@@ -17,8 +17,8 @@ final public class OpenAI: NSObject, LangTools, URLSessionDelegate {
     static let baseURL: URL = URL(string: "https://api.openai.com/v1/")!
     private let apiKey: String
 
-    public lazy var session: URLSession = URLSession(configuration: .default, delegate: streamManager, delegateQueue: nil)
-    public lazy var streamManager: StreamSessionManager = StreamSessionManager<OpenAI>()
+    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: streamManager, delegateQueue: nil)
+    public private(set) lazy var streamManager: StreamSessionManager = StreamSessionManager<OpenAI>()
 
     public init(apiKey: String) {
         self.apiKey = apiKey
@@ -36,21 +36,8 @@ final public class OpenAI: NSObject, LangTools, URLSessionDelegate {
         }
     }
 
-
-    public func complete<Request: LangToolRequest>(request: Request, response: Request.Response) async throws -> Request.Response {
-        if var chatReq = try (request as? ChatCompletionRequest)?.completion(response: response as! OpenAI.ChatCompletionResponse) {
-            return try await perform(request: chatReq) as? Request.Response ?? response
-        }
-        return response
-    }
-
-    
-    public func complete<Request: LangToolRequest & StreamableLangToolRequest>(request: Request, response: Request.Response) throws -> URLSessionDataTask? {
-        if request is ChatCompletionRequest, var chatReq: ChatCompletionRequest? = request as? ChatCompletionRequest {
-            chatReq = try chatReq?.completion(response: response as! ChatCompletionResponse)
-            return try chatReq.flatMap { self.session.dataTask(with: try self.prepare(request: $0)) }
-        }
-        return nil
+    public func completionRequest<Request: LangToolRequest>(request: Request, response: Request.Response) throws -> Request? {
+        return try (request as? ChatCompletionRequest)?.completion(response: response as! ChatCompletionResponse) as? Request
     }
 
     public func prepare<Request: LangToolRequest>(request: Request) throws -> URLRequest {
@@ -63,10 +50,7 @@ final public class OpenAI: NSObject, LangTools, URLSessionDelegate {
     }
 
     public static func processStream(data: Data, completion: @escaping (Data) -> Void) {
-        guard let lines = String(data: data, encoding: .utf8)?.split(separator: "\n") else { return }
-        lines.filter{ $0.hasPrefix("data:") && !$0.contains("[DONE]") }.forEach {
-            completion(Data(String($0.dropFirst(5)).utf8))
-        }
+        String(data: data, encoding: .utf8)?.split(separator: "\n").filter{ $0.hasPrefix("data:") && !$0.contains("[DONE]") }.forEach { completion(Data(String($0.dropFirst(5)).utf8)) }
     }
 }
 
