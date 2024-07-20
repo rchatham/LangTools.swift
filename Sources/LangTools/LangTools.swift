@@ -12,8 +12,7 @@ public protocol LangTools {
     var session: URLSession { get }
     var streamManager: StreamSessionManager<Self> { get }
     func prepare<Request: LangToolRequest>(request: Request) throws -> URLRequest
-    func complete<Request: LangToolRequest>(request: Request, response: Request.Response) async throws -> Request.Response
-    func complete<Request: LangToolRequest & StreamableLangToolRequest>(request: Request, response: Request.Response) throws -> URLSessionDataTask?
+    func completionRequest<Request: LangToolRequest>(request: Request, response: Request.Response) throws -> Request?  // Cannot call completion on (any CompletableLangToolRequest)
     static func processStream(data: Data, completion: @escaping (Data) -> Void)
 }
 
@@ -24,14 +23,9 @@ extension LangTools {
         return try await complete(request: request, response: response)
     }
 
-    public func stream<Request: LangToolRequest & StreamableLangToolRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {
-        if request.stream { // Cannot type erase to (any StreamableRequest & Request)
-            let httpRequest: URLRequest; do { httpRequest = try prepare(request: request) } catch { return AsyncThrowingStream { $0.finish(throwing: error) }}
-            return streamManager.stream(task: session.dataTask(with: httpRequest)) {
-                return try self.complete(request: request, response: $0)
-            }
-        }
-        else { return AsyncThrowingStream { cont in Task { cont.yield(try await perform(request: request)); cont.finish() }}}
+    public func stream<Request: StreamableLangToolRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {
+        let httpRequest: URLRequest; do { httpRequest = try prepare(request: request) } catch { return AsyncThrowingStream { $0.finish(throwing: error) }}
+        return streamManager.stream(task: session.dataTask(with: httpRequest)) { try complete(request: request, response: $0) }
     }
 
     private func perform<Response: Decodable>(request: URLRequest) async -> Result<Response, Error> {
@@ -43,6 +37,14 @@ extension LangTools {
         guard let httpResponse = response as? HTTPURLResponse else { throw LangToolError<ErrorResponse>.requestFailed(nil) }
         guard httpResponse.statusCode == 200 else { throw LangToolError<ErrorResponse>.responseUnsuccessful(statusCode: httpResponse.statusCode, Self.decodeError(data: data)) }
         return try Self.decodeResponse(data: data)
+    }
+
+    private func complete<Request: LangToolRequest>(request: Request, response: Request.Response) async throws -> Request.Response {
+        return try await completionRequest(request: request, response: response).flatMap { try await perform(request: $0) } ?? response
+    }
+
+    private func complete<Request: StreamableLangToolRequest>(request: Request, response: Request.Response) throws -> URLSessionDataTask? {
+        return try completionRequest(request: request, response: response).flatMap { session.dataTask(with: try prepare(request: $0)) }
     }
 }
 
@@ -104,8 +106,7 @@ extension LangToolRequest {
     }
 }
 
-public protocol StreamableLangToolRequest: Encodable {
-    associatedtype Response: StreamableLangToolResponse
+public protocol StreamableLangToolRequest: LangToolRequest where Response: StreamableLangToolResponse {
     var stream: Bool? { get set }
 }
 
@@ -114,8 +115,7 @@ public protocol StreamableLangToolResponse: Decodable {
     func combining(with: Self) -> Self
 }
 
-public protocol CompletableLangToolRequest: Encodable {
-    associatedtype Response: Decodable
+public protocol CompletableLangToolRequest: LangToolRequest {
     func completion(response: Response) throws -> Self?
 }
 
