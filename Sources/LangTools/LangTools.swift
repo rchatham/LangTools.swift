@@ -18,12 +18,12 @@ public protocol LangTools {
 
 extension LangTools {
     // In order to call the function completion in non-streaming calls, we are unable to return the intermediate call and thus you can not mix responding to functions in your code AND using function closures. If this functionality is needed use streaming. This functionality may be able to be added via a configuration callback on the function or request in the future.
-    public func perform<Request: LangToolRequest>(request: Request) async throws -> Request.Response {
+    public func perform<Request: LangToolRequest>(request: Request, reconfigureCompletionRequest reconfig: @escaping (Request) -> Request? = { return $0 }) async throws -> Request.Response {
         let response: Request.Response = try await perform(request: try prepare(request: request))
         return try await complete(request: request, response: response)
     }
 
-    public func stream<Request: StreamableLangToolRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {
+    public func stream<Request: StreamableLangToolRequest>(request: Request, reconfigureCompletionRequest reconfig: @escaping (Request) -> Request? = { return $0 }) -> AsyncThrowingStream<Request.Response, Error> {
         let httpRequest: URLRequest; do { httpRequest = try prepare(request: request) } catch { return AsyncThrowingStream { $0.finish(throwing: error) }}
         return streamManager.stream(task: session.dataTask(with: httpRequest)) { try complete(request: request, response: $0) }
     }
@@ -39,12 +39,12 @@ extension LangTools {
         return try Self.decodeResponse(data: data)
     }
 
-    private func complete<Request: LangToolRequest>(request: Request, response: Request.Response) async throws -> Request.Response {
-        return try await completionRequest(request: request, response: response).flatMap { try await perform(request: $0) } ?? response
+    private func complete<Request: LangToolRequest>(request: Request, response: Request.Response, reconfigureCompletionRequest reconfig: @escaping (Request) -> Request? = { return $0 }) async throws -> Request.Response {
+        return try await completionRequest(request: request, response: response).flatMap(reconfig).flatMap { try await perform(request: $0) } ?? response
     }
 
-    private func complete<Request: StreamableLangToolRequest>(request: Request, response: Request.Response) throws -> URLSessionDataTask? {
-        return try completionRequest(request: request, response: response).flatMap { session.dataTask(with: try prepare(request: $0)) }
+    private func complete<Request: StreamableLangToolRequest>(request: Request, response: Request.Response, reconfigureCompletionRequest reconfig: @escaping (Request) -> Request? = { return $0 }) throws -> URLSessionDataTask? {
+        return try completionRequest(request: request, response: response).flatMap(reconfig).flatMap { session.dataTask(with: try prepare(request: $0)) }
     }
 }
 
