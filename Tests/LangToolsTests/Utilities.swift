@@ -8,7 +8,7 @@
 import XCTest
 @testable import LangTools
 
-extension StreamableLangToolResponse where Self: Encodable {
+extension LangToolsStreamableResponse where Self: Encodable {
     func streamData() throws -> Data {
         let jsonString = try data().string
         return ("data: " + jsonString).data(using: .utf8)!

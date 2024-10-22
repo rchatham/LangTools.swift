@@ -60,18 +60,19 @@ extension URLSessionTask {
     var endpoint: String { currentRequest!.endpoint }
 }
 
-struct MockRequest: LangToolRequest, StreamableLangToolRequest, Encodable {
+struct MockRequest: LangToolsRequest, LangToolsStreamableRequest, LangToolsCompletableRequest, Encodable {
     static var url: URL { URL(filePath: "test") }
     static var path: String { url.endpoint }
     typealias Response = MockResponse
     var stream: Bool?
+    var messages: [MockMessage] = []
     init(stream: Bool? = nil) { self.stream = stream }
     func completion(response: MockResponse) throws -> MockRequest? { return nil }
 }
 
-struct MockResponse: Codable, StreamableLangToolResponse {
+struct MockResponse: Codable, LangToolsStreamableResponse {
     var status: String
-    func combining(with next: MockResponse) -> MockResponse { return next }
+    func combining(with next: MockResponse) -> MockResponse { MockResponse(status: status + next.status) }
     static var empty: MockResponse { MockResponse(status: "") }
     static var success: MockResponse { MockResponse(status: "success") }
 }
