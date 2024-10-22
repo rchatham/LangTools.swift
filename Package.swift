@@ -15,17 +15,46 @@ let package = Package(
         .library(
             name: "LangTools",
             targets: ["LangTools"]),
+        .library(
+            name: "OpenAI",
+            targets: ["OpenAI"]),
+        .library(
+            name: "Anthropic",
+            targets: ["Anthropic"]),
+//        .executable(name: "ChatCLI", targets: ["ChatCLI"]), // Executable product
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
             name: "LangTools"),
+        .target(
+            name: "OpenAI",
+            dependencies: [.target(name: "LangTools")]),
+        .target(
+            name: "Anthropic",
+            dependencies: [.target(name: "LangTools")]),
         .testTarget(
             name: "LangToolsTests",
-            dependencies: ["LangTools"],
+            dependencies: ["LangTools", "OpenAI"],
             resources: [
                 .process("Resources/")
             ]),
+        .testTarget(
+            name: "OpenAITests",
+            dependencies: ["OpenAI"],
+            resources: [
+                .process("Resources/")
+            ]),
+        .testTarget(
+            name: "AnthropicTests",
+            dependencies: ["Anthropic"],
+            resources: [
+                .process("Resources/")
+            ]),
+//        .executableTarget(
+//            name: "ChatCLI", // Executable target
+//            dependencies: ["LangTools"] // Depend on the framework
+//        ),
     ]
 )

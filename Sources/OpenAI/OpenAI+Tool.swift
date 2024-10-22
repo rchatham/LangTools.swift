@@ -1,20 +1,30 @@
 import Foundation
-
+import LangTools
 
 public extension OpenAI {
-    enum Tool: Codable {
-        case function(FunctionSchema)
-
-        var name: String {
-            switch self {
-            case .function(let schema): return schema.name
-            }
+    enum Tool: Codable, LangToolsTool {
+        public var tool_schema: FunctionSchema.Parameters {
+            switch self { case .function(let schema): return schema.parameters }
         }
 
-        var description: String? {
-            switch self {
-            case .function(let schema): return schema.description
-            }
+        public init(name: String, description: String, input_schema: FunctionSchema.Parameters, callback: (([String : Any]) -> String?)?) {
+            self = .function(.init(name: name, description: description, parameters: input_schema, callback: callback))
+        }
+        
+        public typealias ToolSchema = FunctionSchema.Parameters
+
+        public var callback: (([String : Any]) -> String?)? {
+            switch self { case .function(let schema): return schema.callback }
+        }
+
+        case function(FunctionSchema)
+
+        public var name: String {
+            switch self { case .function(let schema): return schema.name }
+        }
+
+        public var description: String? {
+            switch self { case .function(let schema): return schema.description }
         }
 
         public struct FunctionSchema: Codable {
@@ -47,19 +57,19 @@ public extension OpenAI {
                 case name, description, parameters
             }
 
-            public struct Parameters: Codable {
-                var type: String = "object"
-                var properties: [String:Property]
-                var required: [String]?
+            public struct Parameters: Codable, LangToolsToolSchema {
+                public var type: String { "object" }
+                public var properties: [String:Property]
+                public var required: [String]?
                 public init(properties: [String : Property] = [:], required: [String]? = nil) {
                     self.properties = properties
                     self.required = required
                 }
 
-                public struct Property: Codable {
-                    var type: String
-                    var enumValues: [String]?
-                    var description: String?
+                public struct Property: Codable, LangToolsToolSchemaProperty {
+                    public var type: String
+                    public var enumValues: [String]?
+                    public var description: String?
                     public init(type: String, enumValues: [String]? = nil, description: String? = nil) {
                         self.type = type
                         self.enumValues = enumValues

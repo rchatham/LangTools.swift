@@ -76,3 +76,41 @@ struct MockResponse: Codable, LangToolsStreamableResponse {
     static var empty: MockResponse { MockResponse(status: "") }
     static var success: MockResponse { MockResponse(status: "success") }
 }
+
+struct MockMessage: Codable, LangToolsMessage {
+    var role: MockRole
+    var content: MockContent
+    var tool_selection: [MockToolSelection]?
+    init(tool_results: [MockToolResult]) {
+        role = .user
+        content = .init()
+    }
+}
+
+enum MockRole: String, LangToolsRole {
+    case user, assistant
+}
+
+struct MockContent: Codable, LangToolsContent {
+    var string: String?
+    var array: [MockContentType]?
+}
+
+struct MockContentType: Codable, LangToolsContentType {
+    var type: String
+}
+
+struct MockToolSelection: Codable, LangToolsToolSelection {
+    var id: String?
+    var name: String?
+    var arguments: String
+}
+
+struct MockToolResult: Codable, LangToolsToolSelectionResult {
+    var tool_selection_id: String
+    var result: String
+    init(tool_selection_id: String, result: String) {
+        self.tool_selection_id = tool_selection_id
+        self.result = result
+    }
+}

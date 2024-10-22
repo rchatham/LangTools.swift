@@ -1,5 +1,5 @@
 //
-//  OpenAI+ChatCompletion.swift
+//  OpenAI+ChatCompletionRequest.swift
 //  openai-swift
 //
 //  Created by Reid Chatham on 12/7/23.
@@ -18,11 +18,12 @@ public extension OpenAI {
 }
 
 public extension OpenAI {
-    struct ChatCompletionRequest: Codable, LangToolRequest, StreamableLangToolRequest, CompletableLangToolRequest {
+    struct ChatCompletionRequest: Codable, LangToolsRequest, LangToolsStreamableRequest, LangToolsCompletableRequest, LangToolsToolCallingRequest {
         public typealias Response = ChatCompletionResponse
-        public static var url: URL { baseURL.appending(path: "chat/completions") }
+        public static var path: String { "chat/completions" }
+        public static var url: URL { baseURL.appending(path: path) }
         public let model: Model
-        public let messages: [Message]
+        public var messages: [Message]
         public let temperature: Double?
         public let top_p: Double?
         public let n: Int? // how many chat completions to generate for each request
@@ -65,26 +66,26 @@ public extension OpenAI {
             self.parallel_tool_calls = parallel_tool_calls
         }
 
-        public func completion(response: OpenAI.ChatCompletionResponse) throws -> ChatCompletionRequest? { // This needs tests badly
-            for choice in response.choices { // This only returns requests for the first choice - TODO: Add handling of multiple choices
-                guard let tool_calls = choice.message?.tool_calls ?? choice.delta?.tool_calls, !tool_calls.isEmpty else { continue }
-                // if wanting to use names for assistant message, need to insert here
-                let assistant = try Message(role: .assistant, content: .null, name: nil, tool_calls: tool_calls)
-                var toolMessages: [Message] = []
-                for tool_call in tool_calls {
-                    if case .function(let function) = tools?.first(where: { $0.name == tool_call.function.name }) {
-                        guard let args = tool_call.function.arguments.dictionary else { throw ChatCompletionError.failedToDecodeFunctionArguments }
-                        guard function.parameters.required?.filter({ !args.keys.contains($0) }).isEmpty ?? true else { throw ChatCompletionError.missingRequiredFunctionArguments }
-                        guard let str = function.callback?(args) else { continue }
-                        toolMessages.append(try Message(role: .tool, content: .string(str), name: nil, tool_call_id: tool_call.id))
-                    }
-                }
-                if toolMessages.isEmpty { continue }
-                // might be worth checking if toolMessages.count == tool_calls.count. OpenAI will return an error for this already and is a developer configuration issue.
-                return ChatCompletionRequest(model: model, messages: messages + [assistant] + toolMessages, temperature: temperature, top_p: top_p, n: n, stream: stream, stop: stop, max_tokens: max_tokens, presence_penalty: presence_penalty, frequency_penalty: frequency_penalty, logit_bias: logit_bias, user: user, response_type: response_format?.type, seed: seed, tools: tools, tool_choice: tool_choice)
-            }
-            return nil
-        }
+//        public func completion(response: OpenAI.ChatCompletionResponse) throws -> ChatCompletionRequest? { // This needs tests badly
+//            for choice in response.choices { // This only returns requests for the first choice - TODO: Add handling of multiple choices
+//                guard let tool_calls = choice.message?.toolChoice ?? choice.delta?.tool_calls, !tool_calls.isEmpty else { continue }
+//                var toolMessages: [Message] = []
+//                for tool_call in tool_calls {
+//                    if case .function(let function) = tools?.first(where: { $0.name == tool_call.function.name }) {
+//                        guard let args = tool_call.function.arguments.dictionary else { throw ChatCompletionError.failedToDecodeFunctionArguments }
+//                        guard function.parameters.required?.filter({ !args.keys.contains($0) }).isEmpty ?? true else { throw ChatCompletionError.missingRequiredFunctionArguments }
+//                        guard let str = function.callback?(args) else { continue }
+//                        toolMessages.append(try Message(role: .tool, content: .string(str), name: nil, tool_call_id: tool_call.id))
+//                    }
+//                }
+//                if toolMessages.isEmpty { continue }
+//                // might be worth checking if toolMessages.count == tool_calls.count. OpenAI will return an error for this already and is a developer configuration issue.
+//                // if wanting to use names for assistant message, need to insert here
+//                let assistant = try Message(role: .assistant, content: .null, name: nil, tool_calls: tool_calls)
+//                return ChatCompletionRequest(model: model, messages: messages + [assistant] + toolMessages, temperature: temperature, top_p: top_p, n: n, stream: stream, stop: stop, max_tokens: max_tokens, presence_penalty: presence_penalty, frequency_penalty: frequency_penalty, logit_bias: logit_bias, user: user, response_type: response_format?.type, seed: seed, tools: tools, tool_choice: tool_choice)
+//            }
+//            return nil
+//        }
 
         public struct StreamOptions: Codable {
             let include_usage: Bool
@@ -180,22 +181,50 @@ public extension OpenAI {
         }
     }
 
-    struct ChatCompletionResponse: Codable, StreamableLangToolResponse {
+    struct ChatCompletionResponse: Codable, LangToolsStreamableResponse, LangToolsMultipleChoiceResponse, LangToolsToolCallingResponse {
+        public var tool_selection: [OpenAI.Message.ToolCall]? {
+            let choice = choices[pick?(choices) ?? 0]
+            return choice.message?.tool_selection ?? choice.delta?.tool_selection
+        }
+
+        public typealias ToolSelection = Message.ToolCall
+
         public let id: String
         public let object: String // chat.completion or chat.completion.chunk
         public let created: Int
         public let model: String? // TODO: make response return typed model response
         public let system_fingerprint: String?
-        public let choices: [Choice]
+        public var choices: [Choice]
         public let usage: Usage?
 
-        public struct Choice: Codable {
+        @CodableIgnored
+        public var pick: (([Choice]) -> Int)?
+
+        public init(id: String, object: String, created: Int, model: String?, system_fingerprint: String?, choices: [Choice], usage: Usage?, pick: @escaping ([Choice]) -> Int = {_ in 0}) {
+            self.id = id
+            self.object = object
+            self.created = created
+            self.model = model
+            self.system_fingerprint = system_fingerprint
+            self.choices = choices
+            self.usage = usage
+            self.pick = pick
+        }
+
+        public struct Choice: Codable, LangToolsMultipleChoiceChoice {
             public let index: Int
             public let message: Message?
             public let finish_reason: FinishReason?
             public let delta: Message.Delta?
-            
-            public enum FinishReason: String, Codable {
+
+            public init(index: Int, message: Message?, finish_reason: FinishReason?, delta: Message.Delta?) {
+                self.index = index
+                self.message = message
+                self.finish_reason = finish_reason
+                self.delta = delta
+            }
+
+            public enum FinishReason: String, Codable, LangToolsFinishReason {
                 case stop, length, content_filter, tool_calls
             }
 
@@ -232,6 +261,12 @@ public extension OpenAI {
             public let prompt_tokens: Int
             public let completion_tokens: Int
             public let total_tokens: Int
+
+            public init(prompt_tokens: Int, completion_tokens: Int, total_tokens: Int) {
+                self.prompt_tokens = prompt_tokens
+                self.completion_tokens = completion_tokens
+                self.total_tokens = total_tokens
+            }
         }
 
         public func combining(with next: ChatCompletionResponse) -> ChatCompletionResponse {
@@ -263,4 +298,20 @@ extension Array where Element == OpenAI.Message.ToolCall {
         guard first?.index != nil else { return self }
         return self.sorted(by: { $0.index! < $1.index! }) // assume that if an index exists it exists for all tool calls
     }
+}
+
+@propertyWrapper
+public struct CodableIgnored<T>: Codable {
+    public var wrappedValue: T?
+    public init(wrappedValue: T?) { self.wrappedValue = wrappedValue }
+    public init(from decoder: Decoder) throws { self.wrappedValue = nil }
+    public func encode(to encoder: Encoder) throws {} // Do nothing
+}
+
+extension KeyedDecodingContainer {
+    public func decode<T>(_ type: CodableIgnored<T>.Type, forKey key: Self.Key) throws -> CodableIgnored<T> { return CodableIgnored(wrappedValue: nil) }
+}
+
+extension KeyedEncodingContainer {
+    public mutating func encode<T>(_ value: CodableIgnored<T>, forKey key: KeyedEncodingContainer<K>.Key) throws {} // Do nothing
 }

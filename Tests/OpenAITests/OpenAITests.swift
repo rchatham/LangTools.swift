@@ -6,7 +6,6 @@
 //
 
 import XCTest
-@testable import LangTools
 @testable import OpenAI
 
 class OpenAITests: XCTestCase {
@@ -27,28 +26,28 @@ class OpenAITests: XCTestCase {
         super.tearDown()
     }
 
-    func test() async throws {
-        MockURLProtocol.mockNetworkHandlers[MockRequest.url.endpoint] = { request in
-            return (.success(try MockResponse.success.data()), 200)
-        }
-        let response = try await api.perform(request: MockRequest())
-        XCTAssertEqual(response.status, "success")
-    }
-
-    func disabled_testStream() async throws {
-        MockURLProtocol.mockNetworkHandlers[MockRequest.url.endpoint] = { request in
-            return (.success(try MockResponse.success.streamData()), 200)
-        }
-        var results: [MockResponse] = []
-        for try await response in api.stream(request: MockRequest(stream: true)) {
-            results.append(response)
-        }
-        let content = results.reduce("") { $0 + ($1.status) }
-        XCTAssertEqual(content, "success")
-    }
+//    func test() async throws {
+//        MockURLProtocol.mockNetworkHandlers[MockRequest.path] = { request in
+//            return (.success(try MockResponse.success.data()), 200)
+//        }
+//        let response = try await api.perform(request: MockRequest())
+//        XCTAssertEqual(response.status, "success")
+//    }
+//
+//    func disabled_testStream() async throws {
+//        MockURLProtocol.mockNetworkHandlers[MockRequest.path] = { request in
+//            return (.success(try MockResponse.success.streamData()), 200)
+//        }
+//        var results: [MockResponse] = []
+//        for try await response in api.stream(request: MockRequest(stream: true)) {
+//            results.append(response)
+//        }
+//        let content = results.reduce("") { $0 + ($1.status) }
+//        XCTAssertEqual(content, "success")
+//    }
 
     func testChatStream() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.url.endpoint] = { request in
+        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.path] = { request in
             return (.success(try OpenAI.ChatCompletionResponse(
                 id: "testid",
                 object: "chat.completion.chunk",
@@ -66,7 +65,7 @@ class OpenAITests: XCTestCase {
                 usage: .init(prompt_tokens: 50, completion_tokens: 50, total_tokens: 100)).streamData()), 200)
         }
         var results: [OpenAI.ChatCompletionResponse] = []
-        for try await response in api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt35Turbo, messages: [.init(role: .user, content: "Hi")], stream: true)) {
+        for try await response in api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt4Turbo, messages: [.init(role: .user, content: "Hi")], stream: true)) {
             results.append(response)
         }
         let content = results.reduce("") { $0 + ($1.choices[0].delta?.content ?? "") }
@@ -75,11 +74,11 @@ class OpenAITests: XCTestCase {
     }
 
     func testChatStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.url.endpoint] = { request in
+        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.path] = { request in
             return (.success(try self.getData(filename: "assistant_response_stream", fileExtension: "txt")!), 200)
         }
         var results: [OpenAI.ChatCompletionResponse] = []
-        for try await response in api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt35Turbo, messages: [.init(role: .user, content: "Hi")], stream: true)) {
+        for try await response in api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt4Turbo, messages: [.init(role: .user, content: "Hi")], stream: true)) {
             results.append(response)
         }
         let content = results.reduce("") { $0 + ($1.choices[0].delta?.content ?? "") }
@@ -89,10 +88,10 @@ class OpenAITests: XCTestCase {
     }
 
     func testToolCallStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.url.endpoint] = { request in
+        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.path] = { request in
             return (.success(try self.getData(filename: "tool_call_stream", fileExtension: "txt")!), 200)
         }
-        let request = OpenAI.ChatCompletionRequest(model: .gpt35Turbo, messages: [.init(role: .user, content: "Hi")], stream: true)
+        let request = OpenAI.ChatCompletionRequest(model: .gpt4Turbo, messages: [.init(role: .user, content: "Hi")], stream: true)
         var results: [OpenAI.ChatCompletionResponse] = []
         for try await response in api.stream(request: request) {
             results.append(response)
@@ -105,7 +104,7 @@ class OpenAITests: XCTestCase {
     }
 
     func testToolCallWithFunctionCallbackStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.url.endpoint] = { request in
+        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.path] = { request in
             return (.success(try self.getData(filename: "tool_call_stream", fileExtension: "txt")!), 200)
         }
         let tools: [OpenAI.Tool] = [.function(.init(
@@ -123,12 +122,12 @@ class OpenAITests: XCTestCase {
                 ],
                 required: ["location", "format"]),
             callback: { _ in
-                MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.url.endpoint] = { request in
+                MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.path] = { request in
                     return (.success(try self.getData(filename: "tool_call_stream_response", fileExtension: "txt")!), 200)
                 }
                 return "27"
             }))]
-        let request = OpenAI.ChatCompletionRequest(model: .gpt35Turbo, messages: [.init(role: .user, content: "Hi")], stream: true, tools: tools)
+        let request = OpenAI.ChatCompletionRequest(model: .gpt4Turbo, messages: [.init(role: .user, content: "Hi")], stream: true, tools: tools)
         var results: [OpenAI.ChatCompletionResponse] = []
         for try await response in api.stream(request: request) {
             results.append(response)

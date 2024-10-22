@@ -6,8 +6,7 @@
 //
 
 import XCTest
-@testable import LangTools
-import OpenAI
+@testable import OpenAI
 
 final class ChatCompletionRequestTests: XCTestCase {
     func testChatCompletionRequestDecodable() throws {

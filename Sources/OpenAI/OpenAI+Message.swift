@@ -1,13 +1,52 @@
 import Foundation
-
+import LangTools
 
 public extension OpenAI {
-    struct Message: Codable, CustomStringConvertible {
+    struct Message: Codable, CustomStringConvertible, LangToolsMessage {
+        public typealias ToolSelection = ToolCall
+        public typealias ToolResult = Content.ToolResultContent
+
+        public init(tool_results: [Content.ToolResultContent]) {
+            role = .tool
+            content = .array(tool_results.map{.toolResult($0)})
+            name = nil
+            tool_calls = nil
+        }
+        
+        public var tool_selection_id: String { tool_call_id ?? "no id" }
+
+        public var result: String {
+            switch content {
+            case .null:
+                return "null"
+            case .string(let string):
+                return string
+            case .array(let array):
+                switch array[0] {
+                case .text(let txt): return txt.text
+                default: return "image"
+                }
+            }
+        }
+
+        public init(tool_selection_id: String, result: String) {
+            role = .tool
+            content = Content.array([.toolResult(.init(tool_selection_id: tool_selection_id, result: result))])
+            name = nil
+            tool_calls = nil
+        }
+
+
         public let role: Role
         public let content: Content
         public let name: String?
         public let tool_calls: [ToolCall]?
-        public let tool_call_id: String?
+        public var tool_call_id: String? {
+            if case .toolResult(let tool) = content.array?.first { return tool.tool_selection_id }; return nil
+        }
+
+        public var tool_selection: [ToolCall]? { tool_calls }
+
 
         public var description: String {
             let tools: String? = tool_calls?.reduce("") {
@@ -23,41 +62,62 @@ public extension OpenAI {
                   tool_call_id: \(tool_call_id ?? "")
                 """
         }
-        
+
         public init(role: Role, content: String) {
             self.role = role
-            self.content = .string(content)
+            self.content = Content.string(content)
             self.name = nil
             self.tool_calls = nil
-            self.tool_call_id = nil
         }
         
-        public init(role: Role, content: Content, name: String? = nil, tool_calls: [ToolCall]? = nil, tool_call_id: String? = nil) throws {
+        public init(role: Role, content: Content, name: String? = nil, tool_calls: [ToolCall]? = nil) throws {
             switch role {
             case .user: if case .null = content { throw MessageError.missingContent }
-            case .tool: guard tool_call_id != nil else { throw MessageError.missingContent }; fallthrough
-            case .system, .assistant: guard content.description == "null" || content.description.hasPrefix("string: ") else { throw MessageError.invalidContent }
+            case .tool: guard case .array(let arr) = content, case .toolResult(_) = arr[0] else { throw MessageError.missingContent }
+            case .system, .assistant: if case .array(_) = content { throw MessageError.invalidContent }
             }
 
             if role != .assistant, let tool_calls = tool_calls {
                 print("\(role.rawValue.capitalized) is not able to use tool calls: \(tool_calls.description). Please check your configuration, only assistant messages are allowed to contain tool calls")
             }
-            if role != .tool, let tool_call_id = tool_call_id {
-                print("\(role.rawValue.capitalized) can not have tool_call_id: \(tool_call_id). Please check your configuration, only tool meesages may have a tool_call_id.")
+            if role != .tool, case .array(let arr) = content, case .toolResult(let tool) = arr[0] {
+                print("\(role.rawValue.capitalized) can not have tool_call_id: \(tool.tool_selection_id). Please check your configuration, only tool meesages may have a tool_call_id.")
             }
 
             self.role = role
             self.content = content
             self.name = name
             self.tool_calls = role == .assistant ? tool_calls : nil
-            self.tool_call_id = role == .tool ? tool_call_id : nil
         }
-        
-        public enum Role: String, Codable {
+
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(role, forKey: .role)
+            try container.encode(content, forKey: .content)
+            try container.encodeIfPresent(name, forKey: .name)
+            try container.encodeIfPresent(tool_calls, forKey: .tool_calls)
+            try container.encodeIfPresent(tool_call_id, forKey: .tool_call_id)
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            role = try container.decode(Role.self, forKey: .role)
+            if let tool_call_id = try container.decodeIfPresent(String.self, forKey: .tool_call_id), let result = try container.decode(Content.self, forKey: .content).string {
+                self.content = Content.array([.toolResult(.init(tool_selection_id: tool_call_id, result: result))])
+            } else {
+                content = try container.decode(Content.self, forKey: .content)
+            }
+            name = try container.decodeIfPresent(String.self, forKey: .name)
+            tool_calls = try container.decodeIfPresent([ToolCall].self, forKey: .tool_calls)
+        }
+
+        enum CodingKeys: String, CodingKey { case role, content, name, tool_calls, tool_call_id }
+
+        public enum Role: String, Codable, LangToolsRole {
             case system, user, assistant, tool
         }
         
-        public enum Content: Codable, CustomStringConvertible {
+        public enum Content: Codable, CustomStringConvertible, LangToolsContent {
             case null
             case string(String)
             case array([ContentType])
@@ -70,14 +130,24 @@ public extension OpenAI {
                 }
             }
 
-            public enum ContentType: Codable, CustomStringConvertible {
+            public var string: String? {
+                if case .string(let str) = self { return str } else { return nil }
+            }
+
+            public var array: [ContentType]? {
+                if case .array(let arr) = self { return arr } else { return nil }
+            }
+
+            public enum ContentType: Codable, CustomStringConvertible, LangToolsContentType {
                 case text(TextContent)
                 case image(ImageContent)
+                case toolResult(ToolResultContent)
 
                 public var description: String {
                     switch self {
                     case .text(let txt): return "text: \(txt.text)"
                     case .image(let img): return "image: \(img.image_url)"
+                    case .toolResult(let tool): return "tool_id: \(tool.tool_selection_id), result: \(tool.result)"
                     }
                 }
                 
@@ -85,6 +155,7 @@ public extension OpenAI {
                     switch self {
                     case .image(let img): return img.type
                     case .text(let txt): return txt.type
+                    case .toolResult(let tool): return "tool_selection"
                     }
                 }
                 
@@ -100,25 +171,25 @@ public extension OpenAI {
                     switch self {
                     case .text(let txt): try container.encode(txt)
                     case .image(let img): try container.encode(img)
+                    case .toolResult(let tool): try container.encode(tool.result)
                     }
                 }
             }
             
-            public struct TextContent: Codable {
-                var type: String = "text"
+            public struct TextContent: LangToolsTextContentType {
                 public let text: String
                 public init(text: String) {
                     self.text = text
                 }
             }
 
-            public struct ImageContent: Codable {
-                var type: String = "image_url"
+            public struct ImageContent: LangToolsImageContentType {
+                public var type: String { "image_url" }
                 public let image_url: ImageURL
                 public init(image_url: ImageURL) {
                     self.image_url = image_url
                 }
-                
+
                 public struct ImageURL: Codable {
                     public let url: String
                     public let detail: Detail?
@@ -127,8 +198,18 @@ public extension OpenAI {
                         self.detail = detail
                     }
                 }
+
                 public enum Detail: String, Codable {
                     case auto, high, low
+                }
+            }
+
+            public struct ToolResultContent: LangToolsToolSelectionResult {
+                public var tool_selection_id: String
+                public var result: String
+                public init(tool_selection_id: String, result: String) {
+                    self.tool_selection_id = tool_selection_id
+                    self.result = result
                 }
             }
 
@@ -154,17 +235,22 @@ public extension OpenAI {
             case invalidRole, missingContent, invalidContent
         }
 
-        public struct Delta: Codable {
+        public struct Delta: Codable, LangToolsMessageDelta {
             public let role: Role?
             public let content: String?
             public let tool_calls: [ToolCall]?
+
+            public var tool_selection: [ToolCall]? { tool_calls }
         }
 
-        public struct ToolCall: Codable, CustomStringConvertible {
+        public struct ToolCall: Codable, CustomStringConvertible, LangToolsToolSelection {
             public let index: Int?
             public let id: String?
             public let type: ToolType?
             public let function: Function
+
+            public var arguments: String { function.arguments }
+            public var name: String? { function.name }
 
             public var description: String {
                 return """
