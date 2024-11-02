@@ -16,7 +16,8 @@ public protocol LangToolsMessage: Codable {
     var role: Role { get }
     var content: Content { get }
     var tool_selection: [ToolSelection]? { get }
-    init(tool_results: [ToolResult])
+    init(tool_selection: [ToolSelection])
+    static func messages(for tool_results: [ToolResult]) -> [Self]
 }
 
 public protocol LangToolsRole: Codable {

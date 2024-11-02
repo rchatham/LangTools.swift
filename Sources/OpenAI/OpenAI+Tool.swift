@@ -58,7 +58,7 @@ public extension OpenAI {
             }
 
             public struct Parameters: Codable, LangToolsToolSchema {
-                public var type: String { "object" }
+                public let type: String = "object"
                 public var properties: [String:Property]
                 public var required: [String]?
                 public init(properties: [String : Property] = [:], required: [String]? = nil) {

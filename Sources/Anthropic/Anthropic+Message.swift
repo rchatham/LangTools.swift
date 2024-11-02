@@ -1,14 +1,19 @@
 import Foundation
 import LangTools
 
-public extension Anthropic {
-    struct Message: Codable, LangToolsMessage {
+extension Anthropic {
+    public struct Message: Codable, LangToolsMessage {
+
         public let role: Role
         public let content: Content
 
-        public init(tool_results: [Content.ContentType.ToolResult]) {
-            role = .user
-            content = .array(tool_results.map{.toolResult($0)})
+        public static func messages(for tool_results: [Content.ContentType.ToolResult]) -> [Anthropic.Message] {
+            return [.init(role: .user, content: .array(tool_results.map{.toolResult($0)}))]
+        }
+
+        public init(tool_selection: [Anthropic.Content.ContentType.ToolUse]) {
+            role = .assistant
+            content = .array(tool_selection.map{.toolUse($0)})
         }
 
         public var tool_selection: [Content.ContentType.ToolUse]? {
@@ -42,11 +47,11 @@ public extension Anthropic {
         }
     }
 
-    enum Role: String, Codable, LangToolsRole {
+    public enum Role: String, Codable, LangToolsRole {
         case user, assistant
     }
 
-    enum Content: Codable, LangToolsContent {
+    public enum Content: Codable, LangToolsContent {
         case string(String)
         case array([ContentType])
 
@@ -115,7 +120,7 @@ public extension Anthropic {
             }
 
             public struct TextContent: Codable, LangToolsContentType {
-                public var type: String { "text" }
+                public let type: String = "text"
                 public let text: String
                 public init(text: String) {
                     self.text = text
@@ -123,14 +128,14 @@ public extension Anthropic {
             }
 
             public struct ImageContent: Codable, LangToolsContentType {
-                public var type: String { "image" }
+                public let type: String = "image"
                 public let source: ImageSource
                 public init(source: ImageSource) {
                     self.source = source
                 }
 
                 public struct ImageSource: Codable {
-                    var type: String = "base64"
+                    let type: String = "base64"
                     public let media_type: MediaType
                     public let data: String
                     public init(data: String, media_type: MediaType) {
@@ -145,12 +150,20 @@ public extension Anthropic {
             }
 
             public struct ToolUse: Codable, LangToolsContentType, LangToolsToolSelection {
-                public var type: String { "tool_use" }
+                public let type: String = "tool_use"
                 public let id: String?
                 public let name: String?
                 public let input: String
 
                 public var arguments: String { input }
+
+                public func encode(to encoder: any Encoder) throws {
+                    var container = encoder.container(keyedBy: CodingKeys.self)
+                    try container.encode(type, forKey: .type)
+                    try container.encodeIfPresent(id, forKey: .id)
+                    try container.encodeIfPresent(name, forKey: .name)
+                    try container.encode(input.dictionary ?? [:], forKey: .input)
+                }
             }
 
             public struct ToolResult: Codable, LangToolsContentType, LangToolsToolSelectionResult {
@@ -162,7 +175,7 @@ public extension Anthropic {
                     is_error = false
                 }
                 
-                public var type: String { "tool_result" }
+                public let type: String = "tool_result"
                 public let tool_use_id: String
                 public let is_error: Bool
                 public let content: Content // Cannot be toolUse or toolResult ContentType

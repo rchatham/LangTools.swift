@@ -6,28 +6,11 @@ public extension OpenAI {
         public typealias ToolSelection = ToolCall
         public typealias ToolResult = Content.ToolResultContent
 
-        public init(tool_results: [Content.ToolResultContent]) {
-            role = .tool
-            content = .array(tool_results.map{.toolResult($0)})
-            name = nil
-            tool_calls = nil
+        public static func messages(for tool_results: [Content.ToolResultContent]) -> [OpenAI.Message] {
+            return tool_results.map { .init(tool_selection_id: $0.tool_selection_id, result: $0.result) }
         }
-        
-        public var tool_selection_id: String { tool_call_id ?? "no id" }
 
-        public var result: String {
-            switch content {
-            case .null:
-                return "null"
-            case .string(let string):
-                return string
-            case .array(let array):
-                switch array[0] {
-                case .text(let txt): return txt.text
-                default: return "image"
-                }
-            }
-        }
+        public var tool_selection_id: String { tool_call_id ?? "no id" }
 
         public init(tool_selection_id: String, result: String) {
             role = .tool
@@ -36,13 +19,22 @@ public extension OpenAI {
             tool_calls = nil
         }
 
+        public init(tool_selection: [ToolCall]) {
+            role = .assistant
+            content = .null
+            name = nil
+            tool_calls = tool_selection
+        }
 
         public let role: Role
         public let content: Content
         public let name: String?
         public let tool_calls: [ToolCall]?
         public var tool_call_id: String? {
-            if case .toolResult(let tool) = content.array?.first { return tool.tool_selection_id }; return nil
+            if let tool = toolResult { return tool.tool_selection_id }; return nil
+        }
+        var toolResult: ToolResult? {
+            if case .toolResult(let tool) = content.array?.first { return tool }; return nil
         }
 
         public var tool_selection: [ToolCall]? { tool_calls }
@@ -93,10 +85,14 @@ public extension OpenAI {
         public func encode(to encoder: any Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(role, forKey: .role)
-            try container.encode(content, forKey: .content)
+            if let tool_call_id, let toolResult {
+                try container.encode(tool_call_id, forKey: .tool_call_id)
+                try container.encode(Content.string(toolResult.result), forKey: .content)
+            } else {
+                try container.encode(content, forKey: .content)
+            }
             try container.encodeIfPresent(name, forKey: .name)
             try container.encodeIfPresent(tool_calls, forKey: .tool_calls)
-            try container.encodeIfPresent(tool_call_id, forKey: .tool_call_id)
         }
 
         public init(from decoder: any Decoder) throws {

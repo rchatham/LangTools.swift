@@ -15,11 +15,16 @@ public extension Anthropic {
     }
 }
 
-public extension Anthropic {
-    struct MessageRequest: LangToolsStreamableRequest, LangToolsCompletableRequest, LangToolsToolCallingRequest, Codable {
-//        public func completion(response: Response) throws -> MessageRequest? {
-//            return nil
-//        }
+extension Anthropic {
+    public struct MessageRequest: LangToolsStreamableRequest, LangToolsCompletableRequest, LangToolsToolCallingRequest, Codable {
+
+        public func message(for response: Anthropic.MessageResponse) -> Anthropic.Message? {
+            response.message.flatMap { Message(role: $0.role, content: $0.content) }
+        }
+
+        public func toolSelection(for response: Anthropic.MessageResponse) -> [Anthropic.Message.ToolSelection]? {
+            response.message?.content.tool_selection
+        }
         
         public typealias Response = MessageResponse
         public static var path: String { "messages" }
@@ -52,22 +57,6 @@ public extension Anthropic {
             self.top_k = top_k
             self.top_p = top_p
         }
-
-//        public func completion(response: Anthropic.MessageResponse) throws -> Anthropic.MessageRequest? {
-//            guard case .array(let array) = response.message?.content else { return nil }
-//            var toolResults: [Anthropic.Content.ContentType.ToolResult] = []
-//            for tool_use in array.compactMap({ if case .toolUse(let tool_use) = $0 { return tool_use } else { return nil }}) {
-//                if let tool = tools?.first(where: { $0.name == tool_use.name }) {
-//                    guard let args = tool_use.input.dictionary else { throw MessageRequestError.failedToDecodeFunctionArguments }
-//                    guard tool.input_schema.required?.filter({ !args.keys.contains($0) }).isEmpty ?? true else { throw MessageRequestError.missingRequiredFunctionArguments }
-//                    guard let str = tool.callback?(args) else { continue }
-//                    toolResults.append(.init(tool_selection_id: tool_use.id!, result: str))
-//                }
-//            }
-//            guard !toolResults.isEmpty else { return nil }
-//            return updating(messages: messages + [Message(role: Role.user, content: Message.Content.array(toolResults.map { Message.Content.ContentType.toolResult($0) } ))])
-////            return .init(model: model, messages: messages + [Message(role: .user, content: .array(toolResults.map{.toolResult($0)}))], max_tokens: max_tokens, metadata: metadata, stop_sequences: stop_sequences, stream: stream, system: system, temperature: temperature, tools: tools, tool_choice: tool_choice, top_k: top_k, top_p: top_p)
-//        }
 
         public enum ToolChoice: Codable {
             case auto, `any`, tool(String)
@@ -102,10 +91,9 @@ public extension Anthropic {
         }
     }
 
-    struct MessageResponse: Codable, LangToolsToolCallingResponse {
-        public var tool_selection: [Message.ToolSelection]? {
-            message?.content.tool_selection
-        }
+    public struct MessageResponse: Codable, LangToolsToolCallingResponse {
+        public typealias Message = Anthropic.Message
+        public typealias ToolSelection = Message.ToolSelection
 
         public let type: ResponseType
         public let message: MessageResponseInfo?

@@ -63,12 +63,42 @@ extension Array<Message> {
     }
 }
 
+extension Array<OpenAI.Tool> {
+    func toAnthropicTools() -> [Anthropic.Tool] {
+        return self.map {
+            Anthropic.Tool(
+                name: $0.name,
+                description: $0.description ?? "",
+                input_schema: .init(
+                    properties: $0.tool_schema.properties.mapValues {
+                        Anthropic.Tool.InputSchema.Property(
+                            type: $0.type,
+                            enumValues: $0.enumValues,
+                            description: $0.description)
+                    },
+                    required: $0.tool_schema.required),
+                callback: $0.callback)
+        }
+    }
+}
+
 extension OpenAI.Message.Role {
     func toAnthropicRole() -> Anthropic.Role {
         switch self {
         case .assistant: return .assistant
         case .user: return .user
         default: fatalError("role not handled ya fool!")
+        }
+    }
+}
+
+extension OpenAI.ChatCompletionRequest.ToolChoice {
+    func toAnthropicToolChoice() -> Anthropic.MessageRequest.ToolChoice? {
+        switch self {
+        case .none: return nil
+        case .auto: return .auto
+        case .required: return .any
+        case .tool(let toolWrapper): switch toolWrapper { case .function(let name): return .tool(name) }
         }
     }
 }

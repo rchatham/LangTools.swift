@@ -8,8 +8,8 @@
 import Foundation
 
 
-public protocol LangToolsRequest: Encodable {
-    associatedtype Response: Decodable
+public protocol LangToolsRequest: Encodable where Response.Message == Message {
+    associatedtype Response: LangToolsResponse
     associatedtype Message: LangToolsMessage
     static var url: URL { get }
     var messages: [Message] { get set }
@@ -35,17 +35,21 @@ extension LangToolsRequest {
     }
 }
 
+public protocol LangToolsResponse: Decodable {
+    associatedtype Message: LangToolsMessage
+}
+
 public protocol LangToolsStreamableRequest: LangToolsRequest where Response: LangToolsStreamableResponse {
     var stream: Bool? { get set }
 }
 
-public protocol LangToolsStreamableResponse: Decodable {
+public protocol LangToolsStreamableResponse: LangToolsResponse {
     static var empty: Self { get }
     func combining(with: Self) -> Self
 }
 
-public protocol LangToolsCompletableRequest: LangToolsRequest { //where Message.ToolResult == ToolResult {
-//    associatedtype ToolResult: LangToolsToolSelectionResult
+public protocol LangToolsCompletableRequest: LangToolsRequest where Message.ToolResult == ToolResult {
+    associatedtype ToolResult: LangToolsToolSelectionResult
     func completion(response: Response) throws -> Self?
 }
 
@@ -56,15 +60,10 @@ public protocol LangToolsMultipleChoiceRequest: LangToolsRequest where Response:
 }
 
 public extension LangToolsMultipleChoiceRequest where Self: LangToolsCompletableRequest {
-//    func completion(response: Response) throws -> Self? {
-//        var response = response
-//        response.choices = [response.choices[pick(from: response.choices)]]
-//        return try completion(response: response)
-//    }
     func pick(from choices: [Choice]) -> Int { return 0 }
 }
 
-public protocol LangToolsMultipleChoiceResponse: Codable {
+public protocol LangToolsMultipleChoiceResponse: LangToolsResponse {
     associatedtype Choice: LangToolsMultipleChoiceChoice
     var choices: [Choice] { get set }
 }
@@ -86,7 +85,6 @@ public protocol LangToolsToolSelection: Codable {
 }
 
 public protocol LangToolsToolSelectionResult: Codable {
-//    associatedtype Content: LangToolsContent
     var tool_selection_id: String { get }
     var result: String { get }
     init(tool_selection_id: String, result: String)
@@ -107,11 +105,12 @@ public protocol LangToolsFinishReason: Codable {
 public protocol LangToolsToolCallingRequest: LangToolsRequest, Codable where Response: LangToolsToolCallingResponse {
     associatedtype Tool: LangToolsTool
     var tools: [Tool]? { get }
+    func toolSelection(for response: Response) -> [Response.ToolSelection]?
+    func message(for response: Response) -> Response.Message?
 }
 
-public protocol LangToolsToolCallingResponse: Codable {
+public protocol LangToolsToolCallingResponse: LangToolsResponse {
     associatedtype ToolSelection: LangToolsToolSelection
-    var tool_selection: [ToolSelection]? { get }
 }
 
 public extension LangToolsToolCallingRequest where Self: LangToolsMultipleChoiceRequest, Choice.Message == Message, Response.ToolSelection == Message.ToolSelection, Choice.Delta.ToolSelection == Message.ToolSelection {
@@ -119,21 +118,32 @@ public extension LangToolsToolCallingRequest where Self: LangToolsMultipleChoice
         let choice = response.choices[pick(from: response.choices)]
         return choice.message?.tool_selection ?? choice.delta?.tool_selection
     }
+
+    func message(for response: Response) -> Response.Message? {
+        let choice = response.choices[pick(from: response.choices)]
+        guard let tool_selection = choice.message?.tool_selection ?? choice.delta?.tool_selection else { return nil }
+        return Message(tool_selection: tool_selection)
+    }
 }
 
 public extension LangToolsRequest where Self: LangToolsToolCallingRequest, Self: LangToolsCompletableRequest {
     func completion(response: Response) throws -> Self? {
-        guard let tool_selections = response.tool_selection else { return nil }
+        guard let tool_selections = toolSelection(for: response) else { return nil }
         var tool_results: [Message.ToolResult] = []
         for tool_selection in tool_selections {
             guard let tool = tools?.first(where: { $0.name == tool_selection.name }) else { continue }
-            guard let args = tool_selection.arguments.dictionary else { throw LangToolsRequestError.failedToDecodeFunctionArguments }
+            guard let args = tool_selection.arguments.isEmpty ? [:] : tool_selection.arguments.dictionary else { throw LangToolsRequestError.failedToDecodeFunctionArguments }
             guard tool.tool_schema.required?.filter({ !args.keys.contains($0) }).isEmpty ?? true else { throw LangToolsRequestError.missingRequiredFunctionArguments }
             guard let str = tool.callback?(args) else { continue }
-            tool_results.append(Message.ToolResult.init(tool_selection_id: tool_selection.id!, result: str))
+            tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: str))
         }
         guard !tool_results.isEmpty else { return nil }
-        return updating(messages: messages + [Message(tool_results: tool_results)])
+        var results: [Message] = []
+        if let message = message(for: response) {
+            results.append(message)
+        }
+        results.append(contentsOf: Message.messages(for: tool_results))
+        return updating(messages: messages + results)
     }
 }
 

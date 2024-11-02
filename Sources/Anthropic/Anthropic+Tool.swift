@@ -1,8 +1,8 @@
 import Foundation
 import LangTools
 
-public extension Anthropic {
-    struct Tool: Codable, LangToolsTool {
+extension Anthropic {
+    public struct Tool: Codable, LangToolsTool {
         public let name: String
         public let description: String?
         let input_schema: InputSchema // JSON Schema object
@@ -34,7 +34,7 @@ public extension Anthropic {
         }
 
         public struct InputSchema: Codable, LangToolsToolSchema {
-            public var type: String { "object" }
+            public let type: String = "object"
             public var properties: [String:Property]
             public var required: [String]?
             public init(properties: [String : Property] = [:], required: [String]? = nil) {

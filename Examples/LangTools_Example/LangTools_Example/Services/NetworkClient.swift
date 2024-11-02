@@ -12,7 +12,7 @@ import Anthropic
 //typealias Model = OpenAI.Model
 typealias Role = OpenAI.Message.Role
 
-let useAnthropic = true
+let useAnthropic = false
 
 class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     static let shared = NetworkClient()
@@ -49,7 +49,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         let uuid = UUID()
         var content = ""
         if useAnthropic { //, if case .anthropic(let model) = model {
-            let request = Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: true) //, tools: <#T##[Anthropic.Tool]?#>, tool_choice: <#T##Anthropic.MessageRequest.ToolChoice?#>)
+            let request = Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: true, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
             return AsyncThrowingStream { continuation in
                 Task {
                     for try await response in langToolClient.stream(request: request) {
@@ -66,18 +66,18 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         } else if case .openAI(let model) = model  {
             let request = OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice)
             return AsyncThrowingStream { continuation in
-                    Task {
-                        for try await response in langToolClient.stream(request: request) {
-                            if case .string(let content) = response.choices[0].message?.content {
-                                continuation.yield(Message(uuid: uuid, text: content, role: .assistant))
-                            } else if let chunk = response.choices[0].delta?.content {
-                                content = content + chunk
-                                continuation.yield(Message(uuid: uuid, text: content, role: .assistant))
-                            }
+                Task {
+                    for try await response in langToolClient.stream(request: request) {
+                        if case .string(let content) = response.choices[0].message?.content {
+                            continuation.yield(Message(uuid: uuid, text: content, role: .assistant))
+                        } else if let chunk = response.choices[0].delta?.content {
+                            content = content + chunk
+                            continuation.yield(Message(uuid: uuid, text: content, role: .assistant))
                         }
-                        continuation.finish()
                     }
+                    continuation.finish()
                 }
+            }
         }
         fatalError("this should never happen!")
     }

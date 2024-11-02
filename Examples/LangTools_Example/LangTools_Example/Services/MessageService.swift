@@ -7,6 +7,7 @@
 import Foundation
 import LangTools
 import OpenAI
+import Anthropic
 
 @Observable
 class MessageService {

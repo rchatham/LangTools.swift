@@ -7,8 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		B1D1EC6C2CA3153000AD7FA6 /* OpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = B1D1EC6B2CA3153000AD7FA6 /* OpenAI */; };
-		B1D1EC6F2CA3159600AD7FA6 /* Anthropic in Frameworks */ = {isa = PBXBuildFile; productRef = B1D1EC6E2CA3159600AD7FA6 /* Anthropic */; };
+		B19586DB2CD40C6900843DF5 /* Anthropic in Frameworks */ = {isa = PBXBuildFile; productRef = B19586DA2CD40C6900843DF5 /* Anthropic */; };
+		B19586DD2CD40C6900843DF5 /* LangTools in Frameworks */ = {isa = PBXBuildFile; productRef = B19586DC2CD40C6900843DF5 /* LangTools */; };
+		B19586DF2CD40C6900843DF5 /* OpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = B19586DE2CD40C6900843DF5 /* OpenAI */; };
 		B1D1EC722CA31C5F00AD7FA6 /* KeychainAccess in Frameworks */ = {isa = PBXBuildFile; productRef = B1D1EC712CA31C5F00AD7FA6 /* KeychainAccess */; };
 /* End PBXBuildFile section */
 
@@ -58,9 +59,10 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				B1D1EC6C2CA3153000AD7FA6 /* OpenAI in Frameworks */,
-				B1D1EC6F2CA3159600AD7FA6 /* Anthropic in Frameworks */,
+				B19586DD2CD40C6900843DF5 /* LangTools in Frameworks */,
 				B1D1EC722CA31C5F00AD7FA6 /* KeychainAccess in Frameworks */,
+				B19586DF2CD40C6900843DF5 /* OpenAI in Frameworks */,
+				B19586DB2CD40C6900843DF5 /* Anthropic in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -121,9 +123,10 @@
 			);
 			name = LangTools_Example;
 			packageProductDependencies = (
-				B1D1EC6B2CA3153000AD7FA6 /* OpenAI */,
-				B1D1EC6E2CA3159600AD7FA6 /* Anthropic */,
 				B1D1EC712CA31C5F00AD7FA6 /* KeychainAccess */,
+				B19586DA2CD40C6900843DF5 /* Anthropic */,
+				B19586DC2CD40C6900843DF5 /* LangTools */,
+				B19586DE2CD40C6900843DF5 /* OpenAI */,
 			);
 			productName = LangTools_Example;
 			productReference = B1D1EBDF2CA2518F00AD7FA6 /* LangTools_Example.app */;
@@ -208,9 +211,8 @@
 			mainGroup = B1D1EBD62CA2518E00AD7FA6;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				B1D1EC6A2CA3153000AD7FA6 /* XCRemoteSwiftPackageReference "OpenAI" */,
-				B1D1EC6D2CA3159600AD7FA6 /* XCRemoteSwiftPackageReference "anthropic" */,
 				B1D1EC702CA31C5F00AD7FA6 /* XCRemoteSwiftPackageReference "KeychainAccess" */,
+				B19586D92CD40C6900843DF5 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B1D1EBE02CA2518F00AD7FA6 /* Products */;
@@ -574,23 +576,14 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		B19586D92CD40C6900843DF5 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../../LangTools.swift;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
-		B1D1EC6A2CA3153000AD7FA6 /* XCRemoteSwiftPackageReference "OpenAI" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/rchatham/OpenAI.swift";
-			requirement = {
-				branch = "lang-tools";
-				kind = branch;
-			};
-		};
-		B1D1EC6D2CA3159600AD7FA6 /* XCRemoteSwiftPackageReference "anthropic" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/rchatham/anthropic.swift";
-			requirement = {
-				branch = main;
-				kind = branch;
-			};
-		};
 		B1D1EC702CA31C5F00AD7FA6 /* XCRemoteSwiftPackageReference "KeychainAccess" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/kishikawakatsumi/KeychainAccess";
@@ -602,15 +595,17 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		B1D1EC6B2CA3153000AD7FA6 /* OpenAI */ = {
+		B19586DA2CD40C6900843DF5 /* Anthropic */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = B1D1EC6A2CA3153000AD7FA6 /* XCRemoteSwiftPackageReference "OpenAI" */;
-			productName = OpenAI;
-		};
-		B1D1EC6E2CA3159600AD7FA6 /* Anthropic */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = B1D1EC6D2CA3159600AD7FA6 /* XCRemoteSwiftPackageReference "anthropic" */;
 			productName = Anthropic;
+		};
+		B19586DC2CD40C6900843DF5 /* LangTools */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LangTools;
+		};
+		B19586DE2CD40C6900843DF5 /* OpenAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OpenAI;
 		};
 		B1D1EC712CA31C5F00AD7FA6 /* KeychainAccess */ = {
 			isa = XCSwiftPackageProductDependency;
