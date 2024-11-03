@@ -1,6 +1,6 @@
 //
 //  ChatCompletionResponseTests.swift
-//  OpenAI-SwiftTests
+//  OpenAITests
 //
 //  Created by Reid Chatham on 12/15/23.
 //

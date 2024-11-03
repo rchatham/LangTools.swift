@@ -1,6 +1,6 @@
 //
 //  MockURLProtocol.swift
-//  OpenAI-SwiftTests
+//  OpenAITests
 //
 //  Created by Reid Chatham on 12/30/23.
 //
@@ -58,58 +58,3 @@ extension URLRequest {
 extension URLSessionTask {
     var endpoint: String { currentRequest!.endpoint }
 }
-
-//struct MockRequest: LangToolsRequest, LangToolsStreamableRequest, LangToolsCompletableRequest, Encodable {
-//    static var url: URL { URL(filePath: "test") }
-//    static var path: String { url.endpoint }
-//    typealias Response = MockResponse
-//    var stream: Bool?
-//    var messages: [MockMessage] = []
-//    init(stream: Bool? = nil) { self.stream = stream }
-//    func completion(response: MockResponse) throws -> MockRequest? { return nil }
-//}
-//
-//struct MockResponse: Codable, LangToolsStreamableResponse {
-//    var status: String
-//    func combining(with next: MockResponse) -> MockResponse { MockResponse(status: status + next.status) }
-//    static var empty: MockResponse { MockResponse(status: "") }
-//    static var success: MockResponse { MockResponse(status: "success") }
-//}
-//
-//struct MockMessage: Codable, LangToolsMessage {
-//    var role: MockRole
-//    var content: MockContent
-//    var tool_selection: [MockToolSelection]?
-//    init(tool_results: [MockToolResult]) {
-//        role = .user
-//        content = .init()
-//    }
-//}
-//
-//enum MockRole: String, LangToolsRole {
-//    case user, assistant
-//}
-//
-//struct MockContent: Codable, LangToolsContent {
-//    var string: String?
-//    var array: [MockContentType]?
-//}
-//
-//struct MockContentType: Codable, LangToolsContentType {
-//    var type: String
-//}
-//
-//struct MockToolSelection: Codable, LangToolsToolSelection {
-//    var id: String?
-//    var name: String?
-//    var arguments: String
-//}
-//
-//struct MockToolResult: Codable, LangToolsToolSelectionResult {
-//    var tool_selection_id: String
-//    var result: String
-//    init(tool_selection_id: String, result: String) {
-//        self.tool_selection_id = tool_selection_id
-//        self.result = result
-//    }
-//}
