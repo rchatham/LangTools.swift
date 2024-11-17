@@ -9,21 +9,35 @@ import Foundation
 
 public protocol LangTools {
     associatedtype ErrorResponse: Codable & Error
+    static var url: URL { get }
     var session: URLSession { get }
     var streamManager: StreamSessionManager<Self> { get }
-    func prepare<Request: LangToolsRequest>(request: Request) throws -> URLRequest
-    func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) throws -> Request?  // Cannot call completion on (any LangToolsCompletableRequest)
+    func prepare<ChatRequest: LangToolsChatRequest>(request: ChatRequest) throws -> URLRequest
+    func completionRequest<ChatRequest: LangToolsChatRequest>(request: ChatRequest, response: ChatRequest.ChatResponse) throws -> ChatRequest?
     static func processStream(data: Data, completion: @escaping (Data) -> Void)
+    var requestTypes: [(any LangToolsChatRequest) -> Bool] { get }
 }
 
 extension LangTools {
-    // In order to call the function completion in non-streaming calls, we are unable to return the intermediate call and thus you can not mix responding to functions in your code AND using function closures. If this functionality is needed use streaming. This functionality may be able to be added via a configuration callback on the function or request in the future.
-    public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response {
-        let response: Request.Response = try await perform(request: try prepare(request: request))
+
+    public func canHandleRequest<ChatRequest: LangToolsChatRequest>(_ request: ChatRequest) -> Bool {
+        for requestType in self.requestTypes {
+            if requestType(request) { return true }
+        }
+        return false
+    }
+
+    // In order to call the function completion in non-streaming calls, we are
+    // unable to return the intermediate call and thus you can not mix responding 
+    // to functions in your code AND using function closures. If this functionality 
+    // is needed use streaming. This functionality may be able to be added via a 
+    // configuration callback on the function or request in the future.
+    public func perform<ChatRequest: LangToolsChatRequest>(request: ChatRequest) async throws -> ChatRequest.ChatResponse {
+        let response: ChatRequest.ChatResponse = try await perform(request: try prepare(request: request))
         return try await complete(request: request, response: response)
     }
 
-    public func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {
+    public func stream<ChatRequest: LangToolsStreamableChatRequest>(request: ChatRequest) -> AsyncThrowingStream<ChatRequest.ChatResponse, Error> {
         let httpRequest: URLRequest; do { httpRequest = try prepare(request: request) } catch { return AsyncThrowingStream { $0.finish(throwing: error) }}
         return streamManager.stream(task: session.dataTask(with: httpRequest)) { try complete(request: request, response: $0) }
     }
@@ -39,11 +53,11 @@ extension LangTools {
         return try Self.decodeResponse(data: data)
     }
 
-    private func complete<Request: LangToolsRequest>(request: Request, response: Request.Response) async throws -> Request.Response {
+    private func complete<ChatRequest: LangToolsChatRequest>(request: ChatRequest, response: ChatRequest.ChatResponse) async throws -> ChatRequest.ChatResponse {
         return try await completionRequest(request: request, response: response).flatMap { try await perform(request: $0) } ?? response
     }
 
-    private func complete<Request: LangToolsStreamableRequest>(request: Request, response: Request.Response) throws -> URLSessionDataTask? {
+    private func complete<ChatRequest: LangToolsStreamableChatRequest>(request: ChatRequest, response: ChatRequest.ChatResponse) throws -> URLSessionDataTask? {
         return try completionRequest(request: request, response: response).flatMap { session.dataTask(with: try prepare(request: $0)) }
     }
 }
@@ -55,7 +69,7 @@ public class StreamSessionManager<LangTool: LangTools>: NSObject, URLSessionData
     private var completion: (([Data]) throws -> URLSessionDataTask?)? = nil
     private var data: [Data] = []
 
-    func stream<StreamResponse: LangToolsStreamableResponse, Response: Decodable>(task: URLSessionDataTask, completion: @escaping (StreamResponse) throws -> URLSessionDataTask?) -> AsyncThrowingStream<Response, Error> {
+    func stream<StreamChatResponse: LangToolsStreamableChatResponse, ChatResponse: Decodable>(task: URLSessionDataTask, completion: @escaping (StreamChatResponse) throws -> URLSessionDataTask?) -> AsyncThrowingStream<ChatResponse, Error> {
         self.completion = { return try completion(try StreamSessionManager.response(from: $0)) }
         return AsyncThrowingStream { continuation in
             didReceiveEvent = { continuation.yield(with: LangTool.decode(data: $0)) }
@@ -82,8 +96,8 @@ public class StreamSessionManager<LangTool: LangTools>: NSObject, URLSessionData
         didCompleteStream?(error)
     }
 
-    private static func response<Response: LangToolsStreamableResponse>(from data: [Data]) throws -> Response {
-        return try data.compactMap { try LangTool.decodeResponse(data: $0) }.reduce(Response.empty) { $0.combining(with: $1) }
+    private static func response<ChatResponse: LangToolsStreamableChatResponse>(from data: [Data]) throws -> ChatResponse {
+        return try data.compactMap { try LangTool.decodeResponse(data: $0) }.reduce(ChatResponse.empty) { $0.combining(with: $1) }
     }
 }
 

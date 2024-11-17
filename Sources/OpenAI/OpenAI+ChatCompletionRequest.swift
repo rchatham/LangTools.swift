@@ -16,17 +16,11 @@ public extension OpenAI {
 }
 
 extension OpenAI {
-    public struct ChatCompletionRequest: Codable, LangToolsRequest, LangToolsStreamableRequest, LangToolsCompletableRequest, LangToolsToolCallingRequest, LangToolsMultipleChoiceRequest {
+    public struct ChatCompletionRequest: Codable, LangToolsChatRequest, LangToolsStreamableChatRequest, LangToolsCompletableChatRequest, LangToolsToolCallingChatRequest, LangToolsMultipleChoiceChatRequest {
 
-        public func message(for response: OpenAI.ChatCompletionResponse) -> OpenAI.Message? {
-            let choice = response.choices[pick(from: response.choices)]
-            guard let tool_calls = choice.message?.tool_calls ?? choice.delta?.tool_calls else { return nil }
-            return try? .init(role: .assistant, content: .null, name: nil, tool_calls: tool_calls)
-        }
-
-        public typealias Response = ChatCompletionResponse
+        public typealias ChatResponse = ChatCompletionResponse
         public static var path: String { "chat/completions" }
-        public static var url: URL { baseURL.appending(path: path) }
+        public static var url: URL { OpenAI.url.appending(path: path) }
         public let model: Model
         public var messages: [Message]
         public let temperature: Double?
@@ -49,10 +43,9 @@ extension OpenAI {
         public let parallel_tool_calls: Bool?
 
         @CodableIgnored
-        private var _pick: (([Response.Choice]) -> Int)?
-        public func pick(from choices: [Response.Choice]) -> Int { _pick?(choices) ?? 0 }
+        var choose: (([ChatResponse.Choice]) -> Int)?
 
-        public init(model: Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, pick: @escaping ([Response.Choice]) -> Int = {_ in 0}) {
+        public init(model: Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, choose: @escaping ([ChatResponse.Choice]) -> Int = {_ in 0}) {
             self.model = model
             self.messages = messages
             self.temperature = temperature
@@ -73,7 +66,7 @@ extension OpenAI {
             self.tools = tools
             self.tool_choice = tool_choice
             self.parallel_tool_calls = parallel_tool_calls
-            _pick = pick
+            self.choose = choose
         }
 
         public struct StreamOptions: Codable {
@@ -172,9 +165,13 @@ extension OpenAI {
         }
     }
 
-    public struct ChatCompletionResponse: Codable, LangToolsStreamableResponse, LangToolsMultipleChoiceResponse, LangToolsToolCallingResponse {
+    public struct ChatCompletionResponse: Codable, LangToolsStreamableChatResponse, LangToolsMultipleChoiceChatResponse, LangToolsToolCallingChatResponse {
+        public typealias Delta = OpenAI.Message.Delta
         public typealias Message = OpenAI.Message
         public typealias ToolSelection = Message.ToolCall
+
+        public var delta: OpenAI.Message.Delta? { choices[choose?(choices) ?? 0].delta }
+        public var message: OpenAI.Message? { choices[choose?(choices) ?? 0].message }
 
         public let id: String
         public let object: String // chat.completion or chat.completion.chunk
@@ -183,6 +180,9 @@ extension OpenAI {
         public let system_fingerprint: String?
         public var choices: [Choice]
         public let usage: Usage?
+
+        @CodableIgnored
+        var choose: (([Choice]) -> Int)?
 
         public init(id: String, object: String, created: Int, model: String?, system_fingerprint: String?, choices: [Choice], usage: Usage?) {
             self.id = id
@@ -207,12 +207,22 @@ extension OpenAI {
                 self.delta = delta
             }
 
-            public enum FinishReason: String, Codable, LangToolsFinishReason {
+            public enum FinishReason: String, Codable {//, LangToolsFinishReason {
                 case stop, length, content_filter, tool_calls
             }
 
             func combining(with next: Choice) -> Choice {
+                // We want to merge all `delta`s into the `message` parameter, however the first
+                // ChatCompletionResponse we decode does not have a value for `message` if it is streaming
+                // so we need to first merge the initial `delta` then merge the `next.delta`. We no longer
+                // need the delta object but we preserve it to maintain api consistency with OpenAI.
+                let message = combining(message ?? combining(nil, with: delta), with: next.delta)
                 return Choice(index: index, message: message, finish_reason: finish_reason ?? next.finish_reason, delta: combining(delta, with: next.delta))
+            }
+
+            func combining(_ message: Message?, with delta: Message.Delta?) -> Message? {
+                guard let delta = delta else { return message }
+                return try! Message(role: message?.role ?? delta.role ?? .assistant, content: .string(message?.content.string ?? "" + (delta.content ?? "")), name: message?.name, tool_calls: combining(message?.tool_calls, with: delta.tool_calls))
             }
 
             func combining(_ delta: Message.Delta?, with next: Message.Delta?) -> Message.Delta? {
@@ -222,11 +232,11 @@ extension OpenAI {
 
             func combining(_ toolCalls: [Message.ToolCall]?, with next: [Message.ToolCall]?) -> [Message.ToolCall]? {
                 guard let toolCalls = toolCalls, let next = next else { return toolCalls ?? next }
-                return next.sorted().reduce(into: toolCalls.sorted()) { partialResult, toolCall in
-                    if (toolCall.index ?? .max < partialResult.count) {
-                        partialResult[toolCall.index!] = combining(partialResult[toolCall.index!], with: toolCall)
+                return next.sorted().reduce(into: toolCalls.sorted()) { partialResult, next in
+                    if (next.index ?? .max < partialResult.count) {
+                        partialResult[next.index!] = combining(partialResult[next.index!], with: next)
                     } else {
-                        partialResult.append(toolCall)
+                        partialResult.append(next)
                     }
                 }
             }

@@ -2,7 +2,7 @@ import Foundation
 import LangTools
 
 extension Anthropic {
-    public struct Message: Codable, LangToolsMessage {
+    public struct Message: Codable, LangToolsMessage, LangToolsToolMessage {
 
         public let role: Role
         public let content: Content

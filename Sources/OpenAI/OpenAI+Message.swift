@@ -2,7 +2,7 @@ import Foundation
 import LangTools
 
 public extension OpenAI {
-    struct Message: Codable, CustomStringConvertible, LangToolsMessage {
+    struct Message: Codable, CustomStringConvertible, LangToolsMessage, LangToolsToolMessage {
         public typealias ToolSelection = ToolCall
         public typealias ToolResult = Content.ToolResultContent
 
@@ -30,9 +30,11 @@ public extension OpenAI {
         public let content: Content
         public let name: String?
         public let tool_calls: [ToolCall]?
+
         public var tool_call_id: String? {
             if let tool = toolResult { return tool.tool_selection_id }; return nil
         }
+
         var toolResult: ToolResult? {
             if case .toolResult(let tool) = content.array?.first { return tool }; return nil
         }
@@ -231,7 +233,7 @@ public extension OpenAI {
             case invalidRole, missingContent, invalidContent
         }
 
-        public struct Delta: Codable, LangToolsMessageDelta {
+        public struct Delta: Codable, LangToolsMessageDelta, LangToolsToolMessageDelta {
             public let role: Role?
             public let content: String?
             public let tool_calls: [ToolCall]?

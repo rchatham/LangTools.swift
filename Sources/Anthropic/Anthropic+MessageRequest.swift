@@ -16,19 +16,11 @@ public extension Anthropic {
 }
 
 extension Anthropic {
-    public struct MessageRequest: LangToolsStreamableRequest, LangToolsCompletableRequest, LangToolsToolCallingRequest, Codable {
+    public struct MessageRequest: LangToolsStreamableChatRequest, LangToolsCompletableChatRequest, LangToolsToolCallingChatRequest, Codable {
 
-        public func message(for response: Anthropic.MessageResponse) -> Anthropic.Message? {
-            response.message.flatMap { Message(role: $0.role, content: $0.content) }
-        }
-
-        public func toolSelection(for response: Anthropic.MessageResponse) -> [Anthropic.Message.ToolSelection]? {
-            response.message?.content.tool_selection
-        }
-        
-        public typealias Response = MessageResponse
+        public typealias ChatResponse = MessageResponse
         public static var path: String { "messages" }
-        public static var url: URL { baseURL.appending(path: path) }
+        public static var url: URL { Anthropic.url.appending(path: path) }
 
         let model: Model
         public var messages: [Message]
@@ -91,24 +83,29 @@ extension Anthropic {
         }
     }
 
-    public struct MessageResponse: Codable, LangToolsToolCallingResponse {
+    public struct MessageResponse: Codable, LangToolsToolCallingChatResponse {
+
+        public var message: Anthropic.Message? {
+            messageInfo.flatMap { Message(role: $0.role, content: $0.content) }
+        }
+
         public typealias Message = Anthropic.Message
         public typealias ToolSelection = Message.ToolSelection
 
         public let type: ResponseType
-        public let message: MessageResponseInfo?
+        public let messageInfo: MessageResponseInfo?
         public let stream: StreamResponseInfo?
-        public var usage: Usage { return Usage(input_tokens: message?.usage.input_tokens, output_tokens: stream?.usage?.output_tokens ?? message?.usage.output_tokens ?? 0) }
+        public var usage: Usage { return Usage(input_tokens: messageInfo?.usage.input_tokens, output_tokens: stream?.usage?.output_tokens ?? messageInfo?.usage.output_tokens ?? 0) }
 
         init() {
             type = .empty
-            message = nil
+            messageInfo = nil
             stream = nil
         }
 
         init(content: Content, id: String, model: String, role: Role, stop_reason: StopReason?, stop_sequence: String?, type: ResponseType, usage: Usage) {
             self.type = type
-            message = MessageResponseInfo(content: content, id: id, model: model, role: role, stop_reason: stop_reason, stop_sequence: stop_sequence, type: type, usage: usage)
+            messageInfo = MessageResponseInfo(content: content, id: id, model: model, role: role, stop_reason: stop_reason, stop_sequence: stop_sequence, type: type, usage: usage)
             stream = nil
         }
 
@@ -130,15 +127,16 @@ extension Anthropic {
             let container = try decoder.singleValueContainer()
             let stream = try? container.decode(StreamMessageResponse.self)
             if let stream = stream { self.stream = StreamResponseInfo(index: stream.index, delta: stream.delta, usage: stream.usage) } else { self.stream = nil }
-            message = try? stream?.message ?? container.decode(MessageResponseInfo.self)
-            guard let type = stream?.type ?? message?.type else { throw DecodingError.valueNotFound(ResponseType.self, .init(codingPath: [], debugDescription: "Failed to decode response type.")) }
+            messageInfo = try? stream?.message ?? container.decode(MessageResponseInfo.self)
+            guard let type = stream?.type ?? messageInfo?.type else { throw DecodingError.valueNotFound(ResponseType.self, .init(codingPath: [], debugDescription: "Failed to decode response type.")) }
             self.type = type
         }
 
         public func encode(to encoder: Encoder) throws {
             var container = encoder.singleValueContainer()
-            if let stream = stream { try container.encode(StreamMessageResponse(type: type, message: message, index: stream.index, delta: stream.delta, usage: stream.usage)) }
-            else if let message = message { try container.encode(message) }
+//            if let stream = stream { try container.encode(StreamMessageResponse(type: type, message: messageInfo, index: stream.index, delta: stream.delta, usage: stream.usage)) }
+//            else
+            if let message = messageInfo { try container.encode(message) }
             else { throw EncodingError.invalidValue(false, .init(codingPath: [], debugDescription: "Missing stream and message data.")) }
         }
 
@@ -148,7 +146,11 @@ extension Anthropic {
     }
 }
 
-extension Anthropic.MessageResponse: LangToolsStreamableResponse {
+extension Anthropic.MessageResponse: LangToolsStreamableChatResponse {
+    public var delta: Delta? {
+        stream?.delta
+    }
+
     public struct MessageResponseInfo: Codable {
         public let content: Anthropic.Content
         public let id: String
@@ -171,7 +173,7 @@ extension Anthropic.MessageResponse: LangToolsStreamableResponse {
         }
     }
 
-    internal struct StreamMessageResponse: Codable {
+    internal struct StreamMessageResponse: Decodable {
         let type: ResponseType
         let message: MessageResponseInfo?
         let index: Int?
@@ -195,7 +197,7 @@ extension Anthropic.MessageResponse: LangToolsStreamableResponse {
             self.usage = try container.decodeIfPresent(Usage.self, forKey: .usage)
         }
 
-        public func encode(to encoder: Encoder) throws {}
+//        public func encode(to encoder: Encoder) throws {}
 
         enum CodingKeys: CodingKey { case type, message, index, content_block, delta, usage }
     }
@@ -206,7 +208,10 @@ extension Anthropic.MessageResponse: LangToolsStreamableResponse {
         public let usage: Usage?
     }
 
-    public struct Delta: Codable {
+    public struct Delta: Codable, LangToolsMessageDelta {
+        public var role: Anthropic.Role? { .assistant }
+        public var content: String? { text }
+
         public let type: String?
         public let text: String?
 
@@ -224,7 +229,7 @@ extension Anthropic.MessageResponse: LangToolsStreamableResponse {
 
     public func combining(with next: Anthropic.MessageResponse) -> Anthropic.MessageResponse {
         guard type != .empty else { return next }
-        guard let message = self.message, case .array(var array) = message.content else { return self }
+        guard let message = messageInfo, case .array(var array) = message.content else { return self }
         // combine message content based on index
         if let index = next.stream?.index, let delta = next.stream?.delta {
             if index < array.count {
@@ -237,7 +242,7 @@ extension Anthropic.MessageResponse: LangToolsStreamableResponse {
                 if delta.type == "tool_use", let id = delta.id, let name = delta.name { array.append(.toolUse(.init(id: id, name: name, input: ""))) } // This is kind of a hack, the api returns an empty json object for the "input" key, but then returns a string for "partial_json", so we ignore the "input" key when streaming.
             }
         }
-        return Anthropic.MessageResponse(content: .array(array), id: message.id, model: message.model, role: message.role, stop_reason: message.stop_reason ?? next.stream?.delta?.stop_reason, stop_sequence: message.stop_sequence ?? next.stream?.delta?.stop_sequence, type: next.message?.type ?? message.type, usage: usage)
+        return Anthropic.MessageResponse(content: .array(array), id: message.id, model: message.model, role: message.role, stop_reason: message.stop_reason ?? next.stream?.delta?.stop_reason, stop_sequence: message.stop_sequence ?? next.stream?.delta?.stop_sequence, type: next.messageInfo?.type ?? message.type, usage: usage)
     }
 }
 

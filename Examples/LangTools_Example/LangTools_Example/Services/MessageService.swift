@@ -14,7 +14,7 @@ class MessageService {
     let networkClient: NetworkClient
     var messages: [Message] = [] {
         didSet {
-            print("messages updated: \(messages)")
+//            print("messages updated: \(messages)")
         }
     }
 

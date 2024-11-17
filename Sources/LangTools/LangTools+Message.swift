@@ -11,10 +11,13 @@ import Foundation
 public protocol LangToolsMessage: Codable {
     associatedtype Role: LangToolsRole
     associatedtype Content: LangToolsContent
-    associatedtype ToolSelection: LangToolsToolSelection
-    associatedtype ToolResult: LangToolsToolSelectionResult
     var role: Role { get }
     var content: Content { get }
+}
+
+public protocol LangToolsToolMessage: Codable {
+    associatedtype ToolSelection: LangToolsToolSelection
+    associatedtype ToolResult: LangToolsToolSelectionResult
     var tool_selection: [ToolSelection]? { get }
     init(tool_selection: [ToolSelection])
     static func messages(for tool_results: [ToolResult]) -> [Self]
