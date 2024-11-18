@@ -12,15 +12,15 @@ public protocol LangTools {
     static var url: URL { get }
     var session: URLSession { get }
     var streamManager: StreamSessionManager<Self> { get }
-    func prepare<ChatRequest: LangToolsChatRequest>(request: ChatRequest) throws -> URLRequest
-    func completionRequest<ChatRequest: LangToolsChatRequest>(request: ChatRequest, response: ChatRequest.ChatResponse) throws -> ChatRequest?
+    func prepare<Request: LangToolsRequest>(request: Request) throws -> URLRequest
+    func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) throws -> Request?
     static func processStream(data: Data, completion: @escaping (Data) -> Void)
-    var requestTypes: [(any LangToolsChatRequest) -> Bool] { get }
+    var requestTypes: [(any LangToolsRequest) -> Bool] { get }
 }
 
 extension LangTools {
 
-    public func canHandleRequest<ChatRequest: LangToolsChatRequest>(_ request: ChatRequest) -> Bool {
+    public func canHandleRequest<Request: LangToolsRequest>(_ request: Request) -> Bool {
         for requestType in self.requestTypes {
             if requestType(request) { return true }
         }
@@ -32,12 +32,11 @@ extension LangTools {
     // to functions in your code AND using function closures. If this functionality 
     // is needed use streaming. This functionality may be able to be added via a 
     // configuration callback on the function or request in the future.
-    public func perform<ChatRequest: LangToolsChatRequest>(request: ChatRequest) async throws -> ChatRequest.ChatResponse {
-        let response: ChatRequest.ChatResponse = try await perform(request: try prepare(request: request))
-        return try await complete(request: request, response: response)
+    public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response {
+        return try await complete(request: request, response: try await perform(request: try prepare(request: request)))
     }
 
-    public func stream<ChatRequest: LangToolsStreamableChatRequest>(request: ChatRequest) -> AsyncThrowingStream<ChatRequest.ChatResponse, Error> {
+    public func stream<ChatRequest: LangToolsStreamableChatRequest>(request: ChatRequest) -> AsyncThrowingStream<ChatRequest.Response, Error> {
         let httpRequest: URLRequest; do { httpRequest = try prepare(request: request) } catch { return AsyncThrowingStream { $0.finish(throwing: error) }}
         return streamManager.stream(task: session.dataTask(with: httpRequest)) { try complete(request: request, response: $0) }
     }
@@ -50,14 +49,14 @@ extension LangTools {
         let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { throw LangToolError<ErrorResponse>.requestFailed(nil) }
         guard httpResponse.statusCode == 200 else { throw LangToolError<ErrorResponse>.responseUnsuccessful(statusCode: httpResponse.statusCode, Self.decodeError(data: data)) }
-        return try Self.decodeResponse(data: data)
+        return Response.self == Data.self ? data as! Response : try Self.decodeResponse(data: data)
     }
 
-    private func complete<ChatRequest: LangToolsChatRequest>(request: ChatRequest, response: ChatRequest.ChatResponse) async throws -> ChatRequest.ChatResponse {
+    private func complete<Request: LangToolsRequest>(request: Request, response: Request.Response) async throws -> Request.Response {
         return try await completionRequest(request: request, response: response).flatMap { try await perform(request: $0) } ?? response
     }
 
-    private func complete<ChatRequest: LangToolsStreamableChatRequest>(request: ChatRequest, response: ChatRequest.ChatResponse) throws -> URLSessionDataTask? {
+    private func complete<ChatRequest: LangToolsStreamableChatRequest>(request: ChatRequest, response: ChatRequest.Response) throws -> URLSessionDataTask? {
         return try completionRequest(request: request, response: response).flatMap { session.dataTask(with: try prepare(request: $0)) }
     }
 }

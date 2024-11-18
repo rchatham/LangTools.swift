@@ -8,14 +8,17 @@
 import Foundation
 
 
-public protocol LangToolsChatRequest: Encodable where ChatResponse.Message == Message {
-    associatedtype ChatResponse: LangToolsChatResponse
-    associatedtype Message: LangToolsMessage
+public protocol LangToolsRequest: Encodable {
+    associatedtype Response: Decodable
     static var url: URL { get }
+}
+
+public protocol LangToolsChatRequest: LangToolsRequest where Response: LangToolsChatResponse, Response.Message == Message {
+    associatedtype Message: LangToolsMessage
     var messages: [Message] { get set }
 }
 
-extension LangToolsChatRequest {
+extension LangToolsRequest {
     public var stream: Bool {
         get { return (self as? (any LangToolsStreamableChatRequest))?.stream ?? false }
     }
@@ -27,7 +30,9 @@ extension LangToolsChatRequest {
         }
         return self
     }
+}
 
+extension LangToolsChatRequest {
     public func updating(messages: [Message]) -> Self {
         var req = self
         req.messages = messages
@@ -40,7 +45,7 @@ public protocol LangToolsChatResponse: Decodable {
     var message: Message? { get }
 }
 
-public protocol LangToolsStreamableChatRequest: LangToolsChatRequest where ChatResponse: LangToolsStreamableChatResponse {
+public protocol LangToolsStreamableChatRequest: LangToolsChatRequest where Response: LangToolsStreamableChatResponse {
     var stream: Bool? { get set }
 }
 
@@ -52,10 +57,10 @@ public protocol LangToolsStreamableChatResponse: LangToolsChatResponse {
 }
 
 public protocol LangToolsCompletableChatRequest: LangToolsChatRequest {
-    func completion(response: ChatResponse) throws -> Self?
+    func completion(response: Response) throws -> Self?
 }
 
-public protocol LangToolsMultipleChoiceChatRequest: LangToolsChatRequest where ChatResponse: LangToolsMultipleChoiceChatResponse, ChatResponse.Choice == Self.Choice {
+public protocol LangToolsMultipleChoiceChatRequest: LangToolsChatRequest where Response: LangToolsMultipleChoiceChatResponse, Response.Choice == Self.Choice {
     associatedtype Choice: LangToolsMultipleChoiceChoice
     var n: Int? { get }
 //    func pick(from choices: [Choice]) -> Int // Implement your own caching for this value
@@ -110,7 +115,7 @@ public protocol LangToolsToolMessageDelta: Codable {
 //
 //}
 
-public protocol LangToolsToolCallingChatRequest: LangToolsChatRequest, Codable where ChatResponse: LangToolsToolCallingChatResponse, Message: LangToolsToolMessage {
+public protocol LangToolsToolCallingChatRequest: LangToolsChatRequest, Codable where Response: LangToolsToolCallingChatResponse, Message: LangToolsToolMessage {
     associatedtype Tool: LangToolsTool
     var tools: [Tool]? { get }
 }
@@ -120,7 +125,7 @@ public protocol LangToolsToolCallingChatResponse: LangToolsChatResponse {
 }
 
 public extension LangToolsChatRequest where Self: LangToolsToolCallingChatRequest, Self: LangToolsCompletableChatRequest {
-    func completion(response: ChatResponse) throws -> Self? {
+    func completion(response: Response) throws -> Self? {
         guard let tool_selections = response.message?.tool_selection else { return nil }
         var tool_results: [Message.ToolResult] = []
         for tool_selection in tool_selections {
@@ -146,3 +151,5 @@ public enum LangToolsChatRequestError: Error {
     case failedToDecodeFunctionArguments
     case missingRequiredFunctionArguments
 }
+
+public protocol LangToolsTTSRequest: LangToolsRequest where Response == Data {}

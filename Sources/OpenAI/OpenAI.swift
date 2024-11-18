@@ -18,7 +18,7 @@ final public class OpenAI: LangTools {
     public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: streamManager, delegateQueue: nil)
     public private(set) lazy var streamManager: StreamSessionManager = StreamSessionManager<OpenAI>()
 
-    public var requestTypes: [(any LangToolsChatRequest) -> Bool] {
+    public var requestTypes: [(any LangToolsRequest) -> Bool] {
         return [
             { ($0 as? ChatCompletionRequest) != nil }
         ]
@@ -33,22 +33,22 @@ final public class OpenAI: LangTools {
         return self
     }
 
-    public func perform<ChatRequest: LangToolsChatRequest>(request: ChatRequest, completion: @escaping (Result<ChatRequest.ChatResponse, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
+    public func perform<Request: LangToolsRequest>(request: Request, completion: @escaping (Result<Request.Response, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
         Task {
-            if request.stream, let request = request as? ChatCompletionRequest { do { for try await response in stream(request: request) { completion(.success(response as! ChatRequest.ChatResponse)) }; didCompleteStreaming?(nil) } catch { didCompleteStreaming?(error) }}
+            if request.stream, let request = request as? ChatCompletionRequest { do { for try await response in stream(request: request) { completion(.success(response as! Request.Response)) }; didCompleteStreaming?(nil) } catch { didCompleteStreaming?(error) }}
             else { do { completion(.success(try await perform(request: request))) } catch { completion(.failure(error)) }}
         }
     }
 
-    public func completionRequest<ChatRequest: LangToolsChatRequest>(request: ChatRequest, response: ChatRequest.ChatResponse) throws -> ChatRequest? {
+    public func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) throws -> Request? {
         guard let request = request as? ChatCompletionRequest else { return nil }
         guard var response = try request.completion(response: response as! ChatCompletionResponse) else { return nil }
         response.choose = request.choose
-        return response as! ChatRequest
+        return response as! Request
     }
 
-    public func prepare<ChatRequest: LangToolsChatRequest>(request: ChatRequest) throws -> URLRequest {
-        var urlRequest = URLRequest(url: ChatRequest.url)
+    public func prepare<Request: LangToolsRequest>(request: Request) throws -> URLRequest {
+        var urlRequest = URLRequest(url: Request.url)
         urlRequest.httpMethod = "POST"
         urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")

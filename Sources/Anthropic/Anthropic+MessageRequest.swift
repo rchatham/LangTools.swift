@@ -18,7 +18,7 @@ public extension Anthropic {
 extension Anthropic {
     public struct MessageRequest: LangToolsStreamableChatRequest, LangToolsCompletableChatRequest, LangToolsToolCallingChatRequest, Codable {
 
-        public typealias ChatResponse = MessageResponse
+        public typealias Response = MessageResponse
         public static var path: String { "messages" }
         public static var url: URL { Anthropic.url.appending(path: path) }
 

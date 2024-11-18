@@ -18,7 +18,7 @@ public extension OpenAI {
 extension OpenAI {
     public struct ChatCompletionRequest: Codable, LangToolsChatRequest, LangToolsStreamableChatRequest, LangToolsCompletableChatRequest, LangToolsToolCallingChatRequest, LangToolsMultipleChoiceChatRequest {
 
-        public typealias ChatResponse = ChatCompletionResponse
+        public typealias Response = ChatCompletionResponse
         public static var path: String { "chat/completions" }
         public static var url: URL { OpenAI.url.appending(path: path) }
         public let model: Model
@@ -43,9 +43,9 @@ extension OpenAI {
         public let parallel_tool_calls: Bool?
 
         @CodableIgnored
-        var choose: (([ChatResponse.Choice]) -> Int)?
+        var choose: (([Response.Choice]) -> Int)?
 
-        public init(model: Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, choose: @escaping ([ChatResponse.Choice]) -> Int = {_ in 0}) {
+        public init(model: Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, choose: @escaping ([Response.Choice]) -> Int = {_ in 0}) {
             self.model = model
             self.messages = messages
             self.temperature = temperature

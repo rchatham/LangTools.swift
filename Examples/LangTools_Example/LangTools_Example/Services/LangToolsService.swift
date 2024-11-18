@@ -20,8 +20,8 @@ struct LangToolchain {
 
     private var langTools: [String:(any LangTools)] = [:]
 
-    public func perform<ChatRequest: LangToolsChatRequest>(request: ChatRequest) async throws -> ChatRequest.ChatResponse {
-        guard let langTool = langTools[ChatRequest.url.host()!], langTool.canHandleRequest(request) else { throw LangToolchainError.toolchainCannotHandleRequest }
+    public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response {
+        guard let langTool = langTools[Request.url.host()!], langTool.canHandleRequest(request) else { throw LangToolchainError.toolchainCannotHandleRequest }
         return try await langTool.perform(request: request)
     }
 

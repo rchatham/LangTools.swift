@@ -8,6 +8,7 @@ import Foundation
 import OpenAI
 import Anthropic
 
+
 enum Model: RawRepresentable, Hashable {
     typealias RawValue = String
     case openAI(OpenAI.Model)
