@@ -65,14 +65,17 @@ extension MessageComposerView {
             // Send the message completion request
             Task { [input] in
                 do { try await messageService.performMessageCompletionRequest(message: input, stream: true) }
-//                catch { print("Error sending message completion request: \(error)") }
+                catch let error as LangToolchainError {
+                    print("cannot handle request, probably a missing api key: \(error.localizedDescription)")
+                    self.enterApiKey = true
+                }
+//                catch let error as NetworkClient.NetworkError.missingApiKey {
+//                    self.enterApiKey = true
+//                }
                 catch {
-                    // Show pop-up to enter API key
-                    if case NetworkClient.NetworkError.missingApiKey = error {
-                        self.enterApiKey = true
-                    } else {
-                        self.showAlert = true
-                    }
+                    print("Error sending message completion request: \(error)")
+                    self.errorMessage = error.localizedDescription
+                    self.showAlert = true
                 }
             }
 

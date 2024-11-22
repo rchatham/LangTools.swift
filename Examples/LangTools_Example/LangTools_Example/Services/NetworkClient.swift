@@ -75,10 +75,10 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         return try langToolchain.stream(request: request) // I'm shocked this works, an `any LangToolsStreamableChatRequest` is being passed to a function that expects `some LangToolsStreamableChatRequest`.
     }
 
-    func updateApiKey(_ apiKey: String) throws {
+    func updateApiKey(_ apiKey: String, for apiKeychainService: APIKeychainService) throws {
         guard !apiKey.isEmpty else { throw NetworkError.emptyApiKey }
-        keychainService.saveApiKey(apiKey: apiKey, for: useAnthropic ? .anthropic : .openAI)
-        let langTools: any LangTools = useAnthropic ? Anthropic(apiKey: apiKey) : OpenAI(apiKey: apiKey)
+        keychainService.saveApiKey(apiKey: apiKey, for: apiKeychainService)
+        let langTools: any LangTools = apiKeychainService == .anthropic ? Anthropic(apiKey: apiKey) : OpenAI(apiKey: apiKey)
         langToolchain.register(langTools)
     }
 }

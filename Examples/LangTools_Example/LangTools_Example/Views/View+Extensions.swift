@@ -14,10 +14,14 @@ extension View {
     }
 
     func enterOpenAIKeyAlert(isPresented: Binding<Bool>, apiKey: Binding<String>) -> some View {
-        return alert("Enter OpenAI API Key", isPresented: isPresented, actions: {
-            TextField("OpenAI API Key", text: apiKey)
-            Button("Save", action: {
-                do { try NetworkClient.shared.updateApiKey(apiKey.wrappedValue)}
+        return alert("Enter API Key", isPresented: isPresented, actions: {
+            TextField("API Key", text: apiKey)
+            Button("Save for OpenAI", action: {
+                do { try NetworkClient.shared.updateApiKey(apiKey.wrappedValue, for: .openAI)}
+                catch { if case .emptyApiKey = error as? NetworkClient.NetworkError { print("Empty api key") }}
+            })
+            Button("Save for Anthropic", action: {
+                do { try NetworkClient.shared.updateApiKey(apiKey.wrappedValue, for: .anthropic)}
                 catch { if case .emptyApiKey = error as? NetworkClient.NetworkError { print("Empty api key") }}
             })
             Button("Cancel", role: .cancel, action: {})
