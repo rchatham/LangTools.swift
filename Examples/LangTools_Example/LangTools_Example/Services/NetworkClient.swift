@@ -40,21 +40,11 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = false, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<Message, Error> {
-        let stream = try streamLangToolsChatRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)
-        return AsyncThrowingStream { continuation in
-            Task {
-                let uuid = UUID()
-                var content = ""
-                for try await response in stream {
-                    if let content = response.message?.content.string {
-                        continuation.yield(Message(uuid: uuid, text: content, role: .assistant))
-                    } else if let chunk = (response as? any LangToolsStreamableChatResponse)?.delta?.content {
-                        content = content + chunk
-                        continuation.yield(Message(uuid: uuid, text: content, role: .assistant))
-                    }
-                }
-                continuation.finish()
-            }
+        let uuid = UUID()
+        var content: String?
+        return try streamLangToolsChatRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice).compactMapAsyncThrowingStream { response in
+            content ?= (response.message?.content.string ?? response.delta?.content.map { (content ?? "") + $0 })
+            return content.flatMap { Message(uuid: uuid, text: $0, role: .assistant) }
         }
     }
 

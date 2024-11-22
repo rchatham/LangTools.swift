@@ -25,17 +25,8 @@ struct LangToolchain {
         return try await langTool.perform(request: request)
     }
 
-    public func stream<ChatRequest: LangToolsStreamableChatRequest>(request: ChatRequest) throws -> AsyncThrowingStream<any LangToolsChatResponse, Error> {
+    public func stream<ChatRequest: LangToolsStreamableChatRequest>(request: ChatRequest) throws -> AsyncThrowingStream<any LangToolsStreamableChatResponse, Error> {
         guard let langTool = langTools[ChatRequest.url.host()!], langTool.canHandleRequest(request) else { throw LangToolchainError.toolchainCannotHandleRequest }
         return langTool.stream(request: request).mapAsyncThrowingStream { $0 }
     }
 }
-
-
-extension AsyncThrowingStream {
-    func mapAsyncThrowingStream<T, E>(_ map: @escaping (Element) -> T) -> AsyncThrowingStream<T, E> where E == Error {
-        var iterator = self.makeAsyncIterator()
-        return AsyncThrowingStream<T, E>(unfolding: { try await iterator.next().flatMap { map($0) } })
-    }
-}
-
