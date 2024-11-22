@@ -8,6 +8,7 @@ import Foundation
 import LangTools
 import OpenAI
 import Anthropic
+import AVFAudio
 
 //typealias Model = OpenAI.Model
 typealias Role = OpenAI.Message.Role
@@ -55,6 +56,13 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
                 continuation.finish()
             }
         }
+    }
+
+    func playAudio(for text: String) async {
+        let audioReq = OpenAI.AudioSpeechRequest(model: .tts_1_hd, input: text, voice: .alloy, responseFormat: .mp3, speed: 1.0)
+        let audioResponse: Data = try! await langToolchain.perform(request: audioReq)
+        do { try AudioPlayer.shared.play(data: audioResponse) }
+        catch { print(error.localizedDescription) }
     }
 
     private func performLangToolsChatRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = false, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> (any LangToolsChatResponse)? {

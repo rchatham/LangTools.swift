@@ -20,7 +20,8 @@ final public class OpenAI: LangTools {
 
     public var requestTypes: [(any LangToolsRequest) -> Bool] {
         return [
-            { ($0 as? ChatCompletionRequest) != nil }
+            { ($0 as? ChatCompletionRequest) != nil },
+            { ($0 as? AudioSpeechRequest) != nil }
         ]
     }
 
@@ -88,5 +89,7 @@ public extension OpenAI {
         case gpt4_32k_0613 = "gpt-4-32k-0613"
         case gpt4o = "gpt-4o"
         case gpt4o_2024_05_13 = "gpt-4o-2024-05-13"
+        case tts_1 = "tts-1"
+        case tts_1_hd = "tts-1-hd"
     }
 }
