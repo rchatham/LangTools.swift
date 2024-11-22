@@ -66,13 +66,15 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func performLangToolsChatRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = false, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> (any LangToolsChatResponse)? {
-        let request: any LangToolsChatRequest = if !useAnthropic, case .openAI(let model) = model { OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice) } else { Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice()) }
-        return try await langToolchain.perform(request: request)
+        return try await langToolchain.perform(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice))
     }
 
-    private func streamLangToolsChatRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = false, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<any LangToolsChatResponse, Error> {
-        let request: any LangToolsStreamableChatRequest = if !useAnthropic, case .openAI(let model) = model { OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice) } else { Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice()) }
-        return try langToolchain.stream(request: request) // I'm shocked this works, an `any LangToolsStreamableChatRequest` is being passed to a function that expects `some LangToolsStreamableChatRequest`.
+    private func streamLangToolsChatRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = false, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<any LangToolsStreamableChatResponse, Error> {
+        return try langToolchain.stream(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)) // I'm shocked this works, an `any LangToolsStreamableChatRequest` is being passed to a function that expects `some LangToolsStreamableChatRequest`.
+    }
+
+    func request(messages: [Message], model: Model, stream: Bool, tools: [OpenAI.Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) -> any LangToolsStreamableChatRequest {
+        return if !useAnthropic, case .openAI(let model) = model { OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice) } else { Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice()) }
     }
 
     func updateApiKey(_ apiKey: String, for apiKeychainService: APIKeychainService) throws {
