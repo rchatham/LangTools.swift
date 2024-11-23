@@ -78,17 +78,38 @@ public protocol LangToolsCompletableRequest: LangToolsRequest {
 public protocol LangToolsMultipleChoiceChatRequest: LangToolsChatRequest where Response: LangToolsMultipleChoiceChatResponse, Response.Choice == Self.Choice {
     associatedtype Choice: LangToolsMultipleChoiceChoice
     var n: Int? { get }
-//    func pick(from choices: [Choice]) -> Int // Implement your own caching for this value
+    func choose(from choices: [Choice]) -> Int // Implement your own caching for this value
 }
 
-public extension LangToolsMultipleChoiceChatRequest where Self: LangToolsCompletableRequest {
-//    func pick(from choices: [Choice]) -> Int { return 0 }
+extension LangToolsMultipleChoiceChatRequest {
+    func choose(from choices: [Choice]) -> Int { return 0 }
+}
+
+extension LangToolsMultipleChoiceChatRequest {
+    func update(response: Decodable) throws -> Decodable {
+        if var response = response as? Response {
+            guard choose(from: response.choices) < n ?? 1 else { throw LangToolsRequestError.multipleChoiceIndexOutOfBounds }
+            response.choose = choose
+            return response
+        }
+        return response
+    }
+}
+
+extension LangToolsRequest {
+    func update<Response: Decodable>(response: Response) throws -> Response {
+        return try (self as? (any LangToolsMultipleChoiceChatRequest))?.update(response: response) as? Response ?? response
+    }
 }
 
 public protocol LangToolsMultipleChoiceChatResponse: LangToolsChatResponse {
     associatedtype Choice: LangToolsMultipleChoiceChoice
     var choices: [Choice] { get set }
-//    var pick: (([Choice]) -> Int)? { get set }
+    var choose: (([Choice]) -> Int)? { get set }
+}
+
+public extension LangToolsMultipleChoiceChatResponse {
+    var choice: Choice? { choices.first(where: { $0.index == choose?(choices) }) }
 }
 
 public protocol LangToolsMultipleChoiceChoice: Codable {
@@ -167,6 +188,7 @@ public extension LangToolsToolCallingRequest where Self: LangToolsCompletableReq
 public enum LangToolsRequestError: Error {
     case failedToDecodeFunctionArguments
     case missingRequiredFunctionArguments
+    case multipleChoiceIndexOutOfBounds
 }
 
 public protocol LangToolsTTSRequest: LangToolsRequest where Response == Data {}

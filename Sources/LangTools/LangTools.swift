@@ -33,13 +33,13 @@ extension LangTools {
     // is needed use streaming. This functionality may be able to be added via a 
     // configuration callback on the function or request in the future.
     public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response {
-        return try await complete(request: request, response: try await perform(request: try prepare(request: request.updating(stream: false))))
+        return try await complete(request: request, response: try request.update(response: try await perform(request: try prepare(request: request.updating(stream: false)))) )
     }
 
     public func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {
         guard request.stream else { return AsyncThrowingStream { cont in Task { cont.yield(try await perform(request: request)); cont.finish() }} }
         let httpRequest: URLRequest; do { httpRequest = try prepare(request: request) } catch { return AsyncThrowingStream { $0.finish(throwing: error) }}
-        return streamManager.stream(task: session.dataTask(with: httpRequest)) { try complete(request: request, response: $0) }
+        return streamManager.stream(task: session.dataTask(with: httpRequest), updateResponse: { try request.update(response: $0) }) { try complete(request: request, response: $0) }
     }
 
     private func perform<Response: Decodable>(request: URLRequest) async -> Result<Response, Error> {
@@ -69,10 +69,10 @@ public class StreamSessionManager<LangTool: LangTools>: NSObject, URLSessionData
     private var completion: (([Data]) throws -> URLSessionDataTask?)? = nil
     private var data: [Data] = []
 
-    func stream<StreamResponse: LangToolsStreamableResponse, Response: Decodable>(task: URLSessionDataTask, completion: @escaping (StreamResponse) throws -> URLSessionDataTask?) -> AsyncThrowingStream<Response, Error> {
+    func stream<StreamResponse: LangToolsStreamableResponse, Response: Decodable>(task: URLSessionDataTask, updateResponse: @escaping (Response) throws -> Response, completion: @escaping (StreamResponse) throws -> URLSessionDataTask?) -> AsyncThrowingStream<Response, Error> {
         self.completion = { return try completion(try StreamSessionManager.response(from: $0)) }
         return AsyncThrowingStream { continuation in
-            didReceiveEvent = { continuation.yield(with: LangTool.decode(data: $0)) }
+            didReceiveEvent = { continuation.yield(with: LangTool.decode(data: $0).flatMap { do { return .success(try updateResponse($0)) } catch { return .failure(error) } })}
             didCompleteStream = { continuation.finish(throwing: $0) }
             continuation.onTermination = { @Sendable _ in (self.task, self.didReceiveEvent, self.didCompleteStream, self.completion, self.data) = (nil, nil, nil, nil, []) }
             self.task = task; task.resume()

@@ -65,9 +65,8 @@ class MessageService {
     }
 
     func performMessageCompletionRequest(message: String, stream: Bool = false) async throws {
-        do {
-            try await getChatCompletion(for: message, stream: stream)
-        } catch let error as LangToolError<OpenAIErrorResponse> {
+        do { try await getChatCompletion(for: message, stream: stream) }
+        catch let error as LangToolError<OpenAIErrorResponse> {
             switch error {
             case .jsonParsingFailure(let error): print("error: json parsing error: \(error.localizedDescription)")
             case .apiError(let error): print("error: openai api error: \(error.error)")
@@ -77,12 +76,15 @@ class MessageService {
             case .responseUnsuccessful(statusCode: let code, let error): print("error: unsuccessful status code: \(code), error: \(error?.localizedDescription ?? "no error")")
             case .streamParsingFailure: print("error: stream parsing failure")
             }
-        } catch let error as OpenAI.ChatCompletionError {
+        }
+        catch let error as LangToolsRequestError {
             switch error {
+            case .multipleChoiceIndexOutOfBounds: print("multiple choice index out of bounds")
             case .failedToDecodeFunctionArguments: print("error: failed to decode function args")
             case .missingRequiredFunctionArguments: print("error: missing args")
             }
-        } catch {
+        }
+        catch {
             throw error
         }
     }

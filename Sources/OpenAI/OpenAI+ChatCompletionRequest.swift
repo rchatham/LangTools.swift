@@ -44,7 +44,8 @@ extension OpenAI {
         public let parallel_tool_calls: Bool?
 
         @CodableIgnored
-        var choose: (([Response.Choice]) -> Int)?
+        var _choose: (([Response.Choice]) -> Int)?
+        public func choose(from choices: [Choice]) -> Int { return _choose?(choices) ?? 0 }
 
         public init(model: Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, choose: @escaping ([Response.Choice]) -> Int = {_ in 0}) {
             self.model = model
@@ -67,7 +68,7 @@ extension OpenAI {
             self.tools = tools
             self.tool_choice = tool_choice
             self.parallel_tool_calls = parallel_tool_calls
-            self.choose = choose
+            _choose = choose
         }
 
         public struct StreamOptions: Codable {
@@ -171,8 +172,8 @@ extension OpenAI {
         public typealias Message = OpenAI.Message
         public typealias ToolSelection = Message.ToolCall
 
-        public var delta: OpenAI.Message.Delta? { choices[choose?(choices) ?? 0].delta }
-        public var message: OpenAI.Message? { choices[choose?(choices) ?? 0].message }
+        public var delta: OpenAI.Message.Delta? { choice?.delta }
+        public var message: OpenAI.Message? { choice?.message }
 
         public let id: String
         public let object: String // chat.completion or chat.completion.chunk
@@ -183,7 +184,7 @@ extension OpenAI {
         public let usage: Usage?
 
         @CodableIgnored
-        var choose: (([Choice]) -> Int)?
+        public var choose: (([Choice]) -> Int)?
 
         public init(id: String, object: String, created: Int, model: String?, system_fingerprint: String?, choices: [Choice], usage: Usage?) {
             self.id = id
@@ -295,11 +296,11 @@ extension Array where Element == OpenAI.Message.ToolCall {
 }
 
 @propertyWrapper
-struct CodableIgnored<T>: Codable {
-    var wrappedValue: T?
-    init(wrappedValue: T?) { self.wrappedValue = wrappedValue }
-    init(from decoder: Decoder) throws { self.wrappedValue = nil }
-    func encode(to encoder: Encoder) throws {} // Do nothing
+public struct CodableIgnored<T>: Codable {
+    public var wrappedValue: T?
+    public init(wrappedValue: T?) { self.wrappedValue = wrappedValue }
+    public init(from decoder: Decoder) throws { self.wrappedValue = nil }
+    public func encode(to encoder: Encoder) throws {} // Do nothing
 }
 
 extension KeyedDecodingContainer {
