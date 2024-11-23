@@ -1,5 +1,5 @@
 //
-//  ConversationView.swift
+//  ChatView.swift
 //
 //  Created by Reid Chatham on 1/20/23.
 //
@@ -7,7 +7,7 @@
 import SwiftUI
 import CoreData
 
-struct ConversationView: View {
+struct ChatView: View {
     @ObservedObject var viewModel: ViewModel
     @FocusState private var promptTextFieldIsActive: Bool
 
@@ -16,21 +16,23 @@ struct ConversationView: View {
     }
 
     var body: some View {
-        VStack {
-            messageList
-            messageComposerView
-                .invalidInputAlert(isPresented: $viewModel.showAlert)
-                .enterOpenAIKeyAlert(
-                    isPresented: $viewModel.enterApiKey,
-                    apiKey: $viewModel.apiKey)
-        }
-        .navigationTitle("ChatGPT")
-        .toolbar {
-            #if DEBUG
-            NavigationLink(destination: viewModel.settingsView()) {
-                Image(systemName: "gear")
+        NavigationStack {
+            VStack {
+                messageList
+                messageComposerView
+                    .invalidInputAlert(isPresented: $viewModel.showAlert)
+                    .enterOpenAIKeyAlert(
+                        isPresented: $viewModel.enterApiKey,
+                        apiKey: $viewModel.apiKey)
             }
-            #endif
+            .navigationTitle("LangTools.swift")
+            .toolbar {
+                #if DEBUG
+                NavigationLink(destination: viewModel.settingsView()) {
+                    Image(systemName: "gear")
+                }
+                #endif
+            }
         }
     }
 
@@ -45,7 +47,7 @@ struct ConversationView: View {
     }
 }
 
-extension ConversationView {
+extension ChatView {
     @MainActor class ViewModel: ObservableObject {
         @Published var apiKey = ""
         @Published var input = ""

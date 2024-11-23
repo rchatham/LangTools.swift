@@ -11,7 +11,7 @@ import SwiftUI
 struct LangTools_ExampleApp: App {
     var body: some Scene {
         WindowGroup {
-            ConversationView(viewModel: .init(messageService: .init()))
+            ChatView(viewModel: .init(messageService: .init()))
         }
     }
 }
