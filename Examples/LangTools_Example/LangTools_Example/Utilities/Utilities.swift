@@ -23,11 +23,13 @@ extension AsyncThrowingStream {
     func compactMapAsyncThrowingStream<T, E>(_ compactMap: @escaping (Element) -> T?) -> AsyncThrowingStream<T, E> where E == Error {
         return AsyncThrowingStream<T, E> { continuation in
             Task {
-                for try await value in self {
-                    if let mapped = compactMap(value) {
-                        continuation.yield(mapped)
+                do {
+                    for try await value in self {
+                        if let mapped = compactMap(value) {
+                            continuation.yield(mapped)
+                        }
                     }
-                }
+                } catch { continuation.finish(throwing: error) }
                 continuation.finish()
             }
         }
