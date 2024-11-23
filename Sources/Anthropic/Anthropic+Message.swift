@@ -63,7 +63,7 @@ extension Anthropic {
         }
 
         public var string: String? {
-            if case .string(let str) = self { return str } else { return nil }
+            if case .string(let str) = self { return str } else { return array?.first(where: { $0.textContent != nil })?.textContent?.text }
         }
 
         public var array: [ContentType]? {
@@ -98,7 +98,10 @@ extension Anthropic {
                 }
             }
 
+            var textContent: TextContent? { if case .text(let text) = self { return text } else { return nil }}
+            var imageContent: ImageContent? { if case .image(let img) = self { return img } else { return nil }}
             var toolUse: ToolUse? { if case .toolUse(let toolUse) = self { return toolUse } else { return nil }}
+            var toolResult: ToolResult? { if case .toolResult(let toolResult) = self { return toolResult } else { return nil }}
 
             public init(from decoder: Decoder) throws {
                 let container = try decoder.singleValueContainer()
