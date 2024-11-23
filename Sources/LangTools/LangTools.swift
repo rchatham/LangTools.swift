@@ -33,10 +33,11 @@ extension LangTools {
     // is needed use streaming. This functionality may be able to be added via a 
     // configuration callback on the function or request in the future.
     public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response {
-        return try await complete(request: request, response: try await perform(request: try prepare(request: request)))
+        return try await complete(request: request, response: try await perform(request: try prepare(request: request.updating(stream: false))))
     }
 
     public func stream<ChatRequest: LangToolsStreamableChatRequest>(request: ChatRequest) -> AsyncThrowingStream<ChatRequest.Response, Error> {
+        guard request.stream else { return AsyncThrowingStream { cont in Task { cont.yield(try await perform(request: request)); cont.finish() }} }
         let httpRequest: URLRequest; do { httpRequest = try prepare(request: request) } catch { return AsyncThrowingStream { $0.finish(throwing: error) }}
         return streamManager.stream(task: session.dataTask(with: httpRequest)) { try complete(request: request, response: $0) }
     }
