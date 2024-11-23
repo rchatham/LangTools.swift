@@ -10,30 +10,22 @@ import Foundation
 
 public protocol LangToolsRequest: Encodable {
     associatedtype Response: Decodable
-    static var url: URL { get }
+    associatedtype LangTool: LangTools
+    static var path: String { get }
 }
 
+public extension LangToolsRequest {
+    var url: URL { LangTool.url.appending(path: Self.path) }
+}
+
+// MARK: - LangToolsChatRequest
 public protocol LangToolsChatRequest: LangToolsRequest where Response: LangToolsChatResponse, Response.Message == Message {
     associatedtype Message: LangToolsMessage
     var messages: [Message] { get set }
 }
 
-extension LangToolsRequest {
-    public var stream: Bool {
-        get { return (self as? (any LangToolsStreamableChatRequest))?.stream ?? false }
-    }
-
-    func updating(stream: Bool) -> Self {
-        if var streamReq = (self as? (any LangToolsStreamableChatRequest)) {
-            streamReq.stream = stream
-            return (streamReq as! Self)
-        }
-        return self
-    }
-}
-
 extension LangToolsChatRequest {
-    public func updating(messages: [Message]) -> Self {
+    func updating(messages: [Message]) -> Self {
         var req = self
         req.messages = messages
         return req
@@ -45,28 +37,51 @@ public protocol LangToolsChatResponse: Decodable {
     var message: Message? { get }
 }
 
-public protocol LangToolsStreamableChatRequest: LangToolsChatRequest where Response: LangToolsStreamableChatResponse {
+// MARK: - LangToolsStreamableRequest
+public protocol LangToolsStreamableRequest: LangToolsRequest where Response: LangToolsStreamableResponse {
     var stream: Bool? { get set }
 }
 
-public protocol LangToolsStreamableChatResponse: LangToolsChatResponse {
+public protocol LangToolsStreamableResponse: Decodable {
     associatedtype Delta: LangToolsMessageDelta
     var delta: Delta? { get }
     static var empty: Self { get }
     func combining(with: Self) -> Self
 }
 
-public protocol LangToolsCompletableChatRequest: LangToolsChatRequest {
+public protocol LangToolsMessageDelta: Codable {
+    associatedtype Role: LangToolsRole
+    var role: Role? { get }
+    var content: String? { get }
+}
+
+extension LangToolsRequest {
+    public var stream: Bool {
+        get { return (self as? (any LangToolsStreamableRequest))?.stream ?? false }
+    }
+
+    func updating(stream: Bool) -> Self {
+        if var streamReq = (self as? (any LangToolsStreamableRequest)) {
+            streamReq.stream = stream
+            return (streamReq as! Self)
+        }
+        return self
+    }
+}
+
+// MARK: - LangToolsCompletableRequest
+public protocol LangToolsCompletableRequest: LangToolsRequest {
     func completion(response: Response) throws -> Self?
 }
 
+// MARK: - LangToolsMultipleChoiceChatRequest
 public protocol LangToolsMultipleChoiceChatRequest: LangToolsChatRequest where Response: LangToolsMultipleChoiceChatResponse, Response.Choice == Self.Choice {
     associatedtype Choice: LangToolsMultipleChoiceChoice
     var n: Int? { get }
 //    func pick(from choices: [Choice]) -> Int // Implement your own caching for this value
 }
 
-public extension LangToolsMultipleChoiceChatRequest where Self: LangToolsCompletableChatRequest {
+public extension LangToolsMultipleChoiceChatRequest where Self: LangToolsCompletableRequest {
 //    func pick(from choices: [Choice]) -> Int { return 0 }
 }
 
@@ -86,6 +101,27 @@ public protocol LangToolsMultipleChoiceChoice: Codable {
 //    var finish_reason: FinishReason? { get }
 }
 
+
+//public protocol LangToolsFinishReason: Codable {
+//
+//}
+
+// MARK: - LangToolsToolCallingRequest
+public protocol LangToolsToolCallingRequest: LangToolsChatRequest, Codable where Response: LangToolsToolCallingResponse, Message: LangToolsToolMessage, Message == Response.Message {
+    associatedtype Tool: LangToolsTool
+    var tools: [Tool]? { get }
+}
+
+public protocol LangToolsToolCallingResponse: LangToolsChatResponse where Message: LangToolsToolMessage, ToolSelection == Message.ToolSelection {
+    associatedtype ToolSelection: LangToolsToolSelection
+}
+
+extension LangToolsToolCallingResponse {
+    var tool_selection: [ToolSelection]? {
+        message?.tool_selection
+    }
+}
+
 public protocol LangToolsToolSelection: Codable {
     var id: String? { get }
     var name: String? { get }
@@ -98,12 +134,6 @@ public protocol LangToolsToolSelectionResult: Codable {
     init(tool_selection_id: String, result: String)
 }
 
-public protocol LangToolsMessageDelta: Codable {
-    associatedtype Role: LangToolsRole
-    var role: Role? { get }
-    var content: String? { get }
-}
-
 public protocol LangToolsToolMessageDelta: Codable {
     associatedtype Role: LangToolsRole
     associatedtype ToolSelection: LangToolsToolSelection
@@ -111,29 +141,16 @@ public protocol LangToolsToolMessageDelta: Codable {
     var tool_selection: [ToolSelection]? { get }
 }
 
-//public protocol LangToolsFinishReason: Codable {
-//
-//}
-
-public protocol LangToolsToolCallingChatRequest: LangToolsChatRequest, Codable where Response: LangToolsToolCallingChatResponse, Message: LangToolsToolMessage {
-    associatedtype Tool: LangToolsTool
-    var tools: [Tool]? { get }
-}
-
-public protocol LangToolsToolCallingChatResponse: LangToolsChatResponse {
-    associatedtype ToolSelection: LangToolsToolSelection
-}
-
-public extension LangToolsChatRequest where Self: LangToolsToolCallingChatRequest, Self: LangToolsCompletableChatRequest {
+public extension LangToolsToolCallingRequest where Self: LangToolsCompletableRequest {
     func completion(response: Response) throws -> Self? {
         guard let tool_selections = response.message?.tool_selection else { return nil }
         var tool_results: [Message.ToolResult] = []
         for tool_selection in tool_selections {
             guard let tool = tools?.first(where: { $0.name == tool_selection.name }) else { continue }
             guard let args = tool_selection.arguments.isEmpty ? [:] : tool_selection.arguments.dictionary
-                else { throw LangToolsChatRequestError.failedToDecodeFunctionArguments }
+                else { throw LangToolsRequestError.failedToDecodeFunctionArguments }
             guard tool.tool_schema.required?.filter({ !args.keys.contains($0) }).isEmpty ?? true
-                else { throw LangToolsChatRequestError.missingRequiredFunctionArguments }
+                else { throw LangToolsRequestError.missingRequiredFunctionArguments }
             guard let str = tool.callback?(args) else { continue }
             tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: str))
         }
@@ -147,7 +164,7 @@ public extension LangToolsChatRequest where Self: LangToolsToolCallingChatReques
     }
 }
 
-public enum LangToolsChatRequestError: Error {
+public enum LangToolsRequestError: Error {
     case failedToDecodeFunctionArguments
     case missingRequiredFunctionArguments
 }

@@ -16,11 +16,11 @@ public extension Anthropic {
 }
 
 extension Anthropic {
-    public struct MessageRequest: LangToolsStreamableChatRequest, LangToolsCompletableChatRequest, LangToolsToolCallingChatRequest, Codable {
+    public struct MessageRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsCompletableRequest, LangToolsToolCallingRequest {
 
+        public typealias LangTool = Anthropic
         public typealias Response = MessageResponse
         public static var path: String { "messages" }
-        public static var url: URL { Anthropic.url.appending(path: path) }
 
         let model: Model
         public var messages: [Message]
@@ -83,7 +83,7 @@ extension Anthropic {
         }
     }
 
-    public struct MessageResponse: Codable, LangToolsToolCallingChatResponse {
+    public struct MessageResponse: Codable, LangToolsChatResponse, LangToolsToolCallingResponse {
 
         public var message: Anthropic.Message? {
             messageInfo.flatMap { Message(role: $0.role, content: $0.content) }
@@ -146,7 +146,7 @@ extension Anthropic {
     }
 }
 
-extension Anthropic.MessageResponse: LangToolsStreamableChatResponse {
+extension Anthropic.MessageResponse: LangToolsStreamableResponse {
     public var delta: Delta? {
         stream?.delta
     }

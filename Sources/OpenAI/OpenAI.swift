@@ -48,8 +48,8 @@ final public class OpenAI: LangTools {
         return response as! Request
     }
 
-    public func prepare<Request: LangToolsRequest>(request: Request) throws -> URLRequest {
-        var urlRequest = URLRequest(url: Request.url)
+    public func prepare(request: some LangToolsRequest) throws -> URLRequest {
+        var urlRequest = URLRequest(url: request.url)
         urlRequest.httpMethod = "POST"
         urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")

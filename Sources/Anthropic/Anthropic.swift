@@ -40,8 +40,8 @@ public final class Anthropic: LangTools {
         }
     }
 
-    public func prepare<Request: LangToolsRequest>(request: Request) throws -> URLRequest {
-        var urlRequest = URLRequest(url: Request.url)
+    public func prepare(request: some LangToolsRequest) throws -> URLRequest {
+        var urlRequest = URLRequest(url: request.url)
         urlRequest.httpMethod = "POST"
         urlRequest.addValue("application/json", forHTTPHeaderField: "content-type")
         urlRequest.addValue("2023-06-01", forHTTPHeaderField: "anthropic-version")

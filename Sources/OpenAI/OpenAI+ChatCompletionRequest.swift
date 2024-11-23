@@ -16,11 +16,12 @@ public extension OpenAI {
 }
 
 extension OpenAI {
-    public struct ChatCompletionRequest: Codable, LangToolsChatRequest, LangToolsStreamableChatRequest, LangToolsCompletableChatRequest, LangToolsToolCallingChatRequest, LangToolsMultipleChoiceChatRequest {
+    public struct ChatCompletionRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsCompletableRequest, LangToolsToolCallingRequest, LangToolsMultipleChoiceChatRequest {
 
+        public typealias LangTool = OpenAI
         public typealias Response = ChatCompletionResponse
         public static var path: String { "chat/completions" }
-        public static var url: URL { OpenAI.url.appending(path: path) }
+
         public let model: Model
         public var messages: [Message]
         public let temperature: Double?
@@ -165,7 +166,7 @@ extension OpenAI {
         }
     }
 
-    public struct ChatCompletionResponse: Codable, LangToolsStreamableChatResponse, LangToolsMultipleChoiceChatResponse, LangToolsToolCallingChatResponse {
+    public struct ChatCompletionResponse: Codable, LangToolsChatResponse, LangToolsStreamableResponse, LangToolsToolCallingResponse, LangToolsMultipleChoiceChatResponse {
         public typealias Delta = OpenAI.Message.Delta
         public typealias Message = OpenAI.Message
         public typealias ToolSelection = Message.ToolCall

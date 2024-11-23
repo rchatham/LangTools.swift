@@ -21,12 +21,12 @@ struct LangToolchain {
     private var langTools: [String:(any LangTools)] = [:]
 
     public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response {
-        guard let langTool = langTools[Request.url.host()!], langTool.canHandleRequest(request) else { throw LangToolchainError.toolchainCannotHandleRequest }
+        guard let langTool = langTools[request.url.host()!], langTool.canHandleRequest(request) else { throw LangToolchainError.toolchainCannotHandleRequest }
         return try await langTool.perform(request: request)
     }
 
-    public func stream<ChatRequest: LangToolsStreamableChatRequest>(request: ChatRequest) throws -> AsyncThrowingStream<any LangToolsStreamableChatResponse, Error> {
-        guard let langTool = langTools[ChatRequest.url.host()!], langTool.canHandleRequest(request) else { throw LangToolchainError.toolchainCannotHandleRequest }
+    public func stream<Request: LangToolsStreamableRequest>(request: Request) throws -> AsyncThrowingStream<any LangToolsStreamableResponse, Error> {
+        guard let langTool = langTools[request.url.host()!], langTool.canHandleRequest(request) else { throw LangToolchainError.toolchainCannotHandleRequest }
         return langTool.stream(request: request).mapAsyncThrowingStream { $0 }
     }
 }
