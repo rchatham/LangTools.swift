@@ -163,8 +163,8 @@ public protocol LangToolsToolMessageDelta: Codable {
 }
 
 public extension LangToolsToolCallingRequest where Self: LangToolsCompletableRequest {
-    func completion(response: Response) throws -> Self? {
-        guard let tool_selections = response.message?.tool_selection else { return nil }
+    func completion<Response: LangToolsToolCallingResponse>(response: Response) throws -> Self? {
+        guard let tool_selections = (response as? Self.Response)?.tool_selection else { return nil }
         var tool_results: [Message.ToolResult] = []
         for tool_selection in tool_selections {
             guard let tool = tools?.first(where: { $0.name == tool_selection.name }) else { continue }
@@ -177,7 +177,7 @@ public extension LangToolsToolCallingRequest where Self: LangToolsCompletableReq
         }
         guard !tool_results.isEmpty else { return nil }
         var results: [Message] = []
-        if let message = response.message {
+        if let message = response.message as! Self.Response.Message? {
             results.append(message)
         }
         results.append(contentsOf: Message.messages(for: tool_results))

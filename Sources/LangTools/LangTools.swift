@@ -13,7 +13,6 @@ public protocol LangTools {
     var session: URLSession { get }
     var streamManager: StreamSessionManager<Self> { get }
     func prepare(request: some LangToolsRequest) throws -> URLRequest
-    func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) throws -> Request?
     static func processStream(data: Data, completion: @escaping (Data) -> Void)
     var requestTypes: [(any LangToolsRequest) -> Bool] { get }
 }
@@ -59,6 +58,10 @@ extension LangTools {
 
     private func complete<Request: LangToolsStreamableRequest>(request: Request, response: Request.Response) throws -> URLSessionDataTask? {
         return try completionRequest(request: request, response: response).flatMap { session.dataTask(with: try prepare(request: $0)) }
+    }
+
+    private func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) throws -> Request? {
+        return try (response as? any LangToolsToolCallingResponse).flatMap { try (request as? any LangToolsToolCallingRequest & LangToolsCompletableRequest)?.completion(response: $0) } as? Request
     }
 }
 

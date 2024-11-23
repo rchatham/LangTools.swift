@@ -41,9 +41,6 @@ final public class OpenAI: LangTools {
         }
     }
 
-    public func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) throws -> Request? {
-        return try (request as? ChatCompletionRequest)?.completion(response: response as! ChatCompletionResponse) as? Request
-    }
 
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
         var urlRequest = URLRequest(url: request.url)
