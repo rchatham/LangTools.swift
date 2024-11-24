@@ -160,6 +160,23 @@ extension Anthropic {
 
                 public var arguments: String { input }
 
+                public init(id: String?, name: String?, input: String) {
+                    self.id = id
+                    self.name = name
+                    self.input = input
+                }
+
+                enum CodingKeys: String, CodingKey {
+                    case type, id, name, input
+                }
+
+                public init(from decoder: any Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    self.id = try container.decodeIfPresent(String.self, forKey: .id)
+                    self.name = try container.decodeIfPresent(String.self, forKey: .name)
+                    self.input = try container.decodeIfPresent([String:String].self, forKey: .input)?.string ?? ""
+                }
+
                 public func encode(to encoder: any Encoder) throws {
                     var container = encoder.container(keyedBy: CodingKeys.self)
                     try container.encode(type, forKey: .type)

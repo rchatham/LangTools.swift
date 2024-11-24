@@ -125,11 +125,15 @@ extension Anthropic {
 
         public init(from decoder: Decoder) throws {
             let container = try decoder.singleValueContainer()
-            let stream = try? container.decode(StreamMessageResponse.self)
-            if let stream = stream { self.stream = StreamResponseInfo(index: stream.index, delta: stream.delta, usage: stream.usage) } else { self.stream = nil }
-            messageInfo = try? stream?.message ?? container.decode(MessageResponseInfo.self)
-            guard let type = stream?.type ?? messageInfo?.type else { throw DecodingError.valueNotFound(ResponseType.self, .init(codingPath: [], debugDescription: "Failed to decode response type.")) }
-            self.type = type
+            if let message = try? container.decode(MessageResponseInfo.self) {
+                messageInfo = message
+                stream = nil
+                type = message.type
+            } else if let stream = try? container.decode(StreamMessageResponse.self) {
+                self.stream = StreamResponseInfo(index: stream.index, delta: stream.delta, usage: stream.usage)
+                messageInfo = stream.message
+                type = stream.type
+            } else { throw DecodingError.valueNotFound(ResponseType.self, .init(codingPath: [], debugDescription: "Failed to decode response type.")) }
         }
 
         public func encode(to encoder: Encoder) throws {

@@ -125,5 +125,9 @@ extension String {
     public var dictionary: [String:String]? { return data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed]) as? [String:String] }}
 }
 
+extension Dictionary where Key == String, Value == String {
+    public var string: String? { (try? JSONSerialization.data(withJSONObject: self, options: [.fragmentsAllowed])).flatMap { String(data: $0, encoding: .utf8) }}
+}
+
 extension Optional { func flatMap<U>(_ a: (Wrapped) async throws -> U?) async throws -> U? { switch self { case .some(let wrapped): return try await a(wrapped); case .none: return nil }}}
 
