@@ -112,6 +112,11 @@ public extension LangToolsMultipleChoiceChatResponse {
     var choice: Choice? { choices.first(where: { $0.index == choose?(choices) }) }
 }
 
+public extension LangToolsMultipleChoiceChatResponse where Self: LangToolsStreamableResponse {
+    var delta: Choice.Delta? { choice?.delta }
+    var message: Choice.Message? { choice?.message }
+}
+
 public protocol LangToolsMultipleChoiceChoice: Codable {
     associatedtype Delta: LangToolsMessageDelta
     associatedtype Message: LangToolsMessage
@@ -164,7 +169,7 @@ public protocol LangToolsToolMessageDelta: Codable {
 
 public extension LangToolsToolCallingRequest where Self: LangToolsCompletableRequest {
     func completion<Response: LangToolsToolCallingResponse>(response: Response) throws -> Self? {
-        guard let tool_selections = (response as? Self.Response)?.tool_selection else { return nil }
+        guard let tool_selections = (response as? Response)?.tool_selection else { return nil }
         var tool_results: [Message.ToolResult] = []
         for tool_selection in tool_selections {
             guard let tool = tools?.first(where: { $0.name == tool_selection.name }) else { continue }

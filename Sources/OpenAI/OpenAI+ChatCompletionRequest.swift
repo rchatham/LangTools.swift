@@ -172,9 +172,6 @@ extension OpenAI {
         public typealias Message = OpenAI.Message
         public typealias ToolSelection = Message.ToolCall
 
-        public var delta: OpenAI.Message.Delta? { choice?.delta }
-        public var message: OpenAI.Message? { choice?.message }
-
         public let id: String
         public let object: String // chat.completion or chat.completion.chunk
         public let created: Int
@@ -186,7 +183,7 @@ extension OpenAI {
         @CodableIgnored
         public var choose: (([Choice]) -> Int)?
 
-        public init(id: String, object: String, created: Int, model: String?, system_fingerprint: String?, choices: [Choice], usage: Usage?) {
+        public init(id: String, object: String, created: Int, model: String?, system_fingerprint: String?, choices: [Choice], usage: Usage?, choose: (([Choice]) -> Int)?) {
             self.id = id
             self.object = object
             self.created = created
@@ -235,8 +232,8 @@ extension OpenAI {
             func combining(_ toolCalls: [Message.ToolCall]?, with next: [Message.ToolCall]?) -> [Message.ToolCall]? {
                 guard let toolCalls = toolCalls, let next = next else { return toolCalls ?? next }
                 return next.sorted().reduce(into: toolCalls.sorted()) { partialResult, next in
-                    if (next.index ?? .max < partialResult.count) {
-                        partialResult[next.index!] = combining(partialResult[next.index!], with: next)
+                    if let index = partialResult.firstIndex(where: { $0.index == next.index })  {
+                        partialResult[index] = combining(partialResult[index], with: next)
                     } else {
                         partialResult.append(next)
                     }
@@ -265,15 +262,21 @@ extension OpenAI {
         }
 
         public func combining(with next: ChatCompletionResponse) -> ChatCompletionResponse {
-            return ChatCompletionResponse(id: next.id, object: next.object, created: next.created, model: next.model, system_fingerprint: next.system_fingerprint, choices: combining(choices, with: next.choices), usage: next.usage)
+            return ChatCompletionResponse(id: next.id, object: next.object, created: next.created, model: next.model, system_fingerprint: next.system_fingerprint, choices: combining(choices, with: next.choices), usage: next.usage, choose: choose ?? next.choose)
         }
 
         func combining(_ choices: [Choice], with next: [Choice]) -> [Choice] {
             if choices.isEmpty { return next }
-            return zip(choices.sorted(), next.sorted()).map { $0.combining(with: $1) }
+            return next.sorted().reduce(into: choices.sorted()) { partialResult, next in
+                if let index = partialResult.firstIndex(where: { $0.index == next.index }) {
+                    partialResult[index] = partialResult[index].combining(with: next)
+                } else {
+                    partialResult.append(next)
+                }
+            }
         }
 
-        public static var empty: ChatCompletionResponse { ChatCompletionResponse(id: "", object: "", created: -1, model: nil, system_fingerprint: nil, choices: [], usage: nil) }
+        public static var empty: ChatCompletionResponse { ChatCompletionResponse(id: "", object: "", created: -1, model: nil, system_fingerprint: nil, choices: [], usage: nil, choose: nil) }
     }
 
     public enum ChatCompletionError: Error {

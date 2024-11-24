@@ -72,10 +72,13 @@ public class StreamSessionManager<LangTool: LangTools>: NSObject, URLSessionData
     private var completion: (([Data]) throws -> URLSessionDataTask?)? = nil
     private var data: [Data] = []
 
-    func stream<StreamResponse: LangToolsStreamableResponse, Response: Decodable>(task: URLSessionDataTask, updateResponse: @escaping (Response) throws -> Response, completion: @escaping (StreamResponse) throws -> URLSessionDataTask?) -> AsyncThrowingStream<Response, Error> {
-        self.completion = { return try completion(try StreamSessionManager.response(from: $0)) }
+    func stream<Response: LangToolsStreamableResponse>(task: URLSessionDataTask, updateResponse: @escaping (Response) throws -> Response, completion: @escaping (Response) throws -> URLSessionDataTask?) -> AsyncThrowingStream<Response, Error> {
+        self.completion = { try completion(try updateResponse(try StreamSessionManager.response(from: $0))) }
         return AsyncThrowingStream { continuation in
-            didReceiveEvent = { continuation.yield(with: LangTool.decode(data: $0).flatMap { do { return .success(try updateResponse($0)) } catch { return .failure(error) } })}
+            didReceiveEvent = {
+                do { continuation.yield(try updateResponse(try LangTool.decodeResponse(data: $0))) }
+                catch { continuation.finish(throwing: error) }
+            }
             didCompleteStream = { continuation.finish(throwing: $0) }
             continuation.onTermination = { @Sendable _ in (self.task, self.didReceiveEvent, self.didCompleteStream, self.completion, self.data) = (nil, nil, nil, nil, []) }
             self.task = task; task.resume()
