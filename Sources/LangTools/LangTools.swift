@@ -20,10 +20,7 @@ public protocol LangTools {
 extension LangTools {
 
     public func canHandleRequest<Request: LangToolsRequest>(_ request: Request) -> Bool {
-        for requestType in self.requestTypes {
-            if requestType(request) { return true }
-        }
-        return false
+        return requestTypes.reduce(false) { $0 || $1(request) }
     }
 
     // In order to call the function completion in non-streaming calls, we are
