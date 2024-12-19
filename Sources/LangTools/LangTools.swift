@@ -35,8 +35,8 @@ extension LangTools {
     }
 
     public func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {
-        guard request.stream else { return AsyncThrowingStream { cont in Task { cont.yield(try await perform(request: request)); cont.finish() }} }
-        let httpRequest: URLRequest; do { httpRequest = try prepare(request: request) } catch { return AsyncThrowingStream { $0.finish(throwing: error) }}
+        guard request.stream ?? true else { return AsyncThrowingSingleItemStream(value: { try await perform(request: request) }) }
+        let httpRequest: URLRequest; do { httpRequest = try prepare(request: request.updating(stream: true)) } catch { return AsyncThrowingStream { $0.finish(throwing: error) }}
         return streamManager.stream(task: session.dataTask(with: httpRequest), updateResponse: { try request.update(response: $0) }) { try complete(request: request, response: $0) }
     }
 
@@ -133,3 +133,6 @@ extension Dictionary where Key == String, Value == String {
 
 extension Optional { func flatMap<U>(_ a: (Wrapped) async throws -> U?) async throws -> U? { switch self { case .some(let wrapped): return try await a(wrapped); case .none: return nil }}}
 
+func AsyncThrowingSingleItemStream<U>(value: @escaping () async throws -> U) -> AsyncThrowingStream<U, Error> {
+    return AsyncThrowingStream { cont in Task { do { cont.yield(try await value()) } catch { cont.finish(throwing: error) }; cont.finish() }}
+}
