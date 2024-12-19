@@ -31,7 +31,7 @@ dependencies: [
 
 ## Usage
 
-The best way to learn how it works is to run the LangToolsDemo in XCode! Take a look at the implementation in [MessageService.swift](https://github.com/rchatham/LangTools.swift/blob/main/LangToolsDemo/Message/MessageService.swift).
+The best way to learn how it works is to run the LangToolsDemo in XCode! Take a look at the implementation in [MessageService.swift](https://github.com/rchatham/LangTools.swift/blob/main/Examples/LangTools_Example/LangTools_Example/Services/MessageService.swift).
 
 ### Initializing the Client
 
