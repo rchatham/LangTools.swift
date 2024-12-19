@@ -12,11 +12,21 @@ import LangTools
 public final class Anthropic: LangTools {
     public typealias ErrorResponse = AnthropicErrorResponse
 
-    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: streamManager, delegateQueue: nil)
-    lazy public var streamManager: StreamSessionManager<Anthropic> = StreamSessionManager<Anthropic>()
+    private var apiKey: String { configuration.apiKey }
+    private var configuration: OpenAIConfiguration
 
-    public static let url: URL = URL(string: "https://api.anthropic.com/v1/")!
-    private let apiKey: String
+    public struct OpenAIConfiguration {
+        public var baseURL: URL
+        public let apiKey: String
+
+        public init(baseURL: URL = URL(string: "https://api.anthropic.com/v1/")!, apiKey: String) {
+            self.baseURL = baseURL
+            self.apiKey = apiKey
+        }
+    }
+
+    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: streamManager, delegateQueue: nil)
+    public private(set) lazy var streamManager: StreamSessionManager<Anthropic> = StreamSessionManager<Anthropic>()
 
     public var requestTypes: [(any LangToolsRequest) -> Bool] {
         return [
@@ -25,7 +35,11 @@ public final class Anthropic: LangTools {
     }
 
     public init(apiKey: String) {
-        self.apiKey = apiKey
+        configuration = OpenAIConfiguration(apiKey: apiKey)
+    }
+
+    public init(configuration: OpenAIConfiguration) {
+        self.configuration = configuration
     }
 
     internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
@@ -41,7 +55,7 @@ public final class Anthropic: LangTools {
     }
 
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
-        var urlRequest = URLRequest(url: request.url)
+        var urlRequest = URLRequest(url: configuration.baseURL.appending(path: request.path))
         urlRequest.httpMethod = "POST"
         urlRequest.addValue("application/json", forHTTPHeaderField: "content-type")
         urlRequest.addValue("2023-06-01", forHTTPHeaderField: "anthropic-version")

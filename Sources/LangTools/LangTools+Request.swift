@@ -15,7 +15,7 @@ public protocol LangToolsRequest: Encodable {
 }
 
 public extension LangToolsRequest {
-    var url: URL { LangTool.url.appending(path: Self.path) }
+    var path: String { Self.path }
 }
 
 // MARK: - LangToolsChatRequest

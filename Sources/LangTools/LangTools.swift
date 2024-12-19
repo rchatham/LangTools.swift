@@ -9,12 +9,14 @@ import Foundation
 
 public protocol LangTools {
     associatedtype ErrorResponse: Codable & Error
-    static var url: URL { get }
+    func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response
+    func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error>
+    var requestTypes: [(any LangToolsRequest) -> Bool] { get }
+
     var session: URLSession { get }
     var streamManager: StreamSessionManager<Self> { get }
     func prepare(request: some LangToolsRequest) throws -> URLRequest
     static func processStream(data: Data, completion: @escaping (Data) -> Void)
-    var requestTypes: [(any LangToolsRequest) -> Bool] { get }
 }
 
 extension LangTools {
