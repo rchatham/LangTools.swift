@@ -8,7 +8,22 @@
 import Foundation
 import LangTools
 
+
+struct MockLangTool: LangTools {
+    typealias ErrorResponse = MockErrorResponse
+    var requestTypes: [(any LangToolsRequest) -> Bool]
+    var session: URLSession
+    var streamManager: StreamSessionManager<MockLangTool>
+    func prepare(request: some LangToolsRequest) throws -> URLRequest {
+        return URLRequest(url: URL(string: "http://localhost:8080/v1/")!)
+    }
+    static func processStream(data: Data, completion: @escaping (Data) -> Void) {
+        completion(data)
+    }
+}
+
 struct MockRequest: LangToolsRequest, LangToolsStreamableRequest, LangToolsCompletableRequest, Encodable {
+    typealias LangTool = MockLangTool
     typealias ToolResult = MockToolResult
 
     static var url: URL { URL(filePath: "test") }
@@ -21,9 +36,12 @@ struct MockRequest: LangToolsRequest, LangToolsStreamableRequest, LangToolsCompl
 }
 
 struct MockResponse: Codable, LangToolsStreamableResponse {
+    typealias Delta = MockDelta
     typealias Message = MockMessage
 
     var status: String
+    var delta: MockDelta?
+
     func combining(with next: MockResponse) -> MockResponse { MockResponse(status: status + next.status) }
     static var empty: MockResponse { MockResponse(status: "") }
     static var success: MockResponse { MockResponse(status: "success") }
@@ -54,6 +72,11 @@ struct MockMessage: Codable, LangToolsMessage {
     }
 }
 
+struct MockDelta: LangToolsMessageDelta {
+    var role: MockRole?
+    var content: String?
+}
+
 enum MockRole: String, LangToolsRole {
     case user, assistant
 }
@@ -81,4 +104,8 @@ struct MockToolResult: Codable, LangToolsToolSelectionResult {
         self.tool_selection_id = tool_selection_id
         self.result = result
     }
+}
+
+struct MockErrorResponse: Codable, Error {
+
 }

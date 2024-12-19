@@ -47,8 +47,8 @@ final class ChatCompletionResponseTests: XCTestCase {
             usage: .init(
                 prompt_tokens: 9,
                 completion_tokens: 12,
-                total_tokens: 21
-            )
+                total_tokens: 21),
+            choose: {_ in 0}
         )
         let data = try response.data()
         let testData = try getData(filename: "chat_completion_response")!

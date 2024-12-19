@@ -61,7 +61,7 @@ class AnthropicTests: XCTestCase {
             results.append(response)
         }
         guard let content = results.first?.message?.content.string else { return XCTFail("Failed to decode content") }
-        XCTAssertEqual(results[0].message?.id, "testid")
+        XCTAssertEqual(results[0].messageInfo?.id, "testid")
         XCTAssertEqual(content, "Hi! My name is Claude.")
     }
 

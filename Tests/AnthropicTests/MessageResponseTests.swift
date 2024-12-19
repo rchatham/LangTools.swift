@@ -14,11 +14,11 @@ final class MessageResponseTests: XCTestCase {
             switch result {
             case .success(let response):
                 XCTAssert(
-                    response.message?.id == "msg_013Zva2CMHLNnXjNJJKqJ2EF" &&
-                    response.message?.model == "claude-3-5-sonnet-20240620" &&
-                    response.message?.role == .assistant &&
-                    response.message?.stop_reason == .end_turn &&
-                    response.message?.stop_sequence == nil &&
+                    response.messageInfo?.id == "msg_013Zva2CMHLNnXjNJJKqJ2EF" &&
+                    response.messageInfo?.model == "claude-3-5-sonnet-20240620" &&
+                    response.messageInfo?.role == .assistant &&
+                    response.messageInfo?.stop_reason == .end_turn &&
+                    response.messageInfo?.stop_sequence == nil &&
                     response.type == .message &&
                     response.usage.input_tokens == 10 &&
                     response.usage.output_tokens == 25)

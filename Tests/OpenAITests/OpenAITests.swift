@@ -42,7 +42,7 @@ class OpenAITests: XCTestCase {
                         role: .assistant,
                         content: "Hello, how are you?",
                         tool_calls: nil))],
-                usage: .init(prompt_tokens: 50, completion_tokens: 50, total_tokens: 100)).streamData()), 200)
+                usage: .init(prompt_tokens: 50, completion_tokens: 50, total_tokens: 100), choose: {_ in 0}).streamData()), 200)
         }
         var results: [OpenAI.ChatCompletionResponse] = []
         for try await response in api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt4Turbo, messages: [.init(role: .user, content: "Hi")], stream: true)) {
