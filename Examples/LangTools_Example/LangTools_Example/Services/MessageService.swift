@@ -154,7 +154,7 @@ class MessageService {
         }
 
         if let lastmsg = messages.last?.text {
-            await networkClient.playAudio(for: lastmsg)
+            try await networkClient.playAudio(for: lastmsg)
         }
     }
 

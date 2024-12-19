@@ -33,13 +33,13 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = false, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
-        let response = try await langToolchain.perform(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice))
+    func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
+        let response = try await langToolchain.perform(request: request(messages: messages, model: model, tools: tools, toolChoice: toolChoice))
         guard let text = response.message?.content.string else { fatalError("the api should never return non text") }
         return Message(text: text, role: .assistant)
     }
 
-    func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = false, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<Message, Error> {
+    func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<Message, Error> {
         let uuid = UUID()
         var content: String?
         return try langToolchain.stream(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { response in
@@ -48,14 +48,14 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    func playAudio(for text: String) async {
+    func playAudio(for text: String) async throws {
         let audioReq = OpenAI.AudioSpeechRequest(model: .tts_1_hd, input: text, voice: .alloy, responseFormat: .mp3, speed: 1.2)
-        let audioResponse: Data = try! await langToolchain.perform(request: audioReq)
+        let audioResponse: Data = try await langToolchain.perform(request: audioReq)
         do { try AudioPlayer.shared.play(data: audioResponse) }
         catch { print(error.localizedDescription) }
     }
 
-    func request(messages: [Message], model: Model, stream: Bool, tools: [OpenAI.Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) -> any LangToolsChatRequest & LangToolsStreamableRequest {
+    func request(messages: [Message], model: Model, stream: Bool = false, tools: [OpenAI.Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) -> any LangToolsChatRequest & LangToolsStreamableRequest {
         if !useAnthropic, case .openAI(let model) = model {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), n: 3, stream: stream, tools: tools, tool_choice: toolChoice, choose: {_ in 2})
         } else {
