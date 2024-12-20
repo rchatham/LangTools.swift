@@ -75,14 +75,13 @@ public protocol LangToolsCompletableRequest: LangToolsRequest {
 }
 
 // MARK: - LangToolsMultipleChoiceChatRequest
-public protocol LangToolsMultipleChoiceChatRequest: LangToolsChatRequest where Response: LangToolsMultipleChoiceChatResponse, Response.Choice == Self.Choice {
-    associatedtype Choice: LangToolsMultipleChoiceChoice
+public protocol LangToolsMultipleChoiceChatRequest: LangToolsChatRequest where Response: LangToolsMultipleChoiceChatResponse {
     var n: Int? { get }
-    func choose(from choices: [Choice]) -> Int // Implement your own caching for this value
+    func choose(from choices: [Response.Choice]) -> Int // Implement your own caching for this value
 }
 
 extension LangToolsMultipleChoiceChatRequest {
-    func choose(from choices: [Choice]) -> Int { return 0 }
+    func choose(from choices: [Response.Choice]) -> Int { return 0 }
 }
 
 extension LangToolsMultipleChoiceChatRequest {
