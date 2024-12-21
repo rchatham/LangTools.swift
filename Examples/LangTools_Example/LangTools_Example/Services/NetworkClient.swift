@@ -25,12 +25,8 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 
     override init() {
         super.init()
-        if let apiKey = keychainService.getApiKey(for: .anthropic) {
-            langToolchain.register(Anthropic(apiKey: apiKey))
-        }
-        if let apiKey = keychainService.getApiKey(for: .openAI) {
-            langToolchain.register(OpenAI(apiKey: apiKey))
-        }
+        if let apiKey = keychainService.getApiKey(for: .anthropic) { register(apiKey, for: .anthropic) }
+        if let apiKey = keychainService.getApiKey(for: .openAI) { register(apiKey, for: .openAI) }
     }
 
     func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
@@ -56,19 +52,29 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     func request(messages: [Message], model: Model, stream: Bool = false, tools: [OpenAI.Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) -> any LangToolsChatRequest & LangToolsStreamableRequest {
-        if !useAnthropic, case .openAI(let model) = model {
+        if useAnthropic, case .anthropic(let model) = model {
+            return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
+        } else if case .openAI(let model) = model {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), n: 3, stream: stream, tools: tools, tool_choice: toolChoice, choose: {_ in 2})
         } else {
             return Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
         }
     }
 
-    func updateApiKey(_ apiKey: String, for apiKeychainService: APIKeychainService) throws {
+    func updateApiKey(_ apiKey: String, for llm: LLMAPIService) throws {
         guard !apiKey.isEmpty else { throw NetworkError.emptyApiKey }
-        keychainService.saveApiKey(apiKey: apiKey, for: apiKeychainService)
-        let langTools: any LangTools = apiKeychainService == .anthropic ? Anthropic(apiKey: apiKey) : OpenAI(apiKey: apiKey)
+        keychainService.saveApiKey(apiKey: apiKey, for: llm)
+        register(apiKey, for: llm)
+    }
+
+    func register(_ apiKey: String, for llm: LLMAPIService) {
+        let langTools: any LangTools = llm == .anthropic ? Anthropic(apiKey: apiKey) : OpenAI(apiKey: apiKey)
         langToolchain.register(langTools)
     }
+}
+
+enum LLMAPIService: String {
+    case openAI, anthropic
 }
 
 extension NetworkClient {
