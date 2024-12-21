@@ -15,7 +15,7 @@ enum LangToolchainError: String, Error {
 struct LangToolchain {
 
     public mutating func register<LangTool: LangTools>(_ langTools: LangTool) {
-        self.langTools[String(describing: langTools.self)] = langTools
+        self.langTools[String(describing: LangTool.self)] = langTools
     }
 
     private var langTools: [String:(any LangTools)] = [:]
