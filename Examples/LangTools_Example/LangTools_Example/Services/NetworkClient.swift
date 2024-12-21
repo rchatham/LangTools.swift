@@ -39,8 +39,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<Message, Error> {
-        let uuid = UUID()
-        var content: String?
+        let uuid = UUID(); var content: String?
         return try langToolchain.stream(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { response in
             content ?= (response.delta?.content.map { (content ?? "") + $0 } ?? (response as? (any LangToolsChatResponse))?.message?.content.string)
             return content.flatMap { Message(uuid: uuid, text: $0, role: .assistant) }
