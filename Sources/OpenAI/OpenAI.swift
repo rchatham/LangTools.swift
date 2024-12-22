@@ -10,6 +10,7 @@ import LangTools
 
 
 final public class OpenAI: LangTools {
+    public typealias Model = OpenAIModel
     public typealias ErrorResponse = OpenAIErrorResponse
 
     private var apiKey: String { configuration.apiKey }
@@ -81,23 +82,75 @@ public struct OpenAIErrorResponse: Error, Codable {
     }
 }
 
-public extension OpenAI {
-    enum Model: String, Codable, CaseIterable {
-        case gpt35Turbo = "gpt-3.5-turbo"
-        case gpt35Turbo_0301 = "gpt-3.5-turbo-0301"
-        case gpt35Turbo_1106 = "gpt-3.5-turbo-1106"
-        case gpt35Turbo_16k = "gpt-3.5-turbo-16k"
-        case gpt35Turbo_Instruct = "gpt-3.5-turbo-instruct"
-        case gpt4 = "gpt-4"
-        case gpt4Turbo = "gpt-4-turbo"
-        case gpt4_0613 = "gpt-4-0613"
-        case gpt4Turbo_1106Preview = "gpt-4-1106-preview"
-        case gpt4_VisionPreview = "gpt-4-vision-preview"
-        case gpt4_32k = "gpt-4-32k"
-        case gpt4_32k_0613 = "gpt-4-32k-0613"
-        case gpt4o = "gpt-4o"
-        case gpt4o_2024_05_13 = "gpt-4o-2024-05-13"
-        case tts_1 = "tts-1"
-        case tts_1_hd = "tts-1-hd"
+public enum OpenAIModelType {
+    case chat, tts
+}
+
+public struct OpenAIModel: Codable, CaseIterable {
+    public static var allCases: [OpenAIModel] = openAIModelIds.map { OpenAIModel(model: $0)! }
+
+    public init(rawValue: Int) {
+        modelID = Self.allCases[rawValue].modelID
+    }
+
+    public init?(model: String) {
+        if Self.openAIModelIds.contains(model) {
+            self.modelID = model
+        } else { return nil }
+    }
+
+    public init(customModelID: String) {
+        modelID = customModelID
+    }
+
+    public var rawValue: Int { Self.allCases.firstIndex(where: { $0.modelID == modelID })! }
+
+    public var modelID: String
+    public var type: OpenAIModelType { modelID.hasPrefix("tts") ? .tts : .chat }
+
+    public static let gpt35Turbo = OpenAIModel(model: "gpt-3.5-turbo")!
+    public static let gpt35Turbo_0301 = OpenAIModel(model: "gpt-3.5-turbo-0301")!
+    public static let gpt35Turbo_1106 = OpenAIModel(model: "gpt-3.5-turbo-1106")!
+    public static let gpt35Turbo_16k = OpenAIModel(model: "gpt-3.5-turbo-16k")!
+    public static let gpt35Turbo_Instruct = OpenAIModel(model: "gpt-3.5-turbo-instruct")!
+    public static let gpt4 = OpenAIModel(model: "gpt-4")!
+    public static let gpt4Turbo = OpenAIModel(model: "gpt-4-turbo")!
+    public static let gpt4_0613 = OpenAIModel(model: "gpt-4-0613")!
+    public static let gpt4Turbo_1106Preview = OpenAIModel(model: "gpt-4-1106-preview")!
+    public static let gpt4_VisionPreview = OpenAIModel(model: "gpt-4-vision-preview")!
+    public static let gpt4_32k = OpenAIModel(model: "gpt-4-32k")!
+    public static let gpt4_32k_0613 = OpenAIModel(model: "gpt-4-32k-0613")!
+    public static let gpt4o = OpenAIModel(model: "gpt-4o")!
+    public static let gpt4o_2024_05_13 = OpenAIModel(model: "gpt-4o-2024-05-13")!
+    public static let tts_1 = OpenAIModel(model: "tts-1")!
+    public static let tts_1_hd = OpenAIModel(model: "tts-1-hd")!
+
+    private static var openAIModelIds: [String] = [
+        "gpt-3.5-turbo",
+        "gpt-3.5-turbo-0301",
+        "gpt-3.5-turbo-1106",
+        "gpt-3.5-turbo-16k",
+        "gpt-3.5-turbo-instruct",
+        "gpt-4",
+        "gpt-4-turbo",
+        "gpt-4-0613",
+        "gpt-4-1106-preview",
+        "gpt-4-vision-preview",
+        "gpt-4-32k",
+        "gpt-4-32k-0613",
+        "gpt-4o",
+        "gpt-4o-2024-05-13",
+        "tts-1",
+        "tts-1-hd"
+    ]
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        modelID = try container.decode(String.self)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(modelID)
     }
 }

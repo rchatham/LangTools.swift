@@ -25,6 +25,9 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 
     override init() {
         super.init()
+
+        OpenAIModel.allCases = OpenAIModel.allCases + [.grok, .grokVision]
+
         if let apiKey = keychainService.getApiKey(for: .anthropic) { register(apiKey, for: .anthropic) }
         if let apiKey = keychainService.getApiKey(for: .openAI) { register(apiKey, for: .openAI) }
     }
@@ -56,6 +59,8 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
             return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
         } else if case .openAI(let model) = model {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), n: 3, stream: stream, tools: tools, tool_choice: toolChoice, choose: {_ in 2})
+        } else if case .xAI(let model) = model {
+            return OpenAI.ChatCompletionRequest(model: model.openAIModel, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice)
         } else {
             return Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
         }
@@ -69,6 +74,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 
     func register(_ apiKey: String, for llm: LLMAPIService) {
         let langTools: any LangTools = llm == .anthropic ? Anthropic(apiKey: apiKey) : OpenAI(apiKey: apiKey)
+//            : OpenAI(configuration: .init(baseURL: URL(string: "https://api.x.ai/v1/")!, apiKey: apiKey))
         langToolchain.register(langTools)
     }
 }
@@ -83,4 +89,9 @@ extension NetworkClient {
         case emptyApiKey
         case incompatibleRequest
     }
+}
+
+extension OpenAIModel {
+    static let grok = OpenAIModel(customModelID: "grok-2-1212")
+    static let grokVision = OpenAIModel(customModelID: "grok-2-vision-1212")
 }
