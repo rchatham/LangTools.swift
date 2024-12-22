@@ -3,21 +3,13 @@ import LangTools
 
 public extension OpenAI {
     enum Tool: Codable, LangToolsTool {
-        public var tool_schema: FunctionSchema.Parameters {
-            switch self { case .function(let schema): return schema.parameters }
-        }
+        public typealias ToolSchema = FunctionSchema.Parameters
+
+        case function(FunctionSchema)
 
         public init(name: String, description: String, input_schema: FunctionSchema.Parameters, callback: (([String : Any]) -> String?)?) {
             self = .function(.init(name: name, description: description, parameters: input_schema, callback: callback))
         }
-        
-        public typealias ToolSchema = FunctionSchema.Parameters
-
-        public var callback: (([String : Any]) -> String?)? {
-            switch self { case .function(let schema): return schema.callback }
-        }
-
-        case function(FunctionSchema)
 
         public var name: String {
             switch self { case .function(let schema): return schema.name }
@@ -25,6 +17,14 @@ public extension OpenAI {
 
         public var description: String? {
             switch self { case .function(let schema): return schema.description }
+        }
+
+        public var tool_schema: FunctionSchema.Parameters {
+            switch self { case .function(let schema): return schema.parameters }
+        }
+
+        public var callback: (([String : Any]) -> String?)? {
+            switch self { case .function(let schema): return schema.callback }
         }
 
         public struct FunctionSchema: Codable {
