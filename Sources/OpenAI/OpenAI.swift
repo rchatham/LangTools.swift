@@ -31,7 +31,8 @@ final public class OpenAI: LangTools {
     public var requestTypes: [(any LangToolsRequest) -> Bool] {
         return [
             { ($0 as? ChatCompletionRequest) != nil },
-            { ($0 as? AudioSpeechRequest) != nil }
+            { ($0 as? AudioSpeechRequest) != nil },
+            { ($0 as? AudioTranscriptionRequest) != nil }
         ]
     }
 
@@ -59,9 +60,14 @@ final public class OpenAI: LangTools {
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
         var urlRequest = URLRequest(url: configuration.baseURL.appending(path: request.path))
         urlRequest.httpMethod = "POST"
-        urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolError<ErrorResponse>.invalidData }
+        if let request = (request as? MultipartFormDataEncodableRequest) {
+            urlRequest.addValue("multipart/form-data", forHTTPHeaderField: "Content-Type")
+            urlRequest.httpBody = request.httpBody
+        } else {
+            urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolError<ErrorResponse>.invalidData }
+        }
         return urlRequest
     }
 
@@ -99,5 +105,6 @@ public extension OpenAI {
         case gpt4o_2024_05_13 = "gpt-4o-2024-05-13"
         case tts_1 = "tts-1"
         case tts_1_hd = "tts-1-hd"
+        case whisper = "whisper-1"
     }
 }
