@@ -32,7 +32,8 @@ final public class OpenAI: LangTools {
     public var requestTypes: [(any LangToolsRequest) -> Bool] {
         return [
             { ($0 as? ChatCompletionRequest) != nil },
-            { ($0 as? AudioSpeechRequest) != nil }
+            { ($0 as? AudioSpeechRequest) != nil },
+            { ($0 as? AudioTranscriptionRequest) != nil }
         ]
     }
 
@@ -60,9 +61,14 @@ final public class OpenAI: LangTools {
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
         var urlRequest = URLRequest(url: configuration.baseURL.appending(path: request.path))
         urlRequest.httpMethod = "POST"
-        urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolError<ErrorResponse>.invalidData }
+        if let request = (request as? MultipartFormDataEncodableRequest) {
+            urlRequest.addValue("multipart/form-data", forHTTPHeaderField: "Content-Type")
+            urlRequest.httpBody = request.httpBody
+        } else {
+            urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolError<ErrorResponse>.invalidData }
+        }
         return urlRequest
     }
 
@@ -124,6 +130,7 @@ public struct OpenAIModel: Codable, CaseIterable {
     public static let gpt4o_2024_05_13 = OpenAIModel(model: "gpt-4o-2024-05-13")!
     public static let tts_1 = OpenAIModel(model: "tts-1")!
     public static let tts_1_hd = OpenAIModel(model: "tts-1-hd")!
+    public static let whisper = OpenAIModel(model: "whisper-1")!
 
     private static var openAIModelIds: [String] = [
         "gpt-3.5-turbo",
@@ -141,7 +148,8 @@ public struct OpenAIModel: Codable, CaseIterable {
         "gpt-4o",
         "gpt-4o-2024-05-13",
         "tts-1",
-        "tts-1-hd"
+        "tts-1-hd",
+        "whipser-1"
     ]
 
     public init(from decoder: Decoder) throws {
