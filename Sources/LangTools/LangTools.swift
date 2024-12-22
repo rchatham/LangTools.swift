@@ -12,7 +12,9 @@ public protocol LangTools {
     func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response
     func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error>
     var requestTypes: [(any LangToolsRequest) -> Bool] { get }
+}
 
+public protocol NetworkingLangTools: LangTools {
     var session: URLSession { get }
     var streamManager: StreamSessionManager<Self> { get }
     func prepare(request: some LangToolsRequest) throws -> URLRequest
@@ -20,11 +22,12 @@ public protocol LangTools {
 }
 
 extension LangTools {
-
     public func canHandleRequest<Request: LangToolsRequest>(_ request: Request) -> Bool {
         return requestTypes.reduce(false) { $0 || $1(request) }
     }
+}
 
+extension NetworkingLangTools {
     // In order to call the function completion in non-streaming calls, we are
     // unable to return the intermediate call and thus you can not mix responding 
     // to functions in your code AND using function closures. If this functionality 
@@ -64,7 +67,7 @@ extension LangTools {
     }
 }
 
-public class StreamSessionManager<LangTool: LangTools>: NSObject, URLSessionDataDelegate {
+public class StreamSessionManager<LangTool: NetworkingLangTools>: NSObject, URLSessionDataDelegate {
     private var task: URLSessionDataTask? = nil
     private var didReceiveEvent: ((Data) -> Void)? = nil
     private var didCompleteStream: ((Error?) -> Void)? = nil

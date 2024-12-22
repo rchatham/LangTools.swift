@@ -9,7 +9,7 @@ import Foundation
 import LangTools
 
 
-public final class Anthropic: LangTools {
+public final class Anthropic: NetworkingLangTools {
     public typealias ErrorResponse = AnthropicErrorResponse
 
     private var apiKey: String { configuration.apiKey }

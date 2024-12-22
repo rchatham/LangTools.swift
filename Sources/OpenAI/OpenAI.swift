@@ -9,7 +9,7 @@ import Foundation
 import LangTools
 
 
-final public class OpenAI: LangTools {
+final public class OpenAI: NetworkingLangTools {
     public typealias ErrorResponse = OpenAIErrorResponse
 
     private var apiKey: String { configuration.apiKey }
