@@ -13,9 +13,9 @@ public final class Anthropic: LangTools {
     public typealias ErrorResponse = AnthropicErrorResponse
 
     private var apiKey: String { configuration.apiKey }
-    private var configuration: OpenAIConfiguration
+    private var configuration: AnthropicConfiguration 
 
-    public struct OpenAIConfiguration {
+    public struct AnthropicConfiguration {
         public var baseURL: URL
         public let apiKey: String
 
@@ -35,10 +35,10 @@ public final class Anthropic: LangTools {
     }
 
     public init(apiKey: String) {
-        configuration = OpenAIConfiguration(apiKey: apiKey)
+        configuration = AnthropicConfiguration(apiKey: apiKey)
     }
 
-    public init(configuration: OpenAIConfiguration) {
+    public init(configuration: AnthropicConfiguration) {
         self.configuration = configuration
     }
 
