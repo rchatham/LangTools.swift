@@ -15,13 +15,13 @@ func ?=<T>(_ lhs: inout T?, _ rhs: T?) {
 }
 
 extension AsyncThrowingStream {
-    func mapAsyncThrowingStream<T, E>(_ map: @escaping (Element) -> T) -> AsyncThrowingStream<T, E> where E == Error {
+    func mapAsyncThrowingStream<T>(_ map: @escaping (Element) -> T) -> AsyncThrowingStream<T, Error> {
         var iterator = self.makeAsyncIterator()
-        return AsyncThrowingStream<T, E>(unfolding: { try await iterator.next().flatMap { map($0) } })
+        return AsyncThrowingStream<T, Error>(unfolding: { try await iterator.next().flatMap { map($0) } })
     }
 
-    func compactMapAsyncThrowingStream<T, E>(_ compactMap: @escaping (Element) -> T?) -> AsyncThrowingStream<T, E> where E == Error {
-        return AsyncThrowingStream<T, E> { continuation in
+    func compactMapAsyncThrowingStream<T>(_ compactMap: @escaping (Element) -> T?) -> AsyncThrowingStream<T, Error> {
+        return AsyncThrowingStream<T, Error> { continuation in
             Task {
                 do {
                     for try await value in self {

@@ -8,12 +8,11 @@ import Foundation
 import LangTools
 import OpenAI
 import Anthropic
+import XAI
 import AVFAudio
 
 //typealias Model = OpenAI.Model
 typealias Role = OpenAI.Message.Role
-
-let useAnthropic = false
 
 class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     static let shared = NetworkClient()
@@ -27,6 +26,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         super.init()
         if let apiKey = keychainService.getApiKey(for: .anthropic) { register(apiKey, for: .anthropic) }
         if let apiKey = keychainService.getApiKey(for: .openAI) { register(apiKey, for: .openAI) }
+        if let apiKey = keychainService.getApiKey(for: .xAI) { register(apiKey, for: .xAI) }
     }
 
     func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
@@ -51,10 +51,12 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     func request(messages: [Message], model: Model, stream: Bool = false, tools: [OpenAI.Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) -> any LangToolsChatRequest & LangToolsStreamableRequest {
-        if useAnthropic, case .anthropic(let model) = model {
+        if case .anthropic(let model) = model {
             return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
         } else if case .openAI(let model) = model {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), n: 3, stream: stream, tools: tools, tool_choice: toolChoice, choose: {_ in 2})
+        } else if case .xAI(let model) = model {
+            return OpenAI.ChatCompletionRequest(model: model.openAIModel, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice)
         } else {
             return Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
         }
@@ -67,13 +69,20 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     func register(_ apiKey: String, for llm: LLMAPIService) {
-        let langTools: any LangTools = llm == .anthropic ? Anthropic(apiKey: apiKey) : OpenAI(apiKey: apiKey)
-        langToolchain.register(langTools)
+        langToolchain.register(langTool(for: llm, with: apiKey))
+    }
+
+    func langTool(for llm: LLMAPIService, with apiKey: String) -> any LangTools {
+        switch llm {
+        case .anthropic: return Anthropic(apiKey: apiKey)/*configuration: .init(baseURL: URL(string: "http://localhost:8080/v1/")!, apiKey: apiKey))*/
+        case .openAI: return OpenAI(apiKey: apiKey)/*configuration: .init(baseURL: URL(string: "http://localhost:8080/v1/")!, apiKey: apiKey))*/
+        case .xAI: return XAI(apiKey: apiKey)
+        }
     }
 }
 
 enum LLMAPIService: String {
-    case openAI, anthropic
+    case openAI, anthropic, xAI
 }
 
 extension NetworkClient {

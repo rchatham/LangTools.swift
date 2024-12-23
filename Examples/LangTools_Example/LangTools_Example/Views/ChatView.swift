@@ -21,7 +21,7 @@ struct ChatView: View {
                 messageList
                 messageComposerView
                     .invalidInputAlert(isPresented: $viewModel.showAlert)
-                    .enterOpenAIKeyAlert(
+                    .enterAPIKeyAlert(
                         isPresented: $viewModel.enterApiKey,
                         apiKey: $viewModel.apiKey)
             }

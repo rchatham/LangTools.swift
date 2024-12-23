@@ -11,9 +11,9 @@ struct ChatSettingsView: View {
 
     var body: some View {
         Form {
-            Picker(selection: $viewModel.model, label: Text("AI Model")) {
-                ForEach(Model.allCases, id: \.self) { model in
-                    Text(model).tag(model)
+            Picker("AI Model", selection: $viewModel.model) {
+                ForEach(Model.chatModels, id: \.self) { model in
+                    Text(model.rawValue).tag(model.rawValue)
                 }
             }
             .pickerStyle(.menu)
@@ -38,7 +38,7 @@ struct ChatSettingsView: View {
         .navigationTitle("Settings")
         .onAppear { viewModel.loadSettings()}
         .onDisappear { viewModel.saveSettings()}
-        .enterOpenAIKeyAlert(isPresented: $viewModel.enterApiKey, apiKey: $viewModel.apiKey)
+        .enterAPIKeyAlert(isPresented: $viewModel.enterApiKey, apiKey: $viewModel.apiKey)
     }
 }
 
