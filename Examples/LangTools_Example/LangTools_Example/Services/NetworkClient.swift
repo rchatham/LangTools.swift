@@ -24,8 +24,6 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 
     override init() {
         super.init()
-
-
         if let apiKey = keychainService.getApiKey(for: .anthropic) { register(apiKey, for: .anthropic) }
         if let apiKey = keychainService.getApiKey(for: .openAI) { register(apiKey, for: .openAI) }
         if let apiKey = keychainService.getApiKey(for: .xAI) { register(apiKey, for: .xAI) }
