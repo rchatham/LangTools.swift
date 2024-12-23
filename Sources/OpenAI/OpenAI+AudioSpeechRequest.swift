@@ -77,8 +77,7 @@ extension OpenAI {
 
 private extension OpenAI.AudioSpeechRequest {
     static func validateSpeechModel(_ inputModel: OpenAI.Model) -> OpenAI.Model {
-        let isModelOfIncorrentFormat = inputModel != .tts_1 && inputModel != .tts_1_hd
-        guard !isModelOfIncorrentFormat else {
+        guard [.tts_1, .tts_1_hd].contains(inputModel) else {
             print("[AudioSpeech] 'AudioSpeechQuery' must have a valid Text-To-Speech model, 'tts-1' or 'tts-1-hd'. Setting model to 'tts-1'.")
             return .tts_1
         }
