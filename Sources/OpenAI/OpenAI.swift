@@ -92,7 +92,7 @@ public enum OpenAIModelType {
     case chat, tts
 }
 
-public struct OpenAIModel: Codable, CaseIterable {
+public struct OpenAIModel: Codable, CaseIterable, Equatable {
     public static var allCases: [OpenAIModel] = openAIModelIds.map { OpenAIModel(model: $0)! }
 
     public init(rawValue: Int) {

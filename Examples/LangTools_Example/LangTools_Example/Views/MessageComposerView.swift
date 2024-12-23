@@ -33,7 +33,7 @@ struct MessageComposerView: View {
         .alert(isPresented: $viewModel.showAlert, content: {
             Alert(title: Text("Error"), message: Text(viewModel.errorMessage), dismissButton: .default(Text("OK")))
         })
-        .enterOpenAIKeyAlert(
+        .enterAPIKeyAlert(
             isPresented: $viewModel.enterApiKey,
             apiKey: $viewModel.apiKey)
     }

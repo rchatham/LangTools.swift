@@ -13,8 +13,6 @@ import AVFAudio
 //typealias Model = OpenAI.Model
 typealias Role = OpenAI.Message.Role
 
-let useAnthropic = false
-
 class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     static let shared = NetworkClient()
 
@@ -54,7 +52,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     func request(messages: [Message], model: Model, stream: Bool = false, tools: [OpenAI.Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) -> any LangToolsChatRequest & LangToolsStreamableRequest {
-        if useAnthropic, case .anthropic(let model) = model {
+        if case .anthropic(let model) = model {
             return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
         } else if case .openAI(let model) = model {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), n: 3, stream: stream, tools: tools, tool_choice: toolChoice, choose: {_ in 2})
@@ -79,7 +77,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 }
 
 enum LLMAPIService: String {
-    case openAI, anthropic
+    case openAI, anthropic, xAI
 }
 
 extension NetworkClient {

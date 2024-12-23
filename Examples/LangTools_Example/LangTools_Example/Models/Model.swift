@@ -8,8 +8,7 @@ import Foundation
 import OpenAI
 import Anthropic
 
-
-enum Model: RawRepresentable, Hashable {
+enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable {
     typealias RawValue = String
     case openAI(OpenAI.Model)
     case anthropic(Anthropic.Model)
@@ -30,7 +29,9 @@ enum Model: RawRepresentable, Hashable {
         }
     }
 
-    static var allCases: [String] { OpenAIModel.allCases.map { $0.modelID } + Anthropic.Model.allCases.map { $0.rawValue } }
+    var id: String { rawValue }
+
+    static var allCases: [Model] { OpenAI.Model.allCases.map { .openAI($0) } + Anthropic.Model.allCases.map { .anthropic($0) } + XAIModel.allCases.map { .xAI($0) } }
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(rawValue)
