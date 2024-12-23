@@ -7,6 +7,7 @@
 import Foundation
 import OpenAI
 import Anthropic
+import XAI
 
 enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable {
     typealias RawValue = String
@@ -31,16 +32,9 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    static var allCases: [Model] { OpenAI.Model.allCases.map { .openAI($0) } + Anthropic.Model.allCases.map { .anthropic($0) } + XAIModel.allCases.map { .xAI($0) } }
+    static var allCases: [Model] { OpenAI.Model.allCases.map { .openAI($0) } + Anthropic.Model.allCases.map { .anthropic($0) } + XAI.Model.allCases.map { .xAI($0) } }
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(rawValue)
     }
-}
-
-enum XAIModel: String, CaseIterable {
-    case grok = "grok-2-1212"
-    case grokVision = "grok-2-vision-1212"
-
-    var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
 }

@@ -93,7 +93,8 @@ public enum OpenAIModelType {
 }
 
 public struct OpenAIModel: Codable, CaseIterable, Equatable {
-    public static var allCases: [OpenAIModel] = openAIModelIds.map { OpenAIModel(model: $0)! }
+    public static var allCases: [OpenAIModel] = openAIModels
+    static let openAIModels: [OpenAIModel] = openAIModelIds.map { OpenAIModel(model: $0)! }
 
     public init(rawValue: Int) {
         modelID = Self.allCases[rawValue].modelID

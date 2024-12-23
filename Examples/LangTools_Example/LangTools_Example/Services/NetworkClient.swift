@@ -8,6 +8,7 @@ import Foundation
 import LangTools
 import OpenAI
 import Anthropic
+import XAI
 import AVFAudio
 
 //typealias Model = OpenAI.Model
@@ -28,6 +29,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 
         if let apiKey = keychainService.getApiKey(for: .anthropic) { register(apiKey, for: .anthropic) }
         if let apiKey = keychainService.getApiKey(for: .openAI) { register(apiKey, for: .openAI) }
+        if let apiKey = keychainService.getApiKey(for: .xAI) { register(apiKey, for: .xAI) }
     }
 
     func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
@@ -70,9 +72,15 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     func register(_ apiKey: String, for llm: LLMAPIService) {
-        let langTools: any LangTools = llm == .anthropic ? Anthropic(apiKey: apiKey) : OpenAI(apiKey: apiKey)
-//            : OpenAI(configuration: .init(baseURL: URL(string: "https://api.x.ai/v1/")!, apiKey: apiKey))
-        langToolchain.register(langTools)
+        langToolchain.register(langTool(for: llm, with: apiKey))
+    }
+
+    func langTool(for llm: LLMAPIService, with apiKey: String) -> any LangTools {
+        switch llm {
+        case .anthropic: return Anthropic(apiKey: apiKey)/*configuration: .init(baseURL: URL(string: "http://localhost:8080/v1/")!, apiKey: apiKey))*/
+        case .openAI: return OpenAI(apiKey: apiKey)/*configuration: .init(baseURL: URL(string: "http://localhost:8080/v1/")!, apiKey: apiKey))*/
+        case .xAI: return XAI(apiKey: apiKey)
+        }
     }
 }
 
@@ -86,9 +94,4 @@ extension NetworkClient {
         case emptyApiKey
         case incompatibleRequest
     }
-}
-
-extension OpenAIModel {
-    static let grok = OpenAIModel(customModelID: "grok-2-1212")
-    static let grokVision = OpenAIModel(customModelID: "grok-2-vision-1212")
 }

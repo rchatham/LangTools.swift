@@ -21,6 +21,9 @@ let package = Package(
         .library(
             name: "Anthropic",
             targets: ["Anthropic"]),
+        .library(
+            name: "XAI",
+            targets: ["XAI"]),
 //        .executable(name: "ChatCLI", targets: ["ChatCLI"]), // Executable product
     ],
     targets: [
@@ -33,6 +36,9 @@ let package = Package(
             dependencies: [.target(name: "LangTools")]),
         .target(
             name: "Anthropic",
+            dependencies: [.target(name: "LangTools")]),
+        .target(
+            name: "XAI",
             dependencies: [.target(name: "LangTools")]),
         .testTarget(
             name: "LangToolsTests",
@@ -49,6 +55,12 @@ let package = Package(
         .testTarget(
             name: "AnthropicTests",
             dependencies: ["Anthropic"],
+            resources: [
+                .process("Resources/")
+            ]),
+        .testTarget(
+            name: "XAITests",
+            dependencies: ["XAI"],
             resources: [
                 .process("Resources/")
             ]),

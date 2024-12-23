@@ -11,6 +11,7 @@
 		B19586DD2CD40C6900843DF5 /* LangTools in Frameworks */ = {isa = PBXBuildFile; productRef = B19586DC2CD40C6900843DF5 /* LangTools */; };
 		B19586DF2CD40C6900843DF5 /* OpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = B19586DE2CD40C6900843DF5 /* OpenAI */; };
 		B1D1EC722CA31C5F00AD7FA6 /* KeychainAccess in Frameworks */ = {isa = PBXBuildFile; productRef = B1D1EC712CA31C5F00AD7FA6 /* KeychainAccess */; };
+		B1E289D52D192BE200A1C327 /* XAI in Frameworks */ = {isa = PBXBuildFile; productRef = B1E289D42D192BE200A1C327 /* XAI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,6 +61,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B19586DD2CD40C6900843DF5 /* LangTools in Frameworks */,
+				B1E289D52D192BE200A1C327 /* XAI in Frameworks */,
 				B1D1EC722CA31C5F00AD7FA6 /* KeychainAccess in Frameworks */,
 				B19586DF2CD40C6900843DF5 /* OpenAI in Frameworks */,
 				B19586DB2CD40C6900843DF5 /* Anthropic in Frameworks */,
@@ -89,6 +91,7 @@
 				B1D1EBE12CA2518F00AD7FA6 /* LangTools_Example */,
 				B1D1EBF22CA2519100AD7FA6 /* LangTools_ExampleTests */,
 				B1D1EBFC2CA2519100AD7FA6 /* LangTools_ExampleUITests */,
+				B1E289D32D192BE200A1C327 /* Frameworks */,
 				B1D1EBE02CA2518F00AD7FA6 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -101,6 +104,13 @@
 				B1D1EBF92CA2519100AD7FA6 /* LangTools_ExampleUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		B1E289D32D192BE200A1C327 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -127,6 +137,7 @@
 				B19586DA2CD40C6900843DF5 /* Anthropic */,
 				B19586DC2CD40C6900843DF5 /* LangTools */,
 				B19586DE2CD40C6900843DF5 /* OpenAI */,
+				B1E289D42D192BE200A1C327 /* XAI */,
 			);
 			productName = LangTools_Example;
 			productReference = B1D1EBDF2CA2518F00AD7FA6 /* LangTools_Example.app */;
@@ -613,6 +624,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B1D1EC702CA31C5F00AD7FA6 /* XCRemoteSwiftPackageReference "KeychainAccess" */;
 			productName = KeychainAccess;
+		};
+		B1E289D42D192BE200A1C327 /* XAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B19586D92CD40C6900843DF5 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */;
+			productName = XAI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
