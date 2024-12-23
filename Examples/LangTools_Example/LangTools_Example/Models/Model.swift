@@ -16,7 +16,7 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable {
     case xAI(XAIModel)
 
     init?(rawValue: String) {
-        if let model = OpenAIModel(model: rawValue) { self = .openAI(model) }
+        if let modelID = OpenAIModel.ModelID(rawValue: rawValue) { self = .openAI(modelID.openAIModel) }
         else if let model = Anthropic.Model(rawValue: rawValue) { self = .anthropic(model) }
         else if let model = XAIModel(rawValue: rawValue) { self = .xAI(model) }
         else { return nil }
@@ -24,7 +24,7 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable {
 
     var rawValue: String {
         switch self {
-        case .openAI(let model): return model.modelID
+        case .openAI(let model): return model.id
         case .anthropic(let model): return model.rawValue
         case .xAI(let model): return model.rawValue
         }

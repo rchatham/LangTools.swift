@@ -25,7 +25,6 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     override init() {
         super.init()
 
-        OpenAIModel.allCases = OpenAIModel.allCases + [.grok, .grokVision]
 
         if let apiKey = keychainService.getApiKey(for: .anthropic) { register(apiKey, for: .anthropic) }
         if let apiKey = keychainService.getApiKey(for: .openAI) { register(apiKey, for: .openAI) }

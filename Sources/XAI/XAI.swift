@@ -54,7 +54,7 @@ public enum XAIModel: String, CaseIterable {
     case grok = "grok-2-1212"
     case grokVision = "grok-2-vision-1212"
 
-    public var openAIModel: OpenAIModel { OpenAIModel(modelID: rawValue) }
+    public var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
 }
 
 extension OpenAIModel {
