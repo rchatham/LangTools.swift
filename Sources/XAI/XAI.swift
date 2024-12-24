@@ -29,6 +29,11 @@ public final class XAI: LangTools {
         openAI = OpenAI(configuration: .init(baseURL: URL(string: "https://api.x.ai/v1/")!, apiKey: apiKey))
     }
 
+    internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
+        session = URLSession(configuration: testURLSessionConfiguration, delegate: streamManager, delegateQueue: nil)
+        return self
+    }
+
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
         try openAI.prepare(request: request)
     }

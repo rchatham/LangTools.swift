@@ -63,7 +63,7 @@ let package = Package(
             ]),
         .testTarget(
             name: "XAITests",
-            dependencies: ["XAI"],
+            dependencies: ["XAI", "OpenAI", "LangToolsTests"],
             resources: [
                 .process("Resources/")
             ]),
