@@ -33,7 +33,6 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     static var allCases: [Model] { OpenAI.Model.allCases.map { .openAI($0) } + Anthropic.Model.allCases.map { .anthropic($0) } + XAI.Model.allCases.map { .xAI($0) } }
-
     static var chatModels: [Model] { OpenAI.Model.chatModels.map { .openAI($0) } + Anthropic.Model.allCases.map { .anthropic($0) } + XAI.Model.allCases.map { .xAI($0) } }
 
     func hash(into hasher: inout Hasher) {

@@ -1,0 +1,101 @@
+name: iOS starter workflow
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+jobs:
+  build:
+    name: Build and Test default scheme using any available iPhone simulator
+    runs-on: macos-latest
+    steps:
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Set Default Scheme
+        run: |
+          # First check if we have a workspace or project
+          if [ "`ls -A | grep -i \\.xcworkspace\$`" ]; then
+            filetype_parameter="workspace"
+            file_to_build="`ls -A | grep -i \\.xcworkspace\$`"
+          else
+            filetype_parameter="project"
+            file_to_build="`ls -A | grep -i \\.xcodeproj\$`"
+          fi
+          
+          # Get the scheme list with error handling
+          scheme_list=$(xcodebuild -list -"$filetype_parameter" "$file_to_build" -json | tr -d "\n")
+          default=$(echo $scheme_list | ruby -e '
+            begin
+              require "json"
+              data = JSON.parse(STDIN.gets)
+              if data["project"] && data["project"]["targets"]
+                puts data["project"]["targets"][0]
+              elsif data["workspace"] && data["workspace"]["schemes"]
+                puts data["workspace"]["schemes"][0]
+              else
+                puts "default"
+              end
+            rescue => e
+              puts "default"
+            end
+          ')
+          echo $default | cat >default
+          echo Using default scheme: $default
+
+      # Rest of your workflow remains the same...
+      
+      - name: Build
+        env:
+          scheme: ${{ 'default' }}
+          platform: ${{ 'iOS Simulator' }}
+        run: |
+          # xcrun xctrace returns via stderr, not the expected stdout (see https://developer.apple.com/forums/thread/663959)
+          device=`xcrun xctrace list devices 2>&1 | grep -oE 'iPhone.*?[^\(]+' | head -1 | awk '{$1=$1;print}' | sed -e "s/ Simulator$//"`
+          if [ $scheme = default ]; then scheme=$(cat default); fi
+          if [ "`ls -A | grep -i \\.xcworkspace\$`" ]; then filetype_parameter="workspace" && file_to_build="`ls -A | grep -i \\.xcworkspace\$`"; else filetype_parameter="project" && file_to_build="`ls -A | grep -i \\.xcodeproj\$`"; fi
+          file_to_build=`echo $file_to_build | awk '{$1=$1;print}'`
+          xcodebuild build-for-testing -scheme "$scheme" -"$filetype_parameter" "$file_to_build" -destination "platform=$platform,name=$device"
+
+      - name: Test
+        env:
+          scheme: ${{ 'default' }}
+          platform: ${{ 'iOS Simulator' }}
+        run: |
+          device=`xcrun xctrace list devices 2>&1 | grep -oE 'iPhone.*?[^\(]+' | head -1 | awk '{$1=$1;print}' | sed -e "s/ Simulator$//"`
+          if [ $scheme = default ]; then 
+            scheme=$(cat default)
+            echo "Using scheme from default file: $scheme"
+          fi
+          
+          if [ "`ls -A | grep -i \\.xcworkspace\$`" ]; then 
+            filetype_parameter="workspace" 
+            file_to_build="`ls -A | grep -i \\.xcworkspace\$`"
+          else 
+            filetype_parameter="project" 
+            file_to_build="`ls -A | grep -i \\.xcodeproj\$`"
+          fi
+          file_to_build=`echo $file_to_build | awk '{$1=$1;print}'`
+          
+          echo "File to build: $file_to_build"
+          echo "File type: $filetype_parameter"
+          echo "Scheme: $scheme"
+          
+          # List all available schemes
+          echo "Available schemes:"
+          xcodebuild -list -"$filetype_parameter" "$file_to_build"
+          
+          # More detailed test configuration check
+          if xcodebuild -scheme "$scheme" -"$filetype_parameter" "$file_to_build" -list | grep -q "Test"; then
+            echo "Tests are configured for scheme $scheme"
+            xcodebuild test-without-building -scheme "$scheme" -"$filetype_parameter" "$file_to_build" -destination "platform=$platform,name=$device"
+          else
+            echo "Scheme $scheme is not configured for testing - skipping tests"
+            echo "Full scheme configuration:"
+            xcodebuild -scheme "$scheme" -"$filetype_parameter" "$file_to_build" -list
+            exit 0
+          fi
