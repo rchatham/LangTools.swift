@@ -1,11 +1,9 @@
 name: iOS starter workflow
-
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-
 jobs:
   build:
     name: Build and Test default scheme using any available iPhone simulator
@@ -14,14 +12,43 @@ jobs:
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
+      
       - name: Checkout
         uses: actions/checkout@v4
+      
       - name: Set Default Scheme
         run: |
-          scheme_list=$(xcodebuild -list -json | tr -d "\n")
-          default=$(echo $scheme_list | ruby -e "require 'json'; puts JSON.parse(STDIN.gets)['project']['targets'][0]")
+          # First check if we have a workspace or project
+          if [ "`ls -A | grep -i \\.xcworkspace\$`" ]; then
+            filetype_parameter="workspace"
+            file_to_build="`ls -A | grep -i \\.xcworkspace\$`"
+          else
+            filetype_parameter="project"
+            file_to_build="`ls -A | grep -i \\.xcodeproj\$`"
+          fi
+          
+          # Get the scheme list with error handling
+          scheme_list=$(xcodebuild -list -"$filetype_parameter" "$file_to_build" -json | tr -d "\n")
+          default=$(echo $scheme_list | ruby -e '
+            begin
+              require "json"
+              data = JSON.parse(STDIN.gets)
+              if data["project"] && data["project"]["targets"]
+                puts data["project"]["targets"][0]
+              elsif data["workspace"] && data["workspace"]["schemes"]
+                puts data["workspace"]["schemes"][0]
+              else
+                puts "default"
+              end
+            rescue => e
+              puts "default"
+            end
+          ')
           echo $default | cat >default
           echo Using default scheme: $default
+
+      # Rest of your workflow remains the same...
+      
       - name: Build
         env:
           scheme: ${{ 'default' }}
