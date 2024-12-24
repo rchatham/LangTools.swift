@@ -12,7 +12,7 @@ struct ChatSettingsView: View {
     var body: some View {
         Form {
             Picker("AI Model", selection: $viewModel.model) {
-                ForEach(Model.allCases, id: \.self) { model in
+                ForEach(Model.chatModels, id: \.self) { model in
                     Text(model.rawValue).tag(model.rawValue)
                 }
             }

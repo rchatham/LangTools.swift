@@ -89,11 +89,12 @@ public struct OpenAIErrorResponse: Error, Codable {
 }
 
 public enum OpenAIModelType {
-    case chat, tts
+    case chat, tts, stt
 }
 
 public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable {
     public static var allCases: [OpenAIModel] = openAIModels
+    public static var chatModels: [OpenAIModel] { allCases.filter({ $0.type == .chat }) }
     static let openAIModels: [OpenAIModel] = ModelID.allCases.map { OpenAIModel(modelID: $0) }
 
     public init(rawValue: Int) {
@@ -118,7 +119,7 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable {
     public var id: String
     public var rawValue: Int { Self.allCases.firstIndex(where: { $0.id == id })! }
 
-    public var type: OpenAIModelType { id.hasPrefix("tts") ? .tts : .chat }
+    public var type: OpenAIModelType { id.hasPrefix("tts") ? .tts : (id.hasPrefix("whisper") ? .stt : .chat) }
 
     public static let gpt35Turbo = OpenAIModel(modelID: .gpt35Turbo)
     public static let gpt35Turbo_0301 = OpenAIModel(modelID: .gpt35Turbo_0301)
