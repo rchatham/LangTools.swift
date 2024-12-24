@@ -67,7 +67,11 @@ jobs:
           platform: ${{ 'iOS Simulator' }}
         run: |
           device=`xcrun xctrace list devices 2>&1 | grep -oE 'iPhone.*?[^\(]+' | head -1 | awk '{$1=$1;print}' | sed -e "s/ Simulator$//"`
-          if [ $scheme = default ]; then scheme=$(cat default); fi
+          if [ $scheme = default ]; then 
+            scheme=$(cat default)
+            echo "Using scheme from default file: $scheme"
+          fi
+          
           if [ "`ls -A | grep -i \\.xcworkspace\$`" ]; then 
             filetype_parameter="workspace" 
             file_to_build="`ls -A | grep -i \\.xcworkspace\$`"
@@ -77,10 +81,21 @@ jobs:
           fi
           file_to_build=`echo $file_to_build | awk '{$1=$1;print}'`
           
-          # Check if scheme is configured for testing
+          echo "File to build: $file_to_build"
+          echo "File type: $filetype_parameter"
+          echo "Scheme: $scheme"
+          
+          # List all available schemes
+          echo "Available schemes:"
+          xcodebuild -list -"$filetype_parameter" "$file_to_build"
+          
+          # More detailed test configuration check
           if xcodebuild -scheme "$scheme" -"$filetype_parameter" "$file_to_build" -list | grep -q "Test"; then
+            echo "Tests are configured for scheme $scheme"
             xcodebuild test-without-building -scheme "$scheme" -"$filetype_parameter" "$file_to_build" -destination "platform=$platform,name=$device"
           else
             echo "Scheme $scheme is not configured for testing - skipping tests"
+            echo "Full scheme configuration:"
+            xcodebuild -scheme "$scheme" -"$filetype_parameter" "$file_to_build" -list
             exit 0
           fi
