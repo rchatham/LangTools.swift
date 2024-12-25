@@ -49,6 +49,13 @@ let chatRequest = OpenAI.ChatCompletionRequest(
     messages: [ /* Your messages here */ ],
     /* Other optional parameters */
 )
+/* Anthropic
+let chatRequest = Anthropic.MessageRequest(
+    model: .claude35Sonnet_20240620,
+    messages: [ /* Your messages here */ ]
+)
+// XAI uses OpenAI.ChatCompletionRequest with .grok and .grokVision models.
+*/
 
 // Using async/await
 // Non-streaming - stream is set to false regardless of request config
