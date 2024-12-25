@@ -7,7 +7,7 @@ This package provides a simple Swift interface for interacting with OpenAI and A
 
 ## Features
 
-- Support for various LangTools models including GPT-4o & Claude Opus.
+- Support for various LangTools models including GPT-4o, Claude Opus & Grok 2 (Gemini coming soon).
 - Handling both regular and streaming API requests.
 - Built-in error handling and response parsing.
 - Support for functions.
