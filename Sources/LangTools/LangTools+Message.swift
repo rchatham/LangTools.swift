@@ -39,6 +39,18 @@ public protocol LangToolsContent: Codable {
     var array: [ContentType]? { get }
 }
 
+extension LangToolsContent {
+    public var text: String {
+        if let string = string {
+            return string
+        } else if let array = array, let text = array.first as? LangToolsTextContentType {
+            return text.text
+        } else {
+            return ""
+        }
+    }
+}
+
 public protocol LangToolsContentType: Codable  {
     var type: String { get }
 }
@@ -52,11 +64,14 @@ public extension LangToolsTextContentType {
     var type: String { "text" }
 }
 
-public struct TextContent: LangToolsTextContentType {
-    public let text: String
+public struct LangToolsTextContent: LangToolsTextContentType, LangToolsContent {
+    public var text: String
     public init(text: String) {
-        self.text = text
+       self.text = text
     }
+
+    public var string: String? { text }
+    public var array: [LangToolsTextContent]? { [self] }
 }
 
 public protocol LangToolsImageContentType: LangToolsContentType {

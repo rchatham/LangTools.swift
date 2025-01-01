@@ -18,6 +18,10 @@ public extension LangToolsRequest {
     var path: String { Self.path }
 }
 
+extension LangToolsStreamableResponse {
+    public var content: (any LangToolsContent)? { (self as? any LangToolsStreamableChatResponse)?.delta?.content.map { LangToolsTextContent(text: $0) } ?? (self as? any LangToolsChatResponse)?.message?.content }
+}
+
 // MARK: - LangToolsChatRequest
 public protocol LangToolsChatRequest: LangToolsRequest where Response: LangToolsChatResponse, Response.Message == Message {
     associatedtype Message: LangToolsMessage

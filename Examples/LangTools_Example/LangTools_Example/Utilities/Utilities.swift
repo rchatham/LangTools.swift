@@ -5,7 +5,7 @@
 //  Created by Reid Chatham on 11/21/24.
 //
 
-infix operator ?=
+infix operator ?=: AssignmentPrecedence
 func ?=<T>(_ lhs: inout T, _ rhs: T?) {
     if let rhs { lhs = rhs }
 }
