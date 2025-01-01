@@ -43,17 +43,13 @@ public protocol LangToolsStreamableRequest: LangToolsRequest where Response: Lan
 }
 
 public protocol LangToolsStreamableResponse: Decodable {
-    associatedtype Delta: LangToolsMessageDelta
+    associatedtype Delta
     var delta: Delta? { get }
     static var empty: Self { get }
     func combining(with: Self) -> Self
 }
 
-public protocol LangToolsMessageDelta: Codable {
-    associatedtype Role: LangToolsRole
-    var role: Role? { get }
-    var content: String? { get }
-}
+public protocol LangToolsStreamableChatResponse: LangToolsChatResponse, LangToolsStreamableResponse where Delta: LangToolsMessageDelta {}
 
 extension LangToolsRequest {
     public var stream: Bool {

@@ -167,7 +167,7 @@ extension OpenAI {
         }
     }
 
-    public struct ChatCompletionResponse: Codable, LangToolsChatResponse, LangToolsStreamableResponse, LangToolsToolCallingResponse, LangToolsMultipleChoiceChatResponse {
+    public struct ChatCompletionResponse: Codable, LangToolsStreamableChatResponse, LangToolsToolCallingResponse, LangToolsMultipleChoiceChatResponse {
         public typealias Delta = OpenAI.Message.Delta
         public typealias Message = OpenAI.Message
         public typealias ToolSelection = Message.ToolCall

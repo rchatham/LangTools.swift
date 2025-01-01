@@ -15,6 +15,12 @@ public protocol LangToolsMessage: Codable {
     var content: Content { get }
 }
 
+public protocol LangToolsMessageDelta: Codable {
+    associatedtype Role: LangToolsRole
+    var role: Role? { get }
+    var content: String? { get }
+}
+
 public protocol LangToolsToolMessage: Codable {
     associatedtype ToolSelection: LangToolsToolSelection
     associatedtype ToolResult: LangToolsToolSelectionResult

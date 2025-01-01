@@ -83,7 +83,7 @@ extension Anthropic {
         }
     }
 
-    public struct MessageResponse: Codable, LangToolsChatResponse, LangToolsToolCallingResponse {
+    public struct MessageResponse: Codable, LangToolsStreamableChatResponse, LangToolsToolCallingResponse {
 
         public var message: Anthropic.Message? {
             messageInfo.flatMap { Message(role: $0.role, content: $0.content) }
