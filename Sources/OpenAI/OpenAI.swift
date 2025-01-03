@@ -92,18 +92,14 @@ public enum OpenAIModelType {
     case chat, tts, stt
 }
 
-public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable {
+public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRepresentable {
     public static var allCases: [OpenAIModel] = openAIModels
     public static var chatModels: [OpenAIModel] { allCases.filter({ $0.type == .chat }) }
     static let openAIModels: [OpenAIModel] = ModelID.allCases.map { OpenAIModel(modelID: $0) }
 
-    public init(rawValue: Int) {
-        id = Self.allCases[rawValue].id
-    }
-
-    public init?(modelIDString: String) {
-        if let modelID = ModelID(rawValue: modelIDString), ModelID.allCases.contains(modelID) {
-            id = modelIDString
+    public init?(rawValue: String) {
+        if let modelID = ModelID(rawValue: rawValue), OpenAIModel.allCases.contains(where: { $0.rawValue == rawValue }) {
+            id = rawValue
         } else { return nil }
     }
 
@@ -113,11 +109,13 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable {
 
     public init(customModelID: String) {
         id = customModelID
-        Self.allCases.append(self)
+        if !Self.allCases.contains(self) {
+            Self.allCases.append(self)
+        }
     }
 
     public var id: String
-    public var rawValue: Int { Self.allCases.firstIndex(where: { $0.id == id })! }
+    public var rawValue: String { id }
 
     public var type: OpenAIModelType { id.hasPrefix("tts") ? .tts : (id.hasPrefix("whisper") ? .stt : .chat) }
 
@@ -131,7 +129,6 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable {
     public static let gpt4_0613 = OpenAIModel(modelID: .gpt4_0613)
     public static let gpt4Turbo_1106Preview = OpenAIModel(modelID: .gpt4Turbo_1106Preview)
     public static let gpt4VisionPreview = OpenAIModel(modelID: .gpt4_VisionPreview)
-    public static let gpt4_32k = OpenAIModel(modelID: .gpt4_32k)
     public static let gpt4_32k_0613 = OpenAIModel(modelID: .gpt4_32k_0613)
     public static let gpt4o = OpenAIModel(modelID: .gpt4o)
     public static let gpt4o_2024_05_13 = OpenAIModel(modelID: .gpt4o_2024_05_13)
@@ -150,7 +147,6 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable {
         case gpt4_0613 = "gpt-4-0613"
         case gpt4Turbo_1106Preview = "gpt-4-1106-preview"
         case gpt4_VisionPreview = "gpt-4-vision-preview"
-        case gpt4_32k = "gpt-4-32k"
         case gpt4_32k_0613 = "gpt-4-32k-0613"
         case gpt4o = "gpt-4o"
         case gpt4o_2024_05_13 = "gpt-4o-2024-05-13"
@@ -169,5 +165,9 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
         try container.encode(id)
+    }
+
+    public static func ==(_ lhs: OpenAIModel, _ rhs: OpenAIModel) -> Bool {
+        return lhs.id == rhs.id
     }
 }

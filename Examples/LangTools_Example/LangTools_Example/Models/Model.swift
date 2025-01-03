@@ -9,14 +9,14 @@ import OpenAI
 import Anthropic
 import XAI
 
-enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable {
+enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equatable {
     typealias RawValue = String
     case openAI(OpenAI.Model)
     case anthropic(Anthropic.Model)
     case xAI(XAI.Model)
 
     init?(rawValue: String) {
-        if let model = OpenAI.Model(modelIDString: rawValue) { self = .openAI(model) }
+        if let model = OpenAI.Model(rawValue: rawValue) { self = .openAI(model) }
         else if let model = Anthropic.Model(rawValue: rawValue) { self = .anthropic(model) }
         else if let model = XAI.Model(rawValue: rawValue) { self = .xAI(model) }
         else { return nil }
@@ -24,7 +24,7 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable {
 
     var rawValue: String {
         switch self {
-        case .openAI(let model): return model.id
+        case .openAI(let model): return model.rawValue
         case .anthropic(let model): return model.rawValue
         case .xAI(let model): return model.rawValue
         }
