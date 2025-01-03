@@ -9,6 +9,7 @@ import LangTools
 import OpenAI
 import Anthropic
 import XAI
+import Gemini
 import AVFAudio
 
 
@@ -27,6 +28,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         if let apiKey = keychainService.getApiKey(for: .anthropic) { register(apiKey, for: .anthropic) }
         if let apiKey = keychainService.getApiKey(for: .openAI) { register(apiKey, for: .openAI) }
         if let apiKey = keychainService.getApiKey(for: .xAI) { register(apiKey, for: .xAI) }
+        if let apiKey = keychainService.getApiKey(for: .gemini) { register(apiKey, for: .gemini) }
     }
 
     func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
@@ -39,7 +41,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         let uuid = UUID(); var content: String?
         return try langToolchain.stream(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { response in
             content ?= response.content.flatMap { (content ?? "") + $0.text } ?? content
-            return content.flatMap { Message(uuid: uuid, text: $0, role: .assistant) }
+            return content.flatMap { Message(uuid: uuid, text: $0.trimingTrailingNewlines(), role: .assistant) }
         }
     }
 
@@ -57,6 +59,8 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), n: 3, stream: stream, tools: tools, tool_choice: toolChoice, choose: {_ in 2})
         } else if case .xAI(let model) = model {
             return OpenAI.ChatCompletionRequest(model: model.openAIModel, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice)
+        } else if case .gemini(let model) = model {
+            return OpenAI.ChatCompletionRequest(model: model.openAIModel, messages: messages.toOpenAIMessages(), stream: stream/*, tools: tools, tool_choice: toolChoice*/)
         } else {
             return Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
         }
@@ -77,12 +81,13 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         case .anthropic: return Anthropic(apiKey: apiKey)/*configuration: .init(baseURL: URL(string: "http://localhost:8080/v1/")!, apiKey: apiKey))*/
         case .openAI: return OpenAI(apiKey: apiKey)/*configuration: .init(baseURL: URL(string: "http://localhost:8080/v1/")!, apiKey: apiKey))*/
         case .xAI: return XAI(apiKey: apiKey)
+        case .gemini: return Gemini(apiKey: apiKey)
         }
     }
 }
 
 enum LLMAPIService: String {
-    case openAI, anthropic, xAI
+    case openAI, anthropic, xAI, gemini
 }
 
 extension NetworkClient {
@@ -90,5 +95,19 @@ extension NetworkClient {
         case missingApiKey
         case emptyApiKey
         case incompatibleRequest
+    }
+}
+
+extension String {
+    func trimingTrailingNewlines() -> String {
+        return trimingTrailingCharacters(using: .newlines)
+    }
+
+    func trimingTrailingCharacters(using characterSet: CharacterSet = .whitespacesAndNewlines) -> String {
+        guard let index = lastIndex(where: { !CharacterSet(charactersIn: String($0)).isSubset(of: characterSet) }) else {
+            return self
+        }
+
+        return String(self[...index])
     }
 }

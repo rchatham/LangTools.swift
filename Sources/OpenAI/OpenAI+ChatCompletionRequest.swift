@@ -172,7 +172,7 @@ extension OpenAI {
         public typealias Message = OpenAI.Message
         public typealias ToolSelection = Message.ToolCall
 
-        public let id: String
+        public let id: String?
         public let object: String // chat.completion or chat.completion.chunk
         public let created: Int
         public let model: String? // TODO: make response return typed model response
@@ -183,7 +183,7 @@ extension OpenAI {
         @CodableIgnored
         public var choose: (([Choice]) -> Int)?
 
-        public init(id: String, object: String, created: Int, model: String?, system_fingerprint: String?, choices: [Choice], usage: Usage?, choose: (([Choice]) -> Int)?) {
+        public init(id: String? = nil, object: String, created: Int, model: String?, system_fingerprint: String?, choices: [Choice], usage: Usage?, choose: (([Choice]) -> Int)?) {
             self.id = id
             self.object = object
             self.created = created

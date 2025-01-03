@@ -9,6 +9,7 @@ import LangTools
 import OpenAI
 import Anthropic
 import XAI
+import Gemini
 
 @Observable
 class MessageService {
@@ -72,6 +73,8 @@ class MessageService {
                     print("error: openai api error: \(error.error)")
                 case let error as XAIErrorResponse:
                     print("error: xai api error: \(error.error)")
+                case let error as GeminiErrorResponse:
+                    print("error: gemini api error: \(error.error)")
                 case let error as AnthropicErrorResponse:
                     print("error: enthropic api error: \(error)")
                 default: print("error: uanble to decode error: \(error)")

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B1418B7B2D263C28007E843F /* Gemini in Frameworks */ = {isa = PBXBuildFile; productRef = B1418B7A2D263C28007E843F /* Gemini */; };
 		B19586DB2CD40C6900843DF5 /* Anthropic in Frameworks */ = {isa = PBXBuildFile; productRef = B19586DA2CD40C6900843DF5 /* Anthropic */; };
 		B19586DD2CD40C6900843DF5 /* LangTools in Frameworks */ = {isa = PBXBuildFile; productRef = B19586DC2CD40C6900843DF5 /* LangTools */; };
 		B19586DF2CD40C6900843DF5 /* OpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = B19586DE2CD40C6900843DF5 /* OpenAI */; };
@@ -63,6 +64,7 @@
 				B19586DD2CD40C6900843DF5 /* LangTools in Frameworks */,
 				B1E289D52D192BE200A1C327 /* XAI in Frameworks */,
 				B1D1EC722CA31C5F00AD7FA6 /* KeychainAccess in Frameworks */,
+				B1418B7B2D263C28007E843F /* Gemini in Frameworks */,
 				B19586DF2CD40C6900843DF5 /* OpenAI in Frameworks */,
 				B19586DB2CD40C6900843DF5 /* Anthropic in Frameworks */,
 			);
@@ -138,6 +140,7 @@
 				B19586DC2CD40C6900843DF5 /* LangTools */,
 				B19586DE2CD40C6900843DF5 /* OpenAI */,
 				B1E289D42D192BE200A1C327 /* XAI */,
+				B1418B7A2D263C28007E843F /* Gemini */,
 			);
 			productName = LangTools_Example;
 			productReference = B1D1EBDF2CA2518F00AD7FA6 /* LangTools_Example.app */;
@@ -608,6 +611,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		B1418B7A2D263C28007E843F /* Gemini */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B19586D92CD40C6900843DF5 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */;
+			productName = Gemini;
+		};
 		B19586DA2CD40C6900843DF5 /* Anthropic */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Anthropic;

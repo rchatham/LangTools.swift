@@ -19,6 +19,7 @@ extension View {
             case .anthropic(_): return ("Anthropic", .anthropic)
             case .openAI(_): return ("OpenAI", .openAI)
             case .xAI(_): return ("xAI", .xAI)
+            case .gemini(_): return ("Gemini", .gemini)
             }
         }()
         return alert("Enter API Key", isPresented: isPresented, actions: {

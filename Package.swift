@@ -24,6 +24,9 @@ let package = Package(
         .library(
             name: "XAI",
             targets: ["XAI"]),
+        .library(
+            name: "Gemini",
+            targets: ["Gemini"]),
 //        .executable(name: "ChatCLI", targets: ["ChatCLI"]), // Executable product
     ],
     targets: [
@@ -39,6 +42,12 @@ let package = Package(
             dependencies: [.target(name: "LangTools")]),
         .target(
             name: "XAI",
+            dependencies: [
+                .target(name: "LangTools"),
+                .target(name: "OpenAI"),
+            ]),
+        .target(
+            name: "Gemini",
             dependencies: [
                 .target(name: "LangTools"),
                 .target(name: "OpenAI"),
@@ -64,6 +73,12 @@ let package = Package(
         .testTarget(
             name: "XAITests",
             dependencies: ["XAI", "OpenAI", "LangToolsTests"],
+            resources: [
+                .process("Resources/")
+            ]),
+        .testTarget(
+            name: "GeminiTests",
+            dependencies: ["Gemini", "OpenAI", "LangToolsTests"],
             resources: [
                 .process("Resources/")
             ]),
