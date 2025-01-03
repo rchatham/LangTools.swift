@@ -60,7 +60,7 @@ public final class Anthropic: LangTools {
         urlRequest.addValue("application/json", forHTTPHeaderField: "content-type")
         urlRequest.addValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         urlRequest.addValue(apiKey, forHTTPHeaderField: "x-api-key")
-        do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolError<ErrorResponse>.invalidData }
+        do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolError.invalidData }
         return urlRequest
     }
 
@@ -71,13 +71,13 @@ public final class Anthropic: LangTools {
 }
 
 public struct AnthropicErrorResponse: Codable, Error {
-    let type: String
-    let error: AnthropicAPIError
+    public let type: String
+    public let error: AnthropicAPIError
 }
 
 public struct AnthropicAPIError: Codable {
-    let type: AnthropicAPIErrorType
-    let message: String
+    public let type: AnthropicAPIErrorType
+    public let message: String
 }
 
 // MARK: - API Error Types
