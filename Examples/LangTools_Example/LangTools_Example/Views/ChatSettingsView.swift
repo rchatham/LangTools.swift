@@ -25,13 +25,6 @@ struct ChatSettingsView: View {
                     Slider(value: $viewModel.temperature, in: 0...1, step: 0.01)
                 }
             }
-//            if let deviceToken = $viewModel.deviceToken.wrappedValue {
-//                Text("Device Token: " + deviceToken)
-//            } else {
-//                Button("Register for notifications") {
-//                    NotificationManager.shared.requestPushNotificationPermission()
-//                }
-//            }
             Button("Save Settings") { viewModel.saveSettings()}
             Button("Update API Key") { viewModel.enterApiKey = true}
         }

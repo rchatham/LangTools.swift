@@ -11,7 +11,7 @@ import Anthropic
 import XAI
 import AVFAudio
 
-//typealias Model = OpenAI.Model
+
 typealias Role = OpenAI.Message.Role
 
 class NetworkClient: NSObject, URLSessionWebSocketDelegate {
@@ -31,7 +31,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 
     func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
         let response = try await langToolchain.perform(request: request(messages: messages, model: model, tools: tools, toolChoice: toolChoice))
-        guard let text = response.message?.content.string else { fatalError("the api should never return non text") }
+        guard let text = response.content?.text else { fatalError("the api should never return non text") }
         return Message(text: text, role: .assistant)
     }
 
