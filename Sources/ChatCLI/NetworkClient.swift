@@ -50,11 +50,12 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     func langTool(for llm: LLMAPIService, with apiKey: String) -> any LangTools {
+        let baseURL: URL? = nil //URL(string: "http://localhost:8080/v1/")
         switch llm {
-        case .anthropic: return Anthropic(baseURL: URL(string: "http://localhost:8080/v1/")!, apiKey: apiKey)
-        case .openAI: return OpenAI(baseURL: URL(string: "http://localhost:8080/v1/")!, apiKey: apiKey)
-        case .xAI: return XAI(baseURL: URL(string: "http://localhost:8080/v1/")!, apiKey: apiKey)
-        case .gemini: return Gemini(baseURL: URL(string: "http://localhost:8080/v1/")!, apiKey: apiKey)
+        case .anthropic: return if let baseURL { Anthropic(baseURL: baseURL, apiKey: apiKey) } else { Anthropic(apiKey: apiKey) }
+        case .openAI: return if let baseURL { OpenAI(baseURL: baseURL, apiKey: apiKey) } else { OpenAI(apiKey: apiKey) }
+        case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
+        case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
         }
     }
 }
