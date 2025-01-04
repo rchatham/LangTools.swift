@@ -37,8 +37,8 @@ final public class OpenAI: LangTools {
         ]
     }
 
-    public init(apiKey: String) {
-        configuration = OpenAIConfiguration(apiKey: apiKey)
+    public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String) {
+        configuration = OpenAIConfiguration(baseURL: baseURL, apiKey: apiKey)
     }
 
     public init(configuration: OpenAIConfiguration) {

@@ -24,8 +24,8 @@ public final class XAI: LangTools {
 
     let openAI: OpenAI
 
-    public init(apiKey: String) {
-        openAI = OpenAI(configuration: .init(baseURL: URL(string: "https://api.x.ai/v1/")!, apiKey: apiKey))
+    public init(baseURL: URL = URL(string: "https://api.x.ai/v1/")!, apiKey: String) {
+        openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey))
     }
 
     internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {

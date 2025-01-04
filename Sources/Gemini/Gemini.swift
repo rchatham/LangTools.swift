@@ -24,8 +24,8 @@ public final class Gemini: LangTools {
 
     let openAI: OpenAI
 
-    public init(apiKey: String) {
-        openAI = OpenAI(configuration: .init(baseURL: URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/")!, apiKey: apiKey))
+    public init(baseURL: URL = URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/")!, apiKey: String) {
+        openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey))
     }
 
     internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {

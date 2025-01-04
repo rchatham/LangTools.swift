@@ -34,8 +34,8 @@ public final class Anthropic: LangTools {
         ]
     }
 
-    public init(apiKey: String) {
-        configuration = AnthropicConfiguration(apiKey: apiKey)
+    public init(baseURL: URL = URL(string: "https://api.anthropic.com/v1/")!, apiKey: String) {
+        configuration = AnthropicConfiguration(baseURL: baseURL, apiKey: apiKey)
     }
 
     public init(configuration: AnthropicConfiguration) {
