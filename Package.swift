@@ -52,36 +52,28 @@ let package = Package(
                 .target(name: "LangTools"),
                 .target(name: "OpenAI"),
             ]),
+        .target(
+            name: "TestUtils",
+            dependencies: [.target(name: "LangTools")],
+            resources: [.process("Resources/")]),
         .testTarget(
             name: "LangToolsTests",
-            dependencies: ["LangTools", "OpenAI"],
+            dependencies: ["LangTools", "OpenAI", "TestUtils"],
             resources: [
                 .process("Resources/")
             ]),
         .testTarget(
             name: "OpenAITests",
-            dependencies: ["OpenAI"],
-            resources: [
-                .process("Resources/")
-            ]),
+            dependencies: ["OpenAI", "TestUtils"]),
         .testTarget(
             name: "AnthropicTests",
-            dependencies: ["Anthropic"],
-            resources: [
-                .process("Resources/")
-            ]),
+            dependencies: ["Anthropic", "TestUtils"]),
         .testTarget(
             name: "XAITests",
-            dependencies: ["XAI", "OpenAI", "LangToolsTests"],
-            resources: [
-                .process("Resources/")
-            ]),
+            dependencies: ["XAI", "OpenAI", "TestUtils"]),
         .testTarget(
             name: "GeminiTests",
-            dependencies: ["Gemini", "OpenAI", "LangToolsTests"],
-            resources: [
-                .process("Resources/")
-            ]),
+            dependencies: ["Gemini", "OpenAI", "TestUtils"]),
 //        .executableTarget(
 //            name: "ChatCLI", // Executable target
 //            dependencies: ["LangTools"] // Depend on the framework

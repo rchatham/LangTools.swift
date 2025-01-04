@@ -6,6 +6,7 @@
 //
 
 import XCTest
+@testable import TestUtils
 @testable import OpenAI
 
 class OpenAITests: XCTestCase {

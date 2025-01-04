@@ -6,7 +6,7 @@
 //
 
 import XCTest
-@testable import LangToolsTests
+@testable import TestUtils
 @testable import Gemini
 @testable import OpenAI
 

@@ -1,24 +1,25 @@
 //
 //  MockURLProtocol.swift
-//  OpenAITests
+//  LangTools
 //
 //  Created by Reid Chatham on 12/30/23.
 //
 
 import Foundation
-import LangTools
-@testable import OpenAI
+@testable import LangTools
 
 class MockURLProtocol: URLProtocol {
     typealias MockNetworkHandler = (URLRequest) throws -> (result: Result<Data, Error>, statusCode: Int?)
     public static var mockNetworkHandlers: [String: MockNetworkHandler] = [:]
 
-    override class func canInit(with request: URLRequest) -> Bool { mockNetworkHandlers[request.endpoint] != nil }
-    override class func canInit(with task: URLSessionTask) -> Bool { mockNetworkHandlers[task.endpoint] != nil }
+    override class func canInit(with request: URLRequest) -> Bool { mockNetworkHandlers.first(where: { request.endpoint.hasSuffix($0.0) }) != nil }
+    override class func canInit(with task: URLSessionTask) -> Bool { mockNetworkHandlers.first(where: { task.endpoint.hasSuffix($0.0) }) != nil }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        let response = try! MockURLProtocol.mockNetworkHandlers.removeValue(forKey: request.endpoint)!(request)
+        let (key, handler) = MockURLProtocol.mockNetworkHandlers.first(where: { request.endpoint.hasSuffix($0.0) })!
+        _ = MockURLProtocol.mockNetworkHandlers.removeValue(forKey: key)
+        let response = try! handler(request)
 
         if let statusCode = response.statusCode {
             let httpURLResponse = HTTPURLResponse(

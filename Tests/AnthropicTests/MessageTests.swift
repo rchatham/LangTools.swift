@@ -6,6 +6,7 @@
 //
 
 import XCTest
+@testable import TestUtils
 import Anthropic
 
 final class MessageTests: XCTestCase {
@@ -26,7 +27,7 @@ final class MessageTests: XCTestCase {
             case .failure(let error):
                 XCTFail("failed to decode data \(error.localizedDescription)")
             }
-        }(try getData(filename: "user_message_with_image")!)
+        }(try getData(filename: "user_message_with_image-anthropic")!)
     }
 
     func testUserMessageEncodable() throws {

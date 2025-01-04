@@ -6,6 +6,7 @@
 //
 
 import XCTest
+@testable import TestUtils
 import Anthropic
 
 final class MessageRequestTests: XCTestCase {

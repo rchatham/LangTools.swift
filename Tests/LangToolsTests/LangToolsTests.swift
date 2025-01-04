@@ -1,4 +1,5 @@
 import XCTest
+@testable import TestUtils
 @testable import LangTools
 @testable import OpenAI
 
