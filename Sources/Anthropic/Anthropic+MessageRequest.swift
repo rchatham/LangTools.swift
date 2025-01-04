@@ -20,7 +20,7 @@ extension Anthropic {
 
         public typealias LangTool = Anthropic
         public typealias Response = MessageResponse
-        public static var path: String { "messages" }
+        public static var endpoint: String { "messages" }
 
         let model: Model
         public var messages: [Message]

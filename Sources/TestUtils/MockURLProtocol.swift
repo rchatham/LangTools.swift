@@ -12,12 +12,12 @@ class MockURLProtocol: URLProtocol {
     typealias MockNetworkHandler = (URLRequest) throws -> (result: Result<Data, Error>, statusCode: Int?)
     public static var mockNetworkHandlers: [String: MockNetworkHandler] = [:]
 
-    override class func canInit(with request: URLRequest) -> Bool { mockNetworkHandlers.first(where: { request.endpoint.hasSuffix($0.0) }) != nil }
-    override class func canInit(with task: URLSessionTask) -> Bool { mockNetworkHandlers.first(where: { task.endpoint.hasSuffix($0.0) }) != nil }
+    override class func canInit(with request: URLRequest) -> Bool { mockNetworkHandlers.first(where: { request.path.hasSuffix($0.0) }) != nil }
+    override class func canInit(with task: URLSessionTask) -> Bool { mockNetworkHandlers.first(where: { task.path.hasSuffix($0.0) }) != nil }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        let (key, handler) = MockURLProtocol.mockNetworkHandlers.first(where: { request.endpoint.hasSuffix($0.0) })!
+        let (key, handler) = MockURLProtocol.mockNetworkHandlers.first(where: { request.path.hasSuffix($0.0) })!
         _ = MockURLProtocol.mockNetworkHandlers.removeValue(forKey: key)
         let response = try! handler(request)
 
@@ -53,9 +53,9 @@ extension URL {
 }
 
 extension URLRequest {
-    var endpoint: String { url!.endpoint }
+    var path: String { url!.path }
 }
 
 extension URLSessionTask {
-    var endpoint: String { currentRequest!.endpoint }
+    var path: String { currentRequest!.path }
 }

@@ -59,7 +59,7 @@ final public class OpenAI: LangTools {
 
 
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
-        var urlRequest = URLRequest(url: configuration.baseURL.appending(path: request.path))
+        var urlRequest = URLRequest(url: configuration.baseURL.appending(path: request.endpoint))
         urlRequest.httpMethod = "POST"
         urlRequest.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         if let request = (request as? MultipartFormDataEncodableRequest) {

@@ -13,7 +13,7 @@ extension OpenAI {
     public struct AudioTranscriptionRequest: LangToolsRequest {
         public typealias Response = AudioTranscriptionResponse
         public typealias LangTool = OpenAI
-        public static var path: String { "audio/transcriptions" }
+        public static var endpoint: String { "audio/transcriptions" }
 
         public enum ResponseFormat: String, Codable, Equatable, CaseIterable {
             case json

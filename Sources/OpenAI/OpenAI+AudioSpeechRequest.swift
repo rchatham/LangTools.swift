@@ -14,7 +14,7 @@ extension OpenAI {
     /// Learn more: [OpenAI Speech – Documentation](https://platform.openai.com/docs/api-reference/audio/createSpeech)
     public struct AudioSpeechRequest: Codable, LangToolsRequest, LangToolsTTSRequest {
         public typealias LangTool = OpenAI
-        public static var path: String { "audio/speech" }
+        public static var endpoint: String { "audio/speech" }
 
         /// The text to generate audio for. The maximum length is 4096 characters.
         public let input: String

@@ -27,7 +27,7 @@ struct MockRequest: LangToolsRequest, LangToolsStreamableRequest, LangToolsCompl
     typealias ToolResult = MockToolResult
 
     static var url: URL { URL(filePath: "test") }
-    static var path: String { url.endpoint }
+    static var endpoint: String { url.endpoint }
     typealias Response = MockResponse
     var stream: Bool?
     var messages: [MockMessage] = []

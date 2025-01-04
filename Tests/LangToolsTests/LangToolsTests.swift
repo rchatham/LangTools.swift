@@ -22,7 +22,7 @@ final class LangToolsTests: XCTestCase {
     }
 
     func test() async throws {
-        MockURLProtocol.mockNetworkHandlers[MockRequest.path] = { request in
+        MockURLProtocol.mockNetworkHandlers[MockRequest.endpoint] = { request in
             return (.success(try MockResponse.success.data()), 200)
         }
         let response = try await api.perform(request: MockRequest())
@@ -30,7 +30,7 @@ final class LangToolsTests: XCTestCase {
     }
 
     func testStream() async throws {
-        MockURLProtocol.mockNetworkHandlers[MockRequest.path] = { request in
+        MockURLProtocol.mockNetworkHandlers[MockRequest.endpoint] = { request in
             return (.success(try MockResponse.success.streamData()), 200)
         }
         var results: [MockResponse] = []

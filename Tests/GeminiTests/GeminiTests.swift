@@ -29,7 +29,7 @@ class GeminiTests: XCTestCase {
     }
 
     func testChatStream() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.path] = { request in
+        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
             return (.success(try OpenAI.ChatCompletionResponse(
                 id: "testid",
                 object: "chat.completion.chunk",
@@ -56,7 +56,7 @@ class GeminiTests: XCTestCase {
     }
 
     func testChatStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.path] = { request in
+        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
             return (.success(try self.getData(filename: "assistant_response_stream", fileExtension: "txt")!), 200)
         }
         var results: [OpenAI.ChatCompletionResponse] = []
@@ -70,7 +70,7 @@ class GeminiTests: XCTestCase {
     }
 
     func testToolCallStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.path] = { request in
+        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
             return (.success(try self.getData(filename: "tool_call_stream", fileExtension: "txt")!), 200)
         }
         let request = OpenAI.ChatCompletionRequest(model: .gpt4Turbo, messages: [.init(role: .user, content: "Hi")], stream: true)
@@ -86,7 +86,7 @@ class GeminiTests: XCTestCase {
     }
 
     func testToolCallWithFunctionCallbackStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.path] = { request in
+        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
             return (.success(try self.getData(filename: "tool_call_stream", fileExtension: "txt")!), 200)
         }
         let tools: [OpenAI.Tool] = [.function(.init(
@@ -104,7 +104,7 @@ class GeminiTests: XCTestCase {
                 ],
                 required: ["location", "format"]),
             callback: { _ in
-                MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.path] = { request in
+                MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
                     return (.success(try self.getData(filename: "tool_call_stream_response", fileExtension: "txt")!), 200)
                 }
                 return "27"

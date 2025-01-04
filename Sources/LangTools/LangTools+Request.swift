@@ -11,11 +11,11 @@ import Foundation
 public protocol LangToolsRequest: Encodable {
     associatedtype Response: Decodable
     associatedtype LangTool: LangTools
-    static var path: String { get }
+    static var endpoint: String { get }
 }
 
 public extension LangToolsRequest {
-    var path: String { Self.path }
+    var endpoint: String { Self.endpoint }
 }
 
 extension LangToolsStreamableResponse {

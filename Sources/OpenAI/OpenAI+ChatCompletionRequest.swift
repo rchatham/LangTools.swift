@@ -20,7 +20,7 @@ extension OpenAI {
 
         public typealias LangTool = OpenAI
         public typealias Response = ChatCompletionResponse
-        public static var path: String { "chat/completions" }
+        public static var endpoint: String { "chat/completions" }
 
         public let model: Model
         public var messages: [Message]
