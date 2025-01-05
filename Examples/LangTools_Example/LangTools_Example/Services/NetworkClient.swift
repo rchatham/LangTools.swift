@@ -25,10 +25,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 
     override init() {
         super.init()
-        if let apiKey = keychainService.getApiKey(for: .anthropic) { register(apiKey, for: .anthropic) }
-        if let apiKey = keychainService.getApiKey(for: .openAI) { register(apiKey, for: .openAI) }
-        if let apiKey = keychainService.getApiKey(for: .xAI) { register(apiKey, for: .xAI) }
-        if let apiKey = keychainService.getApiKey(for: .gemini) { register(apiKey, for: .gemini) }
+        LLMAPIService.allCases.forEach { llm in keychainService.getApiKey(for: llm).flatMap { register($0, for: llm) } }
     }
 
     func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
@@ -77,16 +74,17 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     func langTool(for llm: LLMAPIService, with apiKey: String) -> any LangTools {
+        let baseURL: URL? = nil //URL(string: "http://localhost:8080/v1/")
         switch llm {
-        case .anthropic: return Anthropic(apiKey: apiKey)/*configuration: .init(baseURL: URL(string: "http://localhost:8080/v1/")!, apiKey: apiKey))*/
-        case .openAI: return OpenAI(apiKey: apiKey)/*configuration: .init(baseURL: URL(string: "http://localhost:8080/v1/")!, apiKey: apiKey))*/
-        case .xAI: return XAI(apiKey: apiKey)
-        case .gemini: return Gemini(apiKey: apiKey)
+        case .anthropic: return if let baseURL { Anthropic(baseURL: baseURL, apiKey: apiKey) } else { Anthropic(apiKey: apiKey) }
+        case .openAI: return if let baseURL { OpenAI(baseURL: baseURL, apiKey: apiKey) } else { OpenAI(apiKey: apiKey) }
+        case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
+        case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
         }
     }
 }
 
-enum LLMAPIService: String {
+enum LLMAPIService: String, CaseIterable {
     case openAI, anthropic, xAI, gemini
 }
 
