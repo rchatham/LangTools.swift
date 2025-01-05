@@ -20,9 +20,16 @@ public protocol LangTools {
 }
 
 extension LangTools {
-
     public func canHandleRequest<Request: LangToolsRequest>(_ request: Request) -> Bool {
         return requestTypes.reduce(false) { $0 || $1(request) }
+    }
+
+    public func perform<Request: LangToolsRequest>(request: Request, completion: @escaping (Result<Request.Response, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
+        Task {
+            if request.stream, let request = request as? any LangToolsStreamableRequest {
+                do { for try await response in stream(request: request) { completion(.success(response as! Request.Response)) }; didCompleteStreaming?(nil) } catch { didCompleteStreaming?(error) }}
+            else { do { completion(.success(try await perform(request: request))) } catch { completion(.failure(error)) }}
+        }
     }
 
     // In order to call the function completion in non-streaming calls, we are
@@ -38,6 +45,11 @@ extension LangTools {
         guard request.stream ?? true else { return AsyncThrowingSingleItemStream(value: { try await perform(request: request) }) }
         let httpRequest: URLRequest; do { httpRequest = try prepare(request: request.updating(stream: true)) } catch { return AsyncThrowingStream { $0.finish(throwing: error) }}
         return streamManager.stream(task: session.dataTask(with: httpRequest), updateResponse: { try request.update(response: $0) }) { try complete(request: request, response: $0) }
+    }
+
+    // Used because simply mapping the value will cause a copiler error in certain situations, such as in the non-async perform method.
+    public func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<any LangToolsStreamableResponse, Error> {
+        return stream(request: request).mapAsyncThrowingStream { $0 }
     }
 
     private func perform<Response: Decodable>(request: URLRequest) async -> Result<Response, Error> {
@@ -115,13 +127,16 @@ public enum LangToolError: Error {
     case apiError(Codable & Error)
 }
 
-// Helpers
+// MARK: - Helpers
+
 public extension LangTools {
     static func decode<Response: Decodable>(completion: @escaping (Result<Response, Error>) -> Void) -> (Data) -> Void { return { completion(decode(data: $0)) }}
     static func decode<Response: Decodable>(data: Data) -> Result<Response, Error> { let d = JSONDecoder(); do { return .success(try decodeResponse(data: data, decoder: d)) } catch { return .failure(error as! LangToolError) }}
     static func decodeResponse<Response: Decodable>(data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> Response { do { return try decoder.decode(Response.self, from: data) } catch { throw decodeError(data: data, decoder: decoder) ?? .jsonParsingFailure(error) }}
     static func decodeError(data: Data, decoder: JSONDecoder = JSONDecoder()) -> LangToolError? { return (try? decoder.decode(ErrorResponse.self, from: data)).flatMap { .apiError($0) }}
 }
+
+// MARK: - Utilities
 
 extension String {
     public var dictionary: [String:String]? { return data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed]) as? [String:String] }}
@@ -131,8 +146,17 @@ extension Dictionary where Key == String, Value == String {
     public var string: String? { (try? JSONSerialization.data(withJSONObject: self, options: [.fragmentsAllowed])).flatMap { String(data: $0, encoding: .utf8) }}
 }
 
-extension Optional { func flatMap<U>(_ a: (Wrapped) async throws -> U?) async throws -> U? { switch self { case .some(let wrapped): return try await a(wrapped); case .none: return nil }}}
+extension Optional where Wrapped: LangToolsRequest {
+    func flatMap<U>(_ a: (Wrapped) async throws -> U?) async throws -> U? { switch self { case .some(let wrapped): return try await a(wrapped); case .none: return nil }}
+}
 
 func AsyncThrowingSingleItemStream<U>(value: @escaping () async throws -> U) -> AsyncThrowingStream<U, Error> {
     return AsyncThrowingStream { cont in Task { do { cont.yield(try await value()) } catch { cont.finish(throwing: error) }; cont.finish() }}
+}
+
+extension AsyncThrowingStream {
+    func mapAsyncThrowingStream<T>(_ map: @escaping (Element) -> T) -> AsyncThrowingStream<T, Error> {
+        var iterator = self.makeAsyncIterator()
+        return AsyncThrowingStream<T, Error>(unfolding: { try await iterator.next().flatMap { map($0) } })
+    }
 }

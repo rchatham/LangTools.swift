@@ -50,14 +50,6 @@ final public class OpenAI: LangTools {
         return self
     }
 
-    public func perform<Request: LangToolsRequest>(request: Request, completion: @escaping (Result<Request.Response, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
-        Task {
-            if request.stream, let request = request as? ChatCompletionRequest { do { for try await response in stream(request: request) { completion(.success(response as! Request.Response)) }; didCompleteStreaming?(nil) } catch { didCompleteStreaming?(error) }}
-            else { do { completion(.success(try await perform(request: request))) } catch { completion(.failure(error)) }}
-        }
-    }
-
-
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
         var urlRequest = URLRequest(url: configuration.baseURL.appending(path: request.endpoint))
         urlRequest.httpMethod = "POST"
