@@ -110,8 +110,13 @@ struct ChatCLI {
             toolChoice: toolChoice
         )
         for try await message in stream {
+            // hack to print new lines as long as they aren't the last one
+            if content.hasSuffix("\n") {
+                print("")
+            }
+
             await MainActor.run {
-                print("\(message)", terminator: "")
+                print("\(message.trimingTrailingNewlines())", terminator: "")
             }
             fflush(stdout)
 
