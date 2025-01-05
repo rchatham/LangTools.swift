@@ -77,7 +77,6 @@ extension LangTools {
 }
 
 public class StreamSessionManager<LangTool: LangTools>: NSObject, URLSessionDataDelegate {
-    private var task: URLSessionDataTask? = nil
     private var didReceiveEvent: ((Data) -> Void)? = nil
     private var didCompleteStream: ((Error?) -> Void)? = nil
     private var completion: (([Data]) throws -> URLSessionDataTask?)? = nil
@@ -91,8 +90,8 @@ public class StreamSessionManager<LangTool: LangTools>: NSObject, URLSessionData
                 catch { continuation.finish(throwing: error) }
             }
             didCompleteStream = { continuation.finish(throwing: $0) }
-            continuation.onTermination = { @Sendable _ in (self.task, self.didReceiveEvent, self.didCompleteStream, self.completion, self.data) = (nil, nil, nil, nil, []) }
-            self.task = task; task.resume()
+            continuation.onTermination = { @Sendable _ in (self.didReceiveEvent, self.didCompleteStream, self.completion, self.data) = (nil, nil, nil, []) }
+            task.resume()
         }
     }
 
@@ -107,7 +106,7 @@ public class StreamSessionManager<LangTool: LangTools>: NSObject, URLSessionData
     public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         var error = error; if error == nil { do {
             if !data.isEmpty, let task = try completion?(data) {
-                data = []; self.task = task; task.resume(); return /* if new task is returned do not call didCompleteStream */
+                data = []; task.resume(); return /* if new task is returned do not call didCompleteStream */
             }
         } catch let err { error = err } }
         didCompleteStream?(error)
