@@ -20,7 +20,7 @@ struct ChatCLI {
         print("Current model: \(UserDefaults.model.rawValue)")
         
         while true {
-            print(Colors.green + "You: " + Colors.reset, terminator: "")
+            print("You: ".green, terminator: "")
             guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) else { continue }
 
             if input.lowercased() == "exit" {
@@ -105,7 +105,7 @@ struct ChatCLI {
         }
 
         let toolChoice = (messageService.tools?.isEmpty ?? true) ? nil : OpenAI.ChatCompletionRequest.ToolChoice.auto
-        print(Colors.yellow + "\rAssistant: " + Colors.reset, terminator: "")
+        print("\rAssistant: ".yellow, terminator: "")
         let uuid = UUID(); var content: String = ""
         for try await message in try streamChatCompletionRequest(
             messages: messageService.messages,
@@ -132,14 +132,36 @@ struct ChatCLI {
     }
 }
 
-struct Colors {
-    static let reset = "\u{001B}[0;0m"
-    static let black = "\u{001B}[0;30m"
-    static let red = "\u{001B}[0;31m"
-    static let green = "\u{001B}[0;32m"
-    static let yellow = "\u{001B}[0;33m"
-    static let blue = "\u{001B}[0;34m"
-    static let magenta = "\u{001B}[0;35m"
-    static let cyan = "\u{001B}[0;36m"
-    static let white = "\u{001B}[0;37m"
+typealias Colors = ANSIColor
+enum ANSIColor: String, CaseIterable {
+    case black = "\u{001B}[0;30m"
+    case red = "\u{001B}[0;31m"
+    case green = "\u{001B}[0;32m"
+    case yellow = "\u{001B}[0;33m"
+    case blue = "\u{001B}[0;34m"
+    case magenta = "\u{001B}[0;35m"
+    case cyan = "\u{001B}[0;36m"
+    case white = "\u{001B}[0;37m"
+    case `default` = "\u{001B}[0;0m"
+
+    static func + (lhs: ANSIColor, rhs: String) -> String {
+        return lhs.rawValue + rhs
+    }
+
+    static func + (lhs: String, rhs: ANSIColor) -> String {
+        return lhs + rhs.rawValue
+    }
+
+}
+
+extension String {
+    func colored(_ color: ANSIColor) -> String { return color + self + ANSIColor.default }
+    var black: String { return colored(.black) }
+    var red: String { return colored(.red) }
+    var green: String { return colored(.green) }
+    var yellow: String { return colored(.yellow) }
+    var blue: String { return colored(.blue) }
+    var magenta: String { return colored(.magenta) }
+    var cyan: String { return colored(.cyan) }
+    var white: String { return colored(.white) }
 }
