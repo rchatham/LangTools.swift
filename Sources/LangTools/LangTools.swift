@@ -43,11 +43,11 @@ extension LangTools {
 
     public func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {
         guard request.stream ?? true else { return AsyncThrowingSingleItemStream(value: { try await perform(request: request) }) }
-        let httpRequest: URLRequest; do { httpRequest = try prepare(request: request.updating(stream: true)) } catch { return AsyncThrowingStream { $0.finish(throwing: error) }}
+        let httpRequest: URLRequest; do { httpRequest = try prepare(request: request.updating(stream: true)) } catch { return AsyncSingleErrorStream(error: error) }
         return streamManager.stream(task: session.dataTask(with: httpRequest), updateResponse: { try request.update(response: $0) }) { try complete(request: request, response: $0) }
     }
 
-    // Used because simply mapping the value will cause a copiler error in certain situations, such as in the non-async perform method.
+    // Used because simply mapping the value will cause a compiler error in certain situations, such as in the non-async perform method.
     public func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<any LangToolsStreamableResponse, Error> {
         return stream(request: request).mapAsyncThrowingStream { $0 }
     }
@@ -150,8 +150,12 @@ extension Optional where Wrapped: LangToolsRequest {
     func flatMap<U>(_ a: (Wrapped) async throws -> U?) async throws -> U? { switch self { case .some(let wrapped): return try await a(wrapped); case .none: return nil }}
 }
 
-func AsyncThrowingSingleItemStream<U>(value: @escaping () async throws -> U) -> AsyncThrowingStream<U, Error> {
+func AsyncThrowingSingleItemStream<T>(value: @escaping () async throws -> T) -> AsyncThrowingStream<T, Error> {
     return AsyncThrowingStream { cont in Task { do { cont.yield(try await value()) } catch { cont.finish(throwing: error) }; cont.finish() }}
+}
+
+func AsyncSingleErrorStream<T>(error: Error) -> AsyncThrowingStream<T, Error> {
+    return AsyncThrowingStream { $0.finish(throwing: error) }
 }
 
 extension AsyncThrowingStream {

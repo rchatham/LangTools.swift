@@ -12,13 +12,13 @@ let networkClient = NetworkClient.shared
 @main
 struct ChatCLI {
     static func main() async throws {
-        
+
         // Check and request API keys if needed
         try await checkAndRequestAPIKeys(messageService: messageService)
-        
+
         print("Chat CLI Started - Type 'exit' to quit or 'model' to change the active model")
         print("Current model: \(UserDefaults.model.rawValue)")
-        
+
         while true {
             print("You: ".green, terminator: "")
             guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) else { continue }
@@ -27,12 +27,12 @@ struct ChatCLI {
                 print("Goodbye!")
                 break
             }
-            
+
             if input.lowercased() == "model" {
                 try await changeModel()
                 continue
             }
-            
+
             do {
                 try await performMessageCompletionRequest(message: input, stream: true)
             } catch {
@@ -62,7 +62,7 @@ struct ChatCLI {
         print("3. Anthropic Claude")
         print("4. Gemini")
         print("5. XAI")
-        
+
         print("\nSelect model (1-5): ", terminator: "")
         guard let choice = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
 
@@ -95,10 +95,6 @@ struct ChatCLI {
         }
     }
 
-    static func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<String, Error> {
-        return try langToolchain.stream(request: networkClient.request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { $0.content?.text }
-    }
-
     static func getChatCompletion(for message: String, stream: Bool) async throws {
         await MainActor.run {
             messageService.messages.append(Message(text: message, role: .user))
@@ -107,12 +103,13 @@ struct ChatCLI {
         let toolChoice = (messageService.tools?.isEmpty ?? true) ? nil : OpenAI.ChatCompletionRequest.ToolChoice.auto
         print("\rAssistant: ".yellow, terminator: "")
         let uuid = UUID(); var content: String = ""
-        for try await message in try streamChatCompletionRequest(
+        let stream = try streamChatCompletionRequest(
             messages: messageService.messages,
             stream: stream,
             tools: messageService.tools,
             toolChoice: toolChoice
-        ) {
+        )
+        for try await message in stream {
             await MainActor.run {
                 print("\(message)", terminator: "")
             }
@@ -129,6 +126,10 @@ struct ChatCLI {
         }
 
         print("") // Add a newline after the complete response
+    }
+
+    static func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<String, Error> {
+        return try langToolchain.stream(request: networkClient.request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { $0.content?.text }
     }
 }
 
@@ -151,7 +152,6 @@ enum ANSIColor: String, CaseIterable {
     static func + (lhs: String, rhs: ANSIColor) -> String {
         return lhs + rhs.rawValue
     }
-
 }
 
 extension String {

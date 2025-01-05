@@ -93,9 +93,6 @@ class MessageService {
             case .missingRequiredFunctionArguments: print("error: missing args")
             }
         }
-        catch {
-            throw error
-        }
     }
 
     func getChatCompletion(for message: String, stream: Bool) async throws {
