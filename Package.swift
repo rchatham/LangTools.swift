@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "LangTools",
     platforms: [
-        .macOS(.v13),
+        .macOS(.v14),
         .iOS(.v16),
         .watchOS(.v8)
     ],
@@ -27,7 +27,7 @@ let package = Package(
         .library(
             name: "Gemini",
             targets: ["Gemini"]),
-//        .executable(name: "ChatCLI", targets: ["ChatCLI"]), // Executable product
+       .executable(name: "ChatCLI", targets: ["ChatCLI"]),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -74,9 +74,9 @@ let package = Package(
         .testTarget(
             name: "GeminiTests",
             dependencies: ["Gemini", "OpenAI", "TestUtils"]),
-//        .executableTarget(
-//            name: "ChatCLI", // Executable target
-//            dependencies: ["LangTools"] // Depend on the framework
-//        ),
+       .executableTarget(
+           name: "ChatCLI", // Executable target
+           dependencies: ["LangTools", "OpenAI", "Anthropic", "XAI", "Gemini"]
+       ),
     ]
 )
