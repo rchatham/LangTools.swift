@@ -39,6 +39,7 @@ The best way to learn how it works is to run the LangToolsDemo in XCode! Take a 
 let langToolsClient = OpenAI(apiKey: "your-api-key")
 // OR let langToolsClient = Anthropic(apiKey: "your-api-key")
 // OR let langToolsClient = XAI(apiKey: "your-api-key")
+// OR let langToolsClient = Gemini(apiKey: "your-api-key")
 ```
 
 ### Performing a Chat Completion Request
