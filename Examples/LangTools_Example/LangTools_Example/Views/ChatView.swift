@@ -64,7 +64,7 @@ extension ChatView {
         }
 
         func settingsView() -> some View {
-            return ChatSettingsView(viewModel: ChatSettingsView.ViewModel())
+            return ChatSettingsView(viewModel: ChatSettingsView.ViewModel { [weak self] in self?.messageService.messages = [] })
         }
         
         func messageComposerViewModel() -> MessageComposerView.ViewModel {

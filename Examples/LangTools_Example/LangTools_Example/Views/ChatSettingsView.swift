@@ -11,23 +11,27 @@ struct ChatSettingsView: View {
 
     var body: some View {
         Form {
-            Picker("AI Model", selection: $viewModel.model) {
-                ForEach(Model.chatModels, id: \.self) { model in
-                    Text(model.rawValue).tag(model.rawValue)
+            Section(header: Text("Active Model")) {
+                Picker("Chat Models", selection: $viewModel.model) {
+                    ForEach(Model.chatModels, id: \.self) { model in
+                        Text(model.rawValue).tag(model.rawValue)
+                    }
                 }
+                .pickerStyle(.menu)
             }
-            .pickerStyle(.menu)
 
-            Section(header: Text("Model Settings")) {
-                Stepper("Max Tokens: \(viewModel.maxTokens)", value: $viewModel.maxTokens, in: 1...1000)
-                HStack {
-                    Text("Temperature:")
-                    Slider(value: $viewModel.temperature, in: 0...1, step: 0.01)
-                }
-            }
+//            Section(header: Text("Model Settings")) {
+//                Stepper("Max Tokens: \(viewModel.maxTokens)", value: $viewModel.maxTokens, in: 1...1000)
+//                HStack {
+//                    Text("Temperature:")
+//                    Slider(value: $viewModel.temperature, in: 0...1, step: 0.01)
+//                }
+//            }
             Button("Save Settings") { viewModel.saveSettings()}
             Button("Update API Key") { viewModel.enterApiKey = true}
-        }
+            Button.init("Clear messages", role: .destructive) {
+                viewModel.clearMessages()
+            }        }
         .navigationTitle("Settings")
         .onAppear { viewModel.loadSettings()}
         .onDisappear { viewModel.saveSettings()}
@@ -44,6 +48,12 @@ extension ChatSettingsView {
         @Published var maxTokens = UserDefaults.maxTokens
         @Published var temperature = UserDefaults.temperature
         @Published var deviceToken = UserDefaults.deviceToken
+
+        let clearMessages: () -> Void
+
+        init(clearMessages: @escaping () -> Void) {
+            self.clearMessages = clearMessages
+        }
 
         func loadSettings() {
             model = UserDefaults.model
