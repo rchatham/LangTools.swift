@@ -12,10 +12,12 @@ public protocol LangToolsRequest: Encodable {
     associatedtype Response: Decodable
     associatedtype LangTool: LangTools
     static var endpoint: String { get }
+    static var httpMethod: HTTPMethod { get }
 }
 
 public extension LangToolsRequest {
     var endpoint: String { Self.endpoint }
+    public static var httpMethod: HTTPMethod { .post }
 }
 
 extension LangToolsStreamableResponse {
@@ -196,3 +198,9 @@ public enum LangToolsRequestError: Error {
 }
 
 public protocol LangToolsTTSRequest: LangToolsRequest where Response == Data {}
+
+public enum HTTPMethod: String {
+    case get = "GET"
+    case post = "POST"
+    case delete = "DELETE"
+}

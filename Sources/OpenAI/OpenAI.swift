@@ -50,10 +50,15 @@ final public class OpenAI: LangTools {
         return self
     }
 
-    public func prepare(request: some LangToolsRequest) throws -> URLRequest {
-        var urlRequest = URLRequest(url: configuration.baseURL.appending(path: request.endpoint))
-        urlRequest.httpMethod = "POST"
+    public func prepare<Request: LangToolsRequest>(request: Request) throws -> URLRequest {
+        var url = configuration.baseURL.appending(path: request.endpoint)
+        if Request.httpMethod == .get {
+            url = url.appending(queryItems: Mirror(reflecting: request).children.compactMap { if let label = $0.label { URLQueryItem(name: label, value: String(describing: $0.value)) } else { nil }})
+        }
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = Request.httpMethod.rawValue
         urlRequest.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        if Request.httpMethod == .get { return urlRequest }
         if let request = (request as? MultipartFormDataEncodableRequest) {
             urlRequest.addValue("multipart/form-data", forHTTPHeaderField: "Content-Type")
             urlRequest.httpBody = request.httpBody
