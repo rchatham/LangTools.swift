@@ -17,7 +17,7 @@ public protocol LangToolsRequest: Encodable {
 
 public extension LangToolsRequest {
     var endpoint: String { Self.endpoint }
-    public static var httpMethod: HTTPMethod { .post }
+    static var httpMethod: HTTPMethod { .post }
 }
 
 extension LangToolsStreamableResponse {
