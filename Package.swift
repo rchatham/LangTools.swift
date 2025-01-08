@@ -11,72 +11,30 @@ let package = Package(
         .watchOS(.v8)
     ],
     products: [
-        // Products define the executables and libraries a package produces, making them visible to other packages.
-        .library(
-            name: "LangTools",
-            targets: ["LangTools"]),
-        .library(
-            name: "OpenAI",
-            targets: ["OpenAI"]),
-        .library(
-            name: "Anthropic",
-            targets: ["Anthropic"]),
-        .library(
-            name: "XAI",
-            targets: ["XAI"]),
-        .library(
-            name: "Gemini",
-            targets: ["Gemini"]),
-       .executable(name: "ChatCLI", targets: ["ChatCLI"]),
+        .library(name: "LangTools", targets: ["LangTools"]),
+        .library(name: "OpenAI", targets: ["OpenAI"]),
+        .library(name: "Anthropic", targets: ["Anthropic"]),
+        .library(name: "XAI", targets: ["XAI"]),
+        .library(name: "Gemini", targets: ["Gemini"]),
+        .executable(name: "ChatCLI", targets: ["ChatCLI"]),
     ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
-        .target(
-            name: "LangTools"),
-        .target(
-            name: "OpenAI",
-            dependencies: [.target(name: "LangTools")]),
-        .target(
-            name: "Anthropic",
-            dependencies: [.target(name: "LangTools")]),
-        .target(
-            name: "XAI",
-            dependencies: [
-                .target(name: "LangTools"),
-                .target(name: "OpenAI"),
-            ]),
-        .target(
-            name: "Gemini",
-            dependencies: [
-                .target(name: "LangTools"),
-                .target(name: "OpenAI"),
-            ]),
-        .target(
-            name: "TestUtils",
-            dependencies: [.target(name: "LangTools")],
-            resources: [.process("Resources/")]),
-        .testTarget(
-            name: "LangToolsTests",
-            dependencies: ["LangTools", "OpenAI", "TestUtils"],
-            resources: [
-                .process("Resources/")
-            ]),
-        .testTarget(
-            name: "OpenAITests",
-            dependencies: ["OpenAI", "TestUtils"]),
-        .testTarget(
-            name: "AnthropicTests",
-            dependencies: ["Anthropic", "TestUtils"]),
-        .testTarget(
-            name: "XAITests",
-            dependencies: ["XAI", "OpenAI", "TestUtils"]),
-        .testTarget(
-            name: "GeminiTests",
-            dependencies: ["Gemini", "OpenAI", "TestUtils"]),
-       .executableTarget(
-           name: "ChatCLI", // Executable target
-           dependencies: ["LangTools", "OpenAI", "Anthropic", "XAI", "Gemini"]
-       ),
+        // Targets
+        .target(name: "LangTools"),
+        .target(name: "OpenAI", dependencies: [.target(name: "LangTools")]),
+        .target(name: "Anthropic", dependencies: [.target(name: "LangTools")]),
+        .target(name: "XAI", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ]),
+        .target(name: "Gemini", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ]),
+        .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], resources: [.process("Resources/")]),
+
+        // Test targets
+        .testTarget(name: "LangToolsTests", dependencies: ["LangTools", "OpenAI", "TestUtils"], resources: [ .process("Resources/") ]),
+        .testTarget(name: "OpenAITests", dependencies: ["OpenAI", "TestUtils"]),
+        .testTarget(name: "AnthropicTests", dependencies: ["Anthropic", "TestUtils"]),
+        .testTarget(name: "XAITests", dependencies: ["XAI", "OpenAI", "TestUtils"]),
+        .testTarget(name: "GeminiTests", dependencies: ["Gemini", "OpenAI", "TestUtils"]),
+
+        // Executable target
+        .executableTarget(name: "ChatCLI", dependencies: ["LangTools", "OpenAI", "Anthropic", "XAI", "Gemini"]),
     ]
 )
