@@ -90,7 +90,7 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     static let openAIModels: [OpenAIModel] = ModelID.allCases.map { OpenAIModel(modelID: $0) }
 
     public init?(rawValue: String) {
-        if OpenAIModel.openAIModels.contains(where: { $0.rawValue == rawValue }) {
+        if let modelID = ModelID(rawValue: rawValue) {
             id = rawValue
         } else { return nil }
     }
@@ -101,9 +101,6 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
 
     public init(customModelID: String) {
         id = customModelID
-        if !Self.allCases.contains(self) {
-            Self.allCases.append(self)
-        }
     }
 
     public var id: String

@@ -36,19 +36,18 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
 
     var id: String { rawValue }
 
-    static let _modelInitilizer: Void = {
-        _ = XAI.Model.allCases.map { $0.openAIModel }
-        _ = Gemini.Model.allCases.map { $0.openAIModel }
-    }()
-
     static var allCases: [Model] {
-        _ = _modelInitilizer
-        return OpenAI.Model.allCases.map { .openAI($0) } + Anthropic.Model.allCases.map { .anthropic($0) }
+        return OpenAI.Model.allCases.map { .openAI($0) }
+        + Anthropic.Model.allCases.map { .anthropic($0) }
+        + XAI.Model.allCases.map { .xAI($0) }
+        + Gemini.Model.allCases.map { .gemini($0) }
     }
 
     static var chatModels: [Model] {
-        _ = _modelInitilizer
-        return OpenAI.Model.chatModels.map { .openAI($0) } + Anthropic.Model.allCases.map { .anthropic($0) }
+        return OpenAI.Model.chatModels.map { .openAI($0) }
+        + Anthropic.Model.allCases.map { .anthropic($0) }
+        + XAI.Model.allCases.map { .xAI($0) }
+        + Gemini.Model.allCases.map { .gemini($0) }
     }
 
     func hash(into hasher: inout Hasher) {
