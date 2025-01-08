@@ -32,6 +32,11 @@ extension LangTools {
         }
     }
 
+    // Used because simply mapping the value will cause a compiler error in certain situations, such as in the non-async perform method.
+    private func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<any LangToolsStreamableResponse, Error> {
+        return stream(request: request).mapAsyncThrowingStream { $0 }
+    }
+
     // In order to call the function completion in non-streaming calls, we are
     // unable to return the intermediate call and thus you can not mix responding 
     // to functions in your code AND using function closures. If this functionality 
@@ -45,11 +50,6 @@ extension LangTools {
         guard request.stream ?? true else { return AsyncThrowingSingleItemStream(value: { try await perform(request: request) }) }
         let httpRequest: URLRequest; do { httpRequest = try prepare(request: request.updating(stream: true)) } catch { return AsyncSingleErrorStream(error: error) }
         return streamManager.stream(task: session.dataTask(with: httpRequest), updateResponse: { try request.update(response: $0) }) { try complete(request: request, response: $0) }
-    }
-
-    // Used because simply mapping the value will cause a compiler error in certain situations, such as in the non-async perform method.
-    public func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<any LangToolsStreamableResponse, Error> {
-        return stream(request: request).mapAsyncThrowingStream { $0 }
     }
 
     private func perform<Response: Decodable>(request: URLRequest) async -> Result<Response, Error> {
