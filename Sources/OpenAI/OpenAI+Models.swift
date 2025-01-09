@@ -36,7 +36,7 @@ extension OpenAI {
     }
 
     public struct DeleteFineTunedModelRequest: Encodable, LangToolsRequest {
-        public typealias Response = ModelData
+        public typealias Response = DeleteFineTunedModelResponse
         public typealias LangTool = OpenAI
         public static var endpoint: String { "models" }
         public static var httpMethod: HTTPMethod { .delete }

@@ -1,0 +1,23 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "gpt-4o",
+      "object": "model",
+      "created": 1686935002,
+      "owned_by": "openai"
+    },
+    {
+      "id": "gpt-4o-vision",
+      "object": "model",
+      "created": 1686935002,
+      "owned_by": "openai"
+    },
+    {
+      "id": "ft:gpt-4o-mini:acemeco:suffix:abc123",
+      "object": "model",
+      "created": 1686935002,
+      "owned_by": "organization-owner"
+    }
+  ]
+}
