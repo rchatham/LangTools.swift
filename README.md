@@ -174,8 +174,11 @@ Contributions are welcome. Please open an issue or submit a pull request with yo
     - [ ] Allow configuration of subsequent requests after a function call
 - [x] Call LangTools functions without returning intermediate tool message to dev
     - [ ] Optionally return intermediate tool message to devs
+    - [ ] Needs more testing
 - [ ] Implement Assistants endpoint
 - [ ] Implement other api endpoints
+    - [ ] Needs more testing
+- [ ] Add docs
 
 ## License
 
