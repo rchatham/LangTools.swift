@@ -28,14 +28,11 @@ extension OpenAI {
         public let responseFormat: AudioSpeechResponseFormat?
         /// The speed of the generated audio. Select a value from **0.25** to **4.0**. **1.0** is the default.
         /// Defaults to 1
-        public let speed: String?
+        public let speed: Double?
 
         public enum CodingKeys: String, CodingKey {
-            case model
-            case input
-            case voice
+            case model, input, voice, speed
             case responseFormat = "response_format"
-            case speed
         }
 
         public init(model: Model, input: String, voice: AudioSpeechVoice, responseFormat: AudioSpeechResponseFormat = .mp3, speed: Double?) {
@@ -51,12 +48,7 @@ extension OpenAI {
         /// To get aquinted with each of the voices and listen to the samples visit:
         /// [OpenAI Text-to-Speech – Voice Options](https://platform.openai.com/docs/guides/text-to-speech/voice-options)
         public enum AudioSpeechVoice: String, Codable, CaseIterable {
-            case alloy
-            case echo
-            case fable
-            case onyx
-            case nova
-            case shimmer
+            case alloy, ash, coral, echo, fable, onyx, nova, shimmer
         }
 
         /// Encapsulates the response formats available for audio data.
@@ -67,10 +59,7 @@ extension OpenAI {
         /// -  aac
         /// -  flac
         public enum AudioSpeechResponseFormat: String, Codable, CaseIterable {
-            case mp3
-            case opus
-            case aac
-            case flac
+            case mp3, opus, aac, flac, wav, pcm
         }
     }
 }
@@ -92,13 +81,12 @@ public extension OpenAI.AudioSpeechRequest {
         case min = 0.25
     }
 
-    static func normalizeSpeechSpeed(_ inputSpeed: Double?) -> String {
-        guard let inputSpeed else { return "\(Self.Speed.normal.rawValue)" }
-        let isSpeedOutOfBounds = inputSpeed <= Self.Speed.min.rawValue || Self.Speed.max.rawValue <= inputSpeed
-        guard !isSpeedOutOfBounds else {
+    static func normalizeSpeechSpeed(_ inputSpeed: Double?) -> Double? {
+        guard let inputSpeed else { return nil }
+        guard inputSpeed >= Speed.min.rawValue && inputSpeed <= Speed.max.rawValue else {
             print("[AudioSpeech] Speed value must be between 0.25 and 4.0. Setting value to closest valid.")
-            return inputSpeed < Self.Speed.min.rawValue ? "\(Self.Speed.min.rawValue)" : "\(Self.Speed.max.rawValue)"
+            return min(max(Speed.min.rawValue, inputSpeed), Speed.max.rawValue)
         }
-        return "\(inputSpeed)"
+        return inputSpeed
     }
 }
