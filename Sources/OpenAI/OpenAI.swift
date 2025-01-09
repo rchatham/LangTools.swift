@@ -85,7 +85,7 @@ public struct OpenAIErrorResponse: Error, Codable {
 }
 
 public enum OpenAIModelType {
-    case chat, tts, stt
+    case chat, tts, stt, embedding
 }
 
 public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRepresentable {
@@ -110,7 +110,11 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public var id: String
     public var rawValue: String { id }
 
-    public var type: OpenAIModelType { id.hasPrefix("tts") ? .tts : (id.hasPrefix("whisper") ? .stt : .chat) }
+    public var type: OpenAIModelType {
+        id.hasPrefix("text") ? .embedding :
+        id.hasPrefix("tts") ? .tts :
+        id.hasPrefix("whisper") ? .stt : .chat
+    }
 
     public static let gpt35Turbo = OpenAIModel(modelID: .gpt35Turbo)
     public static let gpt35Turbo_0301 = OpenAIModel(modelID: .gpt35Turbo_0301)
@@ -128,6 +132,9 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let tts_1 = OpenAIModel(modelID: .tts_1)
     public static let tts_1_hd = OpenAIModel(modelID: .tts_1_hd)
     public static let whisper = OpenAIModel(modelID: .whisper)
+    public static let textEmbeddingAda002 = OpenAIModel(modelID: .textEmbeddingAda002)
+    public static let textEmbedding3Large = OpenAIModel(modelID: .textEmbedding3Large)
+    public static let textEmbedding3Small = OpenAIModel(modelID: .textEmbedding3Small)
 
     public enum ModelID: String, Codable, CaseIterable {
         case gpt35Turbo = "gpt-3.5-turbo"
@@ -146,6 +153,9 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         case tts_1 = "tts-1"
         case tts_1_hd = "tts-1-hd"
         case whisper = "whisper-1"
+        case textEmbeddingAda002 = "text-embedding-ada-002"
+        case textEmbedding3Large = "text-embedding-3-large"
+        case textEmbedding3Small = "text-embedding-3-small"
 
         public var openAIModel: OpenAIModel { OpenAIModel(modelID: self) }
     }

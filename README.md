@@ -159,6 +159,24 @@ let chatRequest = OpenAI.ChatCompletionRequest(
 ```
 
 ---
+### Embeddings
+
+```swift
+let request = OpenAI.EmbeddingsRequest(
+        input: .string("Your text here"),
+        model: .textEmbeddingAda002
+)
+
+// Non-streaming request
+let response = try await openAI.perform(request: request)
+
+// The response contains:
+// - response.data[0].embedding - The embedding vector
+// - response.usage.prompt_tokens - Token usage information
+// - response.model - Model used
+```
+
+---
 
 ## Contributing
 
