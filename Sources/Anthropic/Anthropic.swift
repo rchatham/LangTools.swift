@@ -56,11 +56,6 @@ public final class Anthropic: LangTools {
         do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolError.invalidData }
         return urlRequest
     }
-
-
-    public static func processStream(data: Data, completion: @escaping (Data) -> Void) {
-        String(data: data, encoding: .utf8)?.split(separator: "\n").filter{ $0.hasPrefix("data:") && !$0.contains("[DONE]") }.forEach { completion(Data(String($0.dropFirst(5)).utf8)) }
-    }
 }
 
 public struct AnthropicErrorResponse: Codable, Error {

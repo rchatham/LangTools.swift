@@ -36,10 +36,6 @@ public final class XAI: LangTools {
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
         try openAI.prepare(request: request)
     }
-    
-    public static func processStream(data: Data, completion: @escaping (Data) -> Void) {
-        OpenAI.processStream(data: data, completion: completion)
-    }
 }
 
 public struct XAIErrorResponse: Error, Codable {

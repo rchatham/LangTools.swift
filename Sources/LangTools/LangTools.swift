@@ -74,6 +74,10 @@ extension LangTools {
     private func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) throws -> Request? {
         return try (response as? any LangToolsToolCallingResponse).flatMap { try (request as? any LangToolsToolCallingRequest & LangToolsCompletableRequest)?.completion(response: $0) } as? Request
     }
+
+    public static func processStream(data: Data, completion: @escaping (Data) -> Void) {
+        String(data: data, encoding: .utf8)?.split(separator: "\n").filter{ $0.hasPrefix("data:") && !$0.contains("[DONE]") }.forEach { completion(Data(String($0.dropFirst(5)).utf8)) }
+    }
 }
 
 public class StreamSessionManager<LangTool: LangTools>: NSObject, URLSessionDataDelegate {
