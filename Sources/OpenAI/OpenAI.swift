@@ -32,8 +32,11 @@ final public class OpenAI: LangTools {
     public var requestTypes: [(any LangToolsRequest) -> Bool] {
         return [
             { ($0 as? ChatCompletionRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
-            { ($0 as? AudioSpeechRequest) != nil },
-            { ($0 as? AudioTranscriptionRequest) != nil }
+            { $0 is AudioSpeechRequest },
+            { $0 is AudioTranscriptionRequest },
+            { $0 is ListModelDataRequest },
+            { $0 is RetrieveModelRequest },
+            { $0 is DeleteFineTunedModelRequest }
         ]
     }
 

@@ -30,7 +30,7 @@ public final class Anthropic: LangTools {
 
     public var requestTypes: [(any LangToolsRequest) -> Bool] {
         return [
-            { ($0 as? MessageRequest) != nil }
+            { $0 is MessageRequest }
         ]
     }
 

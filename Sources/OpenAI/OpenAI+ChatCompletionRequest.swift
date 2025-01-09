@@ -167,6 +167,7 @@ extension OpenAI {
         }
     }
 
+    // TODO: - Add service_tier, update usage
     public struct ChatCompletionResponse: Codable, LangToolsStreamableChatResponse, LangToolsToolCallingResponse, LangToolsMultipleChoiceChatResponse {
         public typealias Delta = OpenAI.Message.Delta
         public typealias Message = OpenAI.Message
@@ -198,6 +199,7 @@ extension OpenAI {
             public let message: Message?
             public let finish_reason: FinishReason?
             public let delta: Message.Delta?
+            // TODO: - Add log probs
 
             public init(index: Int, message: Message?, finish_reason: FinishReason?, delta: Message.Delta?) {
                 self.index = index

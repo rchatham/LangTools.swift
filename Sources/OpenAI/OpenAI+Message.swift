@@ -2,6 +2,7 @@ import Foundation
 import LangTools
 
 public extension OpenAI {
+    // TODO: - Add refusal and audio
     struct Message: Codable, CustomStringConvertible, LangToolsMessage, LangToolsToolMessage {
         public typealias ToolSelection = ToolCall
         public typealias ToolResult = Content.ToolResultContent
