@@ -30,6 +30,10 @@ public struct ToolSchema<PropertySchema: LangToolsToolSchemaProperty>: LangTools
         self.properties = properties
         self.required = required
     }
+
+    enum CodingKeys: String, CodingKey {
+        case type, properties, required
+    }
 }
 
 public protocol LangToolsToolSchemaProperty: Codable {
