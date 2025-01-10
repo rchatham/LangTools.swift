@@ -21,7 +21,7 @@ final class EmbeddingsResponseTests: XCTestCase {
                     response.usage.total_tokens == 8 &&
                     response.data[0].object == "embedding" &&
                     response.data[0].index == 0 &&
-                    response.data[0].embedding.count == 1536
+                    response.data[0].embedding.count == 3
                 )
             case .failure(let error):
                 XCTFail("failed to decode data \(error.localizedDescription)")

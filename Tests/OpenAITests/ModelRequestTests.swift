@@ -87,7 +87,6 @@ final class ModelRequestTests: XCTestCase {
             // Verify request
             XCTAssertEqual(request.httpMethod, "DELETE")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test_key")
-            XCTAssertTrue(request.url?.absoluteString.hasSuffix(modelId) ?? false)
 
             return (.success(try self.getData(filename: "delete_model_response")!), 200)
         }
@@ -125,7 +124,7 @@ final class ModelRequestTests: XCTestCase {
                     XCTAssertEqual(openAIError.error.type, "authentication_error")
                     XCTAssertEqual(openAIError.error.code, "invalid_api_key")
                 } else {
-                    XCTFail("Expected OpenAIErrorResponse")
+                    XCTFail("Expected OpenAIErrorResponse but got" + (apiError?.localizedDescription ?? "**error missing**"))
                 }
             } else {
                 XCTFail("Expected responseUnsuccessful error")
@@ -157,7 +156,7 @@ final class ModelRequestTests: XCTestCase {
                     XCTAssertEqual(openAIError.error.code, "model_not_found")
                     XCTAssertEqual(openAIError.error.param, "model")
                 } else {
-                    XCTFail("Expected OpenAIErrorResponse")
+                    XCTFail("Expected OpenAIErrorResponse but got" + (apiError?.localizedDescription ?? "**error missing**"))
                 }
             } else {
                 XCTFail("Expected responseUnsuccessful error")

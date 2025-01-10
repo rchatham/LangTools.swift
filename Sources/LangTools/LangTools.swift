@@ -134,9 +134,9 @@ public enum LangToolError: Error {
 
 public extension LangTools {
     static func decode<Response: Decodable>(completion: @escaping (Result<Response, Error>) -> Void) -> (Data) -> Void { return { completion(decode(data: $0)) }}
-    static func decode<Response: Decodable>(data: Data) -> Result<Response, Error> { let d = JSONDecoder(); do { return .success(try decodeResponse(data: data, decoder: d)) } catch { return .failure(error as! LangToolError) }}
-    static func decodeResponse<Response: Decodable>(data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> Response { do { return try decoder.decode(Response.self, from: data) } catch { throw decodeError(data: data, decoder: decoder) ?? .jsonParsingFailure(error) }}
-    static func decodeError(data: Data, decoder: JSONDecoder = JSONDecoder()) -> LangToolError? { return (try? decoder.decode(ErrorResponse.self, from: data)).flatMap { .apiError($0) }}
+    static func decode<Response: Decodable>(data: Data) -> Result<Response, Error> { let d = JSONDecoder(); do { return .success(try decodeResponse(data: data, decoder: d)) } catch { return .failure(error) }}
+    static func decodeResponse<Response: Decodable>(data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> Response { do { return try decoder.decode(Response.self, from: data) } catch { throw decodeError(data: data, decoder: decoder) ?? LangToolError.jsonParsingFailure(error) }}
+    static func decodeError(data: Data, decoder: JSONDecoder = JSONDecoder()) -> ErrorResponse? { return (try? decoder.decode(ErrorResponse.self, from: data)) }
 }
 
 // MARK: - Utilities
