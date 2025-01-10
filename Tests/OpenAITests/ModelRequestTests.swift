@@ -60,7 +60,7 @@ final class ModelRequestTests: XCTestCase {
 
     func testRetrieveModelRequest() async throws {
         let modelId = "gpt-4o"
-        MockURLProtocol.mockNetworkHandlers[OpenAI.RetrieveModelRequest.endpoint] = { request in
+        MockURLProtocol.mockNetworkHandlers[OpenAI.RetrieveModelRequest.endpoint + "/" + modelId] = { request in
             // Verify request
             XCTAssertEqual(request.httpMethod, "GET")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test_key")
@@ -69,7 +69,7 @@ final class ModelRequestTests: XCTestCase {
             return (.success(try self.getData(filename: "retrieve_model_response")!), 200)
         }
 
-        let response = try await api.perform(request: OpenAI.RetrieveModelRequest(model: modelId))
+        let response = try await api.perform(request: OpenAI.RetrieveModelRequest(id: modelId))
 
         // Verify response
         XCTAssertEqual(response.id, "gpt-4o")
@@ -91,8 +91,7 @@ final class ModelRequestTests: XCTestCase {
             return (.success(try self.getData(filename: "delete_model_response")!), 200)
         }
 
-        let response = try await api.perform(
-            request: OpenAI.DeleteFineTunedModelRequest(model: modelId))
+        let response = try await api.perform(request: OpenAI.DeleteFineTunedModelRequest(id: modelId))
 
         // Verify response
         XCTAssertEqual(response.id, modelId)
@@ -133,7 +132,8 @@ final class ModelRequestTests: XCTestCase {
     }
 
     func testModelNotFoundError() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.RetrieveModelRequest.endpoint] = { _ in
+        let modelId = "nonexistent-model"
+        MockURLProtocol.mockNetworkHandlers[OpenAI.RetrieveModelRequest.endpoint + "/" + modelId] = { _ in
             let errorResponse = OpenAIErrorResponse(
                 error: .init(
                     message: "The model 'nonexistent-model' does not exist",
@@ -146,7 +146,7 @@ final class ModelRequestTests: XCTestCase {
 
         do {
             _ = try await api.perform(
-                request: OpenAI.RetrieveModelRequest(model: "nonexistent-model"))
+                request: OpenAI.RetrieveModelRequest(id: modelId))
             XCTFail("Expected error to be thrown")
         } catch let error as LangToolError {
             if case .responseUnsuccessful(let code, _, let apiError) = error {

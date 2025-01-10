@@ -56,7 +56,15 @@ final public class OpenAI: LangTools {
     public func prepare<Request: LangToolsRequest>(request: Request) throws -> URLRequest {
         var url = configuration.baseURL.appending(path: request.endpoint)
         if Request.httpMethod == .get {
-            url = url.appending(queryItems: Mirror(reflecting: request).children.compactMap { if let label = $0.label { URLQueryItem(name: label, value: String(describing: $0.value)) } else { nil }})
+            if let id = (request as? any Identifiable)?.id as? String {
+                url = url.appending(path: id)
+            }
+            let queryItems = Mirror(reflecting: request).children
+                .filter { $0.label != nil && $0.label != "id" }
+                .map { URLQueryItem(name: $0.label!, value: String(describing: $0.value))}
+            if !queryItems.isEmpty {
+                url = url.appending(queryItems: queryItems)
+            }
         }
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = Request.httpMethod.rawValue
