@@ -10,8 +10,8 @@ import CoreData
 // MessageComposerView
 struct MessageComposerView: View {
     @ObservedObject var viewModel: ViewModel
-    @FocusState private var promptTextFieldIsActive
-    
+    @FocusState private var promptTextFieldIsActive: Bool
+
     var body: some View {
         HStack {
             TextField("Enter your prompt", text: $viewModel.input, axis: .vertical)
@@ -20,16 +20,15 @@ struct MessageComposerView: View {
                 .foregroundColor(.primary)
                 .lineLimit(5)
                 .multilineTextAlignment(.leading)
-                .focused($promptTextFieldIsActive)
                 .submitLabel(.done)
                 .onSubmit(submitButtonTapped)
+                .focused($promptTextFieldIsActive)
             Button(action: submitButtonTapped) {
                 Text("Submit")
                     .padding(EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 20))
                     .foregroundColor(.accentColor)
             }
         }
-//        .defaultFocus($promptTextFieldIsActive, true, priority: .automatic)
         .alert(isPresented: $viewModel.showAlert, content: {
             Alert(title: Text("Error"), message: Text(viewModel.errorMessage), dismissButton: .default(Text("OK")))
         })
@@ -69,9 +68,6 @@ extension MessageComposerView {
                     print("cannot handle request, probably a missing api key: \(error.localizedDescription)")
                     self.enterApiKey = true
                 }
-//                catch let error as NetworkClient.NetworkError.missingApiKey {
-//                    self.enterApiKey = true
-//                }
                 catch {
                     print("Error sending message completion request: \(error)")
                     self.errorMessage = error.localizedDescription

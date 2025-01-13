@@ -20,10 +20,11 @@ class AudioPlayer {
             // Create audio player from data
             audioPlayer = try AVAudioPlayer(data: data)
 
+#if os(iOS)
             // Configure audio session
             try AVAudioSession.sharedInstance().setCategory(.playback)
             try AVAudioSession.sharedInstance().setActive(true)
-
+#endif
             guard let player = audioPlayer else {
                 throw AudioPlayerError.playerNotReady
             }

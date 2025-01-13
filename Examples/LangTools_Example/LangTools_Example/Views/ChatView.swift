@@ -9,7 +9,6 @@ import CoreData
 
 struct ChatView: View {
     @ObservedObject var viewModel: ViewModel
-    @FocusState private var promptTextFieldIsActive: Bool
 
     init(viewModel: ViewModel) {
         self.viewModel = viewModel
