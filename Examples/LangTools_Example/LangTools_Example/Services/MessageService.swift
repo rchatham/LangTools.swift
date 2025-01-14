@@ -102,15 +102,15 @@ class MessageService {
 
         let toolChoice = (tools?.isEmpty ?? true) ? nil : OpenAI.ChatCompletionRequest.ToolChoice.auto
         let uuid = UUID(); var content: String = ""
-        for try await message in try networkClient.streamChatCompletionRequest(messages: messages, stream: stream, tools: tools, toolChoice: toolChoice) {
+        for try await chunk in try networkClient.streamChatCompletionRequest(messages: messages, stream: stream, tools: tools, toolChoice: toolChoice) {
 
             guard let last = messages.last else { continue }
 
-            content += message
+            content += chunk
             let message = Message(uuid: uuid, text: content.trimingTrailingNewlines(), role: .assistant)
 
             await MainActor.run {
-                if let last = messages.last, last.uuid == uuid {
+                if last.uuid == uuid {
                     messages[messages.count - 1] = message
                 } else {
                     messages.append(message)
@@ -118,8 +118,10 @@ class MessageService {
             }
         }
 
-        if let lastmsg = messages.last?.text {
-            try await networkClient.playAudio(for: lastmsg)
+        if messages.last?.uuid == uuid, let text = messages.last?.text {
+            Task {
+                try await networkClient.playAudio(for: text)
+            }
         }
     }
 
