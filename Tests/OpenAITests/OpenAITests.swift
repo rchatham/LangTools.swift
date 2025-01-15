@@ -46,7 +46,7 @@ class OpenAITests: XCTestCase {
                 usage: .init(prompt_tokens: 50, completion_tokens: 50, total_tokens: 100), choose: {_ in 0}).streamData()), 200)
         }
         var results: [OpenAI.ChatCompletionResponse] = []
-        for try await response in api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt4Turbo, messages: [.init(role: .user, content: "Hi")], stream: true)) {
+        for try await response in try api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt4Turbo, messages: [.init(role: .user, content: "Hi")], stream: true)) {
             results.append(response)
         }
         let content = results.reduce("") { $0 + ($1.choices[0].delta?.content ?? "") }
@@ -59,7 +59,7 @@ class OpenAITests: XCTestCase {
             return (.success(try self.getData(filename: "assistant_response_stream", fileExtension: "txt")!), 200)
         }
         var results: [OpenAI.ChatCompletionResponse] = []
-        for try await response in api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt4Turbo, messages: [.init(role: .user, content: "Hi")], stream: true)) {
+        for try await response in try api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt4Turbo, messages: [.init(role: .user, content: "Hi")], stream: true)) {
             results.append(response)
         }
         let content = results.reduce("") { $0 + ($1.choices[0].delta?.content ?? "") }
@@ -74,7 +74,7 @@ class OpenAITests: XCTestCase {
         }
         let request = OpenAI.ChatCompletionRequest(model: .gpt4Turbo, messages: [.init(role: .user, content: "Hi")], stream: true)
         var results: [OpenAI.ChatCompletionResponse] = []
-        for try await response in api.stream(request: request) {
+        for try await response in try api.stream(request: request) {
             results.append(response)
         }
         XCTAssertEqual(results[0].choices[0].delta?.role, .assistant)
@@ -110,7 +110,7 @@ class OpenAITests: XCTestCase {
             }))]
         let request = OpenAI.ChatCompletionRequest(model: .gpt4Turbo, messages: [.init(role: .user, content: "Hi")], stream: true, tools: tools)
         var results: [OpenAI.ChatCompletionResponse] = []
-        for try await response in api.stream(request: request) {
+        for try await response in try api.stream(request: request) {
             results.append(response)
         }
         XCTAssertEqual(results[0].choices[0].delta?.role, .assistant)

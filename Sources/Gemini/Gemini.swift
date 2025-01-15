@@ -19,8 +19,7 @@ public final class Gemini: LangTools {
         ]
     }
 
-    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: streamManager, delegateQueue: nil)
-    public let streamManager = StreamSessionManager<Gemini>()
+    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
 
     let openAI: OpenAI
 
@@ -29,7 +28,7 @@ public final class Gemini: LangTools {
     }
 
     internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
-        session = URLSession(configuration: testURLSessionConfiguration, delegate: streamManager, delegateQueue: nil)
+        session = URLSession(configuration: testURLSessionConfiguration, delegate: nil, delegateQueue: nil)
         return self
     }
 

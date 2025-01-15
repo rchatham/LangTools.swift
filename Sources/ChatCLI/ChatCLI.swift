@@ -103,7 +103,7 @@ struct ChatCLI {
         let toolChoice = (messageService.tools?.isEmpty ?? true) ? nil : OpenAI.ChatCompletionRequest.ToolChoice.auto
         print("\rAssistant: ".yellow, terminator: "")
         let uuid = UUID(); var content: String = ""
-        let stream = try streamChatCompletionRequest(
+        let stream = try await streamChatCompletionRequest(
             messages: messageService.messages,
             stream: stream,
             tools: messageService.tools,

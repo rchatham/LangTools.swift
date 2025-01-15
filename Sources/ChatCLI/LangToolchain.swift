@@ -28,7 +28,7 @@ struct LangToolchain {
 
     public func stream<Request: LangToolsStreamableRequest>(request: Request) throws -> AsyncThrowingStream<any LangToolsStreamableResponse, Error> {
         for langTool in langTools.values where langTool.canHandleRequest(request) {
-            return langTool.stream(request: request).mapAsyncThrowingStream { $0 }
+            return try langTool.stream(request: request).mapAsyncThrowingStream { $0 }
         }
         throw LangToolchainError.toolchainCannotHandleRequest
     }

@@ -102,7 +102,7 @@ class MessageService {
 
         let toolChoice = (tools?.isEmpty ?? true) ? nil : OpenAI.ChatCompletionRequest.ToolChoice.auto
         let uuid = UUID(); var content: String = ""
-        for try await chunk in try networkClient.streamChatCompletionRequest(messages: messages, stream: stream, tools: tools, toolChoice: toolChoice) {
+        for try await chunk in try await networkClient.streamChatCompletionRequest(messages: messages, stream: stream, tools: tools, toolChoice: toolChoice) {
 
             guard let last = messages.last else { continue }
 

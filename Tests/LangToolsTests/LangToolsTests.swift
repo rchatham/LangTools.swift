@@ -34,7 +34,7 @@ final class LangToolsTests: XCTestCase {
             return (.success(try MockResponse.success.streamData()), 200)
         }
         var results: [MockResponse] = []
-        for try await response in api.stream(request: MockRequest(stream: true)) {
+        for try await response in try api.stream(request: MockRequest(stream: true)) {
             results.append(response)
         }
         let content = results.reduce("") { $0 + ($1.status) }

@@ -13,12 +13,8 @@ struct MockLangTool: LangTools {
     typealias ErrorResponse = MockErrorResponse
     var requestTypes: [(any LangToolsRequest) -> Bool]
     var session: URLSession
-    var streamManager: StreamSessionManager<MockLangTool>
     func prepare(request: some LangToolsRequest) throws -> URLRequest {
         return URLRequest(url: URL(string: "http://localhost:8080/v1/")!)
-    }
-    static func processStream(data: Data, completion: @escaping (Data) -> Void) {
-        completion(data)
     }
 }
 
