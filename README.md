@@ -63,7 +63,7 @@ let chatRequest = Anthropic.MessageRequest(
 let response = try await langToolsClient.perform(request: request)
 
 // Streaming - returns message as streamed or not depending on request config
-for try await response in try langToolsClient.stream(request: request) {
+for try await response in langToolsClient.stream(request: request) {
     
     // handle non-streaming messages
     if let message = response.message {

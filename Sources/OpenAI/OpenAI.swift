@@ -26,8 +26,7 @@ final public class OpenAI: LangTools {
         }
     }
 
-    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: streamManager, delegateQueue: nil)
-    public private(set) lazy var streamManager: StreamSessionManager = StreamSessionManager<OpenAI>()
+    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
 
     public var requestTypes: [(any LangToolsRequest) -> Bool] {
         return [
@@ -49,7 +48,7 @@ final public class OpenAI: LangTools {
     }
 
     internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
-        session = URLSession(configuration: testURLSessionConfiguration, delegate: streamManager, delegateQueue: nil)
+        session = URLSession(configuration: testURLSessionConfiguration, delegate: nil, delegateQueue: nil)
         return self
     }
 
