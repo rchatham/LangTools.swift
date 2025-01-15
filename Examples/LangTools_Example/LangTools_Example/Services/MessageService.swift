@@ -82,7 +82,7 @@ class MessageService {
             case .invalidData: print("error: invalid data")
             case .invalidURL: print("error: invalid url")
             case .requestFailed(let error): print("error: request failed with error: \(error?.localizedDescription ?? "no error")")
-            case .responseUnsuccessful(statusCode: let code, status: let status, let error): print("error: unsuccessful status code: \(code), message: \(status) - \(error?.localizedDescription ?? "no error description")")
+            case .responseUnsuccessful(statusCode: let code, let error): print("error: unsuccessful status code: \(code), message: \(error?.localizedDescription ?? "no error description")")
             case .streamParsingFailure: print("error: stream parsing failure")
             }
         }

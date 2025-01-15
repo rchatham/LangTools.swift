@@ -59,7 +59,7 @@ extension LangTools {
     private func perform<Response: Decodable>(request: URLRequest) async throws -> Response {
         let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { throw LangToolError.requestFailed(nil) }
-        guard httpResponse.statusCode == 200 else { throw LangToolError.responseUnsuccessful(statusCode: httpResponse.statusCode, status: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode), Self.decodeError(data: data)) }
+        guard httpResponse.statusCode == 200 else { throw LangToolError.responseUnsuccessful(statusCode: httpResponse.statusCode, Self.decodeError(data: data)) }
         return Response.self == Data.self ? data as! Response : try Self.decodeResponse(data: data)
     }
 
@@ -126,7 +126,7 @@ public enum LangToolError: Error {
     case invalidData, streamParsingFailure, invalidURL
     case requestFailed(Error?)
     case jsonParsingFailure(Error)
-    case responseUnsuccessful(statusCode: Int, status: String, Error?)
+    case responseUnsuccessful(statusCode: Int, Error?)
     case apiError(Codable & Error)
 }
 
