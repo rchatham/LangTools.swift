@@ -65,10 +65,13 @@ final public class OpenAI: LangTools {
                 url = url.appending(queryItems: queryItems)
             }
         }
+
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = Request.httpMethod.rawValue
         urlRequest.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
         if Request.httpMethod == .get { return urlRequest }
+
         if let request = (request as? MultipartFormDataEncodableRequest) {
             urlRequest.addValue("multipart/form-data", forHTTPHeaderField: "Content-Type")
             urlRequest.httpBody = request.httpBody
@@ -76,6 +79,7 @@ final public class OpenAI: LangTools {
             urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
             do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolError.invalidData }
         }
+
         return urlRequest
     }
 }

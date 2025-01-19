@@ -1,8 +1,8 @@
 //
 //  Ollama.swift
-//  Ollama
+//  LangTools
 //
-//  Created by Reid Chatham on 1/6/25.
+//  Created by Claude on 1/18/25.
 //
 
 import Foundation
@@ -13,33 +13,79 @@ public final class Ollama: LangTools {
     public typealias Model = OllamaModel
     public typealias ErrorResponse = OllamaErrorResponse
 
+    private var configuration: OllamaConfiguration
+
+    public struct OllamaConfiguration {
+        public var baseURL: URL
+
+        public init(baseURL: URL = URL(string: "http://localhost:11434")!) {
+            self.baseURL = baseURL
+        }
+    }
+
+    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
+
     public var requestTypes: [(any LangToolsRequest) -> Bool] {
-        [
-            { ($0 as? OpenAI.ChatCompletionRequest).flatMap { OpenAIModel.ollamaModels.contains($0.model) } ?? false },
+        return [
+            { ($0 as? ListModelsRequest) != nil },
+            { ($0 as? ListRunningModelsRequest) != nil },
+            { ($0 as? ShowModelRequest) != nil },
+            { ($0 as? DeleteModelRequest) != nil },
+            { ($0 as? CopyModelRequest) != nil },
+            { ($0 as? PullModelRequest) != nil },
+            { ($0 as? PushModelRequest) != nil },
+            { ($0 as? CreateModelRequest) != nil }
         ]
     }
 
-    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: streamManager, delegateQueue: nil)
-    public let streamManager = StreamSessionManager<Ollama>()
-
-    let openAI: OpenAI
-
     public init(baseURL: URL = URL(string: "http://localhost:11434")!) {
-        openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: "ollama"))
+        configuration = OllamaConfiguration(baseURL: baseURL)
+    }
+
+    public init(configuration: OllamaConfiguration) {
+        self.configuration = configuration
     }
 
     internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
-        session = URLSession(configuration: testURLSessionConfiguration, delegate: streamManager, delegateQueue: nil)
+        session = URLSession(configuration: testURLSessionConfiguration, delegate: nil, delegateQueue: nil)
         return self
     }
 
-    public func prepare(request: some LangToolsRequest) throws -> URLRequest {
-        try openAI.prepare(request: request)
+    public func prepare<Request: LangToolsRequest>(request: Request) throws -> URLRequest {
+        var url = configuration.baseURL.appending(path: request.endpoint)
+        if Request.httpMethod == .get {
+            if let id = (request as? any Identifiable)?.id as? String {
+                url = url.appending(path: id)
+            }
+            let queryItems = Mirror(reflecting: request).children
+                .filter { $0.label != nil && $0.label != "id" }
+                .map { URLQueryItem(name: $0.label!, value: String(describing: $0.value))}
+            if !queryItems.isEmpty {
+                url = url.appending(queryItems: queryItems)
+            }
+        }
+
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = Request.httpMethod.rawValue
+
+        if Request.httpMethod == .get { return urlRequest }
+
+        urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        do { urlRequest.httpBody = try JSONEncoder().encode(request) }
+        catch { throw LangToolError.invalidData }
+
+        return urlRequest
     }
 
-    public static func processStream(data: Data, completion: @escaping (Data) -> Void) {
-        OpenAI.processStream(data: data, completion: completion)
+    public static func decodeStream<T: Decodable>(_ line: String) throws -> T? {
+        return try line.data(using: .utf8).map { try Self.decodeResponse(data: $0) }
     }
+
+//    public static func processStream(data: Data, completion: @escaping (Data) -> Void) {
+//        String(data: data, encoding: .utf8)?.split(separator: "\n")
+//            .filter{ !$0.isEmpty }
+//            .forEach { completion(Data($0.utf8)) }
+//    }
 }
 
 public struct OllamaErrorResponse: Error, Codable {
@@ -48,190 +94,91 @@ public struct OllamaErrorResponse: Error, Codable {
     public struct APIError: Error, Codable {
         public let message: String
         public let type: String
-        public let param: String?
-        public let code: String?
     }
 }
 
-public struct OllamaModel: Codable, CaseIterable, Equatable, Identifiable, RawRepresentable {
+public struct OllamaModel: RawRepresentable, Codable, Hashable, CaseIterable {
 
-    public static var allCases: [OllamaModel] = []
+    static public var allCases: [OllamaModel] = []
 
-    public init?(rawValue: String) {
-        guard let id = ModelID(rawValue: rawValue) else { return nil }
-        self = Self.init(modelID: id)
+    public let rawValue: String
+
+    public init(rawValue: String) {
+        self.rawValue = rawValue
     }
-
-    public init(modelID: ModelID) {
-        id = modelID
-        if !Self.allCases.contains(self) {
-            Self.allCases.append(self)
-        }
-    }
-
-    public var id: ModelID
-    public var rawValue: String { id.rawValue }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        id = ModelID(stringLiteral: try container.decode(String.self))
+        rawValue = try container.decode(String.self)
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
-        try container.encode(id)
+        try container.encode(rawValue)
     }
 
-    public static func ==(_ lhs: OllamaModel, _ rhs: OllamaModel) -> Bool {
-        return lhs.id == rhs.id
-    }
-
-    var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
-
-    public struct ModelID: Hashable, Equatable, Comparable, RawRepresentable, CustomStringConvertible, ExpressibleByStringLiteral, ExpressibleByStringInterpolation, Codable {
-        /// The optional namespace of the model.
-        /// Namespaces are used to organize models, often representing the creator or organization.
-        public let namespace: String?
-
-        /// The name of the model.
-        /// This is the primary identifier for the model.
-        public let model: String
-
-        /// The optional tag (version) of the model.
-        /// Tags are used to specify different versions or variations of the same model.
-        public let tag: String?
-
-        /// The raw string representation of the model identifier.
-        public typealias RawValue = String
-
-        // MARK: Equatable & Comparable
-
-        /// Compares two `ModelID` instances for equality.
-        /// The comparison is case-insensitive.
-        public static func == (lhs: ModelID, rhs: ModelID) -> Bool {
-            return lhs.rawValue.caseInsensitiveCompare(rhs.rawValue) == .orderedSame
-        }
-
-        /// Compares two `ModelID` instances for ordering.
-        /// The comparison is case-insensitive.
-        public static func < (lhs: ModelID, rhs: ModelID) -> Bool {
-            return lhs.rawValue.caseInsensitiveCompare(rhs.rawValue) == .orderedAscending
-        }
-
-        // MARK: RawRepresentable
-
-        /// Initializes a `ModelID` from a raw string value.
-        /// The raw value should be in the format `"[namespace/]model[:tag]"`.
-        public init?(rawValue: RawValue) {
-            let components = rawValue.split(separator: "/", maxSplits: 1)
-
-            if components.count == 2 {
-                self.namespace = String(components[0])
-                let modelAndTag = components[1].split(separator: ":", maxSplits: 1)
-                self.model = String(modelAndTag[0])
-                self.tag = modelAndTag.count > 1 ? String(modelAndTag[1]) : nil
-            } else {
-                self.namespace = nil
-                let modelAndTag = rawValue.split(separator: ":", maxSplits: 1)
-                self.model = String(modelAndTag[0])
-                self.tag = modelAndTag.count > 1 ? String(modelAndTag[1]) : nil
-            }
-        }
-
-        /// Returns the raw string representation of the `ModelID`.
-        public var rawValue: String {
-            let namespaceString = namespace.map { "\($0)/" } ?? ""
-            let tagString = tag.map { ":\($0)" } ?? ""
-            return "\(namespaceString)\(model)\(tagString)"
-        }
-
-        // MARK: CustomStringConvertible
-
-        /// A textual representation of the `ModelID`.
-        public var description: String {
-            return rawValue
-        }
-
-        // MARK: ExpressibleByStringLiteral
-
-        /// Initializes a `ModelID` from a string literal.
-        public init(stringLiteral value: StringLiteralType) {
-            self.init(rawValue: value)!
-        }
-
-        // MARK: ExpressibleByStringInterpolation
-
-        /// Initializes a `ModelID` from a string interpolation.
-        public init(stringInterpolation: DefaultStringInterpolation) {
-            self.init(rawValue: stringInterpolation.description)!
-        }
-
-        // MARK: Codable
-
-        /// Decodes a `ModelID` from a single string value.
-        public init(from decoder: Decoder) throws {
-            let container = try decoder.singleValueContainer()
-            let rawValue = try container.decode(String.self)
-            guard let identifier = Self.init(rawValue: rawValue) else {
-                throw DecodingError.dataCorruptedError( in: container, debugDescription: "Invalid Identifier string: \(rawValue)")
-            }
-            self = identifier
-        }
-
-        /// Encodes the `ModelID` as a single string value.
-        public func encode(to encoder: Encoder) throws {
-            var container = encoder.singleValueContainer()
-            try container.encode(rawValue)
-        }
-
-        // MARK: Pattern Matching
-
-        /// Defines the pattern matching operator for `ID`.
-        /// This allows for partial matching based on namespace, model name, and tag.
-        public static func ~= (pattern: Self, value: Self) -> Bool {
-            if let patternNamespace = pattern.namespace, patternNamespace != value.namespace {
-                return false
-            }
-            if pattern.model != value.model {
-                return false
-            }
-            if let patternTag = pattern.tag, patternTag != value.tag {
-                return false
-            }
-            return true
-        }
-    }
-
-    // MARK: -
-
-    /// Represents additional information about a model.
-    public struct Details: Hashable, Decodable {
-        /// The format of the model file (e.g., "gguf").
-        public let format: String
-
-        /// The primary family or architecture of the model (e.g., "llama").
-        public let family: String
-
-        /// Additional families or architectures the model belongs to, if any.
+    public struct Details: Codable {
+        public let format: String?
+        public let family: String?
         public let families: [String]?
+        public let parameterSize: String?
+        public let quantizationLevel: String?
 
-        /// The parameter size of the model (e.g., "7B", "13B").
-        public let parameterSize: String
-
-        /// The quantization level of the model (e.g., "Q4_0").
-        public let quantizationLevel: String
-
-        /// The parent model, if this model is derived from another.
-        public let parentModel: String?
-
-        /// Coding keys for mapping JSON keys to struct properties.
         enum CodingKeys: String, CodingKey {
-            case format, family, families
+            case format
+            case family
+            case families
             case parameterSize = "parameter_size"
             case quantizationLevel = "quantization_level"
-            case parentModel = "parent_model"
         }
     }
+}
+
+// Helper Types
+public enum Value: Codable {
+    case string(String)
+    case bool(Bool)
+    case int(Int)
+    case double(Double)
+    case null
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let str = try? container.decode(String.self) {
+            self = .string(str)
+        } else if let bool = try? container.decode(Bool.self) {
+            self = .bool(bool)
+        } else if let int = try? container.decode(Int.self) {
+            self = .int(int)
+        } else if let double = try? container.decode(Double.self) {
+            self = .double(double)
+        } else if container.decodeNil() {
+            self = .null
+        } else {
+            throw DecodingError.typeMismatch(Value.self, DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Invalid value type"))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let str): try container.encode(str)
+        case .bool(let bool): try container.encode(bool)
+        case .int(let int): try container.encode(int)
+        case .double(let double): try container.encode(double)
+        case .null: try container.encodeNil()
+        }
+    }
+
+    var string: String? { if case .string(let val) = self { val } else { nil }}
+    var integer: Int? { if case .int(let val) = self { val } else { nil }}
+    var bool: Bool? { if case .bool(let val) = self { val } else { nil }}
+    var double: Double? { if case .double(let val) = self { val } else { nil }}
+    var isNull: Bool { if case .null = self { true } else { false }}
+}
+
+extension OllamaModel {
+    var openAIModel: OpenAIModel { .init(customModelID: rawValue) }
 }
 
 extension OpenAIModel {

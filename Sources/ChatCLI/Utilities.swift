@@ -19,19 +19,4 @@ extension AsyncThrowingStream {
         var iterator = self.makeAsyncIterator()
         return AsyncThrowingStream<T, Error>(unfolding: { try await iterator.next().flatMap { map($0) } })
     }
-
-    func compactMapAsyncThrowingStream<T>(_ compactMap: @escaping (Element) -> T?) -> AsyncThrowingStream<T, Error> {
-        return AsyncThrowingStream<T, Error> { continuation in
-            Task {
-                do {
-                    for try await value in self {
-                        if let mapped = compactMap(value) {
-                            continuation.yield(mapped)
-                        }
-                    }
-                } catch { continuation.finish(throwing: error) }
-                continuation.finish()
-            }
-        }
-    }
 }

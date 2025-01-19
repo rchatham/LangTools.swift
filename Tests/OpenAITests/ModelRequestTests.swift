@@ -36,7 +36,7 @@ final class ModelRequestTests: XCTestCase {
             XCTAssertEqual(request.httpMethod, "GET")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test_key")
 
-            return (.success(try self.getData(filename: "list_models_response")!), 200)
+            return (.success(try self.getData(filename: "list_models_response-openai")!), 200)
         }
 
         let response = try await api.perform(request: OpenAI.ListModelDataRequest())
@@ -88,7 +88,7 @@ final class ModelRequestTests: XCTestCase {
             XCTAssertEqual(request.httpMethod, "DELETE")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test_key")
 
-            return (.success(try self.getData(filename: "delete_model_response")!), 200)
+            return (.success(try self.getData(filename: "delete_model_response-openai")!), 200)
         }
 
         let response = try await api.perform(request: OpenAI.DeleteFineTunedModelRequest(id: modelId))
