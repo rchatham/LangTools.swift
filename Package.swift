@@ -27,7 +27,7 @@ let package = Package(
         .target(name: "XAI", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ]),
         .target(name: "Gemini", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ]),
         .target(name: "Ollama", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ]),
-        .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], resources: [.process("Resources/")]),
+        .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], path: "Tests/TestUtils", resources: [.process("Resources/")]),
 
         // Test targets
         .testTarget(name: "LangToolsTests", dependencies: ["LangTools", "OpenAI", "TestUtils"]),
