@@ -79,8 +79,8 @@ class MessageService: ObservableObject {
             print("Invalid URL configuration")
         case .requestFailed(let error):
             print("Request failed: \(error?.localizedDescription ?? "Unknown error")")
-        case .responseUnsuccessful(let code, let status, let error):
-            print("API response unsuccessful (Status \(code)): \(status) - \(error?.localizedDescription ?? "No additional info")")
+        case .responseUnsuccessful(let code, let error):
+            print("API response unsuccessful status code: \(code), message: \(error?.localizedDescription ?? "No additional info")")
         case .streamParsingFailure:
             print("Failed to parse streaming response")
         }

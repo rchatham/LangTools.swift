@@ -63,7 +63,7 @@ let chatRequest = Anthropic.MessageRequest(
 let response = try await langToolsClient.perform(request: request)
 
 // Streaming - returns message as streamed or not depending on request config
-for try await response in try langToolsClient.stream(request: request) {
+for try await response in langToolsClient.stream(request: request) {
     
     // handle non-streaming messages
     if let message = response.message {
@@ -159,6 +159,24 @@ let chatRequest = OpenAI.ChatCompletionRequest(
 ```
 
 ---
+### Embeddings
+
+```swift
+let request = OpenAI.EmbeddingsRequest(
+        input: .string("Your text here"),
+        model: .textEmbeddingAda002
+)
+
+// Non-streaming request
+let response = try await openAI.perform(request: request)
+
+// The response contains:
+// - response.data[0].embedding - The embedding vector
+// - response.usage.prompt_tokens - Token usage information
+// - response.model - Model used
+```
+
+---
 
 ## Contributing
 
@@ -174,8 +192,11 @@ Contributions are welcome. Please open an issue or submit a pull request with yo
     - [ ] Allow configuration of subsequent requests after a function call
 - [x] Call LangTools functions without returning intermediate tool message to dev
     - [ ] Optionally return intermediate tool message to devs
+    - [ ] Needs more testing
 - [ ] Implement Assistants endpoint
 - [ ] Implement other api endpoints
+    - [ ] Needs more testing
+- [ ] Add docs
 
 ## License
 

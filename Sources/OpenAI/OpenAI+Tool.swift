@@ -66,6 +66,10 @@ public extension OpenAI {
                     self.required = required
                 }
 
+                enum CodingKeys: String, CodingKey {
+                    case type, properties, required
+                }
+
                 public struct Property: Codable, LangToolsToolSchemaProperty {
                     public var type: String
                     public var enumValues: [String]?
@@ -75,6 +79,7 @@ public extension OpenAI {
                         self.enumValues = enumValues
                         self.description = description
                     }
+
                     enum CodingKeys: String, CodingKey {
                         case type, description
                         case enumValues = "enum"

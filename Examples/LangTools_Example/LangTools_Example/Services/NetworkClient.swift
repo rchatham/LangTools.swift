@@ -34,12 +34,8 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         return Message(text: text, role: .assistant)
     }
 
-    func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<Message, Error> {
-        let uuid = UUID(); var content: String?
-        return try langToolchain.stream(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { response in
-            content ?= response.content.flatMap { (content ?? "") + $0.text } ?? content
-            return content.flatMap { Message(uuid: uuid, text: $0.trimingTrailingNewlines(), role: .assistant) }
-        }
+    func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<String, Error> {
+        return try langToolchain.stream(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { $0.content?.text }
     }
 
     func playAudio(for text: String) async throws {

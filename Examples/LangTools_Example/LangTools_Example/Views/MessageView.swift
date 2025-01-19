@@ -18,7 +18,7 @@ struct MessageView: View {
                     .font(.system(size: 18)) // Adjust the font size if necessary
                     .foregroundColor(message.isUser ? (colorScheme == .dark ? .white : .black) : .white)
                     .padding(10) // Add padding around the text
-                    .background(message.isUser ? (colorScheme == .dark ? Color.gray.opacity(0.5) : Color.gray.opacity(0.2)) : Color.blue) // Set background color for message bubble
+                    .background(message.isUser ? (colorScheme == .dark ? Color.gray.opacity(0.5) : .gray.opacity(0.2)) : .blue) // Set background color for message bubble
                     .cornerRadius(10) // Add rounded corners to the message bubble
             }
             if message.isAssistant { Spacer()}

@@ -13,7 +13,6 @@ enum LangToolchainError: String, Error {
 }
 
 struct LangToolchain {
-
     public mutating func register<LangTool: LangTools>(_ langTool: LangTool) {
         self.langTools[String(describing: LangTool.self)] = langTool
     }
@@ -21,12 +20,16 @@ struct LangToolchain {
     private var langTools: [String:(any LangTools)] = [:]
 
     public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response {
-        guard let langTool = langTools.values.first(where: { $0.canHandleRequest(request) }) else { throw LangToolchainError.toolchainCannotHandleRequest }
-        return try await langTool.perform(request: request)
+        for langTool in langTools.values where langTool.canHandleRequest(request) {
+            return try await langTool.perform(request: request)
+        }
+        throw LangToolchainError.toolchainCannotHandleRequest
     }
 
     public func stream<Request: LangToolsStreamableRequest>(request: Request) throws -> AsyncThrowingStream<any LangToolsStreamableResponse, Error> {
-        guard let langTool = langTools.values.first(where: { $0.canHandleRequest(request) }) else { throw LangToolchainError.toolchainCannotHandleRequest }
-        return langTool.stream(request: request).mapAsyncThrowingStream { $0 }
+        for langTool in langTools.values where langTool.canHandleRequest(request) {
+            return langTool.stream(request: request).mapAsyncThrowingStream { $0 }
+        }
+        throw LangToolchainError.toolchainCannotHandleRequest
     }
 }

@@ -8,7 +8,7 @@ import Foundation
 import OpenAI
 import Anthropic
 
-class Message: Codable, ObservableObject {
+class Message: Codable, ObservableObject, Identifiable {
     let uuid: UUID
     var text: String?
     var role: Role

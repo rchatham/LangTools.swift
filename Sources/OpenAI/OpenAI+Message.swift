@@ -2,6 +2,7 @@ import Foundation
 import LangTools
 
 public extension OpenAI {
+    // TODO: - Add refusal and audio
     struct Message: Codable, CustomStringConvertible, LangToolsMessage, LangToolsToolMessage {
         public typealias ToolSelection = ToolCall
         public typealias ToolResult = Content.ToolResultContent
@@ -153,7 +154,7 @@ public extension OpenAI {
                     switch self {
                     case .image(let img): return img.type
                     case .text(let txt): return txt.type
-                    case .toolResult(let tool): return "tool_selection"
+                    case .toolResult(_): return "tool_selection"
                     }
                 }
                 
@@ -182,11 +183,13 @@ public extension OpenAI {
             }
 
             public struct ImageContent: LangToolsImageContentType {
-                public var type: String { "image_url" }
+                public let type: String = "image_url"
                 public let image_url: ImageURL
                 public init(image_url: ImageURL) {
                     self.image_url = image_url
                 }
+
+                enum CodingKeys: String, CodingKey { case type, image_url }
 
                 public struct ImageURL: Codable {
                     public let url: String
@@ -195,10 +198,10 @@ public extension OpenAI {
                         self.url = url
                         self.detail = detail
                     }
-                }
 
-                public enum Detail: String, Codable {
-                    case auto, high, low
+                    public enum Detail: String, Codable {
+                        case auto, high, low
+                    }
                 }
             }
 

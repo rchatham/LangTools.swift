@@ -82,7 +82,7 @@ class MessageService {
             case .invalidData: print("error: invalid data")
             case .invalidURL: print("error: invalid url")
             case .requestFailed(let error): print("error: request failed with error: \(error?.localizedDescription ?? "no error")")
-            case .responseUnsuccessful(statusCode: let code, status: let status, let error): print("error: unsuccessful status code: \(code), message: \(status) - \(error?.localizedDescription ?? "no error description")")
+            case .responseUnsuccessful(statusCode: let code, let error): print("error: unsuccessful status code: \(code), message: \(error?.localizedDescription ?? "no error description")")
             case .streamParsingFailure: print("error: stream parsing failure")
             }
         }
@@ -101,22 +101,27 @@ class MessageService {
         }
 
         let toolChoice = (tools?.isEmpty ?? true) ? nil : OpenAI.ChatCompletionRequest.ToolChoice.auto
+        let uuid = UUID(); var content: String = ""
+        for try await chunk in try networkClient.streamChatCompletionRequest(messages: messages, stream: stream, tools: tools, toolChoice: toolChoice) {
 
-        for try await message in try networkClient.streamChatCompletionRequest(messages: messages, stream: stream, tools: tools, toolChoice: toolChoice) {
+            guard let last = messages.last else { continue }
 
-            if let last = messages.last, last.uuid == message.uuid {
-                await MainActor.run {
-                    messages[self.messages.endIndex - 1] = message
-                }
-            } else {
-                await MainActor.run {
+            content += chunk
+            let message = Message(uuid: uuid, text: content.trimingTrailingNewlines(), role: .assistant)
+
+            await MainActor.run {
+                if last.uuid == uuid {
+                    messages[messages.count - 1] = message
+                } else {
                     messages.append(message)
                 }
             }
         }
 
-        if let lastmsg = messages.last?.text {
-            try await networkClient.playAudio(for: lastmsg)
+        if messages.last?.uuid == uuid, let text = messages.last?.text {
+            Task {
+                try await networkClient.playAudio(for: text)
+            }
         }
     }
 

@@ -73,7 +73,6 @@ class AnthropicTests: XCTestCase {
         var results: [Anthropic.MessageResponse] = []
         for try await response in api.stream(request: Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: [.init(role: .user, content: "Hi")], stream: true)) {
             results.append(response)
-            print(response.type)
         }
         let content = results.reduce("") { $0 + ($1.message?.content.string ?? $1.stream?.delta?.text ?? "") }
         XCTAssertEqual(results[0].message?.role, .assistant)

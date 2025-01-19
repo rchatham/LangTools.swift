@@ -26,14 +26,16 @@ final public class OpenAI: LangTools {
         }
     }
 
-    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: streamManager, delegateQueue: nil)
-    public private(set) lazy var streamManager: StreamSessionManager = StreamSessionManager<OpenAI>()
+    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
 
     public var requestTypes: [(any LangToolsRequest) -> Bool] {
         return [
             { ($0 as? ChatCompletionRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
-            { ($0 as? AudioSpeechRequest) != nil },
-            { ($0 as? AudioTranscriptionRequest) != nil }
+            { $0 is AudioSpeechRequest },
+            { $0 is AudioTranscriptionRequest },
+            { $0 is ListModelDataRequest },
+            { $0 is RetrieveModelRequest },
+            { $0 is DeleteFineTunedModelRequest }
         ]
     }
 
@@ -46,14 +48,22 @@ final public class OpenAI: LangTools {
     }
 
     internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
-        session = URLSession(configuration: testURLSessionConfiguration, delegate: streamManager, delegateQueue: nil)
+        session = URLSession(configuration: testURLSessionConfiguration, delegate: nil, delegateQueue: nil)
         return self
     }
 
     public func prepare<Request: LangToolsRequest>(request: Request) throws -> URLRequest {
         var url = configuration.baseURL.appending(path: request.endpoint)
         if Request.httpMethod == .get {
-            url = url.appending(queryItems: Mirror(reflecting: request).children.compactMap { if let label = $0.label { URLQueryItem(name: label, value: String(describing: $0.value)) } else { nil }})
+            if let id = (request as? any Identifiable)?.id as? String {
+                url = url.appending(path: id)
+            }
+            let queryItems = Mirror(reflecting: request).children
+                .filter { $0.label != nil && $0.label != "id" }
+                .map { URLQueryItem(name: $0.label!, value: String(describing: $0.value))}
+            if !queryItems.isEmpty {
+                url = url.appending(queryItems: queryItems)
+            }
         }
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = Request.httpMethod.rawValue
@@ -67,10 +77,6 @@ final public class OpenAI: LangTools {
             do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolError.invalidData }
         }
         return urlRequest
-    }
-
-    public static func processStream(data: Data, completion: @escaping (Data) -> Void) {
-        String(data: data, encoding: .utf8)?.split(separator: "\n").filter{ $0.hasPrefix("data:") && !$0.contains("[DONE]") }.forEach { completion(Data(String($0.dropFirst(5)).utf8)) }
     }
 }
 
@@ -86,7 +92,7 @@ public struct OpenAIErrorResponse: Error, Codable {
 }
 
 public enum OpenAIModelType {
-    case chat, tts, stt
+    case chat, tts, stt, embedding
 }
 
 public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRepresentable {
@@ -111,7 +117,11 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public var id: String
     public var rawValue: String { id }
 
-    public var type: OpenAIModelType { id.hasPrefix("tts") ? .tts : (id.hasPrefix("whisper") ? .stt : .chat) }
+    public var type: OpenAIModelType {
+        id.hasPrefix("text") ? .embedding :
+        id.hasPrefix("tts") ? .tts :
+        id.hasPrefix("whisper") ? .stt : .chat
+    }
 
     public static let gpt35Turbo = OpenAIModel(modelID: .gpt35Turbo)
     public static let gpt35Turbo_0301 = OpenAIModel(modelID: .gpt35Turbo_0301)
@@ -129,6 +139,9 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let tts_1 = OpenAIModel(modelID: .tts_1)
     public static let tts_1_hd = OpenAIModel(modelID: .tts_1_hd)
     public static let whisper = OpenAIModel(modelID: .whisper)
+    public static let textEmbeddingAda002 = OpenAIModel(modelID: .textEmbeddingAda002)
+    public static let textEmbedding3Large = OpenAIModel(modelID: .textEmbedding3Large)
+    public static let textEmbedding3Small = OpenAIModel(modelID: .textEmbedding3Small)
 
     public enum ModelID: String, Codable, CaseIterable {
         case gpt35Turbo = "gpt-3.5-turbo"
@@ -147,6 +160,9 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         case tts_1 = "tts-1"
         case tts_1_hd = "tts-1-hd"
         case whisper = "whisper-1"
+        case textEmbeddingAda002 = "text-embedding-ada-002"
+        case textEmbedding3Large = "text-embedding-3-large"
+        case textEmbedding3Small = "text-embedding-3-small"
 
         public var openAIModel: OpenAIModel { OpenAIModel(modelID: self) }
     }

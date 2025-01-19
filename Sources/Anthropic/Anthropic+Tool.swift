@@ -42,6 +42,10 @@ extension Anthropic {
                 self.required = required
             }
 
+            enum CodingKeys: String, CodingKey {
+                case type, properties, required
+            }
+
             public struct Property: Codable, LangToolsToolSchemaProperty {
                 public var type: String
                 public var enumValues: [String]?

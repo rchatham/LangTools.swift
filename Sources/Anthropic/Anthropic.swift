@@ -25,12 +25,11 @@ public final class Anthropic: LangTools {
         }
     }
 
-    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: streamManager, delegateQueue: nil)
-    public private(set) lazy var streamManager: StreamSessionManager<Anthropic> = StreamSessionManager<Anthropic>()
+    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
 
     public var requestTypes: [(any LangToolsRequest) -> Bool] {
         return [
-            { ($0 as? MessageRequest) != nil }
+            { $0 is MessageRequest }
         ]
     }
 
@@ -43,7 +42,7 @@ public final class Anthropic: LangTools {
     }
 
     internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
-        session = URLSession(configuration: testURLSessionConfiguration, delegate: streamManager, delegateQueue: nil)
+        session = URLSession(configuration: testURLSessionConfiguration, delegate: nil, delegateQueue: nil)
         return self
     }
 
@@ -55,11 +54,6 @@ public final class Anthropic: LangTools {
         urlRequest.addValue(apiKey, forHTTPHeaderField: "x-api-key")
         do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolError.invalidData }
         return urlRequest
-    }
-
-
-    public static func processStream(data: Data, completion: @escaping (Data) -> Void) {
-        String(data: data, encoding: .utf8)?.split(separator: "\n").filter{ $0.hasPrefix("data:") && !$0.contains("[DONE]") }.forEach { completion(Data(String($0.dropFirst(5)).utf8)) }
     }
 }
 

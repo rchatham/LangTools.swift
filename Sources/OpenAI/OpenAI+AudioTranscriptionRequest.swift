@@ -16,11 +16,8 @@ extension OpenAI {
         public static var endpoint: String { "audio/transcriptions" }
 
         public enum ResponseFormat: String, Codable, Equatable, CaseIterable {
-            case json
-            case text
+            case json, text, srt, vtt
             case verboseJson = "verbose_json"
-            case srt
-            case vtt
         }
 
         /// The audio file object (not file name) to transcribe, in one of these formats: flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, or webm.
@@ -40,54 +37,116 @@ extension OpenAI {
         /// https://platform.openai.com/docs/guides/speech-to-text/prompting
         public let language: String?
 
-        public init(file: Data, fileType: FileType, prompt: String? = nil, temperature: Double? = nil, language: String? = nil, responseFormat: ResponseFormat? = nil) {
+        public let timestamp_granularities: [TimestampGranularity]?
+
+        public init(file: Data, fileType: FileType, prompt: String? = nil, temperature: Double? = nil, language: String? = nil, responseFormat: ResponseFormat? = nil, timestamp_granularities: [TimestampGranularity]? = nil) {
             self.file = file
             self.fileType = fileType
             self.prompt = prompt
             self.temperature = temperature
             self.language = language
             self.responseFormat = responseFormat
+            self.timestamp_granularities = timestamp_granularities
+        }
+
+        public enum TimestampGranularity: String, Codable { // Should this be an option set?
+            case word, segment
         }
 
         public enum FileType: String, Codable, Equatable, CaseIterable {
-            case flac
-            case mp3, mpga
-            case mp4, m4a
-            case mpeg
-            case ogg
-            case wav
-            case webm
+            case flac, mp3, mpga, mp4, m4a, mpeg, ogg, wav, webm
 
             var fileName: String {
                 var fileName = "speech."
                 switch self {
-                case .mpga:
-                    fileName += Self.mp3.rawValue
-                default:
-                    fileName += self.rawValue
+                case .mpga: fileName += Self.mp3.rawValue
+                default: fileName += self.rawValue
                 }
-
                 return fileName
             }
 
             var contentType: String {
                 var contentType = "audio/"
                 switch self {
-                case .mpga:
-                    contentType += Self.mp3.rawValue
-                default:
-                    contentType += self.rawValue
+                case .mpga: contentType += Self.mp3.rawValue
+                default: contentType += self.rawValue
                 }
-
                 return contentType
             }
         }
-    }
 
-    public struct AudioTranscriptionResponse: Codable, Equatable {
+        public struct AudioTranscriptionResponse: Codable {
+            /// The task being performed (e.g., "transcribe")
+            public let task: String?
 
-        /// The transcribed text.
-        public let text: String
+            /// The detected or specified language of the audio
+            public let language: String?
+
+            /// Duration of the audio file in seconds
+            public let duration: Double?
+
+            /// The complete transcribed text
+            public let text: String
+
+            /// Array of individual words with their timestamps
+            public let words: [Word]?
+
+            /// Detailed segments of the transcription with analysis
+            public let segments: [Segment]?
+
+            /// Represents a single word and its timing in the audio
+            public struct Word: Codable {
+                /// The text content of the word
+                public let word: String
+
+                /// Start time of the word in seconds
+                public let start: Double
+
+                /// End time of the word in seconds
+                public let end: Double
+            }
+
+            /// Represents an analyzed segment of the transcription
+            public struct Segment: Codable {
+                /// Unique identifier for the segment
+                public let id: Int
+
+                /// Seek offset for the segment
+                public let seek: Int
+
+                /// Start time of the segment in seconds
+                public let start: Double
+
+                /// End time of the segment in seconds
+                public let end: Double
+
+                /// Transcribed text for this segment
+                public let text: String
+
+                /// Token IDs for the text content
+                public let tokens: [Int]
+
+                /// Temperature parameter used in generation
+                public let temperature: Double
+
+                /// Average log probability for the segment
+                /// Values below -1 indicate potentially failed logprobs
+                public let avg_logprob: Double
+
+                /// Compression ratio for the segment
+                /// Values above 2.4 indicate potential compression issues
+                public let compression_ratio: Double
+
+                /// Probability of no speech in the segment
+                /// If this value > 1.0 and avg_logprob < -1, segment may be silent
+                public let no_speech_prob: Double
+
+                /// Computed property to check if the segment might be problematic
+                public var hasQualityIssues: Bool {
+                    return avg_logprob < -1 || compression_ratio > 2.4 || (no_speech_prob > 1.0 && avg_logprob < -1)
+                }
+            }
+        }
     }
 }
 
@@ -101,5 +160,23 @@ extension OpenAI.AudioTranscriptionRequest: MultipartFormDataEncodableRequest {
             .add(key: "language", value: language)
             .add(key: "response_format", value: responseFormat)
             .httpBody
+    }
+}
+
+// Extension to support fluent API for audio file type validation
+extension OpenAI.AudioTranscriptionRequest.FileType {
+    /// Checks if a given filename extension is supported
+    /// - Parameter extension: The file extension to check
+    /// - Returns: True if the extension is supported
+    public static func isSupported(extension: String) -> Bool {
+        Self.allCases.contains(where: { $0.rawValue == `extension`.lowercased() })
+    }
+
+    /// Attempts to determine the file type from a filename
+    /// - Parameter filename: The filename to check
+    /// - Returns: The corresponding FileType if supported, nil otherwise
+    public static func from(filename: String) -> Self? {
+        let ext = (filename as NSString).pathExtension.lowercased()
+        return Self.allCases.first(where: { $0.rawValue == ext })
     }
 }

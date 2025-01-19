@@ -27,20 +27,20 @@ extension OpenAI {
         }
     }
 
-    public struct RetrieveModelRequest: Encodable, LangToolsRequest {
+    public struct RetrieveModelRequest: Encodable, LangToolsRequest, Identifiable {
         public typealias Response = ModelData
         public typealias LangTool = OpenAI
         public static var endpoint: String { "models" }
         public static var httpMethod: HTTPMethod { .get }
-        public var model: String
+        public var id: String
     }
 
-    public struct DeleteFineTunedModelRequest: Encodable, LangToolsRequest {
-        public typealias Response = ModelData
+    public struct DeleteFineTunedModelRequest: Encodable, LangToolsRequest, Identifiable {
+        public typealias Response = DeleteFineTunedModelResponse
         public typealias LangTool = OpenAI
         public static var endpoint: String { "models" }
         public static var httpMethod: HTTPMethod { .delete }
-        public var model: String
+        public var id: String
 
         public struct DeleteFineTunedModelResponse: Decodable {
             public var id: String

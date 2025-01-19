@@ -84,7 +84,7 @@ extension Anthropic {
                 switch self {
                 case .text(let txt): return "text: \(txt.text)"
                 case .image(let img): return "image: \(img.source.media_type)"
-                case .toolUse(let toolUse): return "tool use: \(toolUse.name)"
+                case .toolUse(let toolUse): return "tool use: \(toolUse.name ?? "missing name")"
                 case .toolResult(let toolResult): return "tool result: \(toolResult.content.description)"
                 }
             }
@@ -128,6 +128,10 @@ extension Anthropic {
                 public init(text: String) {
                     self.text = text
                 }
+
+                enum CodingKeys: String, CodingKey {
+                    case type, text
+                }
             }
 
             public struct ImageContent: Codable, LangToolsContentType {
@@ -135,6 +139,10 @@ extension Anthropic {
                 public let source: ImageSource
                 public init(source: ImageSource) {
                     self.source = source
+                }
+
+                enum CodingKeys: String, CodingKey {
+                    case type, source
                 }
 
                 public struct ImageSource: Codable {
@@ -148,6 +156,10 @@ extension Anthropic {
 
                     public enum MediaType: String, Codable {
                         case jpeg = "image/jpeg", png = "image/png", gif = "image/gif", webp = "image/webp"
+                    }
+
+                    enum CodingKeys: String, CodingKey {
+                        case type, media_type, data
                     }
                 }
             }
@@ -199,6 +211,10 @@ extension Anthropic {
                 public let tool_use_id: String
                 public let is_error: Bool
                 public let content: Content // Cannot be toolUse or toolResult ContentType
+
+                enum CodingKeys: String, CodingKey {
+                    case type, tool_use_id, is_error, content
+                }
             }
         }
         
