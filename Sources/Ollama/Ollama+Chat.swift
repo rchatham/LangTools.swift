@@ -9,7 +9,7 @@ extension Ollama {
         public static var endpoint: String { "api/chat" }
 
         // Required parameters
-        public let model: String
+        public let model: OllamaModel
         public var messages: [Message]
 
         // Optional parameters
@@ -20,7 +20,7 @@ extension Ollama {
         public let tools: [OpenAI.Tool]?
 
         public init(
-            model: String,
+            model: OllamaModel,
             messages: [Message],
             format: GenerateFormat? = nil,
             options: GenerateOptions? = nil,
@@ -173,7 +173,7 @@ public extension Ollama {
     ///   - options: Additional model parameters
     /// - Returns: The chat completion response
     func chat(
-        model: String,
+        model: OllamaModel,
         messages: [Message],
         format: GenerateFormat? = nil,
         options: GenerateOptions? = nil,
@@ -195,7 +195,7 @@ public extension Ollama {
     ///   - options: Additional model parameters
     /// - Returns: A stream of chat completion responses
     func streamChat(
-        model: String,
+        model: OllamaModel,
         messages: [Message],
         options: GenerateOptions? = nil,
         tools: [OpenAI.Tool]? = nil
