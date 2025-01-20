@@ -1,0 +1,13 @@
+{
+  "model": "llama3.2",
+  "created_at": "2023-08-04T19:22:45.499127Z",
+  "response": "The sky is blue because of a phenomenon called Rayleigh scattering. This occurs when sunlight interacts with the Earth's atmosphere. When sunlight, which contains all colors of visible light, enters our atmosphere, it collides with gas molecules. These collisions cause the light to scatter in all directions.",
+  "done": true,
+  "context": [1, 2, 3],
+  "total_duration": 4935886791,
+  "load_duration": 534986708,
+  "prompt_eval_count": 26,
+  "prompt_eval_duration": 107345000,
+  "eval_count": 237,
+  "eval_duration": 4289432000
+}

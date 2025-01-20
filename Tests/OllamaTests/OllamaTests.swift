@@ -19,7 +19,134 @@ class OllamaTests: XCTestCase {
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
-    
+
+
+    func testGenerate() async throws {
+        MockURLProtocol.mockNetworkHandlers[Ollama.GenerateRequest.endpoint] = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            return (.success(try self.getData(filename: "generate_response-ollama")!), 200)
+        }
+
+        let response = try await api.generate(
+            model: "llama3.2",
+            prompt: "Why is the sky blue?"
+        )
+
+        XCTAssertEqual(response.model, "llama3.2")
+        XCTAssertFalse(response.response.isEmpty)
+        XCTAssertTrue(response.done)
+        XCTAssertEqual(response.context, [1, 2, 3])
+        XCTAssertEqual(response.total_duration, 4935886791)
+        XCTAssertEqual(response.load_duration, 534986708)
+        XCTAssertEqual(response.prompt_eval_count, 26)
+        XCTAssertEqual(response.prompt_eval_duration, 107345000)
+        XCTAssertEqual(response.eval_count, 237)
+        XCTAssertEqual(response.eval_duration, 4289432000)
+    }
+
+    func testGenerateWithOptions() async throws {
+        MockURLProtocol.mockNetworkHandlers[Ollama.GenerateRequest.endpoint] = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+
+            return (.success(try self.getData(filename: "generate_response-ollama")!), 200)
+        }
+
+        let options = Ollama.GenerateOptions(
+            seed: 42,
+            top_p: 0.9,
+            temperature: 0.8
+        )
+
+        let response = try await api.generate(
+            model: "llama3.2",
+            prompt: "Why is the sky blue?",
+            options: options
+        )
+
+        XCTAssertTrue(response.done)
+    }
+
+    func testStreamGenerate() async throws {
+           MockURLProtocol.mockNetworkHandlers[Ollama.GenerateRequest.endpoint] = { request in
+               XCTAssertEqual(request.httpMethod, "POST")
+
+
+               return (.success(try self.getData(filename: "generate_stream_response-ollama", fileExtension: "txt")!), 200)
+           }
+
+           var fullResponse = ""
+           var results: [Ollama.GenerateResponse] = []
+
+           for try await response in api.streamGenerate(
+               model: "llama3.2",
+               prompt: "Why is the sky blue?"
+           ) {
+               results.append(response)
+               fullResponse += response.response
+           }
+
+           // Verify we got the expected number of responses
+           XCTAssertEqual(results.count, 5)
+
+           // Verify model name consistency
+           results.forEach { response in
+               XCTAssertEqual(response.model, "llama3.2")
+           }
+
+           // Initial responses should have:
+           // - model, created_at, response, done = false
+           for i in 0..<4 {
+               XCTAssertFalse(results[i].done)
+               XCTAssertNotNil(results[i].created_at)
+               XCTAssertFalse(results[i].response.isEmpty)
+
+               // Should not have metadata fields
+               XCTAssertNil(results[i].context)
+               XCTAssertNil(results[i].total_duration)
+               XCTAssertNil(results[i].eval_count)
+           }
+
+           // Final response should have complete metadata
+           let finalResponse = results.last!
+           XCTAssertTrue(finalResponse.done)
+           XCTAssertNotNil(finalResponse.context)
+           XCTAssertEqual(finalResponse.context!, [1, 2, 3])
+           XCTAssertEqual(finalResponse.total_duration, 10706818083)
+           XCTAssertEqual(finalResponse.load_duration, 6338219291)
+           XCTAssertEqual(finalResponse.prompt_eval_count, 26)
+           XCTAssertEqual(finalResponse.prompt_eval_duration, 130079000)
+           XCTAssertEqual(finalResponse.eval_count, 259)
+           XCTAssertEqual(finalResponse.eval_duration, 4232710000)
+
+           // Verify the full response was assembled correctly
+           XCTAssertEqual(fullResponse, "The sky is blue because of Rayleigh scattering.")
+       }
+
+       func testGenerateWithStructuredOutput() async throws {
+           // Test format parameter with JSON schema
+           let format = Ollama.GenerateFormat.SchemaFormat(
+               type: "object",
+               properties: [
+                   "age": .init(type: "integer", description: "Age of the person"),
+                   "available": .init(type: "boolean", description: "If the person is available")
+               ],
+               required: ["age", "available"]
+           )
+
+           MockURLProtocol.mockNetworkHandlers[Ollama.GenerateRequest.endpoint] = { request in
+               XCTAssertEqual(request.httpMethod, "POST")
+               return (.success(try self.getData(filename: "generate_response-ollama")!), 200)
+           }
+
+           let response = try await api.generate(
+               model: "llama3.2",
+               prompt: "Ollama is 22 years old and is busy saving the world. Respond using JSON",
+               format: .schema(format)
+           )
+
+           XCTAssertTrue(response.done)
+       }
+
     func testListModels() async throws {
         MockURLProtocol.mockNetworkHandlers[Ollama.ListModelsRequest.endpoint] = { request in
             XCTAssertEqual(request.httpMethod, "GET")

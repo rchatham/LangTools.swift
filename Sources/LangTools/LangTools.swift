@@ -63,8 +63,12 @@ extension LangTools {
 
                 var combinedResponse = Request.Response.empty
                 do {
+                    var buffer = ""
                     for try await line in bytes.lines {
-                        guard let response: Request.Response = try Self.decodeStream(line) else { continue }
+                        // ensure line is a complete json object if not concat to previous line and continue
+                        buffer += line
+                        guard let response: Request.Response = try? Self.decodeStream(buffer) else { continue }
+                        buffer = ""
                         continuation.yield(try request.update(response: response))
                         combinedResponse = combinedResponse.combining(with: response)
                     }
