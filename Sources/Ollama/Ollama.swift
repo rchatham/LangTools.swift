@@ -34,7 +34,9 @@ public final class Ollama: LangTools {
             { ($0 as? CopyModelRequest) != nil },
             { ($0 as? PullModelRequest) != nil },
             { ($0 as? PushModelRequest) != nil },
-            { ($0 as? CreateModelRequest) != nil }
+            { ($0 as? CreateModelRequest) != nil },
+            { ($0 as? ChatRequest) != nil },
+            { ($0 as? GenerateRequest) != nil }
         ]
     }
 

@@ -7,7 +7,7 @@ public extension OpenAI {
 
         case function(FunctionSchema)
 
-        public init(name: String, description: String, input_schema: FunctionSchema.Parameters, callback: (([String : Any]) -> String?)?) {
+        public init(name: String, description: String, input_schema: FunctionSchema.Parameters, callback: (([String : Any]) -> String?)? = nil) {
             self = .function(.init(name: name, description: description, parameters: input_schema, callback: callback))
         }
 

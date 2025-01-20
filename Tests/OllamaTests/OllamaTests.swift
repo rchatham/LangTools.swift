@@ -1,5 +1,6 @@
 import XCTest
 import LangTools
+import OpenAI
 @testable import TestUtils
 @testable import Ollama
 
@@ -345,5 +346,110 @@ class OllamaTests: XCTestCase {
 
         let response = try await api.createModel(model: "custom-model", modelfile: "FROM llama2\nSYSTEM You are a helpful assistant.")
         XCTAssertEqual(response.status, "success")
+    }
+
+    func testChat() async throws {
+        MockURLProtocol.mockNetworkHandlers[Ollama.ChatRequest.endpoint] = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            return (.success(try self.getData(filename: "chat_response-ollama")!), 200)
+        }
+
+        let response = try await api.chat(
+            model: "llama3.2",
+            messages: [.init(role: .user, content: "Hello!")]
+        )
+
+        XCTAssertEqual(response.model, "llama3.2")
+        XCTAssertFalse(response.content?.string?.isEmpty ?? true)
+        XCTAssertTrue(response.done)
+        XCTAssertEqual(response.eval_count, 298)
+        XCTAssertEqual(response.eval_duration, 4799921000)
+    }
+
+    func testStreamChat() async throws {
+        MockURLProtocol.mockNetworkHandlers[Ollama.ChatRequest.endpoint] = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            return (.success(try self.getData(filename: "chat_response_stream-ollama", fileExtension: "txt")!), 200)
+        }
+
+        var fullResponse = ""
+        var results: [Ollama.ChatResponse] = []
+
+        for try await response in api.streamChat(
+            model: "llama3.2",
+            messages: [.init(role: .user, content: "Why is the sky blue?")]
+        ) {
+            results.append(response)
+            if let message = response.message {
+                fullResponse += message.content
+            }
+        }
+
+        // Verify we got the expected number of responses
+        XCTAssertEqual(results.count, 5)
+
+        // Verify consistent model name
+        results.forEach { response in
+            XCTAssertEqual(response.model, "llama3.2")
+        }
+
+        // Initial responses should have message content but not be done
+        for i in 0..<4 {
+            XCTAssertFalse(results[i].done)
+            XCTAssertNotNil(results[i].created_at)
+            XCTAssertNotNil(results[i].message)
+            XCTAssertFalse(results[i].message?.content.isEmpty ?? true)
+
+            // Should not have metadata fields
+            XCTAssertNil(results[i].total_duration)
+            XCTAssertNil(results[i].eval_count)
+        }
+
+        // Final response should have complete metadata
+        let finalResponse = results.last!
+        XCTAssertTrue(finalResponse.done)
+        XCTAssertEqual(finalResponse.total_duration, 10706818083)
+        XCTAssertEqual(finalResponse.load_duration, 6338219291)
+        XCTAssertEqual(finalResponse.prompt_eval_count, 26)
+        XCTAssertEqual(finalResponse.prompt_eval_duration, 130079000)
+        XCTAssertEqual(finalResponse.eval_count, 259)
+        XCTAssertEqual(finalResponse.eval_duration, 4232710000)
+
+        // Verify full response text was assembled correctly
+        XCTAssertEqual(fullResponse, "The sky is blue because of Rayleigh scattering.")
+    }
+
+    func testChatWithTools() async throws {
+        MockURLProtocol.mockNetworkHandlers[Ollama.ChatRequest.endpoint] = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            return (.success(try self.getData(filename: "chat_response_with_tools-ollama")!), 200)
+        }
+
+        let tools: [OpenAI.Tool] = [.init(
+            name: "get_current_weather",
+            description: "Get the current weather",
+            input_schema: .init(
+                properties: [
+                    "location": .init(
+                        type: "string",
+                        description: "The city and state, e.g. San Francisco, CA"),
+                    "format": .init(
+                        type: "string",
+                        enumValues: ["celsius", "fahrenheit"],
+                        description: "The temperature unit to use")
+                ],
+                required: ["location", "format"]))]
+
+        let response = try await api.chat(
+            model: "llama3.2",
+            messages: [.init(role: .user, content: "What's the weather in Paris?")],
+            options: nil,
+            tools: tools
+        )
+
+        XCTAssertEqual(response.model, "llama3.2")
+        XCTAssertTrue(response.done)
+        XCTAssertNotNil(response.message?.tool_calls)
+        XCTAssertEqual(response.message?.tool_calls?.first?.function.name, "get_current_weather")
     }
 }
