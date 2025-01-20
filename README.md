@@ -7,12 +7,12 @@ This package provides a simple Swift interface for interacting with OpenAI and A
 
 ## Features
 
-- Support for various LLM model APIs including OpenAI, Anthropic, xAI & Google Gemini.
+- Support for various LLM model APIs including OpenAI, Anthropic, xAI, Google Gemini & Ollama.
 - Handling both regular and streaming API requests.
 - Built-in error handling and response parsing.
 - Support for functions.
     - Streaming functions.
-    - Multiple/Parrellel functions.
+    - Multiple/Parrellel functions. - Dependent on model and api support
 
 ## Requirements
 
@@ -50,9 +50,16 @@ let chatRequest = OpenAI.ChatCompletionRequest(
     messages: [ /* Your messages here */ ],
     /* Other optional parameters */
 )
-/* Anthropic
+/*
+// Anthropic
 let chatRequest = Anthropic.MessageRequest(
     model: .claude35Sonnet_20240620,
+    messages: [ /* Your messages here */ ]
+)
+
+// Ollama
+let request = Ollama.ChatRequest(
+    model: "llama3.2",
     messages: [ /* Your messages here */ ]
 )
 // XAI uses OpenAI.ChatCompletionRequest with .grok and .grokVision models.
@@ -167,8 +174,7 @@ let request = OpenAI.EmbeddingsRequest(
         model: .textEmbeddingAda002
 )
 
-// Non-streaming request
-let response = try await openAI.perform(request: request)
+let response = try await langToolsClient.perform(request: request)
 
 // The response contains:
 // - response.data[0].embedding - The embedding vector
