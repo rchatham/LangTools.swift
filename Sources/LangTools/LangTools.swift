@@ -15,6 +15,7 @@ public protocol LangTools {
 
     var session: URLSession { get }
     func prepare(request: some LangToolsRequest) throws -> URLRequest
+    ///  When implementing decodeStream yourself, throw an error when the buffer is incomplete and additional lines of data from the response are needed to decode the buffer. If the buffer can be handled it should at least return nil to indicate that the buffer can be cleared. If a nil response results in returned the buffer will be cleared and then it will continue reading the data stream, where throwing an error will continue appending the data stream to the current buffer.
     static func decodeStream<T: Decodable>(_ buffer: String) throws -> T?
 }
 
@@ -74,7 +75,7 @@ extension LangTools {
                                 continuation.yield(try request.update(response: response))
                                 combinedResponse = combinedResponse.combining(with: response)
                             }
-                        } catch { continue } // It seems weird to not handle the error here but we are using is purely to escape early if decoding errors. If the buffer can be handled, it should at least return nil.
+                        } catch { continue } // It seems strange not to handle the error here but we are using it to prevent erasing the buffer if decoding errors. If the buffer can be handled, it should at least return nil.
                     }
                     if let completionRequest = try completionRequest(request: request, response: try request.update(response: combinedResponse)) {
                         for try await response in stream(request: completionRequest) {
