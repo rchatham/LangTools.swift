@@ -354,3 +354,27 @@ public extension Ollama {
         return try await perform(request: CreateModelRequest(model: model, modelfile: modelfile, path: path))
     }
 }
+
+extension Ollama {
+    public struct VersionRequest: LangToolsRequest {
+        public typealias Response = VersionResponse
+        public typealias LangTool = Ollama
+
+        public static var endpoint: String { "api/version" }
+        public static var httpMethod: HTTPMethod { .get }
+    }
+
+    public struct VersionResponse: Codable {
+        public let version: String
+    }
+}
+
+// Convenience extension
+public extension Ollama {
+    /// Retrieves the version of the Ollama server
+    /// - Returns: A `VersionResponse` containing the version string
+    /// - Throws: An error if the request fails or the response cannot be decoded
+    func version() async throws -> VersionResponse {
+        return try await perform(request: VersionRequest())
+    }
+}

@@ -452,4 +452,32 @@ class OllamaTests: XCTestCase {
         XCTAssertNotNil(response.message?.tool_calls)
         XCTAssertEqual(response.message?.tool_calls?.first?.function.name, "get_current_weather")
     }
+
+    func testVersion() async throws {
+        MockURLProtocol.mockNetworkHandlers[Ollama.VersionRequest.endpoint] = { request in
+            // Verify request
+            XCTAssertEqual(request.httpMethod, "GET")
+            return (.success(try self.getData(filename: "version_response-ollama")!), 200)
+        }
+
+        let response = try await api.version()
+        XCTAssertEqual(response.version, "0.5.1")
+    }
+
+    func testVersionError() async throws {
+        MockURLProtocol.mockNetworkHandlers[Ollama.VersionRequest.endpoint] = { _ in
+            return (.success(try self.getData(filename: "error")!), 404)
+        }
+
+        do {
+            _ = try await api.version()
+            XCTFail("Expected error to be thrown")
+        } catch let error as LangToolError {
+            if case .responseUnsuccessful(let statusCode, _) = error {
+                XCTAssertEqual(statusCode, 404)
+            } else {
+                XCTFail("Unexpected error type")
+            }
+        }
+    }
 }
