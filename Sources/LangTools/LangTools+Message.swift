@@ -74,9 +74,7 @@ public struct LangToolsTextContent: LangToolsTextContentType, LangToolsContent {
     public var array: [LangToolsTextContent]? { [self] }
 }
 
-public protocol LangToolsImageContentType: LangToolsContentType {
-
-}
+public protocol LangToolsImageContentType: LangToolsContentType {}
 
 //public struct LangToolsImageContent: Codable {
 //    var type: String

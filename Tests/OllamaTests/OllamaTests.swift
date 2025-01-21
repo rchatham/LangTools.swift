@@ -6,7 +6,7 @@ import OpenAI
 
 class OllamaTests: XCTestCase {
     var api: Ollama!
-    
+
     override func setUp() {
         super.setUp()
         URLProtocol.registerClass(MockURLProtocol.self)
@@ -14,7 +14,7 @@ class OllamaTests: XCTestCase {
         config.protocolClasses = [MockURLProtocol.self]
         api = Ollama(baseURL: URL(string: "http://localhost:11434")!).configure(testURLSessionConfiguration: config)
     }
-    
+
     override func tearDown() {
         MockURLProtocol.mockNetworkHandlers.removeAll()
         URLProtocol.unregisterClass(MockURLProtocol.self)
@@ -68,114 +68,115 @@ class OllamaTests: XCTestCase {
     }
 
     func testStreamGenerate() async throws {
-           MockURLProtocol.mockNetworkHandlers[Ollama.GenerateRequest.endpoint] = { request in
-               XCTAssertEqual(request.httpMethod, "POST")
+        MockURLProtocol.mockNetworkHandlers[Ollama.GenerateRequest.endpoint] = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
 
+            return (.success(try self.getData(filename: "generate_stream_response-ollama", fileExtension: "txt")!), 200)
+        }
 
-               return (.success(try self.getData(filename: "generate_stream_response-ollama", fileExtension: "txt")!), 200)
-           }
+        var fullResponse = ""
+        var results: [Ollama.GenerateResponse] = []
 
-           var fullResponse = ""
-           var results: [Ollama.GenerateResponse] = []
+        for try await response in api.streamGenerate(
+            model: "llama3.2",
+            prompt: "Why is the sky blue?"
+        ) {
+            results.append(response)
+            fullResponse += response.response
+        }
 
-           for try await response in api.streamGenerate(
-               model: "llama3.2",
-               prompt: "Why is the sky blue?"
-           ) {
-               results.append(response)
-               fullResponse += response.response
-           }
+        // Verify we got the expected number of responses
+        XCTAssertEqual(results.count, 5)
 
-           // Verify we got the expected number of responses
-           XCTAssertEqual(results.count, 5)
+        // Verify model name consistency
+        results.forEach { response in
+            XCTAssertEqual(response.model, "llama3.2")
+        }
 
-           // Verify model name consistency
-           results.forEach { response in
-               XCTAssertEqual(response.model, "llama3.2")
-           }
+        // Initial responses should have:
+        // - model, created_at, response, done = false
+        for i in 0..<4 {
+            XCTAssertFalse(results[i].done)
+            XCTAssertNotNil(results[i].created_at)
+            XCTAssertFalse(results[i].response.isEmpty)
 
-           // Initial responses should have:
-           // - model, created_at, response, done = false
-           for i in 0..<4 {
-               XCTAssertFalse(results[i].done)
-               XCTAssertNotNil(results[i].created_at)
-               XCTAssertFalse(results[i].response.isEmpty)
+            // Should not have metadata fields
+            XCTAssertNil(results[i].context)
+            XCTAssertNil(results[i].total_duration)
+            XCTAssertNil(results[i].eval_count)
+        }
 
-               // Should not have metadata fields
-               XCTAssertNil(results[i].context)
-               XCTAssertNil(results[i].total_duration)
-               XCTAssertNil(results[i].eval_count)
-           }
+        // Final response should have complete metadata
+        let finalResponse = results.last!
+        XCTAssertTrue(finalResponse.done)
+        XCTAssertNotNil(finalResponse.context)
+        XCTAssertEqual(finalResponse.context!, [1, 2, 3])
+        XCTAssertEqual(finalResponse.total_duration, 10706818083)
+        XCTAssertEqual(finalResponse.load_duration, 6338219291)
+        XCTAssertEqual(finalResponse.prompt_eval_count, 26)
+        XCTAssertEqual(finalResponse.prompt_eval_duration, 130079000)
+        XCTAssertEqual(finalResponse.eval_count, 259)
+        XCTAssertEqual(finalResponse.eval_duration, 4232710000)
 
-           // Final response should have complete metadata
-           let finalResponse = results.last!
-           XCTAssertTrue(finalResponse.done)
-           XCTAssertNotNil(finalResponse.context)
-           XCTAssertEqual(finalResponse.context!, [1, 2, 3])
-           XCTAssertEqual(finalResponse.total_duration, 10706818083)
-           XCTAssertEqual(finalResponse.load_duration, 6338219291)
-           XCTAssertEqual(finalResponse.prompt_eval_count, 26)
-           XCTAssertEqual(finalResponse.prompt_eval_duration, 130079000)
-           XCTAssertEqual(finalResponse.eval_count, 259)
-           XCTAssertEqual(finalResponse.eval_duration, 4232710000)
+        // Verify the full response was assembled correctly
+        XCTAssertEqual(fullResponse, "The sky is blue because of Rayleigh scattering.")
+    }
 
-           // Verify the full response was assembled correctly
-           XCTAssertEqual(fullResponse, "The sky is blue because of Rayleigh scattering.")
-       }
+    func testGenerateWithStructuredOutput() async throws {
+        // Test format parameter with JSON schema
+        let format = Ollama.GenerateFormat.SchemaFormat(
+            type: "object",
+            properties: [
+                "age": .init(type: "integer", description: "Age of the person"),
+                "available": .init(type: "boolean", description: "If the person is available")
+            ],
+            required: ["age", "available"]
+        )
 
-       func testGenerateWithStructuredOutput() async throws {
-           // Test format parameter with JSON schema
-           let format = Ollama.GenerateFormat.SchemaFormat(
-               type: "object",
-               properties: [
-                   "age": .init(type: "integer", description: "Age of the person"),
-                   "available": .init(type: "boolean", description: "If the person is available")
-               ],
-               required: ["age", "available"]
-           )
+        MockURLProtocol.mockNetworkHandlers[Ollama.GenerateRequest.endpoint] = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            //               let decoded = try JSONDecoder().decode(Ollama.GenerateRequest.self, from: request.httpBody!)
+            //               XCTAssertNotNil(decoded.format)
+            return (.success(try self.getData(filename: "generate_response-ollama")!), 200)
+        }
 
-           MockURLProtocol.mockNetworkHandlers[Ollama.GenerateRequest.endpoint] = { request in
-               XCTAssertEqual(request.httpMethod, "POST")
-               return (.success(try self.getData(filename: "generate_response-ollama")!), 200)
-           }
+        let response = try await api.generate(
+            model: "llama3.2",
+            prompt: "Ollama is 22 years old and is busy saving the world. Respond using JSON",
+            format: .schema(format)
+        )
 
-           let response = try await api.generate(
-               model: "llama3.2",
-               prompt: "Ollama is 22 years old and is busy saving the world. Respond using JSON",
-               format: .schema(format)
-           )
-
-           XCTAssertTrue(response.done)
-       }
+        XCTAssertTrue(response.done)
+    }
 
     func testListModels() async throws {
         MockURLProtocol.mockNetworkHandlers[Ollama.ListModelsRequest.endpoint] = { request in
             XCTAssertEqual(request.httpMethod, "GET")
             return (.success(try self.getData(filename: "list_models_response-ollama")!), 200)
         }
-        
+
         let response = try await api.listModels()
         XCTAssertEqual(response.models.count, 2)
-        
+
         let firstModel = response.models[0]
         XCTAssertEqual(firstModel.name, "codellama:13b")
         XCTAssertEqual(firstModel.size, 7365960935)
         XCTAssertEqual(firstModel.details.family, "llama")
         XCTAssertEqual(firstModel.details.parameterSize, "13B")
         XCTAssertEqual(firstModel.details.quantizationLevel, "Q4_0")
-        
+
         let secondModel = response.models[1]
         XCTAssertEqual(secondModel.name, "llama3:latest")
         XCTAssertEqual(secondModel.size, 3825819519)
         XCTAssertEqual(secondModel.details.family, "llama")
         XCTAssertEqual(secondModel.details.parameterSize, "7B")
     }
-    
+
     func testListModelsError() async throws {
         MockURLProtocol.mockNetworkHandlers[Ollama.ListModelsRequest.endpoint] = { _ in
             return (.success(try self.getData(filename: "error")!), 404)
         }
-        
+
         do {
             _ = try await api.listModels()
             XCTFail("Expected error to be thrown")
@@ -261,32 +262,32 @@ class OllamaTests: XCTestCase {
             // XCTAssertTrue(try JSONDecoder().decode(Ollama.PullModelRequest.self, from: request.httpBody!).stream ?? false)
             return (.success(try self.getData(filename: "pull_model_stream_response", fileExtension: "txt")!), 200)
         }
-        
+
         var results: [Ollama.PullModelResponse] = []
         for try await response in api.streamPullModel("llama2") {
             results.append(response)
         }
-        
+
         XCTAssertEqual(results.count, 8)
-        
+
         // Check manifest phase
         XCTAssertEqual(results[0].status, "pulling manifest")
-        
+
         // Check initial download phase
         XCTAssertEqual(results[1].status, "downloading sha256:2ae6f6dd7a3dd734790bbbf58b8909a606e0e7e97e94b7604e0aa7ae4490e6d8")
         XCTAssertEqual(results[1].total, 2142590208)
         XCTAssertNil(results[1].completed)
-        
+
         // Check download progress
         XCTAssertEqual(results[2].status, "downloading sha256:2ae6f6dd7a3dd734790bbbf58b8909a606e0e7e97e94b7604e0aa7ae4490e6d8")
         XCTAssertEqual(results[2].total, 2142590208)
         XCTAssertEqual(results[2].completed, 241970)
-        
+
         // Check final download progress
         XCTAssertEqual(results[3].status, "downloading sha256:2ae6f6dd7a3dd734790bbbf58b8909a606e0e7e97e94b7604e0aa7ae4490e6d8")
         XCTAssertEqual(results[3].total, 2142590208)
         XCTAssertEqual(results[3].completed, 1071295104)
-        
+
         // Check final phases
         XCTAssertEqual(results[4].status, "verifying sha256 digest")
         XCTAssertEqual(results[5].status, "writing manifest")
@@ -311,28 +312,28 @@ class OllamaTests: XCTestCase {
             // XCTAssertTrue(try JSONDecoder().decode(Ollama.PushModelRequest.self, from: request.httpBody!).stream ?? false)
             return (.success(try self.getData(filename: "push_model_stream_response", fileExtension: "txt")!), 200)
         }
-        
+
         var results: [Ollama.PushModelResponse] = []
         for try await response in api.streamPushModel("mattw/pygmalion:latest") {
             results.append(response)
         }
-        
+
         XCTAssertEqual(results.count, 6)
-        
+
         // Check initial phase
         XCTAssertEqual(results[0].status, "retrieving manifest")
-        
+
         // Check upload start
         XCTAssertEqual(results[1].status, "starting upload")
         XCTAssertEqual(results[1].digest, "sha256:bc07c81de745696fdf5afca05e065818a8149fb0c77266fb584d9b2cba3711ab")
         XCTAssertEqual(results[1].total, 1928429856)
-        
+
         // Check upload progress
         XCTAssertEqual(results[2].status, "uploading")
-        
+
         // Check final upload progress
         XCTAssertEqual(results[3].status, "uploading")
-        
+
         // Check final phases
         XCTAssertEqual(results[4].status, "pushing manifest")
         XCTAssertEqual(results[5].status, "success")
