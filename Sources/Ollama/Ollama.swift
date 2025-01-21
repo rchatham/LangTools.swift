@@ -80,15 +80,9 @@ public final class Ollama: LangTools {
         return urlRequest
     }
 
-    public static func decodeStream<T: Decodable>(_ line: String) throws -> T? {
-        return try line.data(using: .utf8).map { try Self.decodeResponse(data: $0) }
+    public static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
+        return try buffer.data(using: .utf8).map { try Self.decodeResponse(data: $0) }
     }
-
-//    public static func processStream(data: Data, completion: @escaping (Data) -> Void) {
-//        String(data: data, encoding: .utf8)?.split(separator: "\n")
-//            .filter{ !$0.isEmpty }
-//            .forEach { completion(Data($0.utf8)) }
-//    }
 }
 
 public struct OllamaErrorResponse: Error, Codable {

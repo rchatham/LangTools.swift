@@ -55,6 +55,11 @@ public final class Anthropic: LangTools {
         do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolError.invalidData }
         return urlRequest
     }
+
+    public static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
+        if buffer.hasPrefix("event:") { return nil }
+        return if buffer.hasPrefix("data:") && !buffer.contains("[DONE]"), let data = buffer.dropFirst(5).data(using: .utf8) { try Self.decodeResponse(data: data) } else { nil }
+    }
 }
 
 public struct AnthropicErrorResponse: Codable, Error {

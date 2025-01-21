@@ -15,7 +15,7 @@ public protocol LangTools {
 
     var session: URLSession { get }
     func prepare(request: some LangToolsRequest) throws -> URLRequest
-    static func decodeStream<T: Decodable>(_ line: String) throws -> T?
+    static func decodeStream<T: Decodable>(_ buffer: String) throws -> T?
 }
 
 extension LangTools {
@@ -67,10 +67,14 @@ extension LangTools {
                     for try await line in bytes.lines {
                         // ensure line is a complete json object if not concat to previous line and continue
                         buffer += line
-                        guard let response: Request.Response = try? Self.decodeStream(buffer) else { continue }
-                        buffer = ""
-                        continuation.yield(try request.update(response: response))
-                        combinedResponse = combinedResponse.combining(with: response)
+                        do {
+                            let response: Request.Response? = try Self.decodeStream(buffer)
+                            buffer = ""
+                            if let response {
+                                continuation.yield(try request.update(response: response))
+                                combinedResponse = combinedResponse.combining(with: response)
+                            }
+                        } catch { continue } // It seems weird to not handle the error here but we are using is purely to escape early if decoding errors. If the buffer can be handled, it should at least return nil.
                     }
                     if let completionRequest = try completionRequest(request: request, response: try request.update(response: combinedResponse)) {
                         for try await response in stream(request: completionRequest) {
@@ -106,8 +110,8 @@ extension LangTools {
         return try (response as? any LangToolsToolCallingResponse).flatMap { try (request as? any LangToolsToolCallingRequest & LangToolsCompletableRequest)?.completion(response: $0) } as? Request
     }
 
-    public static func decodeStream<T: Decodable>(_ line: String) throws -> T? {
-        return if line.hasPrefix("data:") && !line.contains("[DONE]"), let data = line.dropFirst(5).data(using: .utf8) { try Self.decodeResponse(data: data) } else { nil }
+    public static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
+        return if buffer.hasPrefix("data:") && !buffer.contains("[DONE]"), let data = buffer.dropFirst(5).data(using: .utf8) { try Self.decodeResponse(data: data) } else { nil }
     }
 }
 
