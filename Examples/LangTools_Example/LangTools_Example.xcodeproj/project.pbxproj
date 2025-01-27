@@ -7,12 +7,16 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		B1418B7B2D263C28007E843F /* Gemini in Frameworks */ = {isa = PBXBuildFile; productRef = B1418B7A2D263C28007E843F /* Gemini */; };
 		B19586DB2CD40C6900843DF5 /* Anthropic in Frameworks */ = {isa = PBXBuildFile; productRef = B19586DA2CD40C6900843DF5 /* Anthropic */; };
 		B19586DD2CD40C6900843DF5 /* LangTools in Frameworks */ = {isa = PBXBuildFile; productRef = B19586DC2CD40C6900843DF5 /* LangTools */; };
 		B19586DF2CD40C6900843DF5 /* OpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = B19586DE2CD40C6900843DF5 /* OpenAI */; };
 		B1D1EC722CA31C5F00AD7FA6 /* KeychainAccess in Frameworks */ = {isa = PBXBuildFile; productRef = B1D1EC712CA31C5F00AD7FA6 /* KeychainAccess */; };
-		B1E289D52D192BE200A1C327 /* XAI in Frameworks */ = {isa = PBXBuildFile; productRef = B1E289D42D192BE200A1C327 /* XAI */; };
+		B1E419EF2D44C7830082C763 /* Anthropic in Frameworks */ = {isa = PBXBuildFile; productRef = B1E419EE2D44C7830082C763 /* Anthropic */; };
+		B1E419F12D44C7830082C763 /* Gemini in Frameworks */ = {isa = PBXBuildFile; productRef = B1E419F02D44C7830082C763 /* Gemini */; };
+		B1E419F32D44C7830082C763 /* LangTools in Frameworks */ = {isa = PBXBuildFile; productRef = B1E419F22D44C7830082C763 /* LangTools */; };
+		B1E419F52D44C7830082C763 /* Ollama in Frameworks */ = {isa = PBXBuildFile; productRef = B1E419F42D44C7830082C763 /* Ollama */; };
+		B1E419F72D44C7830082C763 /* OpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = B1E419F62D44C7830082C763 /* OpenAI */; };
+		B1E41A0A2D46B4B80082C763 /* XAI in Frameworks */ = {isa = PBXBuildFile; productRef = B1E41A092D46B4B80082C763 /* XAI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -62,11 +66,15 @@
 			buildActionMask = 2147483647;
 			files = (
 				B19586DD2CD40C6900843DF5 /* LangTools in Frameworks */,
-				B1E289D52D192BE200A1C327 /* XAI in Frameworks */,
+				B1E41A0A2D46B4B80082C763 /* XAI in Frameworks */,
 				B1D1EC722CA31C5F00AD7FA6 /* KeychainAccess in Frameworks */,
-				B1418B7B2D263C28007E843F /* Gemini in Frameworks */,
+				B1E419F32D44C7830082C763 /* LangTools in Frameworks */,
 				B19586DF2CD40C6900843DF5 /* OpenAI in Frameworks */,
+				B1E419F52D44C7830082C763 /* Ollama in Frameworks */,
+				B1E419F12D44C7830082C763 /* Gemini in Frameworks */,
 				B19586DB2CD40C6900843DF5 /* Anthropic in Frameworks */,
+				B1E419F72D44C7830082C763 /* OpenAI in Frameworks */,
+				B1E419EF2D44C7830082C763 /* Anthropic in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -139,8 +147,12 @@
 				B19586DA2CD40C6900843DF5 /* Anthropic */,
 				B19586DC2CD40C6900843DF5 /* LangTools */,
 				B19586DE2CD40C6900843DF5 /* OpenAI */,
-				B1E289D42D192BE200A1C327 /* XAI */,
-				B1418B7A2D263C28007E843F /* Gemini */,
+				B1E419EE2D44C7830082C763 /* Anthropic */,
+				B1E419F02D44C7830082C763 /* Gemini */,
+				B1E419F22D44C7830082C763 /* LangTools */,
+				B1E419F42D44C7830082C763 /* Ollama */,
+				B1E419F62D44C7830082C763 /* OpenAI */,
+				B1E41A092D46B4B80082C763 /* XAI */,
 			);
 			productName = LangTools_Example;
 			productReference = B1D1EBDF2CA2518F00AD7FA6 /* LangTools_Example.app */;
@@ -226,7 +238,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				B1D1EC702CA31C5F00AD7FA6 /* XCRemoteSwiftPackageReference "KeychainAccess" */,
-				B19586D92CD40C6900843DF5 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */,
+				B1E419ED2D44C7830082C763 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B1D1EBE02CA2518F00AD7FA6 /* Products */;
@@ -599,7 +611,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		B19586D92CD40C6900843DF5 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */ = {
+		B1E419ED2D44C7830082C763 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../../LangTools.swift;
 		};
@@ -617,11 +629,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		B1418B7A2D263C28007E843F /* Gemini */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = B19586D92CD40C6900843DF5 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */;
-			productName = Gemini;
-		};
 		B19586DA2CD40C6900843DF5 /* Anthropic */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Anthropic;
@@ -639,9 +646,29 @@
 			package = B1D1EC702CA31C5F00AD7FA6 /* XCRemoteSwiftPackageReference "KeychainAccess" */;
 			productName = KeychainAccess;
 		};
-		B1E289D42D192BE200A1C327 /* XAI */ = {
+		B1E419EE2D44C7830082C763 /* Anthropic */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = B19586D92CD40C6900843DF5 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */;
+			productName = Anthropic;
+		};
+		B1E419F02D44C7830082C763 /* Gemini */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Gemini;
+		};
+		B1E419F22D44C7830082C763 /* LangTools */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LangTools;
+		};
+		B1E419F42D44C7830082C763 /* Ollama */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Ollama;
+		};
+		B1E419F62D44C7830082C763 /* OpenAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OpenAI;
+		};
+		B1E41A092D46B4B80082C763 /* XAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B1E419ED2D44C7830082C763 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */;
 			productName = XAI;
 		};
 /* End XCSwiftPackageProductDependency section */

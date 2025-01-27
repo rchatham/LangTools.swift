@@ -67,22 +67,13 @@ class MessageService {
         catch let error as LangToolError {
             switch error {
             case .jsonParsingFailure(let error): print("error: json parsing error: \(error.localizedDescription)")
-            case .apiError(let error):
-                switch error {
-                case let error as OpenAIErrorResponse:
-                    print("error: openai api error: \(error.error)")
-                case let error as XAIErrorResponse:
-                    print("error: xai api error: \(error.error)")
-                case let error as GeminiErrorResponse:
-                    print("error: gemini api error: \(error.error)")
-                case let error as AnthropicErrorResponse:
-                    print("error: enthropic api error: \(error)")
-                default: print("error: uanble to decode error: \(error)")
-                }
+            case .apiError(let error): handleApiError(error)
             case .invalidData: print("error: invalid data")
             case .invalidURL: print("error: invalid url")
             case .requestFailed: print("Request failed")
-            case .responseUnsuccessful(statusCode: let code, let error): print("error: unsuccessful status code: \(code), message: \(error?.localizedDescription ?? "no error description")")
+            case .responseUnsuccessful(statusCode: let code, let error):
+                print("response unsuccessful - status code: \(code)")
+                if let error { handleApiError(error) }
             case .streamParsingFailure: print("error: stream parsing failure")
             }
         }
@@ -92,6 +83,20 @@ class MessageService {
             case .failedToDecodeFunctionArguments: print("error: failed to decode function args")
             case .missingRequiredFunctionArguments: print("error: missing args")
             }
+        }
+    }
+
+    func handleApiError(_ error: Error) {
+        switch error {
+        case let error as OpenAIErrorResponse:
+            print("error: openai api error: \(error.error)")
+        case let error as XAIErrorResponse:
+            print("error: xai api error: \(error.error)")
+        case let error as GeminiErrorResponse:
+            print("error: gemini api error: \(error.error)")
+        case let error as AnthropicErrorResponse:
+            print("error: anthropic api error: \(error.error)")
+        default: print("error: uanble to decode error: \(error)")
         }
     }
 
