@@ -86,14 +86,14 @@ public enum AnthropicAPIErrorType: String, Codable {
 
 public extension Anthropic {
     enum Model: String, Codable, CaseIterable {
-        case claude35Opus_latest = "claude-3-5-opus-latest"
-        case claude35Opus_20240229 = "claude-3-5-opus-20240229"
+        case claude3Opus_latest = "claude-3-opus-latest"
+        case claude3Opus_20240229 = "claude-3-opus-20240229"
         case claude35Sonnet_latest = "claude-3-5-sonnet-latest"
         case claude35Sonnet_20241022 = "claude-3-5-sonnet-20241022"
-        case claude35Sonnet_20240229 = "claude-3-5-sonnet-20240229"
         case claude35Sonnet_20240620 = "claude-3-5-sonnet-20240620"
-        case claude3Haiku_latest = "claude-3-haiku-latest"
-        case claude3Haiku_20241022 = "claude-3-haiku-20241022"
+        case claude3Sonnet_20240229 = "claude-3-sonnet-20240229"
+        case claude35Haiku_latest = "claude-3-5-haiku-latest"
+        case claude35Haiku_20241022 = "claude-3-5-haiku-20241022"
         case claude3Haiku_20240307 = "claude-3-haiku-20240307"
     }
 }
