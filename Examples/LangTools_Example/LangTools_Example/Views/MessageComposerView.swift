@@ -6,6 +6,7 @@
 
 import SwiftUI
 import CoreData
+import LangTools
 
 struct MessageComposerView: View {
     @ObservedObject var viewModel: ViewModel
@@ -24,7 +25,7 @@ struct MessageComposerView: View {
                 .focused($promptTextFieldIsActive)
             Button(action: submitButtonTapped) {
                 Text("Submit")
-                    .foregroundColor(viewModel.messageIsSending ? .red : .accentColor)
+                    .foregroundColor(viewModel.isMessageSending ? .red : .accentColor)
                     .padding(EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 20))
             }
         }
@@ -37,7 +38,7 @@ struct MessageComposerView: View {
     }
     
     func submitButtonTapped() {
-        if viewModel.messageIsSending { return }
+        if viewModel.isMessageSending { return }
 
         Task {
             await viewModel.sendMessage()
@@ -54,7 +55,7 @@ extension MessageComposerView {
         @Published var errorMessage: String = ""
         @Published var enterApiKey: Bool = false
         @Published var apiKey: String = ""
-        @Published var messageIsSending: Bool = false
+        @Published var isMessageSending: Bool = false
 
         private var messageService: MessageService
 
@@ -65,21 +66,28 @@ extension MessageComposerView {
         func sendMessage() async {
             guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             // Send the message completion request
-            messageIsSending = true
-            do { try await messageService.performMessageCompletionRequest(message: input, stream: true) }
+            isMessageSending = true
+            let sentText = input
+            // Clear the input field
+            input = ""
+            do { try await messageService.performMessageCompletionRequest(message: sentText, stream: true) }
             catch let error as LangToolchainError {
                 print("cannot handle request, probably a missing api key: \(error.localizedDescription)")
                 self.enterApiKey = true
+                input = sentText
+            }
+            catch let error as LangToolError {
+                print("cannot handle request, probably a missing api key: \(error.localizedDescription)")
+                self.enterApiKey = true
+                input = sentText
             }
             catch {
                 print("Error sending message completion request: \(error)")
                 self.errorMessage = error.localizedDescription
                 self.showAlert = true
+                input = sentText
             }
-            messageIsSending = false
-
-            // Clear the input field
-            input = ""
+            isMessageSending = false
         }
     }
 }
