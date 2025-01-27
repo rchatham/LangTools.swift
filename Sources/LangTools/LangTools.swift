@@ -62,11 +62,12 @@ extension LangTools {
                     let (bytes, response) = try await session.bytes(for: httpRequest)
                     guard let httpResponse = response as? HTTPURLResponse else { return continuation.finish(throwing: LangToolError.requestFailed) }
                     guard httpResponse.statusCode == 200 else {
-                        var error: Error?; do { error = try await bytes.lines.reduce("", +).data(using: .utf8).flatMap { Self.decodeError(data: $0) as? ErrorResponse }} catch let _error { error = _error }
+                        var error: Error?; do { error = try await bytes.lines.reduce("", +).data(using: .utf8).flatMap { Self.decodeError(data: $0) }} catch let _error { error = _error }
                         return continuation.finish(throwing: LangToolError.responseUnsuccessful(statusCode: httpResponse.statusCode, error))
                     }
 
                     var combinedResponse = Request.Response.empty
+                    // buffer used for responses that need multiple lines to decode
                     var buffer = ""
                     for try await line in bytes.lines {
                         // ensure line is a complete json object if not concat to previous line and continue
@@ -96,14 +97,7 @@ extension LangTools {
 
     // Used because simply mapping the value will cause a compiler error in certain situations, such as in the non-async perform method.
     private func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<any LangToolsStreamableResponse, Error> {
-        return AsyncThrowingStream { cont in
-            Task {
-                for try await response in stream(request: request) {
-                    cont.yield(response)
-                }
-                cont.finish()
-            }
-        }
+        return AsyncThrowingStream { cont in Task { for try await response in stream(request: request) { cont.yield(response) }; cont.finish() } }
     }
 
     private func complete<Request: LangToolsRequest>(request: Request, response: Request.Response) async throws -> Request.Response {
@@ -121,8 +115,7 @@ extension LangTools {
 
 
 public enum LangToolError: Error {
-    case invalidData, streamParsingFailure, invalidURL
-    case requestFailed
+    case invalidData, streamParsingFailure, invalidURL, requestFailed
     case jsonParsingFailure(Error)
     case responseUnsuccessful(statusCode: Int, Error?)
     case apiError(Codable & Error)

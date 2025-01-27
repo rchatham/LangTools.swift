@@ -27,17 +27,17 @@ public final class Ollama: LangTools {
 
     public var requestTypes: [(any LangToolsRequest) -> Bool] {
         return [
-            { ($0 as? ListModelsRequest) != nil },
-            { ($0 as? ListRunningModelsRequest) != nil },
-            { ($0 as? ShowModelRequest) != nil },
-            { ($0 as? DeleteModelRequest) != nil },
-            { ($0 as? CopyModelRequest) != nil },
-            { ($0 as? PullModelRequest) != nil },
-            { ($0 as? PushModelRequest) != nil },
-            { ($0 as? CreateModelRequest) != nil },
-            { ($0 as? ChatRequest) != nil },
-            { ($0 as? GenerateRequest) != nil },
-            { ($0 as? VersionRequest) != nil }
+            { $0 is ListModelsRequest },
+            { $0 is ListRunningModelsRequest },
+            { $0 is ShowModelRequest },
+            { $0 is DeleteModelRequest },
+            { $0 is CopyModelRequest },
+            { $0 is PullModelRequest },
+            { $0 is PushModelRequest },
+            { $0 is CreateModelRequest },
+            { $0 is ChatRequest },
+            { $0 is GenerateRequest },
+            { $0 is VersionRequest }
         ]
     }
 

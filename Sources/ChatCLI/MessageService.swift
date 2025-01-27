@@ -61,18 +61,7 @@ class MessageService: ObservableObject {
         case .jsonParsingFailure(let error):
             print("JSON parsing error: \(error.localizedDescription)")
         case .apiError(let error):
-            switch error {
-            case let error as OpenAIErrorResponse:
-                print("OpenAI API error: \(error.error)")
-            case let error as XAIErrorResponse:
-                print("XAI API error: \(error.error)")
-            case let error as GeminiErrorResponse:
-                print("Gemini API error: \(error.error)")
-            case let error as AnthropicErrorResponse:
-                print("Anthropic API error: \(error)")
-            default:
-                print("Unknown API error: \(error)")
-            }
+            handleLangToolApiError(error)
         case .invalidData:
             print("Invalid data received from API")
         case .invalidURL:
@@ -80,9 +69,24 @@ class MessageService: ObservableObject {
         case .requestFailed:
             print("Request failed")
         case .responseUnsuccessful(let code, let error):
-            print("API response unsuccessful status code: \(code), message: \(error?.localizedDescription ?? "No additional info")")
+            print("API response unsuccessful status code: \(code)")
+            if let error { handleLangToolApiError(error) }
         case .streamParsingFailure:
             print("Failed to parse streaming response")
+    }
+
+    func handleLangToolApiError(_ error: Error) {
+        switch error {
+        case let error as OpenAIErrorResponse:
+            print("OpenAI API error: \(error.error)")
+        case let error as XAIErrorResponse:
+            print("XAI API error: \(error.error)")
+        case let error as GeminiErrorResponse:
+            print("Gemini API error: \(error.error)")
+        case let error as AnthropicErrorResponse:
+            print("Anthropic API error: \(error.error)")
+        default:
+            print("Unknown API error: \(error)")
         }
     }
 
@@ -96,7 +100,6 @@ class MessageService: ObservableObject {
             print("Missing required function arguments")
         }
     }
-
 
     func deleteMessage(id: UUID) {
         messages.removeAll(where: { $0.uuid == id })
