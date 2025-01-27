@@ -15,7 +15,7 @@ public protocol LangTools {
 
     var session: URLSession { get }
     func prepare(request: some LangToolsRequest) throws -> URLRequest
-    ///  When implementing decodeStream yourself, throw an error when the buffer is incomplete and additional lines of data from the response are needed to decode the buffer. If the buffer can be handled it should at least return nil to indicate that the buffer can be cleared. If a nil response results in returned the buffer will be cleared and then it will continue reading the data stream, where throwing an error will continue appending the data stream to the current buffer.
+    ///  When implementing decodeStream yourself, throw an error when the buffer is incomplete and additional lines of data from the response are needed to decode the buffer. If the buffer can be handled it should at least return nil to indicate that the buffer can be cleared. If a nil response is returned the buffer will be cleared and then it will continue reading the data stream, throwing an error will continue appending the data stream to the current buffer.
     static func decodeStream<T: Decodable>(_ buffer: String) throws -> T?
 }
 
@@ -58,35 +58,38 @@ extension LangTools {
 
         return AsyncThrowingStream { continuation in
             Task {
-                let (bytes, response) = try await session.bytes(for: httpRequest)
-                guard let httpResponse = response as? HTTPURLResponse else { throw LangToolError.requestFailed(nil) }
-                guard httpResponse.statusCode == 200 else { throw LangToolError.responseUnsuccessful(statusCode: httpResponse.statusCode, try await bytes.lines.reduce("", +).data(using: .utf8).flatMap { Self.decodeError(data: $0) })}
-
-                var combinedResponse = Request.Response.empty
                 do {
+                    let (bytes, response) = try await session.bytes(for: httpRequest)
+                    guard let httpResponse = response as? HTTPURLResponse else { return continuation.finish(throwing: LangToolError.requestFailed) }
+                    guard httpResponse.statusCode == 200 else {
+                        var error: Error?; do { error = try await bytes.lines.reduce("", +).data(using: .utf8).flatMap { Self.decodeError(data: $0) as? ErrorResponse }} catch let _error { error = _error }
+                        return continuation.finish(throwing: LangToolError.responseUnsuccessful(statusCode: httpResponse.statusCode, error))
+                    }
+
+                    var combinedResponse = Request.Response.empty
                     var buffer = ""
                     for try await line in bytes.lines {
                         // ensure line is a complete json object if not concat to previous line and continue
                         buffer += line
+                        var response: Request.Response?
                         do {
-                            let response: Request.Response? = try Self.decodeStream(buffer)
+                            response = try Self.decodeStream(buffer)
                             buffer = ""
-                            if let response {
-                                continuation.yield(try request.update(response: response))
-                                combinedResponse = combinedResponse.combining(with: response)
-                            }
-                        } catch { continue } // It seems strange not to handle the error here but we are using it to prevent erasing the buffer if decoding errors. If the buffer can be handled, it should at least return nil.
+                        } catch { continue } // We do not handle the error here because we are using it to prevent erasing the buffer when decoding errors. If the buffer can be handled, it should at least return nil.
+                        if let response {
+                            continuation.yield(try request.update(response: response))
+                            combinedResponse = combinedResponse.combining(with: response)
+                        }
                     }
                     if let completionRequest = try completionRequest(request: request, response: try request.update(response: combinedResponse)) {
                         for try await response in stream(request: completionRequest) {
                             continuation.yield(try request.update(response: response))
                         }
                     }
+                    continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
-                    return
                 }
-                continuation.finish()
             }
         }
     }
