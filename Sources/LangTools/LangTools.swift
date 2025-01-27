@@ -68,6 +68,7 @@ extension LangTools {
 
                     var combinedResponse = Request.Response.empty
                     // buffer used for responses that need multiple lines to decode
+                    var errorBuffer: Error?
                     var buffer = ""
                     for try await line in bytes.lines {
                         // ensure line is a complete json object if not concat to previous line and continue
@@ -76,12 +77,22 @@ extension LangTools {
                         do {
                             response = try Self.decodeStream(buffer)
                             buffer = ""
-                        } catch { continue } // We do not handle the error here because we are using it to prevent erasing the buffer when decoding errors. If the buffer can be handled, it should at least return nil.
+                        } catch {
+                            // We may not throw the error here because we are using it to prevent erasing the buffer when decoding errors in case the response needs multiple lines to decode. If the buffer can be handled, it should return nil.
+                            errorBuffer = error
+                            continue
+                        }
                         if let response {
                             continuation.yield(try request.update(response: response))
                             combinedResponse = combinedResponse.combining(with: response)
                         }
                     }
+
+                    if let errorBuffer, !buffer.isEmpty {
+                        // something went wrong with decoding, we should return some kind of decoding error
+                        throw LangToolError.failiedToDecodeStream(buffer: buffer, error: errorBuffer)
+                    }
+
                     if let completionRequest = try completionRequest(request: request, response: try request.update(response: combinedResponse)) {
                         for try await response in stream(request: completionRequest) {
                             continuation.yield(try request.update(response: response))
@@ -119,6 +130,7 @@ public enum LangToolError: Error {
     case jsonParsingFailure(Error)
     case responseUnsuccessful(statusCode: Int, Error?)
     case apiError(Codable & Error)
+    case failiedToDecodeStream(buffer: String, error: Error)
 }
 
 // MARK: - Helpers

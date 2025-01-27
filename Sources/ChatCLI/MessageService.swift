@@ -73,6 +73,9 @@ class MessageService: ObservableObject {
             if let error { handleLangToolApiError(error) }
         case .streamParsingFailure:
             print("Failed to parse streaming response")
+        case .failiedToDecodeStream(buffer: let buffer, error: let error):
+            print("Failed to decode stream: \(buffer), error: \(error.localizedDescription)")
+        }
     }
 
     func handleLangToolApiError(_ error: Error) {

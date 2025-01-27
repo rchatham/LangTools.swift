@@ -75,6 +75,8 @@ class MessageService {
                 print("response unsuccessful - status code: \(code)")
                 if let error { handleApiError(error) }
             case .streamParsingFailure: print("error: stream parsing failure")
+            case .failiedToDecodeStream(buffer: let buffer, error: let error):
+                print("Failed to decode stream: \(buffer), error: \(error.localizedDescription)")
             }
         }
         catch let error as LangToolsRequestError {
