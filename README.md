@@ -45,14 +45,17 @@ let langToolsClient = OpenAI(apiKey: "your-api-key")
 ### Performing a Chat Completion Request
 
 ```swift
-let chatRequest = OpenAI.ChatCompletionRequest(
+// OpenAI
+let request = OpenAI.ChatCompletionRequest(
     model: .gpt4,
     messages: [ /* Your messages here */ ],
     /* Other optional parameters */
 )
-/*
+// XAI uses OpenAI.ChatCompletionRequest with .grok and .grokVision models.
+// Gemini uses OpenAI.ChatCompletionRequest with .gemini models.
+
 // Anthropic
-let chatRequest = Anthropic.MessageRequest(
+let request = Anthropic.MessageRequest(
     model: .claude35Sonnet_20240620,
     messages: [ /* Your messages here */ ]
 )
@@ -62,8 +65,6 @@ let request = Ollama.ChatRequest(
     model: "llama3.2",
     messages: [ /* Your messages here */ ]
 )
-// XAI uses OpenAI.ChatCompletionRequest with .grok and .grokVision models.
-*/
 
 // Using async/await
 // Non-streaming - stream is set to false regardless of request config
@@ -84,7 +85,12 @@ for try await response in langToolsClient.stream(request: request) {
         }
     }
 
-    // handle finish reason
+    // receive text content from response - works for both streaming and non-streaming
+    if let text = response.content.text {
+        content += text
+    }
+
+    // handle finish reason - api depends on response type
     if let finishReason = response.choices.first?.finish_reason {
         switch finishReason {
         case .stop:

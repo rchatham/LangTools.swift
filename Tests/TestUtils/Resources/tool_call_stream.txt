@@ -38,4 +38,6 @@ data: {"id":"chatcmpl-xxxxxxxxxxxxxxxxx","object":"chat.completion.chunk","creat
 
 data: {"id":"chatcmpl-xxxxxxxxxxxxxxxxx","object":"chat.completion.chunk","created":1703041869,"model":"gpt-4-0613","system_fingerprint":null,"choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"tool_calls"}]}
 
+data: {"id":"chatcmpl-xxxxxxxxxxxxxxxxx","object":"chat.completion.chunk","created":1703041869,"model":"gpt-4-0613","system_fingerprint":"fp_44709d6fcb","choices":[],"usage":{"prompt_tokens":30,"completion_tokens":25,"total_tokens":55,"completion_tokens_details":{"reasoning_tokens":10,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}}}
+
 data: [DONE]

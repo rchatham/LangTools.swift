@@ -9,5 +9,17 @@
             "role": "user",
             "content": "Hello!"
         }
-    ]
+    ],
+    "max_completion_tokens": 100,
+    "service_tier": "auto",
+    "store": true,
+    "prediction": {
+        "type": "content",
+        "content": "Expected response"
+    },
+    "modalities": ["text"],
+    "reasoning_effort": "medium",
+    "metadata": {
+        "purpose": "test"
+    }
 }

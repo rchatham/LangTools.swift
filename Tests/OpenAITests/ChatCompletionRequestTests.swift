@@ -13,7 +13,14 @@ final class ChatCompletionRequestTests: XCTestCase {
     func testChatCompletionRequestDecodable() throws {
         OpenAI.decode { (result: Result<OpenAI.ChatCompletionRequest, Error>) in
             switch result {
-            case .success(_): break
+            case .success(let request):
+                XCTAssertEqual(request.model, .gpt35Turbo)
+                XCTAssertEqual(request.max_completion_tokens, 100)
+                XCTAssertEqual(request.service_tier, .auto)
+                XCTAssertEqual(request.store, true)
+                XCTAssertEqual(request.modalities, [.text])
+                XCTAssertEqual(request.reasoning_effort, .medium)
+                XCTAssertEqual(request.metadata?["purpose"], "test")
             case .failure(let error):
                 XCTFail("failed to decode data \(error.localizedDescription)")
             }

@@ -1,0 +1,10 @@
+{
+    "role": "assistant",
+    "content": "Here's what you said, both as text and audio.",
+    "audio": {
+        "id": "audio-123",
+        "expires_at": 1677652588,
+        "data": "base64audio...",
+        "transcript": "Here's what you said, both as text and audio."
+    }
+}

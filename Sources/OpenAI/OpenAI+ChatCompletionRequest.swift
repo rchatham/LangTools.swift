@@ -26,11 +26,12 @@ extension OpenAI {
         public var messages: [Message]
         public let temperature: Double?
         public let top_p: Double?
-        public let n: Int? // how many chat completions to generate for each request
+        public let n: Int?
         public var stream: Bool?
         public let stream_options: StreamOptions?
         public let stop: Stop?
         public let max_tokens: Int?
+        public let max_completion_tokens: Int?
         public let presence_penalty: Double?
         public let frequency_penalty: Double?
         public let logit_bias: [String: Double]?
@@ -42,12 +43,19 @@ extension OpenAI {
         public let tools: [Tool]?
         public let tool_choice: ToolChoice?
         public let parallel_tool_calls: Bool?
+        public let service_tier: Response.ServiceTier?
+        public let store: Bool?
+        public let prediction: PredictionContent?
+        public let modalities: [Modality]?
+        public let audio: AudioConfig?
+        public let reasoning_effort: ReasoningEffort?
+        public let metadata: [String: String]?
 
         @CodableIgnored
         var _choose: (([Response.Choice]) -> Int)?
         public func choose(from choices: [Response.Choice]) -> Int { return _choose?(choices) ?? 0 }
 
-        public init(model: Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, choose: @escaping ([Response.Choice]) -> Int = {_ in 0}) {
+        public init(model: Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, max_completion_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, service_tier: Response.ServiceTier? = nil, store: Bool? = nil, prediction: PredictionContent? = nil, modalities: [Modality]? = nil, audio: AudioConfig? = nil, reasoning_effort: ReasoningEffort? = nil, metadata: [String: String]? = nil, choose: @escaping ([Response.Choice]) -> Int = {_ in 0}) {
             self.model = model
             self.messages = messages
             self.temperature = temperature
@@ -57,6 +65,7 @@ extension OpenAI {
             self.stream_options = stream_options
             self.stop = stop
             self.max_tokens = max_tokens
+            self.max_completion_tokens = max_completion_tokens
             self.presence_penalty = presence_penalty
             self.frequency_penalty = frequency_penalty
             self.logit_bias = logit_bias
@@ -68,11 +77,87 @@ extension OpenAI {
             self.tools = tools
             self.tool_choice = tool_choice
             self.parallel_tool_calls = parallel_tool_calls
+            self.service_tier = service_tier
+            self.store = store
+            self.prediction = prediction
+            self.modalities = modalities
+            self.audio = audio
+            self.reasoning_effort = reasoning_effort
+            self.metadata = metadata
             _choose = choose
         }
 
         public struct StreamOptions: Codable {
             let include_usage: Bool
+        }
+
+        public enum ReasoningEffort: String, Codable {
+            case low, medium, high
+        }
+
+        public enum Modality: String, Codable {
+            case text, audio
+        }
+
+        public struct AudioConfig: Codable {
+            public let voice: Voice
+            public let format: AudioFormat
+
+            public init(voice: Voice, format: AudioFormat) {
+                self.voice = voice
+                self.format = format
+            }
+
+            public enum Voice: String, Codable {
+                case alloy, echo, fable, onyx, nova, shimmer
+                case ash, coral, sage, verse  // Recommended voices
+            }
+
+            public enum AudioFormat: String, Codable {
+                case wav, mp3, flac, opus, pcm16
+            }
+        }
+
+        public struct PredictionContent: Codable {
+            public let type: String = "content"
+            public let content: Content
+
+            public init(content: Content) {
+                self.content = content
+            }
+
+            public enum Content: Codable {
+                case string(String)
+                case array([ContentPart])
+
+                public struct ContentPart: Codable {
+                    public let type: String
+                    public let text: String
+                }
+
+                public func encode(to encoder: Encoder) throws {
+                    var container = encoder.singleValueContainer()
+                    switch self {
+                    case .string(let str): try container.encode(str)
+                    case .array(let arr): try container.encode(arr)
+                    }
+                }
+
+                public init(from decoder: Decoder) throws {
+                    let container = try decoder.singleValueContainer()
+                    if let str = try? container.decode(String.self) {
+                        self = .string(str)
+                    } else if let arr = try? container.decode([ContentPart].self) {
+                        self = .array(arr)
+                    } else {
+                        throw DecodingError.typeMismatch(Content.self,
+                            DecodingError.Context(codingPath: decoder.codingPath,
+                            debugDescription: "Expected String or Array"))
+                    }
+                }
+            }
+
+            enum CodingKeys: CodingKey { case type, content }
         }
 
         public enum ToolChoice: Codable {
@@ -164,6 +249,7 @@ extension OpenAI {
 
         public enum ResponseType: String, Codable {
             case text, json_object
+            // TODO: - add json_schema
         }
     }
 
@@ -180,11 +266,12 @@ extension OpenAI {
         public let system_fingerprint: String?
         public var choices: [Choice]
         public let usage: Usage?
+        public let service_tier: ServiceTier?
 
         @CodableIgnored
         public var choose: (([Choice]) -> Int)?
 
-        public init(id: String? = nil, object: String, created: Int, model: String?, system_fingerprint: String?, choices: [Choice], usage: Usage?, choose: (([Choice]) -> Int)?) {
+        public init(id: String?, object: String, created: Int, model: String?, system_fingerprint: String?, choices: [Choice], usage: Usage?, service_tier: ServiceTier?, choose: (([Choice]) -> Int)?) {
             self.id = id
             self.object = object
             self.created = created
@@ -192,6 +279,8 @@ extension OpenAI {
             self.system_fingerprint = system_fingerprint
             self.choices = choices
             self.usage = usage
+            self.service_tier = service_tier
+            self.choose = choose
         }
 
         public struct Choice: Codable, LangToolsMultipleChoiceChoice {
@@ -199,17 +288,37 @@ extension OpenAI {
             public let message: Message?
             public let finish_reason: FinishReason?
             public let delta: Message.Delta?
-            // TODO: - Add log probs
+            public let logprobs: LogProbs?
 
-            public init(index: Int, message: Message?, finish_reason: FinishReason?, delta: Message.Delta?) {
+            public init(index: Int, message: Message?, finish_reason: FinishReason?, delta: Message.Delta?, logprobs: LogProbs?) {
                 self.index = index
                 self.message = message
                 self.finish_reason = finish_reason
                 self.delta = delta
+                self.logprobs = logprobs
             }
 
             public enum FinishReason: String, Codable {//, LangToolsFinishReason {
                 case stop, length, content_filter, tool_calls
+                case function_call // Deprecated
+            }
+
+            public struct LogProbs: Codable {
+                public let content: [TokenInfo]?
+                public let refusal: [TokenInfo]?
+
+                public struct TokenInfo: Codable {
+                    public let token: String
+                    public let logprob: Double
+                    public let bytes: [Int]?
+                    public let top_logprobs: [TopLogProb]?
+
+                    public struct TopLogProb: Codable {
+                        public let token: String
+                        public let logprob: Double
+                        public let bytes: [Int]?
+                    }
+                }
             }
 
             func combining(with next: Choice) -> Choice {
@@ -218,7 +327,7 @@ extension OpenAI {
                 // so we need to first merge the initial `delta` then merge the `next.delta`. We no longer
                 // need the delta object but we preserve it to maintain api consistency with OpenAI.
                 let message = combining(message ?? combining(nil, with: delta), with: next.delta)
-                return Choice(index: index, message: message, finish_reason: finish_reason ?? next.finish_reason, delta: combining(delta, with: next.delta))
+                return Choice(index: index, message: message, finish_reason: finish_reason ?? next.finish_reason, delta: combining(delta, with: next.delta), logprobs: next.logprobs)
             }
 
             func combining(_ message: Message?, with delta: Message.Delta?) -> Message? {
@@ -228,7 +337,7 @@ extension OpenAI {
 
             func combining(_ delta: Message.Delta?, with next: Message.Delta?) -> Message.Delta? {
                 guard let delta = delta, let next = next else { return delta ?? next }
-                return Message.Delta(role: delta.role ?? next.role, content: delta.content ?? "" + (next.content ?? ""), tool_calls: combining(delta.tool_calls, with: next.tool_calls))
+                return Message.Delta(role: delta.role ?? next.role, content: delta.content ?? "" + (next.content ?? ""), tool_calls: combining(delta.tool_calls, with: next.tool_calls),/**/ audio: delta.audio ?? next.audio, /**/ refusal: next.refusal)
             }
 
             func combining(_ toolCalls: [Message.ToolCall]?, with next: [Message.ToolCall]?) -> [Message.ToolCall]? {
@@ -255,16 +364,48 @@ extension OpenAI {
             public let prompt_tokens: Int
             public let completion_tokens: Int
             public let total_tokens: Int
+            public let completion_tokens_details: CompletionTokensDetails?
+            public let prompt_tokens_details: PromptTokensDetails?
 
-            public init(prompt_tokens: Int, completion_tokens: Int, total_tokens: Int) {
+            public init(prompt_tokens: Int, completion_tokens: Int, total_tokens: Int, completion_tokens_details: CompletionTokensDetails? = nil, prompt_tokens_details: PromptTokensDetails? = nil) {
                 self.prompt_tokens = prompt_tokens
                 self.completion_tokens = completion_tokens
                 self.total_tokens = total_tokens
+                self.completion_tokens_details = completion_tokens_details
+                self.prompt_tokens_details = prompt_tokens_details
+            }
+
+            public struct CompletionTokensDetails: Codable {
+                public let reasoning_tokens: Int
+                public let accepted_prediction_tokens: Int
+                public let rejected_prediction_tokens: Int
+                public let audio_tokens: Int?
+
+                public init(reasoning_tokens: Int, accepted_prediction_tokens: Int, rejected_prediction_tokens: Int, audio_tokens: Int? = nil) {
+                    self.reasoning_tokens = reasoning_tokens
+                    self.accepted_prediction_tokens = accepted_prediction_tokens
+                    self.rejected_prediction_tokens = rejected_prediction_tokens
+                    self.audio_tokens = audio_tokens
+                }
+            }
+
+            public struct PromptTokensDetails: Codable {
+                public let audio_tokens: Int
+                public let cached_tokens: Int
+
+                public init(audio_tokens: Int, cached_tokens: Int) {
+                    self.audio_tokens = audio_tokens
+                    self.cached_tokens = cached_tokens
+                }
             }
         }
 
+        public enum ServiceTier: String, Codable {
+            case auto, `default`
+        }
+
         public func combining(with next: ChatCompletionResponse) -> ChatCompletionResponse {
-            return ChatCompletionResponse(id: next.id, object: next.object, created: next.created, model: next.model, system_fingerprint: next.system_fingerprint, choices: combining(choices, with: next.choices), usage: next.usage, choose: choose ?? next.choose)
+            return ChatCompletionResponse(id: next.id, object: next.object, created: next.created, model: next.model, system_fingerprint: next.system_fingerprint, choices: combining(choices, with: next.choices), usage: next.usage, service_tier: next.service_tier, choose: choose ?? next.choose)
         }
 
         func combining(_ choices: [Choice], with next: [Choice]) -> [Choice] {
@@ -278,7 +419,7 @@ extension OpenAI {
             }
         }
 
-        public static var empty: ChatCompletionResponse { ChatCompletionResponse(id: "", object: "", created: -1, model: nil, system_fingerprint: nil, choices: [], usage: nil, choose: nil) }
+        public static var empty: ChatCompletionResponse { ChatCompletionResponse(id: "", object: "", created: -1, model: nil, system_fingerprint: nil, choices: [], usage: nil, service_tier: nil, choose: nil) }
     }
 
     public enum ChatCompletionError: Error {

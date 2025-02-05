@@ -1,0 +1,11 @@
+data: {"id":"chatcmpl-xxxxxxxxxxxxxxxx","object":"chat.completion.chunk","created":1703041870,"model":"gpt-4-0613","system_fingerprint":"fp_44709d6fcb","choices":[{"index":0,"delta":{"role":"assistant","content":"","audio":null,"refusal":null},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-xxxxxxxxxxxxxxxx","object":"chat.completion.chunk","created":1703041870,"model":"gpt-4-0613","system_fingerprint":"fp_44709d6fcb","choices":[{"index":0,"delta":{"content":"Here is my response"},"logprobs":{"content":[{"token":"Here","logprob":-0.2,"bytes":[72,101,114,101]}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-xxxxxxxxxxxxxxxx","object":"chat.completion.chunk","created":1703041870,"model":"gpt-4-0613","system_fingerprint":"fp_44709d6fcb","choices":[{"index":0,"delta":{"audio":{"id":"audio-123","expires_at":1703042870,"data":"base64audio...","transcript":"Here is my response"}},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-xxxxxxxxxxxxxxxx","object":"chat.completion.chunk","created":1703041870,"model":"gpt-4-0613","system_fingerprint":"fp_44709d6fcb","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-xxxxxxxxxxxxxxxx","object":"chat.completion.chunk","created":1703041870,"model":"gpt-4-0613","system_fingerprint":"fp_44709d6fcb","choices":[],"usage":{"prompt_tokens":20,"completion_tokens":25,"total_tokens":45,"completion_tokens_details":{"reasoning_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0,"audio_tokens":10}}}
+
+data: [DONE]

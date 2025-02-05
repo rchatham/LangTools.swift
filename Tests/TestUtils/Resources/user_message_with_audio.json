@@ -1,0 +1,16 @@
+{
+    "role": "user",
+    "content": [
+        {
+            "type": "input_audio",
+            "input_audio": {
+                "data": "base64audio...",
+                "format": "mp3"
+            }
+        },
+        {
+            "type": "text",
+            "text": "What did I say in this recording?"
+        }
+    ]
+}

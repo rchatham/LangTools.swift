@@ -8,14 +8,39 @@
         "index": 0,
         "message": {
             "role": "assistant",
-            "content": "Hello there, how may I assist you today?",
+            "content": "Hello there, how may I assist you today?"
+        },
+        "logprobs": {
+            "content": [
+                {
+                    "token": "Hello",
+                    "logprob": -0.5,
+                    "bytes": [72, 101, 108, 108, 111],
+                    "top_logprobs": [
+                        {
+                            "token": "Hi",
+                            "logprob": -1.0,
+                            "bytes": [72, 105]
+                        }
+                    ]
+                }
+            ]
         },
         "finish_reason": "stop"
     }],
     "usage": {
         "prompt_tokens": 9,
         "completion_tokens": 12,
-        "total_tokens": 21
-    }
+        "total_tokens": 21,
+        "completion_tokens_details": {
+            "reasoning_tokens": 5,
+            "accepted_prediction_tokens": 3,
+            "rejected_prediction_tokens": 0
+        },
+        "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 0
+        }
+    },
+    "service_tier": "default"
 }
-
