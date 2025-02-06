@@ -13,13 +13,13 @@ protocol MultipartFormDataEncodableRequest {
 }
 
 // MultipartRequest
-public struct MultipartRequest {
-    public let boundary: String
+struct MultipartRequest {
+    let boundary: String
 
     private let separator: String = "\r\n"
     private var data: Data
 
-    public init(boundary: String = UUID().uuidString) {
+    init(boundary: String = UUID().uuidString) {
         self.boundary = boundary
         self.data = .init()
     }
@@ -29,7 +29,7 @@ public struct MultipartRequest {
         self.data = data
     }
 
-    public func add(key: String, value: Any?) -> Self {
+    func add(key: String, value: Any?) -> Self {
         guard let value else { return self }
         var data = data
         data.append("--\(boundary)")
@@ -40,7 +40,7 @@ public struct MultipartRequest {
         return MultipartRequest(boundary: boundary, data: data)
     }
 
-    public func file(fileName: String, contentType: String, fileData: Data) -> Self {
+    func file(fileName: String, contentType: String, fileData: Data) -> Self {
         var data = data
         data.append("--\(boundary)")
         data.append(separator)
@@ -51,9 +51,9 @@ public struct MultipartRequest {
         return MultipartRequest(boundary: boundary, data: data)
     }
 
-    public var httpContentTypeHeadeValue: String { "multipart/form-data; boundary=\(boundary)" }
+    var httpContentTypeHeadeValue: String { "multipart/form-data; boundary=\(boundary)" }
 
-    public var httpBody: Data {
+    var httpBody: Data {
         var bodyData = data
         bodyData.append("--\(boundary)--")
         return bodyData
