@@ -13,7 +13,7 @@ public final class Gemini: LangTools {
     public typealias Model = GeminiModel
     public typealias ErrorResponse = GeminiErrorResponse
 
-    public var requestTypes: [(any LangToolsRequest) -> Bool] {
+    public static var requestTypes: [(any LangToolsRequest) -> Bool] {
         [
             { ($0 as? OpenAI.ChatCompletionRequest).flatMap { OpenAIModel.geminiModels.contains($0.model) } ?? false },
         ]

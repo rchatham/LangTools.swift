@@ -28,7 +28,7 @@ final public class OpenAI: LangTools {
 
     public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
 
-    public var requestTypes: [(any LangToolsRequest) -> Bool] {
+    public static var requestTypes: [(any LangToolsRequest) -> Bool] {
         return [
             { ($0 as? ChatCompletionRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
             { $0 is AudioSpeechRequest },

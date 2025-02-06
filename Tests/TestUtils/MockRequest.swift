@@ -11,7 +11,7 @@ import LangTools
 
 struct MockLangTool: LangTools {
     typealias ErrorResponse = MockErrorResponse
-    var requestTypes: [(any LangToolsRequest) -> Bool]
+    static var requestTypes: [(any LangToolsRequest) -> Bool] = [ { $0 is MockRequest } ]
     var session: URLSession
     func prepare(request: some LangToolsRequest) throws -> URLRequest {
         return URLRequest(url: URL(string: "http://localhost:8080/v1/")!)
