@@ -77,19 +77,20 @@ extension LangTools {
                         do {
                             response = try Self.decodeStream(buffer)
                             buffer = ""
+                            errorBuffer = nil
                         } catch {
-                            // We may not throw the error here because we are using it to prevent erasing the buffer when decoding errors in case the response needs multiple lines to decode. If the buffer can be handled, it should return nil.
+                            // We do not throw the error here because we are using it to prevent erasing the buffer when decoding errors in case the response needs multiple lines to decode. If the buffer can be handled, it should return nil.
                             errorBuffer = error
                             continue
                         }
                         if let response {
+                            // If we were able to create a response object we update the decoded response with information from the request and return it before adding it to the combined response used to handle tool completions.
                             continuation.yield(try request.update(response: response))
                             combinedResponse = combinedResponse.combining(with: response)
                         }
                     }
 
                     if let errorBuffer, !buffer.isEmpty {
-                        // something went wrong with decoding, we should return some kind of decoding error
                         throw LangToolError.failiedToDecodeStream(buffer: buffer, error: errorBuffer)
                     }
 
