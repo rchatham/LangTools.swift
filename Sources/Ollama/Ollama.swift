@@ -25,7 +25,7 @@ public final class Ollama: LangTools {
 
     public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
 
-    public static var requestTypes: [(any LangToolsRequest) -> Bool] {
+    public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
             { $0 is ListModelsRequest },
             { $0 is ListRunningModelsRequest },

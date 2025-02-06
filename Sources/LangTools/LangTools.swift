@@ -11,7 +11,7 @@ public protocol LangTools {
     associatedtype ErrorResponse: Codable & Error
     func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response
     func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error>
-    static var requestTypes: [(any LangToolsRequest) -> Bool] { get }
+    static var requestValidators: [(any LangToolsRequest) -> Bool] { get }
 
     var session: URLSession { get }
     func prepare(request: some LangToolsRequest) throws -> URLRequest
@@ -21,7 +21,7 @@ public protocol LangTools {
 
 extension LangTools {
     public func canHandleRequest<Request: LangToolsRequest>(_ request: Request) -> Bool {
-        return Self.requestTypes.reduce(false) { $0 || $1(request) }
+        return Self.requestValidators.reduce(false) { $0 || $1(request) }
     }
 
     public func perform<Request: LangToolsRequest>(request: Request, completion: @escaping (Result<Request.Response, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {

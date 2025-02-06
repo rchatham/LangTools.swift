@@ -13,7 +13,7 @@ public final class XAI: LangTools {
     public typealias Model = XAIModel
     public typealias ErrorResponse = XAIErrorResponse
 
-    public static var requestTypes: [(any LangToolsRequest) -> Bool] {
+    public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         [
             { ($0 as? OpenAI.ChatCompletionRequest).flatMap { OpenAIModel.xAIModels.contains($0.model) } ?? false },
         ]
