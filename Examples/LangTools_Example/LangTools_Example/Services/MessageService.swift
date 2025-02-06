@@ -10,6 +10,7 @@ import OpenAI
 import Anthropic
 import XAI
 import Gemini
+import Ollama
 
 @Observable
 class MessageService {
@@ -98,6 +99,8 @@ class MessageService {
             print("error: gemini api error: \(error.error)")
         case let error as AnthropicErrorResponse:
             print("error: anthropic api error: \(error.error)")
+        case let error as OllamaErrorResponse:
+            print("error: ollama api error: \(error.error)")
         default: print("error: uanble to decode error: \(error)")
         }
     }

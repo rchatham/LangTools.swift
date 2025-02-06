@@ -20,6 +20,7 @@ extension View {
             case .openAI(_): return ("OpenAI", .openAI)
             case .xAI(_): return ("xAI", .xAI)
             case .gemini(_): return ("Gemini", .gemini)
+            case .ollama(_): return ("Ollama", .ollama)
             }
         }()
         return alert("Enter API Key", isPresented: isPresented, actions: {

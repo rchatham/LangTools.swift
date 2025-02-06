@@ -7,6 +7,7 @@
 import Foundation
 import OpenAI
 import Anthropic
+import Ollama
 
 class Message: Codable, ObservableObject, Identifiable {
     let uuid: UUID
@@ -61,6 +62,11 @@ extension Array<Message> {
             Anthropic.Message(role: message.role.toAnthropicRole(), content: message.text ?? "")
         }
     }
+    func toOllamaMessages() -> [Ollama.Message] {
+        return self.map { message in
+            Ollama.Message(role: message.role.toOllamaRole(), content: message.text ?? "")
+        }
+    }
 }
 
 extension Array<OpenAI.Tool> {
@@ -88,6 +94,14 @@ extension OpenAI.Message.Role {
         case .assistant: return .assistant
         case .user: return .user
         default: fatalError("role not handled ya fool!")
+        }
+    }
+    func toOllamaRole() -> Ollama.Role {
+        switch self {
+        case .assistant: .assistant
+        case .user: .user
+        case .tool: .tool
+        case .system, .developer: .system
         }
     }
 }

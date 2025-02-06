@@ -10,6 +10,7 @@ import OpenAI
 import Anthropic
 import XAI
 import Gemini
+import Ollama
 import AVFAudio
 
 
@@ -54,6 +55,8 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice)
         } else if case .gemini(let model) = model {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream/*, tools: tools, tool_choice: toolChoice*/)
+        } else if case .ollama(let model) = model {
+            return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools)
         } else {
             return Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
         }
@@ -76,12 +79,13 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         case .openAI: return if let baseURL { OpenAI(baseURL: baseURL, apiKey: apiKey) } else { OpenAI(apiKey: apiKey) }
         case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
+        case .ollama: return Ollama()
         }
     }
 }
 
 enum LLMAPIService: String, CaseIterable {
-    case openAI, anthropic, xAI, gemini
+    case openAI, anthropic, xAI, gemini, ollama
 }
 
 extension NetworkClient {

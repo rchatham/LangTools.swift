@@ -356,7 +356,7 @@ class OllamaTests: XCTestCase {
         }
 
         let response = try await api.chat(
-            model: OllamaModel(rawValue: "llama3.2"),
+            model: OllamaModel(rawValue: "llama3.2")!,
             messages: [.init(role: .user, content: "Hello!")]
         )
 
@@ -377,7 +377,7 @@ class OllamaTests: XCTestCase {
         var results: [Ollama.ChatResponse] = []
 
         for try await response in api.streamChat(
-            model: OllamaModel(rawValue: "llama3.2"),
+            model: OllamaModel(rawValue: "llama3.2")!,
             messages: [.init(role: .user, content: "Why is the sky blue?")]
         ) {
             results.append(response)
@@ -442,7 +442,7 @@ class OllamaTests: XCTestCase {
                 required: ["location", "format"]))]
 
         let response = try await api.chat(
-            model: OllamaModel(rawValue: "llama3.2"),
+            model: OllamaModel(rawValue: "llama3.2")!,
             messages: [.init(role: .user, content: "What's the weather in Paris?")],
             options: nil,
             tools: tools

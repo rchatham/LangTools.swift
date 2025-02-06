@@ -100,7 +100,7 @@ public struct OllamaModel: RawRepresentable, Codable, Hashable, CaseIterable {
 
     public let rawValue: String
 
-    public init(rawValue: String) {
+    public init?(rawValue: String) {
         self.rawValue = rawValue
     }
 
