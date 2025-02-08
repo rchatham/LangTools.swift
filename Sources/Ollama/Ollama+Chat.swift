@@ -3,7 +3,7 @@ import LangTools
 import OpenAI
 
 extension Ollama {
-    public struct ChatRequest: Codable, LangToolsRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest {
+    public struct ChatRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest {
         public typealias Response = ChatResponse
         public typealias LangTool = Ollama
         public static var endpoint: String { "api/chat" }
@@ -79,7 +79,7 @@ extension Ollama {
                 created_at: next.created_at,
                 message: Message(
                     role: next.message?.role ?? message?.role ?? .assistant,
-                    content: (message?.content ?? "") + (next.message?.content ?? ""),
+                    content: (message?.content.text ?? "") + (next.message?.content.text ?? ""),
                     images: next.message?.images,
                     tool_calls: next.message?.tool_calls ?? message?.tool_calls
                 ),
@@ -96,20 +96,21 @@ extension Ollama {
     }
 
     public struct Message: Codable, LangToolsMessage, LangToolsToolMessage {
-        public typealias Content = String
+        public typealias Content = LangToolsTextContent
         public typealias ToolSelection = ChatToolCall
         public typealias ToolResult = ChatToolResult
 
         public let role: Role
-        public let content: String
+        // Wrapping in LangToolsTextContent for api consistency.
+        public let content: LangToolsTextContent
         public let images: [String]?
         public let tool_calls: [ChatToolCall]?
 
         public var tool_selection: [ChatToolCall]? { tool_calls }
 
-        public init(role: Role, content: Content, images: [String]? = nil, tool_calls: [ChatToolCall]? = nil) {
+        public init(role: Role, content: String, images: [String]? = nil, tool_calls: [ChatToolCall]? = nil) {
             self.role = role
-            self.content = content
+            self.content = LangToolsTextContent(text: content)
             self.images = images
             self.tool_calls = tool_calls
         }
@@ -125,6 +126,26 @@ extension Ollama {
             return tool_results.map { result in
                 Message(role: .tool, content: result.result)
             }
+        }
+
+        public init(from decoder: any Decoder) throws {
+            var container = try decoder.container(keyedBy: CodingKeys.self)
+            role = try container.decode(Role.self, forKey: .role)
+            content = LangToolsTextContent(text: try container.decode(String.self, forKey: .content))
+            images = try container.decodeIfPresent([String].self, forKey: .images)
+            tool_calls = try container.decodeIfPresent([ChatToolCall].self, forKey: .tool_calls)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var container = try encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(role, forKey: .role)
+            try container.encode(content.text, forKey: .content)
+            try container.encodeIfPresent(images, forKey: .images)
+            try container.encodeIfPresent(tool_calls, forKey: .tool_calls)
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case role, content, images, tool_calls
         }
     }
 
