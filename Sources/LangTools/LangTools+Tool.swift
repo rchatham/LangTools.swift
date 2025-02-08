@@ -19,14 +19,15 @@ public protocol LangToolsToolSchema: Codable {
     var type: String { get }
     var properties: [String:ToolSchemaProperty] { get }
     var required: [String]? { get }
-    init(properties: [String:ToolSchemaProperty], required: [String]?)
+    init(type: String, properties: [String:ToolSchemaProperty], required: [String]?)
 }
 
 public struct ToolSchema<PropertySchema: LangToolsToolSchemaProperty>: LangToolsToolSchema, Codable {
-    public let type: String = "object"
+    public let type: String
     public var properties: [String:PropertySchema]
     public var required: [String]?
-    public init(properties: [String:PropertySchema] = [:], required: [String]? = nil) {
+    public init(type: String = "object", properties: [String:PropertySchema] = [:], required: [String]? = nil) {
+        self.type = type
         self.properties = properties
         self.required = required
     }

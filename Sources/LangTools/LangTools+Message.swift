@@ -44,6 +44,7 @@ extension LangToolsContent {
         if let string = string {
             return string
         } else if let array = array, let text = array.first as? LangToolsTextContentType {
+            // TODO: - fix to handle array's more robustly, multiple text
             return text.text
         } else {
             return ""
@@ -64,7 +65,19 @@ public extension LangToolsTextContentType {
     var type: String { "text" }
 }
 
-public struct LangToolsTextContent: LangToolsTextContentType, LangToolsContent {
+public struct LangToolsTextContent: LangToolsTextContentType, LangToolsContent, ExpressibleByStringLiteral {
+    public init(string: String) {
+        text = string
+    }
+
+    public init(stringLiteral: String) {
+       text = stringLiteral
+    }
+
+    public init(_ content: any LangToolsContent) {
+        self.text = content.text
+    }
+
     public var text: String
     public init(text: String) {
        self.text = text

@@ -34,10 +34,11 @@ extension Anthropic {
         }
 
         public struct InputSchema: Codable, LangToolsToolSchema {
-            public let type: String = "object"
+            public let type: String
             public var properties: [String:Property]
             public var required: [String]?
-            public init(properties: [String : Property] = [:], required: [String]? = nil) {
+            public init(type: String = "object", properties: [String : Property] = [:], required: [String]? = nil) {
+                self.type = type
                 self.properties = properties
                 self.required = required
             }
