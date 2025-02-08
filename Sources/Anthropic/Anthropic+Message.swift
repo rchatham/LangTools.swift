@@ -122,7 +122,7 @@ extension Anthropic {
                 }
             }
 
-            public struct TextContent: Codable, LangToolsContentType {
+            public struct TextContent: Codable, LangToolsTextContentType {
                 public let type: String = "text"
                 public let text: String
                 public init(text: String) {
@@ -134,7 +134,7 @@ extension Anthropic {
                 }
             }
 
-            public struct ImageContent: Codable, LangToolsContentType {
+            public struct ImageContent: Codable, LangToolsImageContentType {
                 public let type: String = "image"
                 public let source: ImageSource
                 public init(source: ImageSource) {
@@ -199,6 +199,11 @@ extension Anthropic {
             }
 
             public struct ToolResult: Codable, LangToolsContentType, LangToolsToolSelectionResult {
+                public let type: String = "tool_result"
+                public let tool_use_id: String
+                public let is_error: Bool
+                public let content: Content // Cannot be toolUse or toolResult ContentType
+
                 public var tool_selection_id: String { tool_use_id }
                 public var result: String { content.string ?? "" }
                 public init(tool_selection_id: String, result: String) {
@@ -206,11 +211,6 @@ extension Anthropic {
                     content = .string(result)
                     is_error = false
                 }
-                
-                public let type: String = "tool_result"
-                public let tool_use_id: String
-                public let is_error: Bool
-                public let content: Content // Cannot be toolUse or toolResult ContentType
 
                 enum CodingKeys: String, CodingKey {
                     case type, tool_use_id, is_error, content

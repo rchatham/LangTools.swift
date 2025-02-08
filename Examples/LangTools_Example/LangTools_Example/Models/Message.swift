@@ -62,6 +62,9 @@ extension Array<Message> {
             Anthropic.Message(role: message.role.toAnthropicRole(), content: message.text ?? "")
         }
     }
+    func createAnthropicSystemMessage() -> String? {
+        return self.filter { $0.isSystem }.reduce("") { (!$0.isEmpty ? $0 + "\n---\n" : "") + ($1.text ?? "") }
+    }
     func toOllamaMessages() -> [Ollama.Message] {
         return self.map { message in
             Ollama.Message(role: message.role.toOllamaRole(), content: message.text ?? "")
