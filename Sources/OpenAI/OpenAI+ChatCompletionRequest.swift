@@ -13,6 +13,10 @@ public extension OpenAI {
     func performChatCompletionRequest(messages: [Message], model: Model = .gpt35Turbo, stream: Bool = false, completion: @escaping (Result<OpenAI.ChatCompletionResponse, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
         perform(request: OpenAI.ChatCompletionRequest(model: model, messages: messages, stream: stream), completion: completion, didCompleteStreaming: didCompleteStreaming)
     }
+
+    public func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest {
+        return  ChatCompletionRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { Tool($0) })
+    }
 }
 
 extension OpenAI {
@@ -53,6 +57,10 @@ extension OpenAI {
         @CodableIgnored
         var _choose: (([Response.Choice]) -> Int)?
         public func choose(from choices: [Response.Choice]) -> Int { return _choose?(choices) ?? 0 }
+
+        public init(model: OpenAIModel, messages: [any LangToolsMessage]) {
+            self.init(model: model, messages: messages.map { Message($0) })
+        }
 
         public init(model: Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, max_completion_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, service_tier: Response.ServiceTier? = nil, store: Bool? = nil, prediction: PredictionContent? = nil, modalities: [Modality]? = nil, audio: AudioConfig? = nil, reasoning_effort: ReasoningEffort? = nil, metadata: [String: String]? = nil, choose: @escaping ([Response.Choice]) -> Int = {_ in 0}) {
             self.model = model

@@ -14,12 +14,51 @@ public protocol LangToolsTool: Codable {
     init(name: String, description: String?, tool_schema: ToolSchema, callback: (([String:Any]) async throws -> String?)?)
 }
 
+extension LangToolsTool {
+    public init(_ tool: any LangToolsTool) {
+        self.init(name: tool.name, description: tool.description, tool_schema: ToolSchema(tool.tool_schema), callback: tool.callback)
+    }
+}
+
 public protocol LangToolsToolSchema: Codable {
     associatedtype ToolSchemaProperty: LangToolsToolSchemaProperty
     var type: String { get }
     var properties: [String:ToolSchemaProperty] { get }
     var required: [String]? { get }
     init(type: String, properties: [String:ToolSchemaProperty], required: [String]?)
+}
+
+extension LangToolsToolSchema {
+    public init(_ schema: any LangToolsToolSchema) {
+        self.init(type: schema.type, properties: schema.properties.compactMapValues({ ToolSchemaProperty($0) }), required: schema.required)
+    }
+}
+
+public protocol LangToolsToolSchemaProperty: Codable {
+    var type: String { get }
+    var enumValues: [String]? { get }
+    var description: String? { get }
+    init(type: String, enumValues: [String]?, description: String?)
+}
+
+extension LangToolsToolSchemaProperty {
+    public init(_ property: any LangToolsToolSchemaProperty) {
+        self.init(type: property.type, enumValues: property.enumValues, description: property.description)
+    }
+}
+
+public struct Tool: Codable, LangToolsTool {
+    public var name: String
+    public var description: String?
+    public var tool_schema: ToolSchema<ToolSchemaProperty>
+    @CodableIgnored
+    public var callback: (([String : Any]) async throws -> String?)? = nil
+    public init(name: String, description: String?, tool_schema: ToolSchema<ToolSchemaProperty>, callback: (([String:Any]) async throws -> String?)? = nil) {
+        self.name = name
+        self.description = description
+        self.tool_schema = tool_schema
+        self.callback = callback
+    }
 }
 
 public struct ToolSchema<PropertySchema: LangToolsToolSchemaProperty>: LangToolsToolSchema, Codable {
@@ -35,13 +74,6 @@ public struct ToolSchema<PropertySchema: LangToolsToolSchemaProperty>: LangTools
     enum CodingKeys: String, CodingKey {
         case type, properties, required
     }
-}
-
-public protocol LangToolsToolSchemaProperty: Codable {
-    var type: String { get }
-    var enumValues: [String]? { get }
-    var description: String? { get }
-    init(type: String, enumValues: [String]?, description: String?)
 }
 
 public struct ToolSchemaProperty: LangToolsToolSchemaProperty {

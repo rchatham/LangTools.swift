@@ -46,6 +46,15 @@ public extension OpenAI {
             return tool_results.map { .init(tool_selection_id: $0.tool_selection_id, result: $0.result) }
         }
 
+        public init(role: Role, content: Content) {
+            self.role = role
+            self.content = content
+            name = nil
+            tool_calls = nil
+            audio = nil
+            refusal = nil
+        }
+
         public init(tool_selection_id: String, result: String) {
             role = .tool
             content = Content.array([.toolResult(.init(tool_selection_id: tool_selection_id, result: result))])
@@ -128,12 +137,37 @@ public extension OpenAI {
 
         public enum Role: String, Codable, LangToolsRole {
             case system, user, assistant, tool, developer
+            public init(_ role: any LangToolsRole) {
+                if role.isAssistant { self = .assistant }
+                else if role.isUser { self = .user }
+                else if role.isSystem { self = .system }
+                else if role.isTool { self = .tool }
+                else { self = .assistant }
+            }
+            public var isAssistant: Bool { self == .assistant }
+            public var isUser: Bool { self == .user }
+            public var isSystem: Bool { self == .system || self == .developer }
+            public var isTool: Bool { self == .tool }
         }
 
         public enum Content: Codable, CustomStringConvertible, LangToolsContent {
             case null
             case string(String)
             case array([ContentType])
+
+            public init(string: String) {
+                self = .string(string)
+            }
+
+            public init(_ content: any LangToolsContent) {
+                if let array = content.array {
+                    self = .array(array.compactMap { try? ContentType($0) } )
+                } else if let string = content.string {
+                    self = .string(string)
+                } else {
+                    self = .null
+                }
+            }
 
             public var description: String {
                 switch self {
@@ -157,6 +191,16 @@ public extension OpenAI {
                 case audio(AudioContent)
                 case refusal(RefusalContent)
                 case toolResult(ToolResultContent)
+
+                public init(_ contentType: any LangToolsContentType) throws {
+                    if let text = contentType.textContentType {
+                        self = .text(try .init(text))
+                    } else {
+                        // TODO: - implement audio and image
+                        fatalError("Implement audio and image first ya dingus!")
+                        throw LangToolError.invalidContentType
+                    }
+                }
 
                 public var description: String {
                     switch self {

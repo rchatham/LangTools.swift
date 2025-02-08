@@ -13,6 +13,11 @@ public extension Anthropic {
     func performMessageRequest(messages: [Message], model: Model = .claude35Sonnet_20240620, stream: Bool = false, completion: @escaping (Result<Anthropic.MessageResponse, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
         perform(request: Anthropic.MessageRequest(model: model, messages: messages, stream: stream), completion: completion, didCompleteStreaming: didCompleteStreaming)
     }
+
+    public func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest {
+        return MessageRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { Tool($0) })
+    }
+
 }
 
 extension Anthropic {
@@ -33,6 +38,13 @@ extension Anthropic {
         let tool_choice: ToolChoice?
         let top_k: Int?
         let top_p: Double?
+
+
+        public init(model: Anthropic.Model, messages: [any LangToolsMessage]) {
+            let system = messages.filter({ $0.role.isSystem }).map({ $0.content.text }).joined(separator: "\n")
+            let messages = messages.filter({ !$0.role.isSystem && !$0.role.isTool }).map({ Message($0) })
+            self.init(model: model, messages: messages, system: system)
+        }
 
         public init(model: Model, messages: [Message], max_tokens: Int = 1024, metadata: Metadata? = nil, stop_sequences: [String]? = nil, stream: Bool? = nil, system: String? = nil, temperature: Double? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, top_k: Int? = nil, top_p: Double? = nil) {
             self.model = model

@@ -12,7 +12,7 @@ import XAI
 import Gemini
 import Ollama
 import AVFAudio
-
+import Agents
 
 typealias Role = OpenAI.Message.Role
 
@@ -59,6 +59,25 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
             return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools)
         } else {
             return Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
+        }
+    }
+
+    func handleCalendarRequest(_ request: String) async -> String {
+        // Create a context for the calendar agent with the user's request
+        let context = AgentContext(messages: [
+            LangToolsMessageImpl<LangToolsTextContent>(
+                role: .user,
+                string: request
+            )
+        ])
+
+        // Execute the request through the calendar agent
+        let calendarAgent = CalendarAgent(langTool: langToolchain.langTool(Anthropic.self)!, model: .claude35Sonnet_latest)
+        do {
+            let response = try await calendarAgent.execute(context: context)
+            return response
+        } catch {
+            return "Failed to handle request: \(error.localizedDescription)"
         }
     }
 

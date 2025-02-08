@@ -49,11 +49,34 @@ extension Anthropic {
 
     public enum Role: String, Codable, LangToolsRole {
         case user, assistant
+
+        public init(_ role: any LangToolsRole) {
+            self = role.isUser ? .user : .assistant
+        }
+
+        public var isAssistant: Bool { self == .assistant }
+        public var isUser: Bool { self == .user }
+        public var isSystem: Bool { false }
+        public var isTool: Bool { false }
     }
 
     public enum Content: Codable, LangToolsContent {
         case string(String)
         case array([ContentType])
+
+        public init(string: String) {
+            self = .string(string)
+        }
+
+        public init(_ content: any LangToolsContent) {
+            if let array = content.array {
+                self = .array(array.compactMap { try? ContentType($0) })
+            } else if let string = content.string {
+                self = .string(string)
+            } else {
+                fatalError("content not handled! \(content)")
+            }
+        }
 
         public var description: String {
             switch self {
@@ -79,6 +102,16 @@ extension Anthropic {
             case image(ImageContent)
             case toolUse(ToolUse)
             case toolResult(ToolResult)
+
+            public init(_ contentType: any LangToolsContentType) throws {
+                if let text = contentType.textContentType {
+                    self = .text(try .init(text))
+                } else {
+                    // TODO: - implement audio and image
+                    fatalError("Implement audio and image first ya dingus!")
+                    throw LangToolError.invalidContentType
+                }
+            }
 
             public var description: String {
                 switch self {
@@ -172,6 +205,10 @@ extension Anthropic {
 
                 public var arguments: String { input }
 
+                public init(_ contentType: any LangToolsContentType) throws {
+                    fatalError("init not implemented for tool use content type")
+                }
+
                 public init(id: String?, name: String?, input: String) {
                     self.id = id
                     self.name = name
@@ -210,6 +247,10 @@ extension Anthropic {
                     tool_use_id = tool_selection_id
                     content = .string(result)
                     is_error = false
+                }
+
+                public init(_ contentType: any LangToolsContentType) throws {
+                    fatalError("init not implemented for tool result content type")
                 }
 
                 enum CodingKeys: String, CodingKey {

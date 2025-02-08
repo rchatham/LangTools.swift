@@ -35,6 +35,10 @@ public final class Gemini: LangTools {
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
         try openAI.prepare(request: request)
     }
+
+    public func chatRequest(model: GeminiModel, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest {
+        return try openAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools)
+    }
 }
 
 public struct GeminiErrorResponse: Error, Codable {

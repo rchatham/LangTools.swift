@@ -28,6 +28,8 @@ extension LangToolsStreamableResponse {
 public protocol LangToolsChatRequest: LangToolsRequest where Response: LangToolsChatResponse, Response.Message == Message {
     associatedtype Message: LangToolsMessage
     var messages: [Message] { get set }
+
+    init(model: LangTool.Model, messages: [any LangToolsMessage])
 }
 
 extension LangToolsChatRequest {

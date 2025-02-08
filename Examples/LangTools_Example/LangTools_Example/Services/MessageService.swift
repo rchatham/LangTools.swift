@@ -11,6 +11,7 @@ import Anthropic
 import XAI
 import Gemini
 import Ollama
+import Agents
 
 @Observable
 class MessageService {
@@ -59,6 +60,29 @@ class MessageService {
                     required: ["location"]),
                 callback: { [weak self] in
                     self?.getTopMichelinStarredRestaurants(location: $0["location"]! as! String)
+                })),
+
+            // Calendar agent tool
+            .function(.init(
+                name: "manage_calendar",
+                description: """
+                    Manage calendar events - create, read, update, or delete calendar events. 
+                    Can handle natural language requests like "Schedule a meeting tomorrow" or 
+                    "What's on my calendar next week?"
+                    """,
+                parameters: .init(
+                    properties: [
+                        "request": .init(
+                            type: "string",
+                            description: "The calendar-related request in natural language"
+                        )
+                    ],
+                    required: ["request"]),
+                callback: { [weak self] args in
+                    guard let request = args["request"] as? String else {
+                        return "Invalid calendar request"
+                    }
+                    return await self?.networkClient.handleCalendarRequest(request)
                 }))
         ]
     }
@@ -78,6 +102,7 @@ class MessageService {
             case .streamParsingFailure: print("error: stream parsing failure")
             case .failiedToDecodeStream(buffer: let buffer, error: let error):
                 print("Failed to decode stream: \(buffer), error: \(error.localizedDescription)")
+            case .invalidContentType: print("error: invalid content type")
             }
         }
         catch let error as LangToolsRequestError {

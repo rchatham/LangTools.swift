@@ -3,6 +3,10 @@ import LangTools
 import OpenAI
 
 extension Ollama {
+    public func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest {
+        return Ollama.ChatRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { OpenAI.Tool($0) })
+    }
+
     public struct ChatRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest {
         public typealias Response = ChatResponse
         public typealias LangTool = Ollama
@@ -18,6 +22,17 @@ extension Ollama {
         public var stream: Bool?
         public let keep_alive: String?
         public let tools: [OpenAI.Tool]?
+
+        public init(model: Ollama.Model, messages: [any LangToolsMessage]) {
+            self.model = model
+            self.messages = messages.map { Message($0) }
+
+            format = nil
+            options = nil
+            stream = nil
+            keep_alive = nil
+            tools = nil
+        }
 
         public init(
             model: OllamaModel,
@@ -115,6 +130,13 @@ extension Ollama {
             self.tool_calls = tool_calls
         }
 
+        public init(role: Ollama.Role, content: LangToolsTextContent) {
+            self.role = role
+            self.content = content
+            images = nil
+            tool_calls = nil
+        }
+
         public init(tool_selection: [ChatToolCall]) {
             self.role = .assistant
             self.content = ""
@@ -181,6 +203,19 @@ extension Ollama {
 
     public enum Role: String, Codable, LangToolsRole {
         case system, user, assistant, tool
+
+        public init(_ role: any LangToolsRole) {
+            if role.isAssistant { self = .assistant }
+            else if role.isUser { self = .user }
+            else if role.isSystem { self = .system }
+            else if role.isTool { self = .tool }
+            else { self = .assistant }
+        }
+
+        public var isAssistant: Bool { self == .assistant }
+        public var isUser: Bool { self == .user }
+        public var isSystem: Bool { self == .system }
+        public var isTool: Bool { self == .tool }
     }
 }
 
@@ -229,10 +264,4 @@ public extension Ollama {
             tools: tools
         ))
     }
-}
-
-extension String: LangToolsContent, LangToolsContentType {
-    public var type: String { "string" }
-    public var string: String? { self }
-    public var array: [Self]? { nil }
 }
