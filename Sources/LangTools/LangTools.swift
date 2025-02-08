@@ -118,7 +118,7 @@ extension LangTools {
 
     private func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) async throws -> Request? {
         guard let response = response as? any LangToolsToolCallingResponse else { return nil }
-        return try await (request as? any LangToolsToolCallingRequest & LangToolsCompletableRequest)?.completion(response: response) as? Request
+        return try await (request as? any LangToolsToolCallingRequest )?.completion(response: response) as? Request
     }
 
     public static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {

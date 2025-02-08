@@ -16,8 +16,7 @@ public extension OpenAI {
 }
 
 extension OpenAI {
-    public struct ChatCompletionRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsCompletableRequest, LangToolsToolCallingRequest, LangToolsMultipleChoiceChatRequest {
-
+    public struct ChatCompletionRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest, LangToolsMultipleChoiceChatRequest {
         public typealias LangTool = OpenAI
         public typealias Response = ChatCompletionResponse
         public static var endpoint: String { "chat/completions" }

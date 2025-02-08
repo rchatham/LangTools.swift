@@ -16,8 +16,7 @@ public extension Anthropic {
 }
 
 extension Anthropic {
-    public struct MessageRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsCompletableRequest, LangToolsToolCallingRequest {
-
+    public struct MessageRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest {
         public typealias LangTool = Anthropic
         public typealias Response = MessageResponse
         public static var endpoint: String { "messages" }

@@ -71,11 +71,6 @@ extension LangToolsRequest {
     }
 }
 
-// MARK: - LangToolsCompletableRequest
-public protocol LangToolsCompletableRequest: LangToolsRequest {
-    func completion(response: Response) throws -> Self?
-}
-
 // MARK: - LangToolsMultipleChoiceChatRequest
 public protocol LangToolsMultipleChoiceChatRequest: LangToolsChatRequest where Response: LangToolsMultipleChoiceChatResponse {
     var n: Int? { get }
@@ -168,7 +163,7 @@ public protocol LangToolsToolMessageDelta: Codable {
     var tool_selection: [ToolSelection]? { get }
 }
 
-public extension LangToolsToolCallingRequest where Self: LangToolsCompletableRequest {
+public extension LangToolsToolCallingRequest {
     func completion<Response: LangToolsToolCallingResponse>(response: Response) async throws -> Self? {
         guard let tool_selections = response.tool_selection, !tool_selections.isEmpty else { return nil }
         var tool_results: [Message.ToolResult] = []

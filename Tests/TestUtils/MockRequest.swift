@@ -18,7 +18,7 @@ struct MockLangTool: LangTools {
     }
 }
 
-struct MockRequest: LangToolsRequest, LangToolsStreamableRequest, LangToolsCompletableRequest, Encodable {
+struct MockRequest: LangToolsRequest, LangToolsStreamableRequest, Encodable {
     typealias LangTool = MockLangTool
     typealias ToolResult = MockToolResult
 
@@ -28,7 +28,6 @@ struct MockRequest: LangToolsRequest, LangToolsStreamableRequest, LangToolsCompl
     var stream: Bool?
     var messages: [MockMessage] = []
     init(stream: Bool? = nil) { self.stream = stream }
-    func completion(response: MockResponse) throws -> MockRequest? { return nil }
 }
 
 struct MockResponse: Codable, LangToolsStreamableResponse {
