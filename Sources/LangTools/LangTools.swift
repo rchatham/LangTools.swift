@@ -8,6 +8,7 @@
 import Foundation
 
 public protocol LangTools {
+    associatedtype Model: RawRepresentable
     associatedtype ErrorResponse: Codable & Error
     func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response
     func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error>
