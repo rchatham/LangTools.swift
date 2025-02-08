@@ -10,8 +10,8 @@ public protocol LangToolsTool: Codable {
     var name: String { get }
     var description: String? { get }
     var tool_schema: ToolSchema { get } // JSON Schema object
-    var callback: (([String:Any]) -> String?)? { get }
-    init(name: String, description: String, input_schema: ToolSchema, callback: (([String:Any]) -> String?)?)
+    var callback: (([String:Any]) async throws -> String?)? { get }
+    init(name: String, description: String?, tool_schema: ToolSchema, callback: (([String:Any]) async throws -> String?)?)
 }
 
 public protocol LangToolsToolSchema: Codable {

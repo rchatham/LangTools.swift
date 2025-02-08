@@ -94,7 +94,7 @@ extension LangTools {
                         throw LangToolError.failiedToDecodeStream(buffer: buffer, error: errorBuffer)
                     }
 
-                    if let completionRequest = try completionRequest(request: request, response: try request.update(response: combinedResponse)) {
+                    if let completionRequest = try await completionRequest(request: request, response: try request.update(response: combinedResponse)) {
                         for try await response in stream(request: completionRequest) {
                             continuation.yield(try request.update(response: response))
                         }
@@ -116,8 +116,9 @@ extension LangTools {
         return try await completionRequest(request: request, response: response).flatMap { try await perform(request: $0) } ?? response
     }
 
-    private func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) throws -> Request? {
-        return try (response as? any LangToolsToolCallingResponse).flatMap { try (request as? any LangToolsToolCallingRequest & LangToolsCompletableRequest)?.completion(response: $0) } as? Request
+    private func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) async throws -> Request? {
+        guard let response = response as? any LangToolsToolCallingResponse else { return nil }
+        return try await (request as? any LangToolsToolCallingRequest & LangToolsCompletableRequest)?.completion(response: response) as? Request
     }
 
     public static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {

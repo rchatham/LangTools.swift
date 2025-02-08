@@ -169,7 +169,7 @@ public protocol LangToolsToolMessageDelta: Codable {
 }
 
 public extension LangToolsToolCallingRequest where Self: LangToolsCompletableRequest {
-    func completion<Response: LangToolsToolCallingResponse>(response: Response) throws -> Self? {
+    func completion<Response: LangToolsToolCallingResponse>(response: Response) async throws -> Self? {
         guard let tool_selections = response.tool_selection, !tool_selections.isEmpty else { return nil }
         var tool_results: [Message.ToolResult] = []
         for tool_selection in tool_selections {
@@ -178,7 +178,7 @@ public extension LangToolsToolCallingRequest where Self: LangToolsCompletableReq
                 else { throw LangToolsRequestError.failedToDecodeFunctionArguments }
             guard tool.tool_schema.required?.filter({ !args.keys.contains($0) }).isEmpty ?? true
                 else { throw LangToolsRequestError.missingRequiredFunctionArguments }
-            guard let str = tool.callback?(args) else { continue }
+            guard let str = try await tool.callback?(args) else { continue }
             tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: str))
         }
         guard !tool_results.isEmpty else { return nil }

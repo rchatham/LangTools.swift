@@ -7,8 +7,8 @@ public extension OpenAI {
 
         case function(FunctionSchema)
 
-        public init(name: String, description: String, input_schema: FunctionSchema.Parameters, callback: (([String : Any]) -> String?)? = nil) {
-            self = .function(.init(name: name, description: description, parameters: input_schema, callback: callback))
+        public init(name: String, description: String?, tool_schema: FunctionSchema.Parameters, callback: (([String : Any]) async throws -> String?)? = nil) {
+            self = .function(.init(name: name, description: description, parameters: tool_schema, callback: callback))
         }
 
         public var name: String {
@@ -23,7 +23,7 @@ public extension OpenAI {
             switch self { case .function(let schema): return schema.parameters }
         }
 
-        public var callback: (([String : Any]) -> String?)? {
+        public var callback: (([String : Any]) async throws -> String?)? {
             switch self { case .function(let schema): return schema.callback }
         }
 
@@ -31,8 +31,8 @@ public extension OpenAI {
             var name: String
             var description: String?
             var parameters: Parameters // JSON Schema object
-            internal var callback: (([String:Any]) -> String?)? = nil
-            public init(name: String, description: String, parameters: Parameters = Parameters(properties: [:]), callback: (([String:Any]) -> String?)? = nil) {
+            internal var callback: (([String:Any]) async throws -> String?)? = nil
+            public init(name: String, description: String?, parameters: Parameters = Parameters(properties: [:]), callback: (([String:Any]) async throws -> String?)? = nil) {
                 self.name = name
                 self.description = description
                 self.parameters = parameters
