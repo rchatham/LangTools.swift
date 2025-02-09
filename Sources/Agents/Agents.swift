@@ -51,10 +51,10 @@ extension Agent {
                 guard let agentName = args["agent_name"] as? String,
                       let reason = args["reason"] as? String,
                       let agent = self.delegateAgents.first(where: { $0.name == agentName })
-                else { return nil }
+                else { return "Failed to retrieve agent." }
                 var messages = context.messages
-                messages.append(LangToolsMessageImpl<LangToolsTextContent>(role: .system, string: "You are a delegate agent of \(name), given the following reason provided in the next message from \(name), perform your function and respond back with your answer."))
-                messages.append(LangToolsMessageImpl<LangToolsTextContent>(role: .user, string: reason)) // TODO: - Should this be a user or assistant message.
+                messages.append(langTool.systemMessage("You are a delegate agent of \(name), given the following reason provided in the next message from \(name), perform your function and respond back with your answer. You should relay any responses from your delegate agents and always return a response no matter what."))
+                messages.append(langTool.userMessage(reason)) // TODO: - Should this be a user or assistant message.
                 let context = AgentContext(messages: messages)
                 do {
                     return try await agent.execute(context: context)
@@ -67,7 +67,9 @@ extension Agent {
         do {
             let request = try langTool.chatRequest(model: model, messages: [systemMessage] + context.messages, tools: tools)
             let response = try await langTool.perform(request: request)
-            return response.message?.content.text ?? "failed to return text content"
+            var result = response.message?.content.text ?? ""
+            result = result.isEmpty ? "failed to return text content" : result
+            return result
         } catch {
             return "error: " + error.localizedDescription
         }

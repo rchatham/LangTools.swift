@@ -46,8 +46,7 @@ struct CalendarPermissionAgent<LangTool: LangTools>: Agent {
             callback: { _ in
                 if #available(iOS 17.0, macOS 14.0, *) {
                     do {
-                        try await EKEventStore().requestFullAccessToEvents()
-                        return "Calendar access granted"
+                        return "Calendar access granted: \(try await EKEventStore().requestFullAccessToEvents())"
                     } catch {
                         return "Failed to get calendar access: \(error.localizedDescription)"
                     }
@@ -74,6 +73,8 @@ struct CalendarReadAgent<LangTool: LangTools>: Agent {
     let instructions = """
         You are responsible for reading and querying calendar events.
         Format dates consistently and provide clear, concise event information.
+
+        Current date: \(Date().description(with: .current))
         """
 
     var delegateAgents: [any Agent] = []
@@ -168,6 +169,10 @@ struct CalendarWriteAgent<LangTool: LangTools>: Agent {
     init(langTool: LangTool, model: LangTool.Model) {
         self.langTool = langTool
         self.model = model
+
+        delegateAgents = [
+            CalendarReadAgent(langTool: langTool, model: model)
+        ]
     }
 
     let name = "calendarWriteAgent"
@@ -176,9 +181,11 @@ struct CalendarWriteAgent<LangTool: LangTools>: Agent {
         You are responsible for creating and modifying calendar events.
         Ensure all required information is provided and validate dates before creating events.
         Always confirm event details with users before taking action.
+        
+        Current date: \(Date().description(with: .current))
         """
 
-    var delegateAgents: [any Agent] = []
+    var delegateAgents: [any Agent]
 
     var tools: [Tool]? = [
         Tool(
@@ -235,7 +242,7 @@ struct CalendarWriteAgent<LangTool: LangTools>: Agent {
                     )
                     return "Event created successfully:\n\(event.formattedDetails)"
                 } catch {
-                    return "Failed to create event: \(error.localizedDescription)"
+                    return "Failed to create event: \(error)"
                 }
             }
         ),
@@ -378,6 +385,8 @@ struct CalendarAgent<LangTool: LangTools>: Agent {
         Always verify calendar permissions before performing operations.
         When creating or modifying events, ensure all required information is provided.
         Use delegate agents for specialized tasks and provide clear, concise responses.
+        
+        Current date: \(Date().description(with: .current))
         """
 
     var delegateAgents: [any Agent]

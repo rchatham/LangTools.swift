@@ -142,6 +142,16 @@ public extension LangToolsTextContentType {
             throw LangToolError.invalidContentType
         }
     }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = try encoder.container(keyedBy: LangToolsTextContentCodingKeys.self)
+        try container.encode(type, forKey: .type)
+        try container.encode(text, forKey: .text)
+    }
+}
+
+enum LangToolsTextContentCodingKeys: String, CodingKey {
+    case type, text
 }
 
 public struct LangToolsTextContent: LangToolsTextContentType, LangToolsContent, ExpressibleByStringLiteral {

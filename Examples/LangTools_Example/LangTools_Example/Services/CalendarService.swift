@@ -285,6 +285,8 @@ extension EKEvent {
             details += "\nAll Day Event"
         }
 
+        details += "\nEvent Identifier: \(eventIdentifier)"
+
         return details
     }
 }

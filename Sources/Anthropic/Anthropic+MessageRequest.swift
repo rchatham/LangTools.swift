@@ -11,13 +11,20 @@ import LangTools
 
 public extension Anthropic {
     func performMessageRequest(messages: [Message], model: Model = .claude35Sonnet_20240620, stream: Bool = false, completion: @escaping (Result<Anthropic.MessageResponse, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
-        perform(request: Anthropic.MessageRequest(model: model, messages: messages, stream: stream), completion: completion, didCompleteStreaming: didCompleteStreaming)
+        perform(request: Anthropic.MessageRequest(model: model, messages: toAnthropicMessages(messages), stream: stream, system: toAnthropicSystemMessage(messages)), completion: completion, didCompleteStreaming: didCompleteStreaming)
     }
 
     public func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest {
-        return MessageRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { Tool($0) })
+        return MessageRequest(model: model, messages: toAnthropicMessages(messages), system: toAnthropicSystemMessage(messages), tools: tools?.map { Tool($0) })
     }
 
+    func toAnthropicMessages(_ messages: [any LangToolsMessage]) -> [Anthropic.Message] {
+        return messages.filter { !$0.role.isSystem || !$0.role.isTool }.map { Anthropic.Message($0) }
+    }
+
+    func toAnthropicSystemMessage(_ messages: [any LangToolsMessage]) -> String? {
+        return messages.filter { $0.role.isSystem }.reduce("") { (!$0.isEmpty ? $0 + "\n---\n" : "") + $1.content.text }
+    }
 }
 
 extension Anthropic {
