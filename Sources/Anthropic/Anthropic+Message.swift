@@ -11,7 +11,7 @@ extension Anthropic {
             return [.init(role: .user, content: .array(tool_results.map{.toolResult($0)}))]
         }
 
-        public init(tool_selection: [Anthropic.Content.ContentType.ToolUse]) {
+        public init(tool_selection: [Content.ContentType.ToolUse]) {
             role = .assistant
             content = .array(tool_selection.map{.toolUse($0)})
         }
@@ -69,10 +69,10 @@ extension Anthropic {
         }
 
         public init(_ content: any LangToolsContent) {
-            if let array = content.array {
-                self = .array(array.compactMap { try? ContentType($0) })
-            } else if let string = content.string {
+            if let string = content.string {
                 self = .string(string)
+            } else if let array = content.array {
+                self = .array(array.compactMap { try? ContentType($0) })
             } else {
                 fatalError("content not handled! \(content)")
             }
@@ -94,7 +94,10 @@ extension Anthropic {
         }
 
         public var tool_selection: [ContentType.ToolUse]? {
-            if case .array(let arr) = self { return arr.compactMap { $0.toolUse }} else { return nil }
+            if case .array(let arr) = self {
+                let arr = arr.compactMap { $0.toolUse }
+                return arr.isEmpty ? nil : arr
+            } else { return nil }
         }
 
         public enum ContentType: Codable, CustomStringConvertible, LangToolsContentType {
