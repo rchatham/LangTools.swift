@@ -188,7 +188,7 @@ extension Ollama {
         public let tool_selection_id: String
         public let result: String
 
-        public init(tool_selection_id: String, result: String) {
+        public init(tool_selection_id: String, result: String, is_error: Bool = false) {
             self.tool_selection_id = tool_selection_id
             self.result = result
         }

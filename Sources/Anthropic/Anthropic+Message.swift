@@ -246,10 +246,10 @@ extension Anthropic {
 
                 public var tool_selection_id: String { tool_use_id }
                 public var result: String { content.string ?? "" }
-                public init(tool_selection_id: String, result: String) {
+                public init(tool_selection_id: String, result: String, is_error: Bool = false) {
                     tool_use_id = tool_selection_id
                     content = .string(result)
-                    is_error = false
+                    self.is_error = is_error
                 }
 
                 public init(_ contentType: any LangToolsContentType) throws {

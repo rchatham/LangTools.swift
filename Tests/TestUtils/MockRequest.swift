@@ -95,7 +95,7 @@ struct MockToolSelection: Codable, LangToolsToolSelection {
 struct MockToolResult: Codable, LangToolsToolSelectionResult {
     var tool_selection_id: String
     var result: String
-    init(tool_selection_id: String, result: String) {
+    public init(tool_selection_id: String, result: String, is_error: Bool = false) {
         self.tool_selection_id = tool_selection_id
         self.result = result
     }

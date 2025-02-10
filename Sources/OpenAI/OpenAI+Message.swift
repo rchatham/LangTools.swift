@@ -316,7 +316,7 @@ public extension OpenAI {
             public struct ToolResultContent: LangToolsToolSelectionResult {
                 public var tool_selection_id: String
                 public var result: String
-                public init(tool_selection_id: String, result: String) {
+                public init(tool_selection_id: String, result: String, is_error: Bool = false) {
                     self.tool_selection_id = tool_selection_id
                     self.result = result
                 }

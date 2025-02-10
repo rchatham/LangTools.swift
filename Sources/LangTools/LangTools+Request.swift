@@ -156,6 +156,13 @@ public protocol LangToolsToolSelectionResult: Codable {
     var tool_selection_id: String { get }
     var result: String { get }
     init(tool_selection_id: String, result: String)
+    init(tool_selection_id: String, result: String, is_error: Bool)
+}
+
+extension LangToolsToolSelectionResult {
+    public init(tool_selection_id: String, result: String) {
+        self.init(tool_selection_id: tool_selection_id, result: result, is_error: false)
+    }
 }
 
 public protocol LangToolsToolMessageDelta: Codable {
@@ -175,8 +182,12 @@ public extension LangToolsToolCallingRequest {
                 else { throw LangToolsRequestError.failedToDecodeFunctionArguments }
             guard tool.tool_schema.required?.filter({ !args.keys.contains($0) }).isEmpty ?? true
                 else { throw LangToolsRequestError.missingRequiredFunctionArguments }
-            guard let str = try await tool.callback?(args) else { continue }
-            tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: str))
+            do {
+                guard let str = try await tool.callback?(args) else { continue }
+                tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: str))
+            } catch {
+                tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: "\(error)", is_error: true))
+            }
         }
         guard !tool_results.isEmpty else { return nil }
         var results: [Message] = []
