@@ -127,7 +127,7 @@ struct CalendarReadAgent<LangTool: LangTools>: Agent {
 
                 do {
                     let events = try CalendarService().upcomingEvents(limit: limit)
-                    return events.map { $0.formattedDetails }.joined(separator: "\n\n")
+                    return events.isEmpty ? "No events returned from calendar." : events.map { $0.formattedDetails }.joined(separator: "\n\n")
                 } catch {
                     return "Failed to fetch upcoming events: \(error.localizedDescription)"
                 }
@@ -152,7 +152,7 @@ struct CalendarReadAgent<LangTool: LangTools>: Agent {
 
                 do {
                     let events = try CalendarService().searchEvents(matching: query)
-                    return events.map { $0.formattedDetails }.joined(separator: "\n\n")
+                    return events.isEmpty ? "No events returned from calendar." : events.map { $0.formattedDetails }.joined(separator: "\n\n")
                 } catch {
                     return "Failed to search events: \(error.localizedDescription)"
                 }

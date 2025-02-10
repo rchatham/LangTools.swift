@@ -72,12 +72,28 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         ])
 
         // Execute the request through the calendar agent
-        let calendarAgent = CalendarAgent(langTool: langToolchain.langTool(Anthropic.self)!, model: .claude35Sonnet_latest)
+        let calendarAgent = calendarAgent()
         do {
             let response = try await calendarAgent.execute(context: context)
             return response
         } catch {
             return "Failed to handle request: \(error.localizedDescription)"
+        }
+    }
+
+    func calendarAgent(model: Model = UserDefaults.model) -> any Agent {
+        if case .anthropic(let model) = model {
+            return CalendarAgent(langTool: langToolchain.langTool(Anthropic.self)!, model: model)
+        } else if case .openAI(let model) = model {
+            return CalendarAgent(langTool: langToolchain.langTool(OpenAI.self)!, model: model)
+        } else if case .xAI(let model) = model {
+            return CalendarAgent(langTool: langToolchain.langTool(XAI.self)!, model: model)
+        } else if case .gemini(let model) = model {
+            return CalendarAgent(langTool: langToolchain.langTool(Gemini.self)!, model: model)
+        } else if case .ollama(let model) = model {
+            return CalendarAgent(langTool: langToolchain.langTool(Ollama.self)!, model: model)
+        } else {
+            return CalendarAgent(langTool: langToolchain.langTool(Anthropic.self)!, model: .claude35Sonnet_latest)
         }
     }
 

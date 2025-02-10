@@ -285,7 +285,9 @@ extension EKEvent {
             details += "\nAll Day Event"
         }
 
-        details += "\nEvent Identifier: \(eventIdentifier)"
+        if let eventIdentifier {
+            details += "\nEvent Identifier: \(eventIdentifier)"
+        }
 
         return details
     }
