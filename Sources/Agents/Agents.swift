@@ -7,6 +7,7 @@
 
 import LangTools
 
+// Watch out Neo, that's an agent. Sentient programs,... they're coming for you.
 public protocol Agent {
     var name: String { get }
     var description: String { get }
@@ -54,7 +55,7 @@ extension Agent {
                 else { return "Failed to retrieve agent." }
                 var messages = context.messages
                 messages.append(langTool.systemMessage("You are a delegate agent of \(name), given the following reason provided in the next message from \(name), perform your function and respond back with your answer. You should relay any responses from your delegate agents and always return a response no matter what."))
-                messages.append(langTool.userMessage(reason)) // TODO: - Should this be a user or assistant message.
+                messages.append(langTool.assistantMessage(reason)) // TODO: - Should this be a user or assistant message.
                 let context = AgentContext(messages: messages)
                 do {
                     return try await agent.execute(context: context)
