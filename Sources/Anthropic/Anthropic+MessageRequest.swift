@@ -156,8 +156,8 @@ extension Anthropic {
 
         public func encode(to encoder: Encoder) throws {
             var container = encoder.singleValueContainer()
-            if let stream = stream { try container.encode(StreamMessageResponse(type: type, message: messageInfo, index: stream.index, delta: stream.delta, usage: stream.usage)) }
-            else
+//            if let stream = stream { try container.encode(StreamMessageResponse(type: type, message: messageInfo, index: stream.index, delta: stream.delta, usage: stream.usage)) }
+//            else
             if let message = messageInfo { try container.encode(message) }
             else { throw EncodingError.invalidValue(false, .init(codingPath: [], debugDescription: "Missing stream and message data.")) }
         }

@@ -116,16 +116,11 @@ class MessageService {
 
     func handleApiError(_ error: Error) {
         switch error {
-        case let error as OpenAIErrorResponse:
-            print("error: openai api error: \(error.error)")
-        case let error as XAIErrorResponse:
-            print("error: xai api error: \(error.error)")
-        case let error as GeminiErrorResponse:
-            print("error: gemini api error: \(error.error)")
-        case let error as AnthropicErrorResponse:
-            print("error: anthropic api error: \(error.error)")
-        case let error as OllamaErrorResponse:
-            print("error: ollama api error: \(error.error)")
+        case let error as OpenAIErrorResponse: print("error: openai api error: \(error.error)")
+        case let error as XAIErrorResponse: print("error: xai api error: \(error.error)")
+        case let error as GeminiErrorResponse: print("error: gemini api error: \(error.error)")
+        case let error as AnthropicErrorResponse: print("error: anthropic api error: \(error.error)")
+        case let error as OllamaErrorResponse: print("error: ollama api error: \(error.error)")
         default: print("error: uanble to decode error: \(error)")
         }
     }
@@ -145,30 +140,17 @@ class MessageService {
             let message = Message(uuid: uuid, text: content.trimingTrailingNewlines(), role: .assistant)
 
             await MainActor.run {
-                if last.uuid == uuid {
-                    messages[messages.count - 1] = message
-                } else {
-                    messages.append(message)
-                }
+                if last.uuid == uuid { messages[messages.count - 1] = message }
+                else { messages.append(message) }
             }
         }
 
         if messages.last?.uuid == uuid, let text = messages.last?.text {
-            Task {
-                try await networkClient.playAudio(for: text)
-            }
+            Task { try await networkClient.playAudio(for: text) }
         }
     }
 
-    func deleteMessage(id: UUID) {
-        messages.removeAll(where: { $0.uuid == id })
-    }
-
-    @objc func getCurrentWeather(location: String, format: String) -> String {
-        return "27"
-    }
-
-    func getTopMichelinStarredRestaurants(location: String) -> String {
-        return "The French Laundry"
-    }
+    func deleteMessage(id: UUID) { messages.removeAll(where: { $0.uuid == id }) }
+    @objc func getCurrentWeather(location:String, format: String) -> String { return "27" }
+    func getTopMichelinStarredRestaurants(location: String) -> String { return "The French Laundry" }
 }

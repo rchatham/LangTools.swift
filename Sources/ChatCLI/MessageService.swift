@@ -75,6 +75,8 @@ class MessageService: ObservableObject {
             print("Failed to parse streaming response")
         case .failiedToDecodeStream(buffer: let buffer, error: let error):
             print("Failed to decode stream: \(buffer), error: \(error.localizedDescription)")
+        case .invalidContentType:
+            print("Invalid content type")
         }
     }
 

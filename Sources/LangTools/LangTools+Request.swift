@@ -179,9 +179,10 @@ public extension LangToolsToolCallingRequest {
         for tool_selection in tool_selections {
             guard let tool = tools?.first(where: { $0.name == tool_selection.name }) else { continue }
             guard let args = tool_selection.arguments.isEmpty ? [:] : tool_selection.arguments.dictionary
-                else { throw LangToolsRequestError.failedToDecodeFunctionArguments }
-            guard tool.tool_schema.required?.filter({ !args.keys.contains($0) }).isEmpty ?? true
-                else { throw LangToolsRequestError.missingRequiredFunctionArguments }
+                else { throw LangToolsRequestError.failedToDecodeFunctionArguments(tool_selection.arguments) }
+            let missing = tool.tool_schema.required?.filter({ !args.keys.contains($0) })
+            guard missing?.isEmpty ?? true
+                else { throw LangToolsRequestError.missingRequiredFunctionArguments(missing!.joined(separator: ", ")) }
             do {
                 guard let str = try await tool.callback?(args) else { continue }
                 tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: str))
@@ -200,8 +201,8 @@ public extension LangToolsToolCallingRequest {
 }
 
 public enum LangToolsRequestError: Error {
-    case failedToDecodeFunctionArguments
-    case missingRequiredFunctionArguments
+    case failedToDecodeFunctionArguments(String)
+    case missingRequiredFunctionArguments(String)
     case multipleChoiceIndexOutOfBounds
 }
 
