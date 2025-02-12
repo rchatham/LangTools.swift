@@ -54,8 +54,7 @@ extension Agent {
                       let agent = self.delegateAgents.first(where: { $0.name == agentName })
                 else { return "Failed to retrieve agent." }
                 var messages = context.messages
-                messages.append(langTool.systemMessage("You are a delegate agent of \(name), given the following reason provided in the next message from \(name), perform your function and respond back with your answer. You should relay any responses from your delegate agents and always return a response no matter what."))
-                messages.append(langTool.assistantMessage(reason)) // TODO: - Should this be a user or assistant message.
+                messages.append(langTool.systemMessage("You are a delegate agent of \(name), given the following reason provided from \(name), perform your function and respond back with your answer.\n\nReason: \(reason)"))
                 let context = AgentContext(messages: messages)
                 do {
                     return try await agent.execute(context: context)
@@ -92,8 +91,9 @@ extension Agent {
         if !delegateAgents.isEmpty {
             prompt += "\n\nYou can transfer to these agents:"
             for agent in delegateAgents {
-                prompt += "\n- \(agent.name): \(agent.description)"
+                prompt += "\n- \(agent.name): \(agent.description);"
             }
+            prompt += "\n\nYou should relay any responses from your delegate agents and always return a response no matter what."
         }
 
         return prompt
