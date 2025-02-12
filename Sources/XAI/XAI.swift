@@ -35,6 +35,10 @@ public final class XAI: LangTools {
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
         try openAI.prepare(request: request)
     }
+
+    public static func chatRequest(model: XAIModel, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest {
+        return try OpenAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools)
+    }
 }
 
 public struct XAIErrorResponse: Error, Codable {

@@ -5,6 +5,7 @@
 //
 
 import Foundation
+import LangTools
 import OpenAI
 import Anthropic
 import Ollama

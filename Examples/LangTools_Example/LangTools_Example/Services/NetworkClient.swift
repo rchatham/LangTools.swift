@@ -12,7 +12,7 @@ import XAI
 import Gemini
 import Ollama
 import AVFAudio
-
+import Agents
 
 typealias Role = OpenAI.Message.Role
 
@@ -50,7 +50,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         if case .anthropic(let model) = model {
             return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
         } else if case .openAI(let model) = model {
-            return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), n: 3, stream: stream, tools: tools, tool_choice: toolChoice, choose: {_ in 2})
+            return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), /*n: 3,*/ stream: stream, tools: tools, tool_choice: toolChoice/*, choose: {_ in 2}*/)
         } else if case .xAI(let model) = model {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice)
         } else if case .gemini(let model) = model {
@@ -59,6 +59,22 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
             return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools)
         } else {
             return Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
+        }
+    }
+
+    func calendarAgent(model: Model = UserDefaults.model) -> any Agent {
+        if case .anthropic(let model) = model {
+            return CalendarAgent(langTool: langToolchain.langTool(Anthropic.self)!, model: model)
+        } else if case .openAI(let model) = model {
+            return CalendarAgent(langTool: langToolchain.langTool(OpenAI.self)!, model: model)
+        } else if case .xAI(let model) = model {
+            return CalendarAgent(langTool: langToolchain.langTool(XAI.self)!, model: model)
+        } else if case .gemini(let model) = model {
+            return CalendarAgent(langTool: langToolchain.langTool(Gemini.self)!, model: model)
+        } else if case .ollama(let model) = model {
+            return CalendarAgent(langTool: langToolchain.langTool(Ollama.self)!, model: model)
+        } else {
+            return CalendarAgent(langTool: langToolchain.langTool(Anthropic.self)!, model: .claude35Sonnet_latest)
         }
     }
 

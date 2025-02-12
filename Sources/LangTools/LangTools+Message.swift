@@ -13,6 +13,57 @@ public protocol LangToolsMessage: Codable {
     associatedtype Content: LangToolsContent
     var role: Role { get }
     var content: Content { get }
+
+    init(_ message: any LangToolsMessage)
+    init(role: Role, content: Content)
+}
+
+extension LangToolsMessage {
+    public init(_ message: any LangToolsMessage) {
+        self.init(role: Role(message.role), content: Content(message.content))
+    }
+}
+
+extension LangTools {
+    public func systemMessage(_ message: String) -> any LangToolsMessage {
+        LangToolsMessageImpl<LangToolsTextContent>(role: .system, string: message)
+    }
+    public func assistantMessage(_ message: String) -> any LangToolsMessage {
+        LangToolsMessageImpl<LangToolsTextContent>(role: .assistant, string: message)
+    }
+    public func userMessage(_ message: String) -> any LangToolsMessage {
+        LangToolsMessageImpl<LangToolsTextContent>(role: .user, string: message)
+    }
+}
+
+public enum LangToolsRoleImpl: LangToolsRole {
+    case system, user, assistant, tool
+    public init(_ role: any LangToolsRole) {
+        if role.isAssistant { self = .assistant }
+        else if role.isUser { self = .user }
+        else if role.isSystem { self = .system }
+        else if role.isTool { self = .tool }
+        else { self = .assistant }
+    }
+    public var isAssistant: Bool { self == .assistant }
+    public var isUser: Bool { self == .user }
+    public var isSystem: Bool { self == .system }
+    public var isTool: Bool { self == .tool }
+}
+
+public struct LangToolsMessageImpl<Content: LangToolsContent>: LangToolsMessage {
+    public var role: LangToolsRoleImpl
+    public var content: Content
+
+    public init(role: LangToolsRoleImpl, string: String) {
+        self.role = role
+        self.content = Content(string: string)
+    }
+
+    public init(role: LangToolsRoleImpl, content: Content) {
+        self.role = role
+        self.content = content
+    }
 }
 
 public protocol LangToolsMessageDelta: Codable {
@@ -29,14 +80,22 @@ public protocol LangToolsToolMessage: Codable {
     static func messages(for tool_results: [ToolResult]) -> [Self]
 }
 
-public protocol LangToolsRole: Codable {
+public protocol LangToolsRole: Codable, Hashable {
+    var isAssistant: Bool { get }
+    var isUser: Bool { get }
+    var isSystem: Bool { get }
+    var isTool: Bool { get }
 
+    init(_ role: any LangToolsRole)
 }
 
 public protocol LangToolsContent: Codable {
     associatedtype ContentType: LangToolsContentType
     var string: String? { get }
     var array: [ContentType]? { get }
+
+    init(_ content: any LangToolsContent)
+    init(string: String)
 }
 
 extension LangToolsContent {
@@ -54,6 +113,18 @@ extension LangToolsContent {
 
 public protocol LangToolsContentType: Codable  {
     var type: String { get }
+
+    var textContentType: LangToolsTextContentType? { get }
+    var imageContentType: LangToolsImageContentType? { get }
+    var audioContentType: LangToolsAudioContentType? { get }
+
+    init(_ contentType: any LangToolsContentType) throws
+}
+
+public extension LangToolsContentType {
+    var textContentType: LangToolsTextContentType? { self as? LangToolsTextContentType }
+    var imageContentType: LangToolsImageContentType? { self as? LangToolsImageContentType }
+    var audioContentType: LangToolsAudioContentType? { self as? LangToolsAudioContentType }
 }
 
 public protocol LangToolsTextContentType: LangToolsContentType {
@@ -63,6 +134,24 @@ public protocol LangToolsTextContentType: LangToolsContentType {
 
 public extension LangToolsTextContentType {
     var type: String { "text" }
+
+    init(_ contentType: any LangToolsContentType) throws {
+        if let text = contentType.textContentType {
+            self.init(text: text.text)
+        } else {
+            throw LangToolError.invalidContentType
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = try encoder.container(keyedBy: LangToolsTextContentCodingKeys.self)
+        try container.encode(type, forKey: .type)
+        try container.encode(text, forKey: .text)
+    }
+}
+
+enum LangToolsTextContentCodingKeys: String, CodingKey {
+    case type, text
 }
 
 public struct LangToolsTextContent: LangToolsTextContentType, LangToolsContent, ExpressibleByStringLiteral {
@@ -88,7 +177,32 @@ public struct LangToolsTextContent: LangToolsTextContentType, LangToolsContent, 
 }
 
 public protocol LangToolsImageContentType: LangToolsContentType {}
+
+public extension LangToolsImageContentType {
+//    var type: String { "image" } // TODO: verify this
+
+    init(_ contentType: any LangToolsContentType) throws {
+        if let text = contentType.imageContentType {
+            fatalError("implement image!")
+        } else {
+            throw LangToolError.invalidContentType
+        }
+    }
+}
+
 public protocol LangToolsAudioContentType: LangToolsContentType {}
+
+public extension LangToolsAudioContentType {
+//    var type: String { "audio" } // TODO: verify this
+
+    init(_ contentType: any LangToolsContentType) throws {
+        if let text = contentType.audioContentType {
+            fatalError("implement audio")
+        } else {
+            throw LangToolError.invalidContentType
+        }
+    }
+}
 
 //public struct LangToolsImageContent: Codable {
 //    var type: String

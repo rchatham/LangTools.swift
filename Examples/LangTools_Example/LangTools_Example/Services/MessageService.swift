@@ -11,6 +11,7 @@ import Anthropic
 import XAI
 import Gemini
 import Ollama
+import Agents
 
 @Observable
 class MessageService {
@@ -38,7 +39,7 @@ class MessageService {
                     ],
                     required: ["location", "format"]),
                 callback: { [weak self] in
-                    self?.getCurrentWeather(location: $0["location"]! as! String, format: $0["format"]! as! String)
+                    self?.getCurrentWeather(location: $0["location"]!.stringValue!, format: $0["format"]!.stringValue!)
                 })),
             .function(.init(
                 name: "getAnswerToUniverse",
@@ -58,7 +59,31 @@ class MessageService {
                     ],
                     required: ["location"]),
                 callback: { [weak self] in
-                    self?.getTopMichelinStarredRestaurants(location: $0["location"]! as! String)
+                    self?.getTopMichelinStarredRestaurants(location: $0["location"]!.stringValue!)
+                })),
+
+            // Calendar agent tool
+            .function(.init(
+                name: "manage_calendar",
+                description: """
+                    Manage calendar events - create, read, update, or delete calendar events. 
+                    Can handle natural language requests like "Schedule a meeting tomorrow" or 
+                    "What's on my calendar next week?"
+                    """,
+                parameters: .init(
+                    properties: [
+                        "request": .init(
+                            type: "string",
+                            description: "The calendar-related request in natural language"
+                        )
+                    ],
+                    required: ["request"]),
+                callback: { [weak self] args in
+                    guard let request = args["request"]?.stringValue else {
+                        return "Invalid calendar request"
+                    }
+                    // TODO: - decide if this should spin off a separate async Task and add a message when it returns
+                    return await self?.handleCalendarRequest(request)
                 }))
         ]
     }
@@ -78,6 +103,7 @@ class MessageService {
             case .streamParsingFailure: print("error: stream parsing failure")
             case .failiedToDecodeStream(buffer: let buffer, error: let error):
                 print("Failed to decode stream: \(buffer), error: \(error.localizedDescription)")
+            case .invalidContentType: print("error: invalid content type")
             }
         }
         catch let error as LangToolsRequestError {
@@ -91,16 +117,11 @@ class MessageService {
 
     func handleApiError(_ error: Error) {
         switch error {
-        case let error as OpenAIErrorResponse:
-            print("error: openai api error: \(error.error)")
-        case let error as XAIErrorResponse:
-            print("error: xai api error: \(error.error)")
-        case let error as GeminiErrorResponse:
-            print("error: gemini api error: \(error.error)")
-        case let error as AnthropicErrorResponse:
-            print("error: anthropic api error: \(error.error)")
-        case let error as OllamaErrorResponse:
-            print("error: ollama api error: \(error.error)")
+        case let error as OpenAIErrorResponse: print("error: openai api error: \(error.error)")
+        case let error as XAIErrorResponse: print("error: xai api error: \(error.error)")
+        case let error as GeminiErrorResponse: print("error: gemini api error: \(error.error)")
+        case let error as AnthropicErrorResponse: print("error: anthropic api error: \(error.error)")
+        case let error as OllamaErrorResponse: print("error: ollama api error: \(error.error)")
         default: print("error: uanble to decode error: \(error)")
         }
     }
@@ -120,30 +141,36 @@ class MessageService {
             let message = Message(uuid: uuid, text: content.trimingTrailingNewlines(), role: .assistant)
 
             await MainActor.run {
-                if last.uuid == uuid {
-                    messages[messages.count - 1] = message
-                } else {
-                    messages.append(message)
-                }
+                if last.uuid == uuid { messages[messages.count - 1] = message }
+                else { messages.append(message) }
             }
         }
 
         if messages.last?.uuid == uuid, let text = messages.last?.text {
-            Task {
-                try await networkClient.playAudio(for: text)
-            }
+            Task { try await networkClient.playAudio(for: text) }
         }
     }
 
-    func deleteMessage(id: UUID) {
-        messages.removeAll(where: { $0.uuid == id })
+    func handleCalendarRequest(_ request: String) async -> String {
+        // Create a context for the calendar agent with the user's request
+        let context = AgentContext(messages: [
+            LangToolsMessageImpl<LangToolsTextContent>(
+                role: .user,
+                string: request
+            )
+        ])
+
+        // Execute the request through the calendar agent
+        let calendarAgent = networkClient.calendarAgent()
+        do {
+            let response = try await calendarAgent.execute(context: context)
+            return response
+        } catch {
+            return "Failed to handle request: \(error.localizedDescription)"
+        }
     }
 
-    @objc func getCurrentWeather(location: String, format: String) -> String {
-        return "27"
-    }
-
-    func getTopMichelinStarredRestaurants(location: String) -> String {
-        return "The French Laundry"
-    }
+    func deleteMessage(id: UUID) { messages.removeAll(where: { $0.uuid == id }) }
+    @objc func getCurrentWeather(location:String, format: String) -> String { return "27" }
+    func getTopMichelinStarredRestaurants(location: String) -> String { return "The French Laundry" }
 }

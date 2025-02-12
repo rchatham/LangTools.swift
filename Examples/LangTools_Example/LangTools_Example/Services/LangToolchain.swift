@@ -7,6 +7,7 @@
 
 import Foundation
 import LangTools
+import Agents
 
 enum LangToolchainError: String, Error {
     case toolchainCannotHandleRequest
@@ -15,6 +16,10 @@ enum LangToolchainError: String, Error {
 struct LangToolchain {
     public mutating func register<LangTool: LangTools>(_ langTool: LangTool) {
         self.langTools[String(describing: LangTool.self)] = langTool
+    }
+
+    public func langTool<LangTool: LangTools>(_ type: LangTool.Type) -> LangTool? {
+        langTools[String(describing: type.self)] as? LangTool
     }
 
     private var langTools: [String:(any LangTools)] = [:]
@@ -31,5 +36,9 @@ struct LangToolchain {
             return langTool.stream(request: request).mapAsyncThrowingStream { $0 }
         }
         throw LangToolchainError.toolchainCannotHandleRequest
+    }
+
+    public func execute(agent: any Agent, with context: AgentContext) async throws -> String {
+        return try await agent.execute(context: context)
     }
 }
