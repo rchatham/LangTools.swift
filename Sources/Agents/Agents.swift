@@ -65,7 +65,7 @@ extension Agent {
         )]
         let systemMessage = langTool.systemMessage(createSystemPrompt())
         do {
-            let request = try langTool.chatRequest(model: model, messages: [systemMessage] + context.messages, tools: tools)
+            let request = try LangTool.chatRequest(model: model, messages: [systemMessage] + context.messages, tools: tools)
             let response = try await langTool.perform(request: request)
             var result = response.message?.content.text ?? ""
             result = result.isEmpty ? "failed to return text content" : result

@@ -62,25 +62,6 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    func handleCalendarRequest(_ request: String) async -> String {
-        // Create a context for the calendar agent with the user's request
-        let context = AgentContext(messages: [
-            LangToolsMessageImpl<LangToolsTextContent>(
-                role: .user,
-                string: request
-            )
-        ])
-
-        // Execute the request through the calendar agent
-        let calendarAgent = calendarAgent()
-        do {
-            let response = try await calendarAgent.execute(context: context)
-            return response
-        } catch {
-            return "Failed to handle request: \(error.localizedDescription)"
-        }
-    }
-
     func calendarAgent(model: Model = UserDefaults.model) -> any Agent {
         if case .anthropic(let model) = model {
             return CalendarAgent(langTool: langToolchain.langTool(Anthropic.self)!, model: model)

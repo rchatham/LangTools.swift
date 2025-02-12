@@ -11,18 +11,18 @@ import LangTools
 
 public extension Anthropic {
     func performMessageRequest(messages: [Message], model: Model = .claude35Sonnet_20240620, stream: Bool = false, completion: @escaping (Result<Anthropic.MessageResponse, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
-        perform(request: Anthropic.MessageRequest(model: model, messages: toAnthropicMessages(messages), stream: stream, system: toAnthropicSystemMessage(messages)), completion: completion, didCompleteStreaming: didCompleteStreaming)
+        perform(request: Anthropic.MessageRequest(model: model, messages: Self.toAnthropicMessages(messages), stream: stream, system: Self.toAnthropicSystemMessage(messages)), completion: completion, didCompleteStreaming: didCompleteStreaming)
     }
 
-    public func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest {
+    public static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest {
         return MessageRequest(model: model, messages: toAnthropicMessages(messages), system: toAnthropicSystemMessage(messages), tools: tools?.map { Tool($0) })
     }
 
-    func toAnthropicMessages(_ messages: [any LangToolsMessage]) -> [Anthropic.Message] {
+    static func toAnthropicMessages(_ messages: [any LangToolsMessage]) -> [Anthropic.Message] {
         return messages.filter { !$0.role.isSystem && !$0.role.isTool }.map { Anthropic.Message($0) }
     }
 
-    func toAnthropicSystemMessage(_ messages: [any LangToolsMessage]) -> String? {
+    static func toAnthropicSystemMessage(_ messages: [any LangToolsMessage]) -> String? {
         return messages.filter { $0.role.isSystem }.reduce("") { (!$0.isEmpty ? $0 + "\n---\n" : "") + $1.content.text }
     }
 }
@@ -48,9 +48,7 @@ extension Anthropic {
 
 
         public init(model: Anthropic.Model, messages: [any LangToolsMessage]) {
-            let system = messages.filter({ $0.role.isSystem }).map({ $0.content.text }).joined(separator: "\n")
-            let messages = messages.filter({ !$0.role.isSystem && !$0.role.isTool }).map({ Message($0) })
-            self.init(model: model, messages: messages, system: system)
+            self.init(model: model, messages: toAnthropicMessages(messages), system: toAnthropicSystemMessage(messages))
         }
 
         public init(model: Model, messages: [Message], max_tokens: Int = 4096, metadata: Metadata? = nil, stop_sequences: [String]? = nil, stream: Bool? = nil, system: String? = nil, temperature: Double? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, top_k: Int? = nil, top_p: Double? = nil) {

@@ -36,8 +36,8 @@ public final class Gemini: LangTools {
         try openAI.prepare(request: request)
     }
 
-    public func chatRequest(model: GeminiModel, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest {
-        return try openAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools)
+    public static func chatRequest(model: GeminiModel, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest {
+        return try OpenAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools)
     }
 }
 

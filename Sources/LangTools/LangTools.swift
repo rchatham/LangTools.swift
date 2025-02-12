@@ -14,7 +14,7 @@ public protocol LangTools {
     func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error>
     static var requestValidators: [(any LangToolsRequest) -> Bool] { get }
 
-    func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest
+    static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest
 
     var session: URLSession { get }
     func prepare(request: some LangToolsRequest) throws -> URLRequest

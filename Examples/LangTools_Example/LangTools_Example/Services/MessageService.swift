@@ -82,7 +82,8 @@ class MessageService {
                     guard let request = args["request"]?.stringValue else {
                         return "Invalid calendar request"
                     }
-                    return await self?.networkClient.handleCalendarRequest(request)
+                    // TODO: - decide if this should spin off a separate async Task and add a message when it returns
+                    return await self?.handleCalendarRequest(request)
                 }))
         ]
     }
@@ -147,6 +148,25 @@ class MessageService {
 
         if messages.last?.uuid == uuid, let text = messages.last?.text {
             Task { try await networkClient.playAudio(for: text) }
+        }
+    }
+
+    func handleCalendarRequest(_ request: String) async -> String {
+        // Create a context for the calendar agent with the user's request
+        let context = AgentContext(messages: [
+            LangToolsMessageImpl<LangToolsTextContent>(
+                role: .user,
+                string: request
+            )
+        ])
+
+        // Execute the request through the calendar agent
+        let calendarAgent = networkClient.calendarAgent()
+        do {
+            let response = try await calendarAgent.execute(context: context)
+            return response
+        } catch {
+            return "Failed to handle request: \(error.localizedDescription)"
         }
     }
 
