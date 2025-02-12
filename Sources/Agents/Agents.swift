@@ -49,8 +49,8 @@ extension Agent {
                 required: ["agent_name", "reason"]
             ),
             callback: { args in
-                guard let agentName = args["agent_name"] as? String,
-                      let reason = args["reason"] as? String,
+                guard let agentName = args["agent_name"]?.stringValue,
+                      let reason = args["reason"]?.stringValue,
                       let agent = self.delegateAgents.first(where: { $0.name == agentName })
                 else { return "Failed to retrieve agent." }
                 var messages = context.messages

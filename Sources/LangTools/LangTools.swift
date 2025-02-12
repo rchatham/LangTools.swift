@@ -160,7 +160,9 @@ public extension LangTools {
 // MARK: - Utilities
 
 extension String {
-    public var dictionary: [String:String]? { return data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed]) as? [String:String] }}
+    public var stringDictionary: [String:String]? { return data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed]) as? [String:String] }}
+    public var dictionary: [String:JSON]? { return data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed]) as? [String:JSON] }}
+    public var json: JSON? { return try? JSON(self) }
 }
 
 extension Dictionary where Key == String, Value == String {

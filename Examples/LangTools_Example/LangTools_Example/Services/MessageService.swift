@@ -39,7 +39,7 @@ class MessageService {
                     ],
                     required: ["location", "format"]),
                 callback: { [weak self] in
-                    self?.getCurrentWeather(location: $0["location"]! as! String, format: $0["format"]! as! String)
+                    self?.getCurrentWeather(location: $0["location"]!.stringValue!, format: $0["format"]!.stringValue!)
                 })),
             .function(.init(
                 name: "getAnswerToUniverse",
@@ -59,7 +59,7 @@ class MessageService {
                     ],
                     required: ["location"]),
                 callback: { [weak self] in
-                    self?.getTopMichelinStarredRestaurants(location: $0["location"]! as! String)
+                    self?.getTopMichelinStarredRestaurants(location: $0["location"]!.stringValue!)
                 })),
 
             // Calendar agent tool
@@ -79,7 +79,7 @@ class MessageService {
                     ],
                     required: ["request"]),
                 callback: { [weak self] args in
-                    guard let request = args["request"] as? String else {
+                    guard let request = args["request"]?.stringValue else {
                         return "Invalid calendar request"
                     }
                     return await self?.networkClient.handleCalendarRequest(request)

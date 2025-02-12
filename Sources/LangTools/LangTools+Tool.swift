@@ -10,8 +10,8 @@ public protocol LangToolsTool: Codable {
     var name: String { get }
     var description: String? { get }
     var tool_schema: ToolSchema { get } // JSON Schema object
-    var callback: (([String:Any]) async throws -> String?)? { get }
-    init(name: String, description: String?, tool_schema: ToolSchema, callback: (([String:Any]) async throws -> String?)?)
+    var callback: (([String:JSON]) async throws -> String?)? { get }
+    init(name: String, description: String?, tool_schema: ToolSchema, callback: (([String:JSON]) async throws -> String?)?)
 }
 
 extension LangToolsTool {
@@ -52,8 +52,8 @@ public struct Tool: Codable, LangToolsTool {
     public var description: String?
     public var tool_schema: ToolSchema<ToolSchemaProperty>
     @CodableIgnored
-    public var callback: (([String : Any]) async throws -> String?)? = nil
-    public init(name: String, description: String?, tool_schema: ToolSchema<ToolSchemaProperty>, callback: (([String:Any]) async throws -> String?)? = nil) {
+    public var callback: (([String:JSON]) async throws -> String?)? = nil
+    public init(name: String, description: String?, tool_schema: ToolSchema<ToolSchemaProperty>, callback: (([String:JSON]) async throws -> String?)? = nil) {
         self.name = name
         self.description = description
         self.tool_schema = tool_schema

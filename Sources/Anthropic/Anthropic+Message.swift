@@ -226,7 +226,7 @@ extension Anthropic {
                     let container = try decoder.container(keyedBy: CodingKeys.self)
                     self.id = try container.decodeIfPresent(String.self, forKey: .id)
                     self.name = try container.decodeIfPresent(String.self, forKey: .name)
-                    self.input = try container.decodeIfPresent([String:String].self, forKey: .input)?.string ?? ""
+                    self.input = try container.decodeIfPresent(JSON.self, forKey: .input)?.jsonString ?? ""
                 }
 
                 public func encode(to encoder: any Encoder) throws {
@@ -234,7 +234,7 @@ extension Anthropic {
                     try container.encode(type, forKey: .type)
                     try container.encodeIfPresent(id, forKey: .id)
                     try container.encodeIfPresent(name, forKey: .name)
-                    try container.encode(input.dictionary ?? [:], forKey: .input)
+                    try container.encode(try JSON(string: input), forKey: .input)
                 }
             }
 

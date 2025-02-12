@@ -97,8 +97,9 @@ struct CalendarReadAgent<LangTool: LangTools>: Agent {
                 required: ["start_date", "end_date"]
             ),
             callback: { args in
-                guard let startDate = (args["start_date"] as? String)?.iso8601Date,
-                      let endDate = (args["end_date"] as? String)?.iso8601Date else {
+                guard let startDate = (args["start_date"]?.stringValue)?.toDate(),
+                      let endDate = (args["end_date"]?.stringValue)?.toDate()
+                else {
                     return "Invalid date format"
                 }
 
@@ -123,7 +124,7 @@ struct CalendarReadAgent<LangTool: LangTools>: Agent {
                 required: []
             ),
             callback: { args in
-                let limit = (args["limit"] as? Int) ?? 10
+                let limit = (args["limit"]?.intValue) ?? 10
 
                 do {
                     let events = try CalendarService().upcomingEvents(limit: limit)
@@ -146,7 +147,7 @@ struct CalendarReadAgent<LangTool: LangTools>: Agent {
                 required: ["query"]
             ),
             callback: { args in
-                guard let query = args["query"] as? String else {
+                guard let query = args["query"]?.stringValue else {
                     return "Invalid query"
                 }
 
@@ -221,15 +222,16 @@ struct CalendarWriteAgent<LangTool: LangTools>: Agent {
                 required: ["title", "start_date", "end_date"]
             ),
             callback: { args in
-                guard let title = args["title"] as? String,
-                      let startDate = (args["start_date"] as? String)?.iso8601Date,
-                      let endDate = (args["end_date"] as? String)?.iso8601Date else {
+                guard let title = args["title"]?.stringValue,
+                      let startDate = (args["start_date"]?.stringValue)?.toDate(),
+                      let endDate = (args["end_date"]?.stringValue)?.toDate()
+                else {
                     return "Invalid event information"
                 }
 
-                let location = args["location"] as? String
-                let notes = args["notes"] as? String
-                let isAllDay = args["is_all_day"] as? Bool ?? false
+                let location = args["location"]?.stringValue
+                let notes = args["notes"]?.stringValue
+                let isAllDay = args["is_all_day"]?.boolValue ?? false
 
                 do {
                     let event = try CalendarService().createEvent(
@@ -259,7 +261,7 @@ struct CalendarWriteAgent<LangTool: LangTools>: Agent {
                 required: ["event_identifier"]
             ),
             callback: { args in
-                guard let eventIdentifier = args["event_identifier"] as? String else {
+                guard let eventIdentifier = args["event_identifier"]?.stringValue else {
                     return "Missing event identifier"
                 }
 
@@ -318,7 +320,7 @@ struct CalendarWriteAgent<LangTool: LangTools>: Agent {
                 required: ["event_identifier"]
             ),
             callback: { args in
-                guard let eventIdentifier = args["event_identifier"] as? String else {
+                guard let eventIdentifier = args["event_identifier"]?.stringValue else {
                     return "Missing event identifier"
                 }
 
@@ -332,12 +334,12 @@ struct CalendarWriteAgent<LangTool: LangTools>: Agent {
                         return "Event not found"
                     }
 
-                    let title = args["title"] as? String
-                    let startDate = (args["start_date"] as? String)?.iso8601Date
-                    let endDate = (args["end_date"] as? String)?.iso8601Date
-                    let location = args["location"] as? String
-                    let notes = args["notes"] as? String
-                    let isAllDay = args["is_all_day"] as? Bool
+                    let title = args["title"]?.stringValue
+                    let startDate = (args["start_date"]?.stringValue)?.toDate()
+                    let endDate = (args["end_date"]?.stringValue)?.toDate()
+                    let location = args["location"]?.stringValue
+                    let notes = args["notes"]?.stringValue
+                    let isAllDay = args["is_all_day"]?.boolValue
 
                     let updatedEvent = try calendarStore.updateEvent(
                         event: event,

@@ -178,7 +178,7 @@ public extension LangToolsToolCallingRequest {
         var tool_results: [Message.ToolResult] = []
         for tool_selection in tool_selections {
             guard let tool = tools?.first(where: { $0.name == tool_selection.name }) else { continue }
-            guard let args = tool_selection.arguments.isEmpty ? [:] : tool_selection.arguments.dictionary
+            guard let args = tool_selection.arguments.isEmpty ? [:] : try? JSON(string: tool_selection.arguments).objectValue
                 else { throw LangToolsRequestError.failedToDecodeFunctionArguments(tool_selection.arguments) }
             let missing = tool.tool_schema.required?.filter({ !args.keys.contains($0) })
             guard missing?.isEmpty ?? true
