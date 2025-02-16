@@ -156,7 +156,7 @@ extension Ollama {
         }
 
         public init(from decoder: any Decoder) throws {
-            var container = try decoder.container(keyedBy: CodingKeys.self)
+            let container = try decoder.container(keyedBy: CodingKeys.self)
             role = try container.decode(Role.self, forKey: .role)
             content = LangToolsTextContent(text: try container.decode(String.self, forKey: .content))
             images = try container.decodeIfPresent([String].self, forKey: .images)
@@ -164,7 +164,7 @@ extension Ollama {
         }
 
         public func encode(to encoder: any Encoder) throws {
-            var container = try encoder.container(keyedBy: CodingKeys.self)
+            var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(role, forKey: .role)
             try container.encode(content.text, forKey: .content)
             try container.encodeIfPresent(images, forKey: .images)
