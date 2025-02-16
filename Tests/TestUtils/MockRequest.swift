@@ -10,6 +10,19 @@ import LangTools
 
 
 struct MockLangTool: LangTools {
+    static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        MockRequest(model: model, messages: messages)
+    }
+
+    enum Model: String, RawRepresentable {
+        case mockModel
+
+        var rawValue: String { "" }
+        init?(rawValue: String) {
+            return nil
+        }
+    }
+
     typealias ErrorResponse = MockErrorResponse
     static var requestValidators: [(any LangToolsRequest) -> Bool] = [ { $0 is MockRequest } ]
     var session: URLSession
@@ -18,7 +31,11 @@ struct MockLangTool: LangTools {
     }
 }
 
-struct MockRequest: LangToolsRequest, LangToolsStreamableRequest, Encodable {
+struct MockRequest: LangToolsChatRequest, LangToolsStreamableRequest, Encodable {
+    init(model: MockLangTool.Model, messages: [any LangToolsMessage]) {
+
+    }
+
     typealias LangTool = MockLangTool
     typealias ToolResult = MockToolResult
 
@@ -30,11 +47,12 @@ struct MockRequest: LangToolsRequest, LangToolsStreamableRequest, Encodable {
     init(stream: Bool? = nil) { self.stream = stream }
 }
 
-struct MockResponse: Codable, LangToolsStreamableResponse {
+struct MockResponse: Codable, LangToolsChatResponse, LangToolsStreamableResponse {
     typealias Delta = MockDelta
     typealias Message = MockMessage
 
     var status: String
+    var message: MockMessage?
     var delta: MockDelta?
 
     func combining(with next: MockResponse) -> MockResponse { MockResponse(status: status + next.status) }
@@ -53,7 +71,7 @@ struct MockMessage: Codable, LangToolsMessage {
     var tool_selection: [MockToolSelection]?
     init(tool_selection: [MockToolSelection]) {
         role = .assistant
-        content = Content()
+        content = .init(string: "")
         self.tool_selection = tool_selection
     }
 
@@ -63,7 +81,7 @@ struct MockMessage: Codable, LangToolsMessage {
     }
 
     static func messages(for tool_results: [MockToolResult]) -> [MockMessage] {
-        return [MockMessage(role: .assistant, content: .init(array: [MockContentType(type: "tool", tool_results: tool_results)]))]
+        return [MockMessage(role: .assistant, content: .init([MockContentType(type: "tool", tool_results: tool_results)]))]
     }
 }
 
@@ -74,14 +92,38 @@ struct MockDelta: LangToolsMessageDelta {
 
 enum MockRole: String, LangToolsRole {
     case user, assistant
+
+    var isAssistant: Bool { self == .assistant }
+    var isUser: Bool { self == .user }
+    var isSystem: Bool { false }
+    var isTool: Bool { false }
+
+    init(_ role: any LangToolsRole) {
+        if role.isUser { self = .user }
+        else { self = .assistant }
+    }
 }
 
 struct MockContent: Codable, LangToolsContent {
+    init(_ content: any LangToolsContent) {}
+    init(string: String) {}
+    init(_ array: [MockContentType]) {}
+
     var string: String?
     var array: [MockContentType]?
 }
 
 struct MockContentType: Codable, LangToolsContentType {
+    init(_ contentType: any LangToolsContentType) throws {
+        type = contentType.type
+        tool_results = nil
+    }
+
+    init(type: String, tool_results: [MockToolResult]) {
+        self.type = type
+        self.tool_results = tool_results
+    }
+
     var type: String
     var tool_results: [MockToolResult]?
 }

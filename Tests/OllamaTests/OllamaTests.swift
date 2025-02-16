@@ -382,7 +382,7 @@ class OllamaTests: XCTestCase {
         ) {
             results.append(response)
             if let message = response.message {
-                fullResponse += message.content
+                fullResponse += message.content.text
             }
         }
 
@@ -399,7 +399,7 @@ class OllamaTests: XCTestCase {
             XCTAssertFalse(results[i].done)
             XCTAssertNotNil(results[i].created_at)
             XCTAssertNotNil(results[i].message)
-            XCTAssertFalse(results[i].message?.content.isEmpty ?? true)
+            XCTAssertFalse(results[i].message?.content.text.isEmpty ?? true)
 
             // Should not have metadata fields
             XCTAssertNil(results[i].total_duration)
@@ -429,7 +429,7 @@ class OllamaTests: XCTestCase {
         let tools: [OpenAI.Tool] = [.init(
             name: "get_current_weather",
             description: "Get the current weather",
-            input_schema: .init(
+            tool_schema: .init(
                 properties: [
                     "location": .init(
                         type: "string",

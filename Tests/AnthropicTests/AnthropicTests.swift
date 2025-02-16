@@ -103,7 +103,7 @@ class AnthropicTests: XCTestCase {
         let tools: [Anthropic.Tool] = [.init(
             name: "get_weather",
             description: "Get the current weather",
-            input_schema: .init(
+            tool_schema: .init(
                 properties: [
                     "location": .init(
                         type: "string",
