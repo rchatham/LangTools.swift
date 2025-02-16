@@ -109,7 +109,7 @@ extension Agent {
                     context.eventHandler(.toolCompleted(agent: name, result: toolResult.result))
                 }
             }
-            let response = try await langTool.perform(request: request)
+            let response = try await langTool.perform(request: request) as any LangToolsChatResponse
             let result = response.message?.content.text ?? ""
             if result.isEmpty {
                 context.eventHandler(.error(agent: name, message: "Empty result received"))
