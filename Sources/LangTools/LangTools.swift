@@ -14,7 +14,7 @@ public protocol LangTools {
     func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error>
     static var requestValidators: [(any LangToolsRequest) -> Bool] { get }
 
-    static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest
+    static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
 
     var session: URLSession { get }
     func prepare(request: some LangToolsRequest) throws -> URLRequest
@@ -197,9 +197,9 @@ public struct CodableIgnored<T>: Codable {
 }
 
 extension KeyedDecodingContainer {
-    func decode<T>(_ type: CodableIgnored<T>.Type, forKey key: Self.Key) throws -> CodableIgnored<T> { return CodableIgnored(wrappedValue: nil) }
+    public func decode<T>(_ type: CodableIgnored<T>.Type, forKey key: Self.Key) throws -> CodableIgnored<T> { return CodableIgnored(wrappedValue: nil) }
 }
 
 extension KeyedEncodingContainer {
-    mutating func encode<T>(_ value: CodableIgnored<T>, forKey key: KeyedEncodingContainer<K>.Key) throws {} // Do nothing
+    public mutating func encode<T>(_ value: CodableIgnored<T>, forKey key: KeyedEncodingContainer<K>.Key) throws {} // Do nothing
 }

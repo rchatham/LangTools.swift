@@ -36,8 +36,8 @@ public final class XAI: LangTools {
         try openAI.prepare(request: request)
     }
 
-    public static func chatRequest(model: XAIModel, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest {
-        return try OpenAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools)
+    public static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        return try OpenAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools, toolEventHandler: toolEventHandler)
     }
 }
 

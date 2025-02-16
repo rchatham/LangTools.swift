@@ -5,6 +5,8 @@
 //  Created by Reid Chatham on 10/14/24.
 //
 
+import Foundation
+
 public protocol LangToolsTool: Codable {
     associatedtype ToolSchema: LangToolsToolSchema
     var name: String { get }
@@ -17,6 +19,9 @@ public protocol LangToolsTool: Codable {
 extension LangToolsTool {
     public init(_ tool: any LangToolsTool) {
         self.init(name: tool.name, description: tool.description, tool_schema: ToolSchema(tool.tool_schema), callback: tool.callback)
+    }
+    public init(name: String, description: String?, tool_schema: ToolSchema, callback: (([String:JSON]) async throws -> String?)?) {
+        fatalError("Not implemented for the current tool. Must instantiate using a different initializer.")
     }
 }
 

@@ -3,8 +3,8 @@ import LangTools
 import OpenAI
 
 extension Ollama {
-    public static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest {
-        return Ollama.ChatRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { OpenAI.Tool($0) })
+    public static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        return Ollama.ChatRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { OpenAI.Tool($0) }, toolEventHandler: toolEventHandler)
     }
 
     public struct ChatRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest {
@@ -22,6 +22,9 @@ extension Ollama {
         public var stream: Bool?
         public let keep_alive: String?
         public let tools: [OpenAI.Tool]?
+
+        @CodableIgnored
+        public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
 
         public init(model: Ollama.Model, messages: [any LangToolsMessage]) {
             self.model = model
@@ -41,7 +44,8 @@ extension Ollama {
             options: GenerateOptions? = nil,
             stream: Bool? = nil,
             keep_alive: String? = nil,
-            tools: [OpenAI.Tool]? = nil
+            tools: [OpenAI.Tool]? = nil,
+            toolEventHandler: ((LangToolsToolEvent) -> Void)? = nil
         ) {
             self.model = model
             self.messages = messages
@@ -50,6 +54,7 @@ extension Ollama {
             self.stream = stream
             self.keep_alive = keep_alive
             self.tools = tools
+            self.toolEventHandler = toolEventHandler
         }
     }
 

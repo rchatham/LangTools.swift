@@ -14,8 +14,8 @@ public extension Anthropic {
         perform(request: Anthropic.MessageRequest(model: model, messages: Self.toAnthropicMessages(messages), stream: stream, system: Self.toAnthropicSystemMessage(messages)), completion: completion, didCompleteStreaming: didCompleteStreaming)
     }
 
-    public static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?) throws -> any LangToolsChatRequest {
-        return MessageRequest(model: model, messages: toAnthropicMessages(messages), system: toAnthropicSystemMessage(messages), tools: tools?.map { Tool($0) })
+    public static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        return MessageRequest(model: model, messages: toAnthropicMessages(messages), system: toAnthropicSystemMessage(messages), tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
     }
 
     static func toAnthropicMessages(_ messages: [any LangToolsMessage]) -> [Anthropic.Message] {
@@ -46,12 +46,15 @@ extension Anthropic {
         let top_k: Int?
         let top_p: Double?
 
+        @CodableIgnored
+        public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
+
 
         public init(model: Anthropic.Model, messages: [any LangToolsMessage]) {
             self.init(model: model, messages: toAnthropicMessages(messages), system: toAnthropicSystemMessage(messages))
         }
 
-        public init(model: Model, messages: [Message], max_tokens: Int = 4096, metadata: Metadata? = nil, stop_sequences: [String]? = nil, stream: Bool? = nil, system: String? = nil, temperature: Double? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, top_k: Int? = nil, top_p: Double? = nil) {
+        public init(model: Model, messages: [Message], max_tokens: Int = 4096, metadata: Metadata? = nil, stop_sequences: [String]? = nil, stream: Bool? = nil, system: String? = nil, temperature: Double? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, top_k: Int? = nil, top_p: Double? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = {_ in}) {
             self.model = model
             self.messages = messages
             self.max_tokens = max_tokens
@@ -64,6 +67,7 @@ extension Anthropic {
             self.tool_choice = tool_choice
             self.top_k = top_k
             self.top_p = top_p
+            self.toolEventHandler = toolEventHandler
         }
 
         public enum ToolChoice: Codable {
