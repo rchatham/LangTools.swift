@@ -111,22 +111,6 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    func mapsAgent(model: Model = UserDefaults.model) -> any Agent {
-        if case .anthropic(let model) = model {
-            return MapsAgent(langTool: langToolchain.langTool(Anthropic.self)!, model: model)
-        } else if case .openAI(let model) = model {
-            return MapsAgent(langTool: langToolchain.langTool(OpenAI.self)!, model: model)
-        } else if case .xAI(let model) = model {
-            return MapsAgent(langTool: langToolchain.langTool(XAI.self)!, model: model)
-        } else if case .gemini(let model) = model {
-            return MapsAgent(langTool: langToolchain.langTool(Gemini.self)!, model: model)
-        } else if case .ollama(let model) = model {
-            return MapsAgent(langTool: langToolchain.langTool(Ollama.self)!, model: model)
-        } else {
-            return MapsAgent(langTool: langToolchain.langTool(Anthropic.self)!, model: .claude35Sonnet_latest)
-        }
-    }
-
     func updateApiKey(_ apiKey: String, for llm: APIService) throws {
         guard !apiKey.isEmpty else { throw NetworkError.emptyApiKey }
         keychainService.saveApiKey(apiKey: apiKey, for: llm)
