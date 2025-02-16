@@ -20,10 +20,6 @@ public extension LangToolsRequest {
     static var httpMethod: HTTPMethod { .post }
 }
 
-extension LangToolsStreamableResponse {
-    public var content: (any LangToolsContent)? { (self as? any LangToolsStreamableChatResponse)?.delta?.content.map { LangToolsTextContent(text: $0) } ?? (self as? any LangToolsChatResponse)?.message?.content }
-}
-
 // MARK: - LangToolsChatRequest
 public protocol LangToolsChatRequest: LangToolsRequest where Response: LangToolsChatResponse, Response.Message == Message {
     associatedtype Message: LangToolsMessage
@@ -57,12 +53,14 @@ public protocol LangToolsStreamableResponse: Decodable {
     func combining(with: Self) -> Self
 }
 
+extension LangToolsStreamableResponse {
+    public var content: (any LangToolsContent)? { (self as? any LangToolsStreamableChatResponse)?.delta?.content.map { LangToolsTextContent(text: $0) }  ?? (self as? any LangToolsChatResponse)?.message?.content }
+}
+
 public protocol LangToolsStreamableChatResponse: LangToolsChatResponse, LangToolsStreamableResponse where Delta: LangToolsMessageDelta {}
 
 extension LangToolsRequest {
-    public var stream: Bool {
-        get { return (self as? (any LangToolsStreamableRequest))?.stream ?? false }
-    }
+    public var stream: Bool { get { (self as? (any LangToolsStreamableRequest))?.stream ?? false } }
 
     func updating(stream: Bool) -> Self {
         if var streamReq = (self as? (any LangToolsStreamableRequest)) {

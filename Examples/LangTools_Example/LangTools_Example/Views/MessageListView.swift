@@ -10,12 +10,11 @@ struct MessageListView: View {
     @StateObject var viewModel: ViewModel
 
     var body: some View {
-//        @ObservedObject var viewModel = viewModel
         ScrollViewReader { scrollProxy in
             ScrollView {
                 LazyVStack(alignment: .leading) {
-                    ForEach(viewModel.messageService.messages, id: \.self) { message in
-                        if !(message.text?.isEmpty ?? true), message.role != .tool { MessageView(message: message) }
+                    ForEach(viewModel.messageService.messages, id: \.uuid) { message in
+                        CollapsibleMessageView(message: message)
                     }
                 }
                 .padding(16)
@@ -23,26 +22,30 @@ struct MessageListView: View {
             .onAppear {
                 scrollToBottom(scrollProxy: scrollProxy)
                 #if os(iOS)
-                    NotificationCenter.default.addObserver(forName: UIResponder.keyboardDidShowNotification, object: nil, queue: .main) { notification in
-                        scrollToBottom(scrollProxy: scrollProxy)
-                    }
+                NotificationCenter.default.addObserver(
+                    forName: UIResponder.keyboardDidShowNotification,
+                    object: nil,
+                    queue: .main
+                ) { _ in
+                    scrollToBottom(scrollProxy: scrollProxy)
+                }
                 #endif
             }
             .onDisappear {
                 #if os(iOS)
-                    NotificationCenter.default.removeObserver(self)
+                NotificationCenter.default.removeObserver(self)
                 #endif
             }
-            .onChange(of: viewModel.messageService.messages.last?.text) {
+            .onChange(of: viewModel.messageService.messages.last?.text) { _ in
                 scrollToBottom(scrollProxy: scrollProxy)
             }
         }
     }
 
-    func scrollToBottom(scrollProxy proxy: ScrollViewProxy) {
+    func scrollToBottom(scrollProxy: ScrollViewProxy) {
         guard let last = viewModel.messageService.messages.last else { return }
         withAnimation {
-            proxy.scrollTo(last, anchor: UnitPoint(x: UnitPoint.bottom.x, y: 0.95))
+            scrollProxy.scrollTo(last, anchor: .bottom)
         }
     }
 }

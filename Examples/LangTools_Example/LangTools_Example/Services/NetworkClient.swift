@@ -26,7 +26,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 
     override init() {
         super.init()
-        LLMAPIService.allCases.forEach { llm in keychainService.getApiKey(for: llm).flatMap { register($0, for: llm) } }
+        APIService.llms.forEach { llm in keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) } }
     }
 
     func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
@@ -78,17 +78,67 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    func updateApiKey(_ apiKey: String, for llm: LLMAPIService) throws {
+    func reminderAgent(model: Model = UserDefaults.model) -> any Agent {
+        if case .anthropic(let model) = model {
+            return ReminderAgent(langTool: langToolchain.langTool(Anthropic.self)!, model: model)
+        } else if case .openAI(let model) = model {
+            return ReminderAgent(langTool: langToolchain.langTool(OpenAI.self)!, model: model)
+        } else if case .xAI(let model) = model {
+            return ReminderAgent(langTool: langToolchain.langTool(XAI.self)!, model: model)
+        } else if case .gemini(let model) = model {
+            return ReminderAgent(langTool: langToolchain.langTool(Gemini.self)!, model: model)
+        } else if case .ollama(let model) = model {
+            return ReminderAgent(langTool: langToolchain.langTool(Ollama.self)!, model: model)
+        } else {
+            return ReminderAgent(langTool: langToolchain.langTool(Anthropic.self)!, model: .claude35Sonnet_latest)
+        }
+    }
+
+    func researchAgent(model: Model = UserDefaults.model) -> (any Agent)? {
+        guard let serperApiKey = keychainService.getApiKey(for: .serper) else { return nil }
+        switch model {
+        case .anthropic(let model):
+            return ResearchAgent(langTool: langToolchain.langTool(Anthropic.self)!, model: model, serperApiKey: serperApiKey)
+        case .openAI(let model):
+            return ResearchAgent(langTool: langToolchain.langTool(OpenAI.self)!, model: model, serperApiKey: serperApiKey)
+        case .xAI(let model):
+            return ResearchAgent(langTool: langToolchain.langTool(XAI.self)!, model: model, serperApiKey: serperApiKey)
+        case .gemini(let model):
+            return ResearchAgent(langTool: langToolchain.langTool(Gemini.self)!, model: model, serperApiKey: serperApiKey)
+        case .ollama(let model):
+            return ResearchAgent(langTool: langToolchain.langTool(Ollama.self)!, model: model, serperApiKey: serperApiKey)
+        }
+    }
+
+    func mapsAgent(model: Model = UserDefaults.model) -> any Agent {
+        if case .anthropic(let model) = model {
+            return MapsAgent(langTool: langToolchain.langTool(Anthropic.self)!, model: model)
+        } else if case .openAI(let model) = model {
+            return MapsAgent(langTool: langToolchain.langTool(OpenAI.self)!, model: model)
+        } else if case .xAI(let model) = model {
+            return MapsAgent(langTool: langToolchain.langTool(XAI.self)!, model: model)
+        } else if case .gemini(let model) = model {
+            return MapsAgent(langTool: langToolchain.langTool(Gemini.self)!, model: model)
+        } else if case .ollama(let model) = model {
+            return MapsAgent(langTool: langToolchain.langTool(Ollama.self)!, model: model)
+        } else {
+            return MapsAgent(langTool: langToolchain.langTool(Anthropic.self)!, model: .claude35Sonnet_latest)
+        }
+    }
+
+    func updateApiKey(_ apiKey: String, for llm: APIService) throws {
         guard !apiKey.isEmpty else { throw NetworkError.emptyApiKey }
         keychainService.saveApiKey(apiKey: apiKey, for: llm)
-        register(apiKey, for: llm)
+        registerLangTool(apiKey, for: llm)
     }
 
-    func register(_ apiKey: String, for llm: LLMAPIService) {
-        langToolchain.register(langTool(for: llm, with: apiKey))
+    func registerLangTool(_ apiKey: String, for llm: APIService) {
+        if let langTool = langTool(for: llm, with: apiKey) {
+            langToolchain.register(langTool)
+        }
     }
 
-    func langTool(for llm: LLMAPIService, with apiKey: String) -> any LangTools {
+    func langTool(for llm: APIService, with apiKey: String) -> (any LangTools)? {
         let baseURL: URL? = nil //URL(string: "http://localhost:8080/v1/")
         switch llm {
         case .anthropic: return if let baseURL { Anthropic(baseURL: baseURL, apiKey: apiKey) } else { Anthropic(apiKey: apiKey) }
@@ -96,12 +146,15 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
         case .ollama: return Ollama()
+        default: return nil
         }
     }
 }
 
-enum LLMAPIService: String, CaseIterable {
-    case openAI, anthropic, xAI, gemini, ollama
+enum APIService: String, CaseIterable {
+    case openAI, anthropic, xAI, gemini, ollama, serper
+
+    static var llms: [APIService] = [.openAI, .anthropic, .xAI, .gemini, .ollama]
 }
 
 extension NetworkClient {

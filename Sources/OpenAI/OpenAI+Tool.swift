@@ -7,7 +7,7 @@ public extension OpenAI {
 
         case function(FunctionSchema)
 
-        public init(name: String, description: String?, tool_schema: FunctionSchema.Parameters, callback: (([String : JSON]) async throws -> String?)? = nil) {
+        public init(name: String, description: String?, tool_schema: FunctionSchema.Parameters, callback: (([String:JSON]) async throws -> String?)? = nil) {
             self = .function(.init(name: name, description: description, parameters: tool_schema, callback: callback))
         }
 
@@ -23,7 +23,7 @@ public extension OpenAI {
             switch self { case .function(let schema): return schema.parameters }
         }
 
-        public var callback: (([String : JSON]) async throws -> String?)? {
+        public var callback: (([String:JSON]) async throws -> String?)? {
             switch self { case .function(let schema): return schema.callback }
         }
 
@@ -61,7 +61,7 @@ public extension OpenAI {
                 public let type: String
                 public var properties: [String:Property]
                 public var required: [String]?
-                public init(type: String = "object", properties: [String : Property] = [:], required: [String]? = nil) {
+                public init(type: String = "object", properties: [String:Property] = [:], required: [String]? = nil) {
                     self.type = type
                     self.properties = properties
                     self.required = required

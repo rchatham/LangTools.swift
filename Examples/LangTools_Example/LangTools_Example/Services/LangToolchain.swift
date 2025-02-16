@@ -38,7 +38,4 @@ struct LangToolchain {
         throw LangToolchainError.toolchainCannotHandleRequest
     }
 
-    public func execute(agent: any Agent, with context: AgentContext) async throws -> String {
-        return try await agent.execute(context: context)
-    }
 }

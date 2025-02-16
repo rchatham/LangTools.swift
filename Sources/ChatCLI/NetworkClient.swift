@@ -22,7 +22,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 
     override init() {
         super.init()
-        LLMAPIService.allCases.forEach { llm in UserDefaults.getApiKey(for: llm).flatMap { register($0, for: llm) } }
+        APIService.allCases.forEach { llm in UserDefaults.getApiKey(for: llm).flatMap { register($0, for: llm) } }
     }
 
     func request(messages: [Message], model: Model, stream: Bool = false, tools: [OpenAI.Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) -> any LangToolsChatRequest & LangToolsStreamableRequest {
@@ -39,17 +39,17 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    func updateApiKey(_ apiKey: String, for llm: LLMAPIService) throws {
+    func updateApiKey(_ apiKey: String, for llm: APIService) throws {
         guard !apiKey.isEmpty else { throw NetworkError.emptyApiKey }
         UserDefaults.setApiKey(apiKey, for: llm)
         register(apiKey, for: llm)
     }
 
-    func register(_ apiKey: String, for llm: LLMAPIService) {
+    func register(_ apiKey: String, for llm: APIService) {
         langToolchain.register(langTool(for: llm, with: apiKey))
     }
 
-    func langTool(for llm: LLMAPIService, with apiKey: String) -> any LangTools {
+    func langTool(for llm: APIService, with apiKey: String) -> any LangTools {
         let baseURL: URL? = nil //URL(string: "http://localhost:8080/v1/")
         switch llm {
         case .anthropic: return if let baseURL { Anthropic(baseURL: baseURL, apiKey: apiKey) } else { Anthropic(apiKey: apiKey) }
@@ -60,7 +60,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     }
 }
 
-enum LLMAPIService: String, CaseIterable {
+enum APIService: String, CaseIterable {
     case openAI, anthropic, xAI, gemini
 }
 

@@ -14,7 +14,7 @@ extension View {
     }
 
     func enterAPIKeyAlert(isPresented: Binding<Bool>, apiKey: Binding<String>) -> some View {
-        let llmInfo: (String, LLMAPIService) = {
+        let llmInfo: (String, APIService) = {
             switch UserDefaults.model {
             case .anthropic(_): return ("Anthropic", .anthropic)
             case .openAI(_): return ("OpenAI", .openAI)

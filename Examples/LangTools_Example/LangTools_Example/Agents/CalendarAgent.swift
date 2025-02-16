@@ -29,7 +29,7 @@ struct CalendarPermissionAgent<LangTool: LangTools>: Agent {
 
     var delegateAgents: [any Agent] = []
 
-    var tools: [Tool]? = [
+    var tools: [any LangToolsTool]? = [
         Tool(
             name: "check_calendar_permission",
             description: "Check current calendar access permission status",
@@ -48,11 +48,11 @@ struct CalendarPermissionAgent<LangTool: LangTools>: Agent {
                     do {
                         return "Calendar access granted: \(try await EKEventStore().requestFullAccessToEvents())"
                     } catch {
-                        return "Failed to get calendar access: \(error.localizedDescription)"
+                        throw AgentError("Failed to get calendar access: \(error.localizedDescription)")
                     }
                 } else {
                     // Handle older versions
-                    return "Calendar access request not supported on this OS version"
+                    throw AgentError("Calendar access request not supported on this OS version")
                 }
             }
         )
@@ -73,13 +73,11 @@ struct CalendarReadAgent<LangTool: LangTools>: Agent {
     let instructions = """
         You are responsible for reading and querying calendar events.
         Format dates consistently and provide clear, concise event information.
-
-        Current date: \(Date().description(with: .current))
         """
 
     var delegateAgents: [any Agent] = []
 
-    var tools: [Tool]? = [
+    var tools: [any LangToolsTool]? = [
         Tool(
             name: "get_events",
             description: "Get calendar events for a specific time range",
@@ -97,17 +95,17 @@ struct CalendarReadAgent<LangTool: LangTools>: Agent {
                 required: ["start_date", "end_date"]
             ),
             callback: { args in
-                guard let startDate = (args["start_date"]?.stringValue)?.toDate(),
-                      let endDate = (args["end_date"]?.stringValue)?.toDate()
+                guard let startDate = (args["start_date"]?.stringValue)?.toDate(),//.iso8601Date,
+                      let endDate = (args["end_date"]?.stringValue)?.toDate()//.iso8601Date
                 else {
-                    return "Invalid date format"
+                    throw AgentError("Invalid date format")
                 }
 
                 do {
                     let events = try CalendarService().fetchEvents(from: startDate, to: endDate)
                     return events.isEmpty ? "No events returned from calendar." : events.map { $0.formattedDetails }.joined(separator: "\n\n")
                 } catch {
-                    return "Failed to fetch events: \(error.localizedDescription)"
+                    throw AgentError("Failed to fetch events: \(error.localizedDescription)")
                 }
             }
         ),
@@ -130,7 +128,7 @@ struct CalendarReadAgent<LangTool: LangTools>: Agent {
                     let events = try CalendarService().upcomingEvents(limit: limit)
                     return events.isEmpty ? "No events returned from calendar." : events.map { $0.formattedDetails }.joined(separator: "\n\n")
                 } catch {
-                    return "Failed to fetch upcoming events: \(error.localizedDescription)"
+                    throw AgentError("Failed to fetch upcoming events: \(error.localizedDescription)")
                 }
             }
         ),
@@ -148,14 +146,14 @@ struct CalendarReadAgent<LangTool: LangTools>: Agent {
             ),
             callback: { args in
                 guard let query = args["query"]?.stringValue else {
-                    return "Invalid query"
+                    throw AgentError("Invalid query")
                 }
-
+                // TODO: - This does not work, this function needs to return a more structured search instead of natural language query.
                 do {
                     let events = try CalendarService().searchEvents(matching: query)
                     return events.isEmpty ? "No events returned from calendar." : events.map { $0.formattedDetails }.joined(separator: "\n\n")
                 } catch {
-                    return "Failed to search events: \(error.localizedDescription)"
+                    throw AgentError("Failed to search events: \(error.localizedDescription)")
                 }
             }
         )
@@ -182,13 +180,11 @@ struct CalendarWriteAgent<LangTool: LangTools>: Agent {
         You are responsible for creating and modifying calendar events.
         Ensure all required information is provided and validate dates before creating events.
         Always confirm event details with users before taking action.
-        
-        Current date: \(Date().description(with: .current))
         """
 
     var delegateAgents: [any Agent]
 
-    var tools: [Tool]? = [
+    var tools: [any LangToolsTool]? = [
         Tool(
             name: "create_event",
             description: "Create a new calendar event",
@@ -223,10 +219,10 @@ struct CalendarWriteAgent<LangTool: LangTools>: Agent {
             ),
             callback: { args in
                 guard let title = args["title"]?.stringValue,
-                      let startDate = (args["start_date"]?.stringValue)?.toDate(),
-                      let endDate = (args["end_date"]?.stringValue)?.toDate()
+                      let startDate = (args["start_date"]?.stringValue)?.toDate(),//.iso8601Date,
+                      let endDate = (args["end_date"]?.stringValue)?.toDate()//.iso8601Date
                 else {
-                    return "Invalid event information"
+                    throw AgentError("Invalid event information")
                 }
 
                 let location = args["location"]?.stringValue
@@ -244,7 +240,7 @@ struct CalendarWriteAgent<LangTool: LangTools>: Agent {
                     )
                     return "Event created successfully:\n\(event.formattedDetails)"
                 } catch {
-                    return "Failed to create event: \(error)"
+                    throw AgentError("Failed to create event: \(error.localizedDescription)")
                 }
             }
         ),
@@ -262,7 +258,7 @@ struct CalendarWriteAgent<LangTool: LangTools>: Agent {
             ),
             callback: { args in
                 guard let eventIdentifier = args["event_identifier"]?.stringValue else {
-                    return "Missing event identifier"
+                    throw AgentError("Missing event identifier")
                 }
 
                 // First find the event in the next year
@@ -273,13 +269,13 @@ struct CalendarWriteAgent<LangTool: LangTools>: Agent {
                     let calendarStore = CalendarService()
                     let events = try calendarStore.fetchEvents(from: now, to: oneYear)
                     guard let event = events.first(where: { $0.eventIdentifier == eventIdentifier }) else {
-                        return "Event not found"
+                        throw AgentError("Event not found")
                     }
 
                     try calendarStore.deleteEvent(event)
                     return "Event deleted successfully"
                 } catch {
-                    return "Failed to delete event: \(error.localizedDescription)"
+                    throw AgentError("Failed to delete event: \(error.localizedDescription)")
                 }
             }
         ),
@@ -321,7 +317,7 @@ struct CalendarWriteAgent<LangTool: LangTools>: Agent {
             ),
             callback: { args in
                 guard let eventIdentifier = args["event_identifier"]?.stringValue else {
-                    return "Missing event identifier"
+                    throw AgentError("Missing event identifier")
                 }
 
                 do {
@@ -331,12 +327,12 @@ struct CalendarWriteAgent<LangTool: LangTools>: Agent {
                     let events = try calendarStore.fetchEvents(from: now, to: oneYear)
 
                     guard let event = events.first(where: { $0.eventIdentifier == eventIdentifier }) else {
-                        return "Event not found"
+                        throw AgentError("Event not found")
                     }
 
                     let title = args["title"]?.stringValue
-                    let startDate = (args["start_date"]?.stringValue)?.toDate()
-                    let endDate = (args["end_date"]?.stringValue)?.toDate()
+                    let startDate = (args["start_date"]?.stringValue)?.toDate()//.iso8601Date
+                    let endDate = (args["end_date"]?.stringValue)?.toDate()//.iso8601Date
                     let location = args["location"]?.stringValue
                     let notes = args["notes"]?.stringValue
                     let isAllDay = args["is_all_day"]?.boolValue
@@ -353,7 +349,7 @@ struct CalendarWriteAgent<LangTool: LangTools>: Agent {
 
                     return "Event updated successfully:\n\(updatedEvent.formattedDetails)"
                 } catch {
-                    return "Failed to update event: \(error.localizedDescription)"
+                    throw AgentError("Failed to update event: \(error.localizedDescription)")
                 }
             }
         )
@@ -387,14 +383,12 @@ struct CalendarAgent<LangTool: LangTools>: Agent {
         Always verify calendar permissions before performing operations.
         When creating or modifying events, ensure all required information is provided.
         Use delegate agents for specialized tasks and provide clear, concise responses.
-        
-        Current date: \(Date().description(with: .current))
         """
 
     var delegateAgents: [any Agent]
 
     // Main agent uses delegate agents' tools
-    var tools: [Tool]? = nil
+    var tools: [any LangToolsTool]? = nil
 }
 
 // MARK: - Helpers

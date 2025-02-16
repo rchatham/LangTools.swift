@@ -26,15 +26,15 @@ extension UserDefaults {
 extension UserDefaults {
     private static let apiKeyPrefix = "apiKey_"
     
-    static func getApiKey(for service: LLMAPIService) -> String? {
+    static func getApiKey(for service: APIService) -> String? {
         return standard.string(forKey: apiKeyPrefix + service.rawValue)
     }
     
-    static func setApiKey(_ apiKey: String, for service: LLMAPIService) {
+    static func setApiKey(_ apiKey: String, for service: APIService) {
         standard.set(apiKey, forKey: apiKeyPrefix + service.rawValue)
     }
     
-    static func removeApiKey(for service: LLMAPIService) {
+    static func removeApiKey(for service: APIService) {
         standard.removeObject(forKey: apiKeyPrefix + service.rawValue)
     }
 }
