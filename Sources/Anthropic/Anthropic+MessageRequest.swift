@@ -11,7 +11,19 @@ import LangTools
 
 public extension Anthropic {
     func performMessageRequest(messages: [Message], model: Model = .claude35Sonnet_20240620, stream: Bool = false, completion: @escaping (Result<Anthropic.MessageResponse, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
-        perform(request: Anthropic.MessageRequest(model: model, messages: messages, stream: stream), completion: completion, didCompleteStreaming: didCompleteStreaming)
+        perform(request: Anthropic.MessageRequest(model: model, messages: Self.toAnthropicMessages(messages), stream: stream, system: Self.toAnthropicSystemMessage(messages)), completion: completion, didCompleteStreaming: didCompleteStreaming)
+    }
+
+    static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        return MessageRequest(model: model, messages: toAnthropicMessages(messages), system: toAnthropicSystemMessage(messages), tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
+    }
+
+    static func toAnthropicMessages(_ messages: [any LangToolsMessage]) -> [Anthropic.Message] {
+        return messages.filter { !$0.role.isSystem && !$0.role.isTool }.map { Anthropic.Message($0) }
+    }
+
+    static func toAnthropicSystemMessage(_ messages: [any LangToolsMessage]) -> String? {
+        return messages.filter { $0.role.isSystem }.reduce("") { (!$0.isEmpty ? $0 + "\n---\n" : "") + $1.content.text }
     }
 }
 
@@ -34,7 +46,15 @@ extension Anthropic {
         let top_k: Int?
         let top_p: Double?
 
-        public init(model: Model, messages: [Message], max_tokens: Int = 1024, metadata: Metadata? = nil, stop_sequences: [String]? = nil, stream: Bool? = nil, system: String? = nil, temperature: Double? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, top_k: Int? = nil, top_p: Double? = nil) {
+        @CodableIgnored
+        public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
+
+
+        public init(model: Anthropic.Model, messages: [any LangToolsMessage]) {
+            self.init(model: model, messages: toAnthropicMessages(messages), system: toAnthropicSystemMessage(messages))
+        }
+
+        public init(model: Model, messages: [Message], max_tokens: Int = 4096, metadata: Metadata? = nil, stop_sequences: [String]? = nil, stream: Bool? = nil, system: String? = nil, temperature: Double? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, top_k: Int? = nil, top_p: Double? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = {_ in}) {
             self.model = model
             self.messages = messages
             self.max_tokens = max_tokens
@@ -47,6 +67,7 @@ extension Anthropic {
             self.tool_choice = tool_choice
             self.top_k = top_k
             self.top_p = top_p
+            self.toolEventHandler = toolEventHandler
         }
 
         public enum ToolChoice: Codable {
@@ -176,7 +197,7 @@ extension Anthropic.MessageResponse: LangToolsStreamableResponse {
         }
     }
 
-    internal struct StreamMessageResponse: Decodable {
+    internal struct StreamMessageResponse: Codable {
         let type: ResponseType
         let message: MessageResponseInfo?
         let index: Int?
@@ -200,7 +221,14 @@ extension Anthropic.MessageResponse: LangToolsStreamableResponse {
             self.usage = try container.decodeIfPresent(Usage.self, forKey: .usage)
         }
 
-//        public func encode(to encoder: Encoder) throws {}
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(type, forKey: .type)
+            try container.encodeIfPresent(message, forKey: .message)
+            try container.encodeIfPresent(index, forKey: .index)
+            try container.encodeIfPresent(delta, forKey: .delta)
+            try container.encodeIfPresent(usage, forKey: .usage)
+        }
 
         enum CodingKeys: CodingKey { case type, message, index, content_block, delta, usage }
     }
@@ -237,12 +265,19 @@ extension Anthropic.MessageResponse: LangToolsStreamableResponse {
         if let index = next.stream?.index, let delta = next.stream?.delta {
             if index < array.count {
                 if let partial_text = delta.text, case .text(let text) = array[index] {
-                    array[index] = .text(.init(text: text.text + partial_text)) }
+                    array[index] = .text(.init(text: text.text + partial_text))
+                }
                 if let partial_json = delta.partial_json, case .toolUse(let toolUse) = array[index] {
-                    array[index] = .toolUse(.init(id: toolUse.id, name: toolUse.name, input: toolUse.input + partial_json)) }
+                    array[index] = .toolUse(.init(id: toolUse.id, name: toolUse.name, input: toolUse.input + partial_json))
+                }
             } else {
-                if let partial_text = delta.text { array.append(.text(.init(text: partial_text))) }
-                if delta.type == "tool_use", let id = delta.id, let name = delta.name { array.append(.toolUse(.init(id: id, name: name, input: ""))) } // This is kind of a hack, the api returns an empty json object for the "input" key, but then returns a string for "partial_json", so we ignore the "input" key when streaming.
+                if let partial_text = delta.text {
+                    array.append(.text(.init(text: partial_text)))
+                }
+                if delta.type == "tool_use", let id = delta.id, let name = delta.name {
+                    // This is kind of a hack, the api returns an empty json object for the "input" key, but then returns a string for "partial_json", so we ignore the "input" key when streaming.
+                    array.append(.toolUse(.init(id: id, name: name, input: "")))
+                }
             }
         }
         return Anthropic.MessageResponse(content: .array(array), id: message.id, model: message.model, role: message.role, stop_reason: message.stop_reason ?? next.stream?.delta?.stop_reason, stop_sequence: message.stop_sequence ?? next.stream?.delta?.stop_sequence, type: next.messageInfo?.type ?? message.type, usage: usage)

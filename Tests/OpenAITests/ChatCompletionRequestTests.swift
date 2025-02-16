@@ -63,7 +63,7 @@ final class ChatCompletionRequestTests: XCTestCase {
         let request = OpenAI.ChatCompletionRequest(
             model: .gpt4Turbo,
             messages: [
-                try .init(role: .user, content: OpenAI.Message.Content.array([
+                .init(role: .user, content: OpenAI.Message.Content.array([
                     .text(.init(text: "What's in this image?")),
                     .image(.init(image_url: .init(url: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg")))
                 ]))

@@ -20,14 +20,12 @@ public extension LangToolsRequest {
     static var httpMethod: HTTPMethod { .post }
 }
 
-extension LangToolsStreamableResponse {
-    public var content: (any LangToolsContent)? { (self as? any LangToolsStreamableChatResponse)?.delta?.content.map { LangToolsTextContent(text: $0) } ?? (self as? any LangToolsChatResponse)?.message?.content }
-}
-
 // MARK: - LangToolsChatRequest
 public protocol LangToolsChatRequest: LangToolsRequest where Response: LangToolsChatResponse, Response.Message == Message {
     associatedtype Message: LangToolsMessage
     var messages: [Message] { get set }
+
+    init(model: LangTool.Model, messages: [any LangToolsMessage])
 }
 
 extension LangToolsChatRequest {
@@ -55,12 +53,14 @@ public protocol LangToolsStreamableResponse: Decodable {
     func combining(with: Self) -> Self
 }
 
+extension LangToolsStreamableResponse {
+    public var content: (any LangToolsContent)? { (self as? any LangToolsStreamableChatResponse)?.delta?.content.map { LangToolsTextContent(text: $0) }  ?? (self as? any LangToolsChatResponse)?.message?.content }
+}
+
 public protocol LangToolsStreamableChatResponse: LangToolsChatResponse, LangToolsStreamableResponse where Delta: LangToolsMessageDelta {}
 
 extension LangToolsRequest {
-    public var stream: Bool {
-        get { return (self as? (any LangToolsStreamableRequest))?.stream ?? false }
-    }
+    public var stream: Bool { get { (self as? (any LangToolsStreamableRequest))?.stream ?? false } }
 
     func updating(stream: Bool) -> Self {
         if var streamReq = (self as? (any LangToolsStreamableRequest)) {
@@ -84,7 +84,8 @@ extension LangToolsMultipleChoiceChatRequest {
 extension LangToolsMultipleChoiceChatRequest {
     func update(response: Decodable) throws -> Decodable {
         if var response = response as? Response {
-            guard choose(from: response.choices) < n ?? 1 else { throw LangToolsRequestError.multipleChoiceIndexOutOfBounds }
+            let choice = choose(from: response.choices)
+            guard choice < n ?? 1 else { throw LangToolsRequestError.multipleChoiceIndexOutOfBounds(choice) }
             response.choose = choose
             return response
         }
@@ -132,6 +133,12 @@ public protocol LangToolsMultipleChoiceChoice: Codable {
 public protocol LangToolsToolCallingRequest: LangToolsChatRequest, Codable where Response: LangToolsToolCallingResponse, Message: LangToolsToolMessage, Message == Response.Message {
     associatedtype Tool: LangToolsTool
     var tools: [Tool]? { get }
+    var toolEventHandler: ((LangToolsToolEvent) -> Void)? { get }
+}
+
+public enum LangToolsToolEvent {
+    case toolCalled(any LangToolsToolSelection)
+    case toolCompleted(any LangToolsToolSelectionResult)
 }
 
 public protocol LangToolsToolCallingResponse: LangToolsChatResponse where Message: LangToolsToolMessage, ToolSelection == Message.ToolSelection {
@@ -154,6 +161,13 @@ public protocol LangToolsToolSelectionResult: Codable {
     var tool_selection_id: String { get }
     var result: String { get }
     init(tool_selection_id: String, result: String)
+    init(tool_selection_id: String, result: String, is_error: Bool)
+}
+
+extension LangToolsToolSelectionResult {
+    public init(tool_selection_id: String, result: String) {
+        self.init(tool_selection_id: tool_selection_id, result: result, is_error: false)
+    }
 }
 
 public protocol LangToolsToolMessageDelta: Codable {
@@ -163,18 +177,25 @@ public protocol LangToolsToolMessageDelta: Codable {
     var tool_selection: [ToolSelection]? { get }
 }
 
-public extension LangToolsToolCallingRequest {
+extension LangToolsToolCallingRequest {
     func completion<Response: LangToolsToolCallingResponse>(response: Response) async throws -> Self? {
-        guard let tool_selections = response.tool_selection, !tool_selections.isEmpty else { return nil }
+        guard let tool_selections = response.tool_selection as? [Message.ToolSelection], !tool_selections.isEmpty else { return nil }
         var tool_results: [Message.ToolResult] = []
         for tool_selection in tool_selections {
+            toolEventHandler?(.toolCalled(tool_selection))
             guard let tool = tools?.first(where: { $0.name == tool_selection.name }) else { continue }
-            guard let args = tool_selection.arguments.isEmpty ? [:] : tool_selection.arguments.dictionary
-                else { throw LangToolsRequestError.failedToDecodeFunctionArguments }
-            guard tool.tool_schema.required?.filter({ !args.keys.contains($0) }).isEmpty ?? true
-                else { throw LangToolsRequestError.missingRequiredFunctionArguments }
-            guard let str = try await tool.callback?(args) else { continue }
-            tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: str))
+            do {
+                guard let args = tool_selection.arguments.isEmpty ? [:] : try? JSON(string: tool_selection.arguments).objectValue
+                    else { throw LangToolsRequestError.failedToDecodeFunctionArguments(tool_selection.arguments) }
+                let missing = tool.tool_schema.required?.filter({ !args.keys.contains($0) })
+                guard missing?.isEmpty ?? true
+                else { throw LangToolsRequestError.missingRequiredFunctionArguments(missing!.joined(separator: ",")) }
+                guard let str = try await tool.callback?(args) else { continue }
+                tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: str))
+            } catch {
+                tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: "\(error.localizedDescription)", is_error: true))
+            }
+            toolEventHandler?(.toolCompleted(tool_results.last!))
         }
         guard !tool_results.isEmpty else { return nil }
         var results: [Message] = []
@@ -187,9 +208,17 @@ public extension LangToolsToolCallingRequest {
 }
 
 public enum LangToolsRequestError: Error {
-    case failedToDecodeFunctionArguments
-    case missingRequiredFunctionArguments
-    case multipleChoiceIndexOutOfBounds
+    case failedToDecodeFunctionArguments(String)
+    case missingRequiredFunctionArguments(String)
+    case multipleChoiceIndexOutOfBounds(Int)
+
+    var localizedDescription: String {
+        switch self {
+        case .failedToDecodeFunctionArguments(let str): return "Failed to decode function arguments: " + str
+        case .missingRequiredFunctionArguments(let str): return "Missing required function arguments: " + str
+        case .multipleChoiceIndexOutOfBounds(let int): return "Multiple choice index out of bounds: \(int)"
+        }
+    }
 }
 
 public protocol LangToolsTTSRequest: LangToolsRequest where Response == Data {}

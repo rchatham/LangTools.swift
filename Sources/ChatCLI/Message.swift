@@ -69,7 +69,7 @@ extension Array<OpenAI.Tool> {
             Anthropic.Tool(
                 name: $0.name,
                 description: $0.description ?? "",
-                input_schema: .init(
+                tool_schema: .init(
                     properties: $0.tool_schema.properties.mapValues {
                         Anthropic.Tool.InputSchema.Property(
                             type: $0.type,

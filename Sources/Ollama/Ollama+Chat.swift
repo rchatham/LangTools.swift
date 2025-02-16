@@ -3,6 +3,10 @@ import LangTools
 import OpenAI
 
 extension Ollama {
+    public static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        return Ollama.ChatRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { OpenAI.Tool($0) }, toolEventHandler: toolEventHandler)
+    }
+
     public struct ChatRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest {
         public typealias Response = ChatResponse
         public typealias LangTool = Ollama
@@ -19,6 +23,20 @@ extension Ollama {
         public let keep_alive: String?
         public let tools: [OpenAI.Tool]?
 
+        @CodableIgnored
+        public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
+
+        public init(model: Ollama.Model, messages: [any LangToolsMessage]) {
+            self.model = model
+            self.messages = messages.map { Message($0) }
+
+            format = nil
+            options = nil
+            stream = nil
+            keep_alive = nil
+            tools = nil
+        }
+
         public init(
             model: OllamaModel,
             messages: [Message],
@@ -26,7 +44,8 @@ extension Ollama {
             options: GenerateOptions? = nil,
             stream: Bool? = nil,
             keep_alive: String? = nil,
-            tools: [OpenAI.Tool]? = nil
+            tools: [OpenAI.Tool]? = nil,
+            toolEventHandler: ((LangToolsToolEvent) -> Void)? = nil
         ) {
             self.model = model
             self.messages = messages
@@ -35,6 +54,7 @@ extension Ollama {
             self.stream = stream
             self.keep_alive = keep_alive
             self.tools = tools
+            self.toolEventHandler = toolEventHandler
         }
     }
 
@@ -115,6 +135,13 @@ extension Ollama {
             self.tool_calls = tool_calls
         }
 
+        public init(role: Ollama.Role, content: LangToolsTextContent) {
+            self.role = role
+            self.content = content
+            images = nil
+            tool_calls = nil
+        }
+
         public init(tool_selection: [ChatToolCall]) {
             self.role = .assistant
             self.content = ""
@@ -129,7 +156,7 @@ extension Ollama {
         }
 
         public init(from decoder: any Decoder) throws {
-            var container = try decoder.container(keyedBy: CodingKeys.self)
+            let container = try decoder.container(keyedBy: CodingKeys.self)
             role = try container.decode(Role.self, forKey: .role)
             content = LangToolsTextContent(text: try container.decode(String.self, forKey: .content))
             images = try container.decodeIfPresent([String].self, forKey: .images)
@@ -137,7 +164,7 @@ extension Ollama {
         }
 
         public func encode(to encoder: any Encoder) throws {
-            var container = try encoder.container(keyedBy: CodingKeys.self)
+            var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(role, forKey: .role)
             try container.encode(content.text, forKey: .content)
             try container.encodeIfPresent(images, forKey: .images)
@@ -166,7 +193,7 @@ extension Ollama {
         public let tool_selection_id: String
         public let result: String
 
-        public init(tool_selection_id: String, result: String) {
+        public init(tool_selection_id: String, result: String, is_error: Bool = false) {
             self.tool_selection_id = tool_selection_id
             self.result = result
         }
@@ -181,6 +208,19 @@ extension Ollama {
 
     public enum Role: String, Codable, LangToolsRole {
         case system, user, assistant, tool
+
+        public init(_ role: any LangToolsRole) {
+            if role.isAssistant { self = .assistant }
+            else if role.isUser { self = .user }
+            else if role.isSystem { self = .system }
+            else if role.isTool { self = .tool }
+            else { self = .assistant }
+        }
+
+        public var isAssistant: Bool { self == .assistant }
+        public var isUser: Bool { self == .user }
+        public var isSystem: Bool { self == .system }
+        public var isTool: Bool { self == .tool }
     }
 }
 
@@ -229,10 +269,4 @@ public extension Ollama {
             tools: tools
         ))
     }
-}
-
-extension String: LangToolsContent, LangToolsContentType {
-    public var type: String { "string" }
-    public var string: String? { self }
-    public var array: [Self]? { nil }
 }

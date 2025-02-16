@@ -13,6 +13,10 @@ public extension OpenAI {
     func performChatCompletionRequest(messages: [Message], model: Model = .gpt35Turbo, stream: Bool = false, completion: @escaping (Result<OpenAI.ChatCompletionResponse, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
         perform(request: OpenAI.ChatCompletionRequest(model: model, messages: messages, stream: stream), completion: completion, didCompleteStreaming: didCompleteStreaming)
     }
+
+    static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        return  ChatCompletionRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
+    }
 }
 
 extension OpenAI {
@@ -54,7 +58,14 @@ extension OpenAI {
         var _choose: (([Response.Choice]) -> Int)?
         public func choose(from choices: [Response.Choice]) -> Int { return _choose?(choices) ?? 0 }
 
-        public init(model: Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, max_completion_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, service_tier: Response.ServiceTier? = nil, store: Bool? = nil, prediction: PredictionContent? = nil, modalities: [Modality]? = nil, audio: AudioConfig? = nil, reasoning_effort: ReasoningEffort? = nil, metadata: [String: String]? = nil, choose: @escaping ([Response.Choice]) -> Int = {_ in 0}) {
+        @CodableIgnored
+        public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
+
+        public init(model: OpenAIModel, messages: [any LangToolsMessage]) {
+            self.init(model: model, messages: messages.map { Message($0) })
+        }
+
+        public init(model: Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, max_completion_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, service_tier: Response.ServiceTier? = nil, store: Bool? = nil, prediction: PredictionContent? = nil, modalities: [Modality]? = nil, audio: AudioConfig? = nil, reasoning_effort: ReasoningEffort? = nil, metadata: [String: String]? = nil, choose: @escaping ([Response.Choice]) -> Int = {_ in 0},  toolEventHandler: @escaping (LangToolsToolEvent) -> Void = {_ in}) {
             self.model = model
             self.messages = messages
             self.temperature = temperature
@@ -84,6 +95,7 @@ extension OpenAI {
             self.reasoning_effort = reasoning_effort
             self.metadata = metadata
             _choose = choose
+            self.toolEventHandler = toolEventHandler
         }
 
         public struct StreamOptions: Codable {
@@ -440,18 +452,3 @@ extension Array where Element == OpenAI.Message.ToolCall {
     }
 }
 
-@propertyWrapper
-public struct CodableIgnored<T>: Codable {
-    public var wrappedValue: T?
-    public init(wrappedValue: T?) { self.wrappedValue = wrappedValue }
-    public init(from decoder: Decoder) throws { self.wrappedValue = nil }
-    public func encode(to encoder: Encoder) throws {} // Do nothing
-}
-
-extension KeyedDecodingContainer {
-    func decode<T>(_ type: CodableIgnored<T>.Type, forKey key: Self.Key) throws -> CodableIgnored<T> { return CodableIgnored(wrappedValue: nil) }
-}
-
-extension KeyedEncodingContainer {
-    mutating func encode<T>(_ value: CodableIgnored<T>, forKey key: KeyedEncodingContainer<K>.Key) throws {} // Do nothing
-}

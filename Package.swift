@@ -12,6 +12,7 @@ let package = Package(
     ],
     products: [
         .library(name: "LangTools", targets: ["LangTools"]),
+        .library(name: "Agents", targets: ["Agents"]),
         .library(name: "OpenAI", targets: ["OpenAI"]),
         .library(name: "Anthropic", targets: ["Anthropic"]),
         .library(name: "XAI", targets: ["XAI"]),
@@ -22,6 +23,7 @@ let package = Package(
     targets: [
         // Targets
         .target(name: "LangTools"),
+        .target(name: "Agents", dependencies: [.target(name: "LangTools")]),
         .target(name: "OpenAI", dependencies: [.target(name: "LangTools")]),
         .target(name: "Anthropic", dependencies: [.target(name: "LangTools")]),
         .target(name: "XAI", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ]),

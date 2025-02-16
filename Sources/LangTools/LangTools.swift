@@ -14,6 +14,8 @@ public protocol LangTools {
     func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error>
     static var requestValidators: [(any LangToolsRequest) -> Bool] { get }
 
+    static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
+
     var session: URLSession { get }
     func prepare(request: some LangToolsRequest) throws -> URLRequest
     ///  When implementing decodeStream yourself, throw an error when the buffer is incomplete and additional lines of data from the response are needed to decode the buffer. If the buffer can be handled it should at least return nil to indicate that the buffer can be cleared. If a nil response is returned the buffer will be cleared and then it will continue reading the data stream, throwing an error will continue appending the data stream to the current buffer.
@@ -119,7 +121,7 @@ extension LangTools {
 
     private func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) async throws -> Request? {
         guard let response = response as? any LangToolsToolCallingResponse else { return nil }
-        return try await (request as? any LangToolsToolCallingRequest )?.completion(response: response) as? Request
+        return try await (request as? any LangToolsToolCallingRequest)?.completion(response: response) as? Request
     }
 
     public static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
@@ -129,7 +131,7 @@ extension LangTools {
 
 
 public enum LangToolError: Error {
-    case invalidData, streamParsingFailure, invalidURL, requestFailed
+    case invalidData, streamParsingFailure, invalidURL, requestFailed, invalidContentType
     case jsonParsingFailure(Error)
     case responseUnsuccessful(statusCode: Int, Error?)
     case apiError(Codable & Error)
@@ -158,7 +160,9 @@ public extension LangTools {
 // MARK: - Utilities
 
 extension String {
-    public var dictionary: [String:String]? { return data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed]) as? [String:String] }}
+    public var stringDictionary: [String:String]? { return data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed]) as? [String:String] }}
+    public var dictionary: [String:JSON]? { return data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed]) as? [String:JSON] }}
+    public var json: JSON? { return try? JSON(self) }
 }
 
 extension Dictionary where Key == String, Value == String {
@@ -182,4 +186,20 @@ public extension AsyncThrowingStream {
             continuation.finish()
         } }
     }
+}
+
+@propertyWrapper
+public struct CodableIgnored<T>: Codable {
+    public var wrappedValue: T?
+    public init(wrappedValue: T?) { self.wrappedValue = wrappedValue }
+    public init(from decoder: Decoder) throws { self.wrappedValue = nil }
+    public func encode(to encoder: Encoder) throws {} // Do nothing
+}
+
+extension KeyedDecodingContainer {
+    public func decode<T>(_ type: CodableIgnored<T>.Type, forKey key: Self.Key) throws -> CodableIgnored<T> { return CodableIgnored(wrappedValue: nil) }
+}
+
+extension KeyedEncodingContainer {
+    public mutating func encode<T>(_ value: CodableIgnored<T>, forKey key: KeyedEncodingContainer<K>.Key) throws {} // Do nothing
 }

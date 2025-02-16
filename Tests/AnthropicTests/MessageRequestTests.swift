@@ -75,7 +75,7 @@ final class MessageRequestTests: XCTestCase {
                 .init(
                     name: "get_stock_price",
                     description: "Get the current stock price for a given ticker symbol.",
-                    input_schema: .init(
+                    tool_schema: .init(
                         properties: [
                             "ticker": .init(
                                 type: "string",

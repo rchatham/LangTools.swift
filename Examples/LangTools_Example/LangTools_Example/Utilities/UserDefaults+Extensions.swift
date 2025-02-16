@@ -26,6 +26,16 @@ extension UserDefaults {
 // UserDefaults extension for setting and getting the device token
 extension UserDefaults {
     private static let deviceTokenKey = "kdeviceToken"
+    private static let systemMessageKey = "systemMessage"
+
+    static var systemMessage: String {
+        get {
+            return UserDefaults.standard.string(forKey: systemMessageKey) ?? "You are a helpful AI assistant."
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: systemMessageKey)
+        }
+    }
 
     static var deviceToken: String? {
         get { standard.string(forKey: deviceTokenKey)}

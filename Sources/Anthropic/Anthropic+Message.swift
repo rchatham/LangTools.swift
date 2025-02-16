@@ -11,7 +11,7 @@ extension Anthropic {
             return [.init(role: .user, content: .array(tool_results.map{.toolResult($0)}))]
         }
 
-        public init(tool_selection: [Anthropic.Content.ContentType.ToolUse]) {
+        public init(tool_selection: [Content.ContentType.ToolUse]) {
             role = .assistant
             content = .array(tool_selection.map{.toolUse($0)})
         }
@@ -49,11 +49,34 @@ extension Anthropic {
 
     public enum Role: String, Codable, LangToolsRole {
         case user, assistant
+
+        public init(_ role: any LangToolsRole) {
+            self = role.isUser ? .user : .assistant
+        }
+
+        public var isAssistant: Bool { self == .assistant }
+        public var isUser: Bool { self == .user }
+        public var isSystem: Bool { false }
+        public var isTool: Bool { false }
     }
 
     public enum Content: Codable, LangToolsContent {
         case string(String)
         case array([ContentType])
+
+        public init(string: String) {
+            self = .string(string)
+        }
+
+        public init(_ content: any LangToolsContent) {
+            if let string = content.string {
+                self = .string(string)
+            } else if let array = content.array {
+                self = .array(array.compactMap { try? ContentType($0) })
+            } else {
+                fatalError("content not handled! \(content)")
+            }
+        }
 
         public var description: String {
             switch self {
@@ -71,7 +94,10 @@ extension Anthropic {
         }
 
         public var tool_selection: [ContentType.ToolUse]? {
-            if case .array(let arr) = self { return arr.compactMap { $0.toolUse }} else { return nil }
+            if case .array(let arr) = self {
+                let arr = arr.compactMap { $0.toolUse }
+                return arr.isEmpty ? nil : arr
+            } else { return nil }
         }
 
         public enum ContentType: Codable, CustomStringConvertible, LangToolsContentType {
@@ -79,6 +105,16 @@ extension Anthropic {
             case image(ImageContent)
             case toolUse(ToolUse)
             case toolResult(ToolResult)
+
+            public init(_ contentType: any LangToolsContentType) throws {
+                if let text = contentType.textContentType {
+                    self = .text(try .init(text))
+                } else {
+                    // TODO: - implement audio and image
+                    fatalError("Implement audio and image first ya dingus!")
+                   // throw LangToolError.invalidContentType
+                }
+            }
 
             public var description: String {
                 switch self {
@@ -172,6 +208,10 @@ extension Anthropic {
 
                 public var arguments: String { input }
 
+                public init(_ contentType: any LangToolsContentType) throws {
+                    fatalError("init not implemented for tool use content type")
+                }
+
                 public init(id: String?, name: String?, input: String) {
                     self.id = id
                     self.name = name
@@ -186,7 +226,7 @@ extension Anthropic {
                     let container = try decoder.container(keyedBy: CodingKeys.self)
                     self.id = try container.decodeIfPresent(String.self, forKey: .id)
                     self.name = try container.decodeIfPresent(String.self, forKey: .name)
-                    self.input = try container.decodeIfPresent([String:String].self, forKey: .input)?.string ?? ""
+                    self.input = try container.decodeIfPresent(JSON.self, forKey: .input)?.jsonString ?? ""
                 }
 
                 public func encode(to encoder: any Encoder) throws {
@@ -194,7 +234,7 @@ extension Anthropic {
                     try container.encode(type, forKey: .type)
                     try container.encodeIfPresent(id, forKey: .id)
                     try container.encodeIfPresent(name, forKey: .name)
-                    try container.encode(input.dictionary ?? [:], forKey: .input)
+                    try container.encode(try JSON(string: input), forKey: .input)
                 }
             }
 
@@ -206,10 +246,14 @@ extension Anthropic {
 
                 public var tool_selection_id: String { tool_use_id }
                 public var result: String { content.string ?? "" }
-                public init(tool_selection_id: String, result: String) {
+                public init(tool_selection_id: String, result: String, is_error: Bool = false) {
                     tool_use_id = tool_selection_id
                     content = .string(result)
-                    is_error = false
+                    self.is_error = is_error
+                }
+
+                public init(_ contentType: any LangToolsContentType) throws {
+                    fatalError("init not implemented for tool result content type")
                 }
 
                 enum CodingKeys: String, CodingKey {

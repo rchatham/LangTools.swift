@@ -42,7 +42,7 @@ struct ChatCLI {
     }
 
     static func checkAndRequestAPIKeys(messageService: MessageService) async throws {
-        for service in LLMAPIService.allCases {
+        for service in APIService.allCases {
             if UserDefaults.getApiKey(for: service) == nil {
                 print("\nNo API key found for \(service.rawValue)")
                 print("Please enter your \(service.rawValue) API key: ", terminator: "")
@@ -109,18 +109,18 @@ struct ChatCLI {
             tools: messageService.tools,
             toolChoice: toolChoice
         )
-        for try await message in stream {
+        for try await chunk in stream {
             // hack to print new lines as long as they aren't the last one
             if content.hasSuffix("\n") {
                 print("")
             }
 
             await MainActor.run {
-                print("\(message.trimingTrailingNewlines())", terminator: "")
+                print("\(chunk.trimingTrailingNewlines())", terminator: "")
             }
             fflush(stdout)
 
-            content += message
+            content += chunk
             let message = Message(uuid: uuid, text: content.trimingTrailingNewlines(), role: .assistant)
 
             if let last = messageService.messages.last, last.uuid == uuid {
