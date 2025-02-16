@@ -84,7 +84,8 @@ extension LangToolsMultipleChoiceChatRequest {
 extension LangToolsMultipleChoiceChatRequest {
     func update(response: Decodable) throws -> Decodable {
         if var response = response as? Response {
-            guard choose(from: response.choices) < n ?? 1 else { throw LangToolsRequestError.multipleChoiceIndexOutOfBounds }
+            let choice = choose(from: response.choices)
+            guard choice < n ?? 1 else { throw LangToolsRequestError.multipleChoiceIndexOutOfBounds(choice) }
             response.choose = choose
             return response
         }
@@ -209,13 +210,13 @@ extension LangToolsToolCallingRequest {
 public enum LangToolsRequestError: Error {
     case failedToDecodeFunctionArguments(String)
     case missingRequiredFunctionArguments(String)
-    case multipleChoiceIndexOutOfBounds
+    case multipleChoiceIndexOutOfBounds(Int)
 
     var localizedDescription: String {
         switch self {
         case .failedToDecodeFunctionArguments(let str): return "Failed to decode function arguments: " + str
         case .missingRequiredFunctionArguments(let str): return "Missing required function arguments: " + str
-        case .multipleChoiceIndexOutOfBounds(let int): return "Multiple choice index out of bounds."
+        case .multipleChoiceIndexOutOfBounds(let int): return "Multiple choice index out of bounds: \(int)"
         }
     }
 }
