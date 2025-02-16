@@ -27,6 +27,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     override init() {
         super.init()
         APIService.llms.forEach { llm in keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) } }
+        keychainService.saveApiKey(apiKey: "", for: .serper)
     }
 
     func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
