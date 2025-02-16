@@ -73,6 +73,8 @@ struct CalendarReadAgent<LangTool: LangTools>: Agent {
     let instructions = """
         You are responsible for reading and querying calendar events.
         Format dates consistently and provide clear, concise event information.
+        Be sure to include the event_identifier when returning information
+        about the event if it is needed for further processing.
         """
 
     var delegateAgents: [any Agent] = []

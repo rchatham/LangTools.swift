@@ -149,17 +149,3 @@ extension NetworkClient {
         case incompatibleRequest
     }
 }
-
-extension String {
-    func trimingTrailingNewlines() -> String {
-        return trimingTrailingCharacters(using: .newlines)
-    }
-
-    func trimingTrailingCharacters(using characterSet: CharacterSet = .whitespacesAndNewlines) -> String {
-        guard let index = lastIndex(where: { !CharacterSet(charactersIn: String($0)).isSubset(of: characterSet) }) else {
-            return self
-        }
-
-        return String(self[...index])
-    }
-}

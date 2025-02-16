@@ -183,18 +183,21 @@ class MessageService {
         }
 
         let toolChoice = (tools?.isEmpty ?? true) ? nil : OpenAI.ChatCompletionRequest.ToolChoice.auto
-        let uuid = UUID(); var content: String = ""
+        var content: String = ""
         for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: tools, toolChoice: toolChoice) {
             content += chunk
             guard let last = messages.last else { continue }
-            let message = Message(uuid: uuid, role: .assistant, contentType: .string(content.trimingTrailingNewlines()))
+            if !last.isAssistant {
+                if chunk.isEmpty { continue }
+                content = chunk.trimingLeadingNewlines()
+            }
+            let message = Message(uuid: last.isAssistant ? last.uuid : UUID(), role: .assistant, contentType: .string(content.trimingTrailingNewlines()))
 
             await MainActor.run {
-                if last.uuid == uuid { messages[messages.count - 1] = message }
+                if last.uuid == message.uuid { messages[messages.count - 1] = message }
                 else { messages.append(message) }
             }
         }
-
     }
 
     func handleCalendarRequest(_ request: String) async -> String {
@@ -250,9 +253,8 @@ class MessageService {
             Task { await self.handleAgentEvent(event) }
         }
 
-
         // Execute the request through the reminder agent
-        guard let researchAgent = networkClient.researchAgent() else { return "Failed to initialize ResearchAgent, need to update serper api key."}
+        guard let researchAgent = networkClient.researchAgent() else { return "Failed to initialize ResearchAgent, need to update serper api key." }
         do {
             let response = try await researchAgent.execute(context: context)
             return response
@@ -351,5 +353,31 @@ extension Array<Message> {
             }
         }
         return false
+    }
+}
+
+extension String {
+    func trimingTrailingNewlines() -> String {
+        return trimingTrailingCharacters(using: .newlines)
+    }
+
+    func trimingTrailingCharacters(using characterSet: CharacterSet = .whitespacesAndNewlines) -> String {
+        guard let index = lastIndex(where: { !CharacterSet(charactersIn: String($0)).isSubset(of: characterSet) }) else {
+            return self
+        }
+
+        return String(self[...index])
+    }
+
+    func trimingLeadingNewlines() -> String {
+        return trimingLeadingCharacters(using: .newlines)
+    }
+
+    func trimingLeadingCharacters(using characterSet: CharacterSet = .whitespacesAndNewlines) -> String {
+        guard let index = firstIndex(where: { !CharacterSet(charactersIn: String($0)).isSubset(of: characterSet) }) else {
+            return self
+        }
+
+        return String(self[index...])
     }
 }
