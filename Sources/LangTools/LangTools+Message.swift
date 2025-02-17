@@ -143,8 +143,8 @@ public extension LangToolsTextContentType {
         }
     }
 
-    public func encode(to encoder: any Encoder) throws {
-        var container = try encoder.container(keyedBy: LangToolsTextContentCodingKeys.self)
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: LangToolsTextContentCodingKeys.self)
         try container.encode(type, forKey: .type)
         try container.encode(text, forKey: .text)
     }
@@ -182,8 +182,8 @@ public extension LangToolsImageContentType {
 //    var type: String { "image" } // TODO: verify this
 
     init(_ contentType: any LangToolsContentType) throws {
-        if let text = contentType.imageContentType {
-            fatalError("implement image!")
+        if let image = contentType.imageContentType {
+            fatalError("implement image! \(image)")
         } else {
             throw LangToolError.invalidContentType
         }
@@ -196,8 +196,8 @@ public extension LangToolsAudioContentType {
 //    var type: String { "audio" } // TODO: verify this
 
     init(_ contentType: any LangToolsContentType) throws {
-        if let text = contentType.audioContentType {
-            fatalError("implement audio")
+        if let audio = contentType.audioContentType {
+            fatalError("implement audio! \(audio)")
         } else {
             throw LangToolError.invalidContentType
         }

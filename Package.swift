@@ -22,13 +22,13 @@ let package = Package(
     ],
     targets: [
         // Targets
-        .target(name: "LangTools"),
-        .target(name: "Agents", dependencies: [.target(name: "LangTools")]),
-        .target(name: "OpenAI", dependencies: [.target(name: "LangTools")]),
-        .target(name: "Anthropic", dependencies: [.target(name: "LangTools")]),
-        .target(name: "XAI", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ]),
-        .target(name: "Gemini", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ]),
-        .target(name: "Ollama", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ]),
+        .target(name: "LangTools", resources: [.process("README.md")]),
+        .target(name: "Agents", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
+        .target(name: "OpenAI", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
+        .target(name: "Anthropic", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
+        .target(name: "XAI", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
+        .target(name: "Gemini", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
+        .target(name: "Ollama", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
         .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], path: "Tests/TestUtils", resources: [.process("Resources/")]),
 
         // Test targets
