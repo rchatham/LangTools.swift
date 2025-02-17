@@ -71,6 +71,9 @@ let context = AgentContext(messages: [
 let response = try await agent.execute(context: context)
 ```
 
+https://github.com/user-attachments/assets/ce9341fe-5eb2-43bc-a7f3-08b88019c981
+
+
 ## Documentation
 
 See individual module README files for detailed documentation and examples:
