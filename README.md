@@ -10,29 +10,6 @@ LangTools is a Swift framework for working with Large Language Models (LLMs) and
 - 📝 **Streaming Support**: Handle streaming responses from AI models
 - 🛠️ **Tool Integration**: Add custom capabilities to your AI interactions
 
-## Modules
-
-### [LangTools Core](Sources/LangTools/README.md)
-Base protocols and utilities for working with LLMs. Provides the foundation for model interactions and common interfaces.
-
-### [Agents](Sources/Agents/README.md)
-Framework for building specialized AI assistants with tools and delegation capabilities. Create agents that can perform specific tasks and collaborate.
-
-### [OpenAI](Sources/OpenAI/README.md)
-Integration with OpenAI's GPT models, including chat completions, embeddings, and audio capabilities.
-
-### [Anthropic](Sources/Anthropic/README.md)
-Support for Anthropic's Claude models with streaming and tool integration.
-
-### [X.AI](Sources/XAI/README.md)
-Integration with X.AI's Grok models.
-
-### [Gemini](Sources/Gemini/README.md)
-Support for Google's Gemini AI models.
-
-### [Ollama](Sources/Ollama/README.md)
-Integration with local Ollama models and server.
-
 ## Installation
 
 ### Swift Package Manager
@@ -72,8 +49,6 @@ print(response.message?.content.text ?? "No response")
 
 ```swift
 struct SimpleAgent: Agent {
-    typealias LangTool = Anthropic
-    
     let langTool: Anthropic
     let model: Anthropic.Model
     
@@ -83,25 +58,30 @@ struct SimpleAgent: Agent {
     
     var delegateAgents: [any Agent] = []
     var tools: [any LangToolsTool]? = nil
-    
-    init(langTool: Anthropic, model: Anthropic.Model) {
-        self.langTool = langTool
-        self.model = model
-    }
 }
+
+// Use your agent
+let agent = SimpleAgent(
+    langTool: Anthropic(apiKey: "your-key"), 
+    model: .claude35Sonnet_latest
+)
+let context = AgentContext(messages: [
+    LangToolsMessageImpl(role: .user, string: "Hello!")
+])
+let response = try await agent.execute(context: context)
 ```
 
 ## Documentation
 
 See individual module README files for detailed documentation and examples:
 
-- [LangTools Core Documentation](Sources/LangTools/README.md)
-- [Agents Documentation](Sources/Agents/README.md)
-- [OpenAI Documentation](Sources/OpenAI/README.md)
-- [Anthropic Documentation](Sources/Anthropic/README.md)
-- [X.AI Documentation](Sources/XAI/README.md)
-- [Gemini Documentation](Sources/Gemini/README.md)
-- [Ollama Documentation](Sources/Ollama/README.md)
+- [LangTools](Sources/LangTools/README.md)
+- [Agents](Sources/Agents/README.md)
+- [OpenAI](Sources/OpenAI/README.md)
+- [Anthropic](Sources/Anthropic/README.md)
+- [XAI](Sources/XAI/README.md)
+- [Gemini](Sources/Gemini/README.md)
+- [Ollama](Sources/Ollama/README.md)
 
 ## Contributing
 
