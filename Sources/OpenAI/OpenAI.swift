@@ -102,6 +102,7 @@ public enum OpenAIModelType {
 public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRepresentable {
     public static var allCases: [OpenAIModel] = openAIModels
     public static var chatModels: [OpenAIModel] { allCases.filter({ $0.type == .chat }) }
+    public static var reasoning: [OpenAIModel] { [.o1, .o1_mini, .o1_preview, .o3_mini] }
     static let openAIModels: [OpenAIModel] = ModelID.allCases.map { OpenAIModel(modelID: $0) }
 
     public init?(rawValue: String) {
@@ -147,6 +148,7 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let chatGPT4o_latest = OpenAIModel(modelID: .chatGPT4o_latest)
     public static let o1 = OpenAIModel(modelID: .o1)
     public static let o1_mini = OpenAIModel(modelID: .o1_mini)
+    public static let o3_mini = OpenAIModel(modelID: .o3_mini)
     public static let o1_preview = OpenAIModel(modelID: .o1_preview)
     public static let tts_1 = OpenAIModel(modelID: .tts_1)
     public static let tts_1_hd = OpenAIModel(modelID: .tts_1_hd)
@@ -176,6 +178,7 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         case chatGPT4o_latest = "chatgpt-4o-latest"
         case o1 = "o1"
         case o1_mini = "o1-mini"
+        case o3_mini = "o3-mini"
         case o1_preview = "o1-preview"
         case tts_1 = "tts-1"
         case tts_1_hd = "tts-1-hd"

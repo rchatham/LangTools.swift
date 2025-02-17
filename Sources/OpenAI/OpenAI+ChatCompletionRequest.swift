@@ -67,7 +67,7 @@ extension OpenAI {
 
         public init(model: Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, max_completion_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, service_tier: Response.ServiceTier? = nil, store: Bool? = nil, prediction: PredictionContent? = nil, modalities: [Modality]? = nil, audio: AudioConfig? = nil, reasoning_effort: ReasoningEffort? = nil, metadata: [String: String]? = nil, choose: @escaping ([Response.Choice]) -> Int = {_ in 0},  toolEventHandler: @escaping (LangToolsToolEvent) -> Void = {_ in}) {
             self.model = model
-            self.messages = messages
+            self.messages = if Model.reasoning.contains(model) { messages.map { Message(role: $0.role == .system ? .developer : $0.role, content: $0.content) } } else { messages }
             self.temperature = temperature
             self.top_p = top_p
             self.n = n
