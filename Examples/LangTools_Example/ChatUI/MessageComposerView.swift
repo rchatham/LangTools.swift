@@ -6,7 +6,6 @@
 
 import SwiftUI
 import CoreData
-import LangTools
 
 struct MessageComposerView: View {
     @ObservedObject var viewModel: ViewModel
@@ -32,11 +31,8 @@ struct MessageComposerView: View {
         .alert(isPresented: $viewModel.showAlert, content: {
             Alert(title: Text("Error"), message: Text(viewModel.errorMessage), dismissButton: .default(Text("OK")))
         })
-        .enterAPIKeyAlert(
-            isPresented: $viewModel.enterApiKey,
-            apiKey: $viewModel.apiKey)
     }
-    
+
     func submitButtonTapped() {
         if viewModel.isMessageSending { return }
 
@@ -44,7 +40,7 @@ struct MessageComposerView: View {
             await viewModel.sendMessage()
             promptTextFieldIsActive = true
         }
-   }
+    }
 }
 
 extension MessageComposerView {
@@ -53,16 +49,14 @@ extension MessageComposerView {
 
         @Published var showAlert: Bool = false
         @Published var errorMessage: String = ""
-        @Published var enterApiKey: Bool = false
-        @Published var apiKey: String = ""
         @Published var isMessageSending: Bool = false
 
-        private var messageService: MessageService
+        private var messageService: any ChatMessageService
 
-        init(messageService: MessageService) {
+        init(messageService: any ChatMessageService) {
             self.messageService = messageService
         }
-        
+
         func sendMessage() async {
             guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             // Send the message completion request
@@ -70,17 +64,7 @@ extension MessageComposerView {
             let sentText = input
             // Clear the input field
             input = ""
-            do { try await messageService.performMessageCompletionRequest(message: sentText, stream: true) }
-            catch let error as LangToolchainError {
-                print("cannot handle request, probably a missing api key: \(error.localizedDescription)")
-                self.enterApiKey = true
-                input = sentText
-            }
-            catch let error as LangToolError {
-                print("cannot handle request, probably a missing api key: \(error.localizedDescription)")
-                self.enterApiKey = true
-                input = sentText
-            }
+            do { try await messageService.performChatCompletionRequest(message: sentText, stream: true) }
             catch {
                 print("Error sending message completion request: \(error)")
                 self.errorMessage = error.localizedDescription

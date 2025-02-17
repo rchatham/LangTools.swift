@@ -6,14 +6,14 @@
 
 import SwiftUI
 
-struct MessageListView: View {
+struct MessageListView<MessageService: ChatMessageService>: View {
     @StateObject var viewModel: ViewModel
 
     var body: some View {
         ScrollViewReader { scrollProxy in
             ScrollView {
                 LazyVStack(alignment: .leading) {
-                    ForEach(viewModel.messageService.messages, id: \.uuid) { message in
+                    ForEach(viewModel.messageService.chatMessages, id: \.uuid) { message in
                         CollapsibleMessageView(message: message)
                     }
                 }
@@ -35,15 +35,14 @@ struct MessageListView: View {
                 #if os(iOS)
                 NotificationCenter.default.removeObserver(self)
                 #endif
-            }
-            .onChange(of: viewModel.messageService.messages.last?.text) { _ in
+            }.onChange(of: viewModel.messageService.chatMessages.last?.text) { (_,_) in
                 scrollToBottom(scrollProxy: scrollProxy)
             }
         }
     }
 
     func scrollToBottom(scrollProxy: ScrollViewProxy) {
-        guard let last = viewModel.messageService.messages.last else { return }
+        guard let last = viewModel.messageService.chatMessages.last else { return }
         withAnimation {
             scrollProxy.scrollTo(last, anchor: .bottom)
         }
@@ -59,9 +58,3 @@ extension MessageListView {
         }
     }
 }
-
-//struct MessageListView_Previews: PreviewProvider {
-//    static var previews: some View {
-//        MessageListView(viewModel: .init(messageService: .init()))
-//    }
-//}

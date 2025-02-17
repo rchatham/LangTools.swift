@@ -134,7 +134,7 @@ class MessageService {
         ]
     }
 
-    func performMessageCompletionRequest(message: String, stream: Bool = false) async throws {
+    func performChatCompletionRequest(message: String, stream: Bool = false) async throws {
         do { try await getChatCompletion(for: message, stream: stream) }
         catch let error as LangToolError {
             switch error {

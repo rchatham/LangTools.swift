@@ -10,11 +10,12 @@ import OpenAI
 import Anthropic
 import Ollama
 
-class Message: Codable, ObservableObject, Identifiable, Equatable, Hashable {
+final class Message: Codable, ObservableObject, Identifiable, Equatable, Hashable {
     let uuid: UUID
     var role: Role
     @Published var contentType: ContentType
     var imageDetail: ImageDetail?
+    var id: UUID { uuid }
 
     var text: String? {
         switch contentType {

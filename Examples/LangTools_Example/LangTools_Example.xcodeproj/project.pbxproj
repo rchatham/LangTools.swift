@@ -18,6 +18,8 @@
 		B1E419F52D44C7830082C763 /* Ollama in Frameworks */ = {isa = PBXBuildFile; productRef = B1E419F42D44C7830082C763 /* Ollama */; };
 		B1E419F72D44C7830082C763 /* OpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = B1E419F62D44C7830082C763 /* OpenAI */; };
 		B1E41A0A2D46B4B80082C763 /* XAI in Frameworks */ = {isa = PBXBuildFile; productRef = B1E41A092D46B4B80082C763 /* XAI */; };
+		B1FC36C42D625AF000BB049B /* ChatUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B1FC36AF2D625AF000BB049B /* ChatUI.framework */; };
+		B1FC36C52D625AF000BB049B /* ChatUI.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = B1FC36AF2D625AF000BB049B /* ChatUI.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -35,12 +37,34 @@
 			remoteGlobalIDString = B1D1EBDE2CA2518E00AD7FA6;
 			remoteInfo = LangTools_Example;
 		};
+		B1FC36C22D625AF000BB049B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B1D1EBD72CA2518E00AD7FA6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B1FC36AE2D625AF000BB049B;
+			remoteInfo = ChatView;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		B1FC36C62D625AF000BB049B /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				B1FC36C52D625AF000BB049B /* ChatUI.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		B1D1EBDF2CA2518F00AD7FA6 /* LangTools_Example.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LangTools_Example.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1D1EBEF2CA2519100AD7FA6 /* LangTools_ExampleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LangTools_ExampleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1D1EBF92CA2519100AD7FA6 /* LangTools_ExampleUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LangTools_ExampleUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1FC36AF2D625AF000BB049B /* ChatUI.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ChatUI.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -59,6 +83,11 @@
 			path = LangTools_ExampleUITests;
 			sourceTree = "<group>";
 		};
+		B1FC36B02D625AF000BB049B /* ChatUI */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ChatUI;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -75,6 +104,7 @@
 				B1E419F52D44C7830082C763 /* Ollama in Frameworks */,
 				B1E419F12D44C7830082C763 /* Gemini in Frameworks */,
 				B19586DB2CD40C6900843DF5 /* Anthropic in Frameworks */,
+				B1FC36C42D625AF000BB049B /* ChatUI.framework in Frameworks */,
 				B1E419F72D44C7830082C763 /* OpenAI in Frameworks */,
 				B1E419EF2D44C7830082C763 /* Anthropic in Frameworks */,
 			);
@@ -94,6 +124,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B1FC36AC2D625AF000BB049B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -103,6 +140,7 @@
 				B1D1EBE12CA2518F00AD7FA6 /* LangTools_Example */,
 				B1D1EBF22CA2519100AD7FA6 /* LangTools_ExampleTests */,
 				B1D1EBFC2CA2519100AD7FA6 /* LangTools_ExampleUITests */,
+				B1FC36B02D625AF000BB049B /* ChatUI */,
 				B1E289D32D192BE200A1C327 /* Frameworks */,
 				B1D1EBE02CA2518F00AD7FA6 /* Products */,
 			);
@@ -114,6 +152,7 @@
 				B1D1EBDF2CA2518F00AD7FA6 /* LangTools_Example.app */,
 				B1D1EBEF2CA2519100AD7FA6 /* LangTools_ExampleTests.xctest */,
 				B1D1EBF92CA2519100AD7FA6 /* LangTools_ExampleUITests.xctest */,
+				B1FC36AF2D625AF000BB049B /* ChatUI.framework */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -127,6 +166,16 @@
 		};
 /* End PBXGroup section */
 
+/* Begin PBXHeadersBuildPhase section */
+		B1FC36AA2D625AF000BB049B /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXHeadersBuildPhase section */
+
 /* Begin PBXNativeTarget section */
 		B1D1EBDE2CA2518E00AD7FA6 /* LangTools_Example */ = {
 			isa = PBXNativeTarget;
@@ -135,10 +184,12 @@
 				B1D1EBDB2CA2518E00AD7FA6 /* Sources */,
 				B1D1EBDC2CA2518E00AD7FA6 /* Frameworks */,
 				B1D1EBDD2CA2518E00AD7FA6 /* Resources */,
+				B1FC36C62D625AF000BB049B /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				B1FC36C32D625AF000BB049B /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				B1D1EBE12CA2518F00AD7FA6 /* LangTools_Example */,
@@ -207,6 +258,29 @@
 			productReference = B1D1EBF92CA2519100AD7FA6 /* LangTools_ExampleUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		B1FC36AE2D625AF000BB049B /* ChatUI */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B1FC36CC2D625AF000BB049B /* Build configuration list for PBXNativeTarget "ChatUI" */;
+			buildPhases = (
+				B1FC36AA2D625AF000BB049B /* Headers */,
+				B1FC36AB2D625AF000BB049B /* Sources */,
+				B1FC36AC2D625AF000BB049B /* Frameworks */,
+				B1FC36AD2D625AF000BB049B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B1FC36B02D625AF000BB049B /* ChatUI */,
+			);
+			name = ChatUI;
+			packageProductDependencies = (
+			);
+			productName = ChatView;
+			productReference = B1FC36AF2D625AF000BB049B /* ChatUI.framework */;
+			productType = "com.apple.product-type.framework";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -214,7 +288,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 1600;
+				LastSwiftUpdateCheck = 1620;
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					B1D1EBDE2CA2518E00AD7FA6 = {
@@ -227,6 +301,9 @@
 					B1D1EBF82CA2519100AD7FA6 = {
 						CreatedOnToolsVersion = 16.0;
 						TestTargetID = B1D1EBDE2CA2518E00AD7FA6;
+					};
+					B1FC36AE2D625AF000BB049B = {
+						CreatedOnToolsVersion = 16.2;
 					};
 				};
 			};
@@ -251,6 +328,7 @@
 				B1D1EBDE2CA2518E00AD7FA6 /* LangTools_Example */,
 				B1D1EBEE2CA2519100AD7FA6 /* LangTools_ExampleTests */,
 				B1D1EBF82CA2519100AD7FA6 /* LangTools_ExampleUITests */,
+				B1FC36AE2D625AF000BB049B /* ChatUI */,
 			);
 		};
 /* End PBXProject section */
@@ -271,6 +349,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		B1D1EBF72CA2519100AD7FA6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B1FC36AD2D625AF000BB049B /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -301,6 +386,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B1FC36AB2D625AF000BB049B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -313,6 +405,11 @@
 			isa = PBXTargetDependency;
 			target = B1D1EBDE2CA2518E00AD7FA6 /* LangTools_Example */;
 			targetProxy = B1D1EBFA2CA2519100AD7FA6 /* PBXContainerItemProxy */;
+		};
+		B1FC36C32D625AF000BB049B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B1FC36AE2D625AF000BB049B /* ChatUI */;
+			targetProxy = B1FC36C22D625AF000BB049B /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -584,6 +681,78 @@
 			};
 			name = Release;
 		};
+		B1FC36C72D625AF000BB049B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUILD_LIBRARY_FOR_DISTRIBUTION = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DEVELOPMENT_TEAM = 82W93M4H92;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				ENABLE_MODULE_VERIFIER = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
+				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
+				PRODUCT_BUNDLE_IDENTIFIER = com.reidchatham.ChatUI;
+				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_INSTALL_OBJC_HEADER = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VERSIONING_SYSTEM = "apple-generic";
+				VERSION_INFO_PREFIX = "";
+			};
+			name = Debug;
+		};
+		B1FC36C82D625AF000BB049B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUILD_LIBRARY_FOR_DISTRIBUTION = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DEVELOPMENT_TEAM = 82W93M4H92;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				ENABLE_MODULE_VERIFIER = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
+				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
+				PRODUCT_BUNDLE_IDENTIFIER = com.reidchatham.ChatUI;
+				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_INSTALL_OBJC_HEADER = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VERSIONING_SYSTEM = "apple-generic";
+				VERSION_INFO_PREFIX = "";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -619,6 +788,15 @@
 			buildConfigurations = (
 				B1D1EC0A2CA2519100AD7FA6 /* Debug */,
 				B1D1EC0B2CA2519100AD7FA6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B1FC36CC2D625AF000BB049B /* Build configuration list for PBXNativeTarget "ChatUI" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B1FC36C72D625AF000BB049B /* Debug */,
+				B1FC36C82D625AF000BB049B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

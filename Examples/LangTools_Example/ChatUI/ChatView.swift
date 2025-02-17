@@ -6,23 +6,21 @@
 
 import SwiftUI
 import CoreData
+import Combine
 
-struct ChatView: View {
+public struct ChatView<MessageService: ChatMessageService, SettingsView: View>: View {
     @ObservedObject var viewModel: ViewModel
 
-    init(viewModel: ViewModel) {
+    public init(viewModel: ViewModel) {
         self.viewModel = viewModel
     }
 
-    var body: some View {
+    public var body: some View {
         NavigationStack {
             VStack {
                 messageList
                 messageComposerView
                     .invalidInputAlert(isPresented: $viewModel.showAlert)
-                    .enterAPIKeyAlert(
-                        isPresented: $viewModel.enterApiKey,
-                        apiKey: $viewModel.apiKey)
             }
             .navigationTitle("LangTools.swift")
             .toolbar {
@@ -47,30 +45,32 @@ struct ChatView: View {
 }
 
 extension ChatView {
-    @MainActor class ViewModel: ObservableObject {
+    @MainActor public class ViewModel: ObservableObject {
         @Published var apiKey = ""
         @Published var input = ""
         @Published var showAlert = false
         @Published var enterApiKey = false
         private let messageService: MessageService
+        private var _settingView: (() -> SettingsView)?
 
-        init(messageService: MessageService) {
+        public init(messageService: MessageService, settingsView: (() -> SettingsView)?) {
             self.messageService = messageService
+            _settingView = settingsView
         }
 
         func delete(id: UUID) {
             messageService.deleteMessage(id: id)
         }
 
-        func settingsView() -> some View {
-            return ChatSettingsView(viewModel: ChatSettingsView.ViewModel { [weak self] in self?.messageService.messages = [] })
+        func settingsView() -> (some View)? {
+            return _settingView?()
         }
         
         func messageComposerViewModel() -> MessageComposerView.ViewModel {
             return MessageComposerView.ViewModel(messageService: messageService)
         }
 
-        func messageListViewModel() -> MessageListView.ViewModel {
+        func messageListViewModel() -> MessageListView<MessageService>.ViewModel {
             return MessageListView.ViewModel(messageService: messageService)
         }
     }

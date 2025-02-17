@@ -7,10 +7,9 @@
 
 import Foundation
 import SwiftUI
-import Agents
 
 
-struct CollapsibleMessageView: View {
+struct CollapsibleMessageView<Message: ChatMessageInfo>: View {
     @ObservedObject var message: Message
     @Environment(\.colorScheme) var colorScheme
     @State private var isExpanded = false
@@ -19,7 +18,7 @@ struct CollapsibleMessageView: View {
         VStack(alignment: .leading, spacing: 4) {
             // Main message bubble
             Button(action: {
-                if !message.childMessages.isEmpty {
+                if !message.childChatMessages.isEmpty {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         isExpanded.toggle()
                     }
@@ -30,7 +29,7 @@ struct CollapsibleMessageView: View {
 
                     VStack(alignment: .leading) {
                         HStack {
-                            if !message.childMessages.isEmpty {
+                            if !message.childChatMessages.isEmpty {
                                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                                     .font(.system(size: 12))
                                     .foregroundColor(messageColor.opacity(0.7))
@@ -53,7 +52,7 @@ struct CollapsibleMessageView: View {
             // Child messages
             if isExpanded {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(message.childMessages) { childMessage in
+                    ForEach(message.childChatMessages) { childMessage in
                         CollapsibleMessageView(message: childMessage)
                             .padding(.leading, 16)
                     }

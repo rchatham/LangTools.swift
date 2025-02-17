@@ -7,12 +7,6 @@
 import SwiftUI
 
 extension View {
-    func invalidInputAlert(isPresented: Binding<Bool>) -> some View {
-        return alert(Text("Invalid Input"), isPresented: isPresented, actions: {
-            Button("OK", role: .cancel, action: {})
-        }, message: { Text("Please enter a valid prompt") })
-    }
-
     func enterAPIKeyAlert(isPresented: Binding<Bool>, apiKey: Binding<String>) -> some View {
         let llmInfo: (String, APIService) = {
             switch UserDefaults.model {

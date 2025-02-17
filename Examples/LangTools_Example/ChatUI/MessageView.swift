@@ -6,7 +6,7 @@
 
 import SwiftUI
 
-struct MessageView: View {
+struct MessageView<Message: ChatMessageInfo>: View {
     @ObservedObject var message: Message
     @Environment(\.colorScheme) var colorScheme // Get the current color scheme
     
@@ -42,9 +42,3 @@ struct MessageView: View {
             .blue
     }
 }
-
-//struct MessageView_Previews: PreviewProvider {
-//    static var previews: some View {
-//        MessageView(message: Message.example())
-//    }
-//}
