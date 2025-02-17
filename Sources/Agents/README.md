@@ -152,9 +152,9 @@ do {
 }
 ```
 
-## Built-in Agents
+## Example Agents
 
-LangTools includes several built-in agents:
+The LangTools example project includes several agents:
 
 - `CalendarAgent`: Manages calendar operations (creating, reading, updating events)
 - `ReminderAgent`: Handles reminders and tasks
