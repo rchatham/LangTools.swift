@@ -172,7 +172,8 @@ let request = OpenAI.ChatCompletionRequest(
     messages: [Message(role: .user, content: "Write a tagline")],
     n: 3,
     choose: { choices in
-        // Choose the shortest response
+        // Used in conjunction with automatic tool completion.
+        // Choose the shortest response:
         choices.min { $0.message?.content.text?.count ?? 0 < $1.message?.content.text?.count ?? 0 }?.index ?? 0
     }
 )
