@@ -226,7 +226,7 @@ class MessageService {
             case .failiedToDecodeStream(buffer: let buffer, error: let error):
                 return ChatAlertInfo(
                     title: "Stream Decoding Error",
-                    message: "Failed to decode stream data.\n\(error.localizedDescription)"
+                    message: "Failed to decode stream data: \(buffer).\n\(error.localizedDescription)"
                 )
 
             case .invalidContentType:
