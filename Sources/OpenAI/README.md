@@ -27,6 +27,20 @@ Swift interface for OpenAI's APIs, part of the LangTools framework.
 .gpt4_VisionPreview    // "gpt-4-vision-preview"
 .gpt4_32k_0613        // "gpt-4-32k-0613"
 
+// GPT-4 Omega models
+.gpt4o                  // "gpt-4o"
+.gpt4o_mini            // "gpt-4o-mini"
+.gpt4o_2024_05_13      // "gpt-4o-2024-05-13"
+.gpt4o_realtimePreview // "gpt-4o-realtime-preview"
+.gpt4o_miniRealtimePreview // "gpt-4o-mini-realtime-preview"
+.gpt4o_audioPreview    // "gpt-4o-audio-preview"
+.chatGPT4o_latest      // "chatgpt-4o-latest"
+
+// O1 models
+.o1                    // "o1"
+.o1_mini              // "o1-mini"
+.o1_preview           // "o1-preview"
+
 // Audio models
 .tts_1                 // Text-to-Speech
 .tts_1_hd             // High-quality Text-to-Speech
@@ -217,33 +231,6 @@ do {
         print("Error:", error.error.message)
     }
 }
-```
-
-## Models and Types
-
-### Message Types
-
-Messages can contain different content types:
-
-```swift
-// Text content
-Message(role: .user, content: "Hello")
-
-// Tool results
-Message(
-    role: .tool,
-    content: .array([.toolResult(.init(
-        tool_selection_id: "123",
-        result: "Tool result"
-    ))])
-)
-
-// Function calls
-Message(
-    role: .assistant,
-    content: .string("Using tool..."),
-    tool_calls: [toolCall]
-)
 ```
 
 ## Working with Files
