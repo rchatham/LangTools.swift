@@ -67,7 +67,7 @@ extension Agent {
         context.eventHandler(.started(agent: name, parent: context.parent?.name, task: context.messages.last?.content.text ?? "Unknown task"))
         let tools = delegateAgents.isEmpty ? tools : (tools ?? []) + [Tool(
             name: "agent_transfer",
-            description: "Transfer the conversation to another agent",
+            description: "Transfer the conversation to another agent. Be specific and explicit in your directions, direct them only to do what you need them to do.",
             tool_schema: .init(
                 properties: [
                     "agent_name": .init(
@@ -89,7 +89,7 @@ extension Agent {
                 context.eventHandler(.agentTransfer(from: name, to: agentName, reason: reason))
                 var context = context
                 context.parent = self
-                context.messages.append(langTool.systemMessage("You are a delegate agent of \(name), given the following reason provided from \(name), perform your function and respond back with your answer."))
+                context.messages.append(langTool.systemMessage("You are a delegate agent of \(name), given the following reason provided from \(name), perform your function and respond back with your answer. Assume that if you do no have a tool to complete a task that it is \(name)'s responsibility to handle it further."))
                 context.messages.append(langTool.assistantMessage(reason))
                 do {
                     return try await agent.execute(context: context)
