@@ -61,6 +61,9 @@ let context = AgentContext(messages: [
 let response = try await agent.execute(context: context)
 ```
 
+For more detailed information about Agents, including tools, delegation, and event tracking, see the Agents [documentation](/Sources/Agents/AGENTS.md).
+
+
 ### Initializing the Client
 
 ```swift
