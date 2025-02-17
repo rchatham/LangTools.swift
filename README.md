@@ -31,7 +31,35 @@ dependencies: [
 
 ## Usage
 
-The best way to learn how it works is to run the LangToolsDemo in XCode! Take a look at the implementation in [NetworkClient.swift](https://github.com/rchatham/LangTools.swift/blob/main/Examples/LangTools_Example/LangTools_Example/Services/NetworkClient.swift).
+The best way to learn how it works is to run the LangTools_Example in XCode!
+
+### Build your own Agents!
+
+Create an agent in just a few lines of code:
+
+```swift
+struct SimpleAgent: Agent {
+    let langTool: Anthropic
+    let model: Anthropic.Model
+    
+    let name = "simpleAgent"
+    let description = "A simple agent that responds to user queries"
+    let instructions = "You are a simple agent that responds to user queries."
+    
+    var delegateAgents: [any Agent] = []
+    var tools: [any LangToolsTool]? = nil
+}
+
+// Use your agent
+let agent = SimpleAgent(
+    langTool: Anthropic(apiKey: "your-key"), 
+    model: .claude35Sonnet_latest
+)
+let context = AgentContext(messages: [
+    Anthropic.Message(role: .user, string: "Hello!")
+])
+let response = try await agent.execute(context: context)
+```
 
 ### Initializing the Client
 
