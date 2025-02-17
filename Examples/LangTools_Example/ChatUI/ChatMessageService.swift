@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import SwiftUI
 
 public protocol ChatMessageInfo: ObservableObject, Identifiable, Hashable where ID == UUID {
     var uuid: UUID { get }
@@ -23,7 +24,41 @@ public protocol ChatMessageService: ObservableObject {
     associatedtype ChatMessage: ChatMessageInfo
     var chatMessages: [ChatMessage] { get set }
     func performChatCompletionRequest(message: String, stream: Bool) async throws
+    func handleError(error: Error) -> ChatAlertInfo?
     func deleteMessage(id: UUID)
 }
 
+public struct ChatAlertInfo {
+    public var title: String
+    public var textField: TextFieldInfo?
+    public var button: ButtonInfo?
+    public var message: String?
+    public init(title: String, textField: TextFieldInfo? = nil, button: ButtonInfo? = nil, message: String? = nil) {
+        self.title = title
+        self.textField = textField
+        self.button = button
+        self.message = message
+    }
+}
 
+public struct TextFieldInfo {
+    public var placeholder: String?
+    public var label: String
+    public var text: Binding<String>
+    public init(placeholder: String? = nil, label: String, text: Binding<String>) {
+        self.placeholder = placeholder
+        self.label = label
+        self.text = text
+    }
+}
+
+public struct ButtonInfo {
+    public var text: String
+    public var action: (ChatAlertInfo) throws -> Void
+    public var role: ButtonRole?
+    public init(text: String, action: @escaping (ChatAlertInfo) throws -> Void = {_ in}, role: ButtonRole? = nil) {
+        self.text = text
+        self.action = action
+        self.role = role
+    }
+}

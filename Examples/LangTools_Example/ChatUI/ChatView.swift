@@ -11,6 +11,10 @@ import Combine
 public struct ChatView<MessageService: ChatMessageService, SettingsView: View>: View {
     @ObservedObject var viewModel: ViewModel
 
+    public init(messageService: MessageService, settingsView: (() -> SettingsView)?) {
+        viewModel = ViewModel(messageService: messageService, settingsView: settingsView)
+    }
+
     public init(viewModel: ViewModel) {
         self.viewModel = viewModel
     }
@@ -46,10 +50,8 @@ public struct ChatView<MessageService: ChatMessageService, SettingsView: View>: 
 
 extension ChatView {
     @MainActor public class ViewModel: ObservableObject {
-        @Published var apiKey = ""
         @Published var input = ""
         @Published var showAlert = false
-        @Published var enterApiKey = false
         private let messageService: MessageService
         private var _settingView: (() -> SettingsView)?
 

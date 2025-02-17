@@ -13,8 +13,13 @@ struct LangTools_ExampleApp: App {
     var messageService = MessageService()
     var body: some Scene {
         WindowGroup {
-            ChatView(viewModel: .init(messageService: messageService, settingsView: { ChatSettingsView(viewModel: ChatSettingsView.ViewModel { self.messageService.messages = [] }) } ))
+            ChatView(messageService: messageService, settingsView: chatSettingsView)
         }
+    }
+
+    @ViewBuilder
+    func chatSettingsView() -> some View {
+        ChatSettingsView(viewModel: ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages))
     }
 }
 

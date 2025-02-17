@@ -28,8 +28,3 @@ extension View {
     }
 }
 
-struct EmptyLabel: View {
-    var body: some View {
-        Label(title: { Text("") }, icon: {Image(systemName: "")})
-    }
-}

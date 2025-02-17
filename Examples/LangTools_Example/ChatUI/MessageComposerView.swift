@@ -28,8 +28,17 @@ struct MessageComposerView: View {
                     .padding(EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 20))
             }
         }
-        .alert(isPresented: $viewModel.showAlert, content: {
-            Alert(title: Text("Error"), message: Text(viewModel.errorMessage), dismissButton: .default(Text("OK")))
+        .alert(viewModel.alertInfo?.title ?? "///Missing title///", isPresented: $viewModel.showAlert, actions: {
+            if let alertInfo = $viewModel.alertInfo.wrappedValue, let tf = alertInfo.textField, let bt = alertInfo.button {
+                TextField(tf.label, text: tf.text)
+                Button(bt.text, role: bt.role, action: { do { try bt.action(alertInfo) } catch { viewModel.handleError(error) } })
+            }
+            Button("Cancel", role: .cancel, action: {})
+        }, message: {
+            if let text = $viewModel.alertInfo.wrappedValue?.message { Text(text) }
+        })
+        .alert(isPresented: $viewModel.showError, content: {
+            Alert(title: Text("Error"), message: Text($viewModel.alertInfo.wrappedValue?.title ?? ""), dismissButton: .default(Text("OK")))
         })
     }
 
@@ -48,7 +57,8 @@ extension MessageComposerView {
         @Published var input: String = ""
 
         @Published var showAlert: Bool = false
-        @Published var errorMessage: String = ""
+        @Published var alertInfo: ChatAlertInfo?
+        @Published var showError: Bool = false
         @Published var isMessageSending: Bool = false
 
         private var messageService: any ChatMessageService
@@ -63,15 +73,23 @@ extension MessageComposerView {
             isMessageSending = true
             let sentText = input
             // Clear the input field
-            input = ""
+            Task { @MainActor in input = "" }
             do { try await messageService.performChatCompletionRequest(message: sentText, stream: true) }
             catch {
-                print("Error sending message completion request: \(error)")
-                self.errorMessage = error.localizedDescription
-                self.showAlert = true
-                input = sentText
+                handleError(error)
+                Task { @MainActor in input = sentText }
             }
             isMessageSending = false
+        }
+
+        func handleError(_ error: any Error) {
+            if let alertInfo = messageService.handleError(error: error) {
+                self.alertInfo = alertInfo
+                self.showAlert = true
+            } else {
+                self.alertInfo = ChatAlertInfo(title: "Error", textField: nil , button: nil, message: "Error sending message completion request: \(error)")
+                self.showError = true
+            }
         }
     }
 }

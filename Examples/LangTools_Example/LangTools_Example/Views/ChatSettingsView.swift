@@ -49,6 +49,38 @@ struct ChatSettingsView: View {
     }
 }
 
+extension ChatSettingsView {
+    @MainActor class ViewModel: ObservableObject {
+        @Published var apiKey = ""
+        @Published var enterApiKey = false
+        @Published var model: Model = UserDefaults.model
+        @Published var maxTokens = UserDefaults.maxTokens
+        @Published var temperature = UserDefaults.temperature
+        @Published var deviceToken = UserDefaults.deviceToken
+        @Published var systemMessage = UserDefaults.systemMessage
+
+        let clearMessages: () -> Void
+
+        init(clearMessages: @escaping () -> Void) {
+            self.clearMessages = clearMessages
+        }
+
+        func loadSettings() {
+            model = UserDefaults.model
+            maxTokens = UserDefaults.maxTokens
+            temperature = UserDefaults.temperature
+            systemMessage = UserDefaults.systemMessage
+        }
+
+        func saveSettings() {
+            UserDefaults.model = model
+            UserDefaults.maxTokens = maxTokens
+            UserDefaults.temperature = temperature
+            UserDefaults.systemMessage = systemMessage
+        }
+    }
+}
+
 struct SystemMessageEditor: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var systemMessage: String
@@ -80,38 +112,6 @@ struct SystemMessageEditor: View {
             .onAppear {
                 editedMessage = systemMessage
             }
-        }
-    }
-}
-
-extension ChatSettingsView {
-    @MainActor class ViewModel: ObservableObject {
-        @Published var apiKey = ""
-        @Published var enterApiKey = false
-        @Published var model: Model = UserDefaults.model
-        @Published var maxTokens = UserDefaults.maxTokens
-        @Published var temperature = UserDefaults.temperature
-        @Published var deviceToken = UserDefaults.deviceToken
-        @Published var systemMessage = UserDefaults.systemMessage
-
-        let clearMessages: () -> Void
-
-        init(clearMessages: @escaping () -> Void) {
-            self.clearMessages = clearMessages
-        }
-
-        func loadSettings() {
-            model = UserDefaults.model
-            maxTokens = UserDefaults.maxTokens
-            temperature = UserDefaults.temperature
-            systemMessage = UserDefaults.systemMessage
-        }
-
-        func saveSettings() {
-            UserDefaults.model = model
-            UserDefaults.maxTokens = maxTokens
-            UserDefaults.temperature = temperature
-            UserDefaults.systemMessage = systemMessage
         }
     }
 }
