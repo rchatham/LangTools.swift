@@ -35,11 +35,6 @@ extension LangTools {
         }
     }
 
-    // In order to call the function completion in non-streaming calls, we are
-    // unable to return the intermediate call and thus you can not mix responding 
-    // to functions in your code AND using function closures. If this functionality 
-    // is needed use streaming. This functionality may be able to be added via a 
-    // configuration callback on the function or request in the future.
     public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response {
         return try await complete(request: request, response: try request.update(response: try await perform(request: try prepare(request: request.updating(stream: false)))) )
     }

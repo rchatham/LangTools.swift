@@ -192,11 +192,14 @@ extension Ollama {
     public struct ChatToolResult: Codable, LangToolsToolSelectionResult {
         public let tool_selection_id: String
         public let result: String
+        public var is_error: Bool = false
 
         public init(tool_selection_id: String, result: String, is_error: Bool = false) {
             self.tool_selection_id = tool_selection_id
             self.result = result
+            self.is_error = is_error
         }
+        enum CodingKeys: CodingKey { case tool_selection_id, result }
     }
 
     public struct ChatDelta: Codable, LangToolsMessageDelta {

@@ -160,6 +160,7 @@ public protocol LangToolsToolSelection: Codable {
 public protocol LangToolsToolSelectionResult: Codable {
     var tool_selection_id: String { get }
     var result: String { get }
+    var is_error: Bool { get }
     init(tool_selection_id: String, result: String)
     init(tool_selection_id: String, result: String, is_error: Bool)
 }

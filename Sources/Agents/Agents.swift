@@ -47,7 +47,7 @@ public enum AgentEvent: Equatable {
         switch self {
         case .started(let agent, let parent, let task):
             let parentString = parent == nil ? "" : "parent: " + parent!
-            return "🤖 Agent '\(agent)'\(parentString) started: \(task)"
+            return "🤖 Agent '\(agent):\(parentString)' started: \(task)"
         case .agentTransfer(let from, let to, let reason):
             return "🔄 Agent '\(from)' delegated to '\(to)': \(reason)"
         case .toolCalled(let agent, let tool, let args):
@@ -106,7 +106,11 @@ extension Agent {
                     context.eventHandler(.toolCalled(agent: name, tool: toolCall.name ?? "no_tool_name", arguments: toolCall.arguments))
 
                 case .toolCompleted(let toolResult):
-                    context.eventHandler(.toolCompleted(agent: name, result: toolResult.result))
+                    if toolResult.is_error {
+                        context.eventHandler(.error(agent: name, message: toolResult.result))
+                    } else {
+                        context.eventHandler(.toolCompleted(agent: name, result: toolResult.result))
+                    }
                 }
             }
             let response = try await langTool.perform(request: request) as any LangToolsChatResponse

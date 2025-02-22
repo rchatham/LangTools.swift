@@ -42,7 +42,6 @@ struct ChatSettingsView: View {
         .navigationTitle("Settings")
         .onAppear { viewModel.loadSettings() }
         .onDisappear { viewModel.saveSettings() }
-        .enterAPIKeyAlert(isPresented: $viewModel.enterApiKey, apiKey: $viewModel.apiKey)
         .sheet(isPresented: $isEditingSystemMessage) {
             SystemMessageEditor(systemMessage: $viewModel.systemMessage)
         }
