@@ -67,7 +67,7 @@ extension Agent {
         context.eventHandler(.started(agent: name, parent: context.parent?.name, task: context.messages.last?.content.text ?? "Unknown task"))
         let tools = delegateAgents.isEmpty ? tools : (tools ?? []) + [Tool(
             name: "agent_transfer",
-            description: "Transfer the conversation to another agent. Be specific and explicit in your directions, direct them only to do what you need them to do.",
+            description: "Transfer the task to another agent. Be specific and explicit in your directions, direct them only to do what you need them to do.",
             tool_schema: .init(
                 properties: [
                     "agent_name": .init(
@@ -144,9 +144,9 @@ extension Agent {
         if !delegateAgents.isEmpty {
             prompt += "\n\nYou can transfer to these agents:"
             for agent in delegateAgents {
-                prompt += "\n- \(agent.name): \(agent.description);"
+                prompt += "\n- \(agent.name): \(agent.description)"
             }
-            prompt += "\n\nYou should relay any responses from your delegate agents and always return a response no matter what."
+            prompt += "\n\nAlways return a reponse no matter what. You should relay all the critical details from your delegate agents, the user will not have access to the agent's response. Your answer should be specific and comprehensive, but provide only the relevant information to the user or parent agent."
         }
         prompt += "\n\nCurrent time: \(Date().description(with: .current))"
         return prompt

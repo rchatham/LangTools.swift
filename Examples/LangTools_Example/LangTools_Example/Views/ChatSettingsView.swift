@@ -120,7 +120,9 @@ struct SystemMessageEditor: View {
                     .frame(maxHeight: .infinity)
             }
             .navigationTitle("Edit System Message")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
