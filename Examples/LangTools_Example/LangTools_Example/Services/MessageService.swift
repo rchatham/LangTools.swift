@@ -275,12 +275,12 @@ extension MessageService {
             case .toolCompleted(agent: let agent, result: let result):
                 let message = Message.createToolReturnedEvent(
                     agentName: agent,
-                    result: result
+                    result: result ?? "Missing agent result."
                 )
 
                 messages.insert(message, for: agent)
 
-            case .completed(let agent, let result):
+            case .completed(let agent, let result, let is_error):
                 let message = Message.createCompletionEvent(
                     agentName: agent,
                     result: result

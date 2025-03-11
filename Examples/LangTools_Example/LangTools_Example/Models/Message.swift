@@ -262,8 +262,8 @@ struct AgentEventContent: Codable, Equatable, Hashable {
     }
 
     var hasCompleted: Bool {
-        if type == .completed { return true }
-        return children.contains { if case .agentEvent(let content) = $0.contentType { content.type == .completed } else { false } }
+        if type == .completed || type == .failed { return true }
+        return children.contains { if case .agentEvent(let content) = $0.contentType { content.type == .completed || content.type == .failed } else { false } }
     }
 
     func hash(into hasher: inout Hasher) {
@@ -280,6 +280,7 @@ enum AgentEventType: String, Codable {
     case toolCalled
     case toolCompleted
     case completed
+    case failed
     case error
 
     var icon: String {
@@ -289,7 +290,8 @@ enum AgentEventType: String, Codable {
         case .toolCalled: return "🛠️"
         case .toolCompleted: return "✅"
         case .completed: return "🏁"
-        case .error: return "❌"
+        case .failed: return "⚠️"
+        case .error: return "‼️"
         }
     }
 }

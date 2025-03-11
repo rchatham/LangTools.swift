@@ -138,7 +138,7 @@ public protocol LangToolsToolCallingRequest: LangToolsChatRequest, Codable where
 
 public enum LangToolsToolEvent {
     case toolCalled(any LangToolsToolSelection)
-    case toolCompleted(any LangToolsToolSelectionResult)
+    case toolCompleted((any LangToolsToolSelectionResult)?)
 }
 
 public protocol LangToolsToolCallingResponse: LangToolsChatResponse where Message: LangToolsToolMessage, ToolSelection == Message.ToolSelection {
@@ -191,17 +191,18 @@ extension LangToolsToolCallingRequest {
                 let missing = tool.tool_schema.required?.filter({ !args.keys.contains($0) })
                 guard missing?.isEmpty ?? true
                 else { throw LangToolsRequestError.missingRequiredFunctionArguments(missing!.joined(separator: ",")) }
-                guard let str = try await tool.callback?(args) else { continue }
+                guard let str = try await tool.callback?(args) else { toolEventHandler?(.toolCompleted(nil)); continue }
                 tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: str))
             } catch {
                 tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: "\(error.localizedDescription)", is_error: true))
             }
-            toolEventHandler?(.toolCompleted(tool_results.last!))
+            toolEventHandler?(.toolCompleted(tool_results.last))
         }
         guard !tool_results.isEmpty else { return nil }
         var results: [Message] = []
-        if let message = response.message as! Self.Response.Message? {
-            results.append(message)
+        if var message = response.message as! Self.Response.Message? {
+            let toolSelectionsWithResult = tool_selections.filter({ tool_results.map{ $0.tool_selection_id }.contains($0.id) })
+            results.append(Message(tool_selection: toolSelectionsWithResult))
         }
         results.append(contentsOf: Message.messages(for: tool_results))
         return updating(messages: messages + results)

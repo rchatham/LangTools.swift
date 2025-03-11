@@ -39,8 +39,8 @@ public enum AgentEvent: Equatable {
     case started(agent: String, parent: String?, task: String)
     case agentTransfer(from: String, to: String, reason: String)
     case toolCalled(agent: String, tool: String, arguments: String)
-    case toolCompleted(agent: String, result: String)
-    case completed(agent: String, result: String)
+    case toolCompleted(agent: String, result: String?)
+    case completed(agent: String, result: String, is_error: Bool = false)
     case error(agent: String, message: String)
 
     public var description: String {
@@ -54,10 +54,10 @@ public enum AgentEvent: Equatable {
             return "🛠️ Agent '\(agent)' using tool: \(tool), arguments: \(args)"
         case .toolCompleted(let agent, let tool):
             return "✅ Agent '\(agent)' completed tool: \(tool)"
-        case .completed(let agent, let result):
-            return "🏁 Agent '\(agent)' completed with result: \(result)"
+        case .completed(let agent, let result, let is_error):
+            return "\(is_error ? "⚠️" :"🏁") Agent '\(agent)' \(is_error ? "encountered an error" :"completed with result"): \(result)"
         case .error(let agent, let message):
-            return "❌ Agent '\(agent)' error: \(message)"
+            return "‼️ Agent '\(agent)' error: \(message)"
         }
     }
 }
@@ -99,20 +99,21 @@ extension Agent {
             }
         )]
         let systemMessage = langTool.systemMessage(createSystemPrompt())
-        do {
-            let request = try LangTool.chatRequest(model: model, messages: [systemMessage] + context.messages, tools: tools) { [name] event in
-                switch event {
-                case .toolCalled(let toolCall):
-                    context.eventHandler(.toolCalled(agent: name, tool: toolCall.name ?? "no_tool_name", arguments: toolCall.arguments))
+        let toolEventHandler: (LangToolsToolEvent) -> Void = { [name] event in
+            switch event {
+            case .toolCalled(let toolCall):
+                context.eventHandler(.toolCalled(agent: name, tool: toolCall.name ?? "no_tool_name", arguments: toolCall.arguments))
 
-                case .toolCompleted(let toolResult):
-                    if toolResult.is_error {
-                        context.eventHandler(.error(agent: name, message: toolResult.result))
-                    } else {
-                        context.eventHandler(.toolCompleted(agent: name, result: toolResult.result))
-                    }
+            case .toolCompleted(let toolResult):
+                if toolResult?.is_error ?? false {
+                    context.eventHandler(.error(agent: name, message: toolResult?.result ?? "No tool result returned."))
+                } else {
+                    context.eventHandler(.toolCompleted(agent: name, result: toolResult?.result))
                 }
             }
+        }
+        do {
+            let request = try LangTool.chatRequest(model: model, messages: [systemMessage] + context.messages, tools: tools, toolEventHandler: toolEventHandler)
             let response = try await langTool.perform(request: request) as any LangToolsChatResponse
             let result = response.message?.content.text ?? ""
             if result.isEmpty {
@@ -122,7 +123,7 @@ extension Agent {
             context.eventHandler(.completed(agent: name, result: result))
             return result
         } catch {
-            context.eventHandler(.error(agent: name, message: error.localizedDescription))
+            context.eventHandler(.completed(agent: name, result: error.localizedDescription, is_error: true))
             throw AgentError("error: " + error.localizedDescription)
         }
     }
