@@ -131,49 +131,6 @@ public struct OllamaModel: RawRepresentable, Codable, Hashable, CaseIterable {
     }
 }
 
-// Helper Types
-public enum Value: Codable {
-    case string(String)
-    case bool(Bool)
-    case int(Int)
-    case double(Double)
-    case null
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let str = try? container.decode(String.self) {
-            self = .string(str)
-        } else if let bool = try? container.decode(Bool.self) {
-            self = .bool(bool)
-        } else if let int = try? container.decode(Int.self) {
-            self = .int(int)
-        } else if let double = try? container.decode(Double.self) {
-            self = .double(double)
-        } else if container.decodeNil() {
-            self = .null
-        } else {
-            throw DecodingError.typeMismatch(Value.self, DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Invalid value type"))
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case .string(let str): try container.encode(str)
-        case .bool(let bool): try container.encode(bool)
-        case .int(let int): try container.encode(int)
-        case .double(let double): try container.encode(double)
-        case .null: try container.encodeNil()
-        }
-    }
-
-    var string: String? { if case .string(let val) = self { val } else { nil }}
-    var integer: Int? { if case .int(let val) = self { val } else { nil }}
-    var bool: Bool? { if case .bool(let val) = self { val } else { nil }}
-    var double: Double? { if case .double(let val) = self { val } else { nil }}
-    var isNull: Bool { if case .null = self { true } else { false }}
-}
-
 extension OllamaModel {
     var openAIModel: OpenAIModel { .init(customModelID: rawValue) }
 }

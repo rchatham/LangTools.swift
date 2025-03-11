@@ -219,8 +219,8 @@ class OllamaTests: XCTestCase {
         XCTAssertEqual(response.details.family, "llama")
         XCTAssertEqual(response.details.parameterSize, "7B")
         XCTAssertEqual(response.details.quantizationLevel, "Q4_0")
-        XCTAssertEqual(response.modelInfo["architecture"]?.string, "llama")
-        XCTAssertEqual(response.modelInfo["vocab_size"]?.integer, 32000)
+        XCTAssertEqual(response.modelInfo["architecture"]?.stringValue, "llama")
+        XCTAssertEqual(response.modelInfo["vocab_size"]?.intValue, 32000)
     }
 
     func testDeleteModel() async throws {

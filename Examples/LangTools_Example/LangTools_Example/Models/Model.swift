@@ -41,20 +41,43 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
 
     var id: String { rawValue }
 
-    static var allCases: [Model] {
-        return OpenAI.Model.allCases.map { .openAI($0) }
+    public static var allCases: [Model] {
+        let standardModels: [Model] = OpenAI.Model.allCases.map { .openAI($0) }
         + Anthropic.Model.allCases.map { .anthropic($0) }
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
-        + Ollama.Model.allCases.map { .ollama($0) }
+
+        // Get locally cached Ollama models from UserDefaults or from OllamaService if available
+        let ollamaModels: [Model] = {
+            if !OllamaService.shared.availableModels.isEmpty {
+                return OllamaService.shared.availableModels
+            }
+            return cachedOllamaModels
+        }().map { .ollama($0) }
+
+        return standardModels + ollamaModels
     }
 
-    static var chatModels: [Model] {
+    public static var chatModels: [Model] {
         return OpenAI.Model.chatModels.map { .openAI($0) }
         + Anthropic.Model.allCases.map { .anthropic($0) }
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
-        + Ollama.Model.allCases.map { .ollama($0) }
+        + cachedOllamaModels.map { .ollama($0) }
+    }
+
+    // Get Ollama models from UserDefaults
+    static var cachedOllamaModels: [Ollama.Model] {
+        guard let modelNames = UserDefaults.standard.stringArray(forKey: "ollamaModels") else {
+            return []
+        }
+        return modelNames.compactMap { Ollama.Model(rawValue: $0) }
+    }
+
+    // Update the cached Ollama models
+    static func updateCachedOllamaModels(_ models: [Ollama.Model]) {
+        let modelNames = models.map { $0.rawValue }
+        UserDefaults.standard.set(modelNames, forKey: "ollamaModels")
     }
 
     func hash(into hasher: inout Hasher) {

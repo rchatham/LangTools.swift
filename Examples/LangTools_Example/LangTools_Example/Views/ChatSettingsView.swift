@@ -9,6 +9,7 @@ import SwiftUI
 public struct ChatSettingsView: View {
     @ObservedObject public var viewModel: ViewModel
     @State private var isEditingSystemMessage = false
+    @State private var showingOllamaSettings = false
 
     public init(viewModel: ViewModel) {
         self.viewModel = viewModel
@@ -17,6 +18,10 @@ public struct ChatSettingsView: View {
     public var body: some View {
         Form {
             Section(header: Text("Active Model")) {
+
+                // Force refresh when OllamaService updates its models
+                let _ = OllamaService.shared.availableModels
+
                 Picker("Chat Models", selection: $viewModel.model) {
                     ForEach(Model.chatModels, id: \.self) { model in
                         Text(model.rawValue).tag(model.rawValue)
@@ -37,6 +42,20 @@ public struct ChatSettingsView: View {
                 }
             }
 
+            Section(header: Text("Local Models")) {
+                Button(action: {
+                    showingOllamaSettings = true
+                }) {
+                    HStack {
+                        Text("Manage Ollama Models")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                }
+            }
+
             Button("Save Settings") { viewModel.saveSettings() }
             Button("Update API Key") { viewModel.enterApiKey = true }
             Button("Clear messages", role: .destructive) {
@@ -48,6 +67,9 @@ public struct ChatSettingsView: View {
         .onDisappear { viewModel.saveSettings() }
         .sheet(isPresented: $isEditingSystemMessage) {
             SystemMessageEditor(systemMessage: $viewModel.systemMessage)
+        }
+        .sheet(isPresented: $showingOllamaSettings) {
+            OllamaSettingsView()
         }
     }
 }

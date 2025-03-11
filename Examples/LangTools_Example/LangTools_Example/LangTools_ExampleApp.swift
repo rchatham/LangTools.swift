@@ -11,11 +11,18 @@ import OpenAI
 import Anthropic
 import Gemini
 import XAI
+import Ollama
 import ChatUI
 
 @main
 struct LangTools_ExampleApp: App {
     var messageService = MessageService()
+
+    init() {
+        // Initialize Ollama on app startup
+        initializeOllama()
+    }
+
     var body: some Scene {
         WindowGroup {
             ChatView(title: "LangTools.swift", messageService: messageService, settingsView: chatSettingsView)
@@ -25,6 +32,16 @@ struct LangTools_ExampleApp: App {
     @ViewBuilder
     func chatSettingsView() -> some View {
         ChatSettingsView(viewModel: ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages))
+    }
+
+    func initializeOllama() {
+        // Initialize OllamaService to start background refresh
+        Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second after app launch
+            await MainActor.run {
+                OllamaService.shared.refreshModels()
+            }
+        }
     }
 }
 

@@ -100,7 +100,7 @@ extension Ollama {
                 message: Message(
                     role: next.message?.role ?? message?.role ?? .assistant,
                     content: (message?.content.text ?? "") + (next.message?.content.text ?? ""),
-                    images: next.message?.images,
+                    images: next.message?.images ?? message?.images,
                     tool_calls: next.message?.tool_calls ?? message?.tool_calls
                 ),
                 done: next.done,
@@ -177,8 +177,8 @@ extension Ollama {
     }
 
     public struct ChatToolCall: Codable, LangToolsToolSelection {
-        public let id: String?
-        public let name: String?
+        public let id: String? = "ollama"
+        public var name: String? { function.name }
         public var arguments: String { function.arguments.string ?? "" }
 
         public let function: Function

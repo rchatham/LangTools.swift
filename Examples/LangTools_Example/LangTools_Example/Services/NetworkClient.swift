@@ -28,6 +28,12 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         super.init()
         APIService.llms.forEach { llm in keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) } }
         keychainService.saveApiKey(apiKey: "", for: .serper)
+
+        // For Ollama, we don't need an API key
+        registerLangTool("", for: .ollama)
+
+        // Initialize Ollama service to start populating available models
+        _ = OllamaService.shared
     }
 
     func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {

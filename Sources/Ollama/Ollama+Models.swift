@@ -109,7 +109,7 @@ extension Ollama {
         public let parameters: String
         public let template: String
         public let details: OllamaModel.Details
-        public let modelInfo: [String: Value]
+        public let modelInfo: [String: JSON]
 
         enum CodingKeys: String, CodingKey {
             case modelfile, parameters, template, details
