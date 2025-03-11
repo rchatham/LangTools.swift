@@ -9,10 +9,11 @@ import Foundation
 import Combine
 import SwiftUI
 
-public protocol ChatMessageInfo: ObservableObject, Identifiable, Hashable where ID == UUID {
+public protocol ChatMessageInfo: Sendable, ObservableObject, Identifiable, Hashable where ID == UUID {
     var uuid: UUID { get }
     var text: String? { get }
 
+    var parentMessage: Self? { get }
     var childChatMessages: [Self] { get }
 
     var isUser: Bool { get }
@@ -20,10 +21,10 @@ public protocol ChatMessageInfo: ObservableObject, Identifiable, Hashable where 
     var isAgentEvent: Bool { get }
 }
 
-public protocol ChatMessageService: ObservableObject {
+public protocol ChatMessageService: Sendable, ObservableObject {
     associatedtype ChatMessage: ChatMessageInfo
     var chatMessages: [ChatMessage] { get set }
-    func performChatCompletionRequest(message: String, stream: Bool) async throws
+    func send(message: String, stream: Bool) async throws
     func handleError(error: Error) -> ChatAlertInfo?
     func deleteMessage(id: UUID)
 }

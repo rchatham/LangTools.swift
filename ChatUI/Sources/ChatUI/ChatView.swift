@@ -11,8 +11,8 @@ import Combine
 public struct ChatView<MessageService: ChatMessageService, SettingsView: View>: View {
     @ObservedObject var viewModel: ViewModel
 
-    public init(messageService: MessageService, settingsView: (() -> SettingsView)?) {
-        viewModel = ViewModel(messageService: messageService, settingsView: settingsView)
+    public init(title: String? = nil, messageService: MessageService, settingsView: (() -> SettingsView)?) {
+        viewModel = ViewModel(title: title, messageService: messageService, settingsView: settingsView)
     }
 
     public init(viewModel: ViewModel) {
@@ -21,19 +21,26 @@ public struct ChatView<MessageService: ChatMessageService, SettingsView: View>: 
 
     public var body: some View {
         NavigationStack {
-            VStack {
-                messageList
-                messageComposerView
-                    .invalidInputAlert(isPresented: $viewModel.showAlert)
+            if let title = viewModel.title {
+                chatView.navigationTitle(title)
+            } else {
+                chatView
             }
-            .navigationTitle("LangTools.swift")
-            .toolbar {
-                #if DEBUG
-                NavigationLink(destination: viewModel.settingsView()) {
-                    Image(systemName: "gear")
-                }
-                #endif
+        }
+    }
+
+    var chatView: some View {
+        VStack {
+            messageList
+            messageComposerView
+                .invalidInputAlert(isPresented: $viewModel.showAlert)
+        }
+        .toolbar {
+            #if DEBUG
+            NavigationLink(destination: viewModel.settingsView()) {
+                Image(systemName: "gear")
             }
+            #endif
         }
     }
 
@@ -50,12 +57,14 @@ public struct ChatView<MessageService: ChatMessageService, SettingsView: View>: 
 
 extension ChatView {
     @MainActor public class ViewModel: ObservableObject {
+        @Published var title: String?
         @Published var input = ""
         @Published var showAlert = false
         private let messageService: MessageService
         private var _settingView: (() -> SettingsView)?
 
-        public init(messageService: MessageService, settingsView: (() -> SettingsView)?) {
+        public init(title: String? = nil, messageService: MessageService, settingsView: (() -> SettingsView)?) {
+            self.title = title
             self.messageService = messageService
             _settingView = settingsView
         }

@@ -13,6 +13,7 @@ struct CollapsibleMessageView<Message: ChatMessageInfo>: View {
     @ObservedObject var message: Message
     @Environment(\.colorScheme) var colorScheme
     @State private var isExpanded = false
+    @Binding var parentIsExpanded: Bool?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -21,6 +22,10 @@ struct CollapsibleMessageView<Message: ChatMessageInfo>: View {
                 if !message.childChatMessages.isEmpty {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         isExpanded.toggle()
+                    }
+                } else {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        parentIsExpanded = false
                     }
                 }
             }) {
@@ -53,7 +58,10 @@ struct CollapsibleMessageView<Message: ChatMessageInfo>: View {
             if isExpanded {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(message.childChatMessages) { childMessage in
-                        CollapsibleMessageView(message: childMessage)
+                        let binding = Binding<Bool?>(
+                            get: { isExpanded },
+                            set: { val in isExpanded = val ?? false })
+                        CollapsibleMessageView(message: childMessage, parentIsExpanded: binding)
                             .padding(.leading, 16)
                     }
                 }

@@ -14,7 +14,7 @@ struct MessageListView<MessageService: ChatMessageService>: View {
             ScrollView {
                 LazyVStack(alignment: .leading) {
                     ForEach(viewModel.messageService.chatMessages, id: \.uuid) { message in
-                        CollapsibleMessageView(message: message)
+                        CollapsibleMessageView(message: message, parentIsExpanded: .constant(false))
                     }
                 }
                 .padding(16)
@@ -27,7 +27,9 @@ struct MessageListView<MessageService: ChatMessageService>: View {
                     object: nil,
                     queue: .main
                 ) { _ in
-                    scrollToBottom(scrollProxy: scrollProxy)
+                    Task { @MainActor in
+                        scrollToBottom(scrollProxy: scrollProxy)
+                    }
                 }
                 #endif
             }
@@ -44,7 +46,7 @@ struct MessageListView<MessageService: ChatMessageService>: View {
     func scrollToBottom(scrollProxy: ScrollViewProxy) {
         guard let last = viewModel.messageService.chatMessages.last else { return }
         withAnimation {
-            scrollProxy.scrollTo(last, anchor: .bottom)
+            scrollProxy.scrollTo(last.uuid, anchor: .bottom)
         }
     }
 }

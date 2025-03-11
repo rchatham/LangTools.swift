@@ -93,6 +93,13 @@ extension Message {
         return false
     }
 
+    public var parent: Message? {
+        if case .agentEvent(let content) = contentType {
+            return content.parent
+        }
+        return nil
+    }
+
     var childMessages: [Message] {
         if case .agentEvent(let content) = contentType {
             return content.children
@@ -260,6 +267,7 @@ struct AgentEventContent: Codable, Equatable, Hashable {
     let type: AgentEventType
     let agentName: String
     let details: String
+    weak var parent: Message?
     var children: [Message]
 
     var formattedText: String {

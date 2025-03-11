@@ -61,7 +61,7 @@ extension MessageComposerView {
         @Published var showError: Bool = false
         @Published var isMessageSending: Bool = false
 
-        private var messageService: any ChatMessageService
+        nonisolated private let messageService: any ChatMessageService
 
         init(messageService: any ChatMessageService) {
             self.messageService = messageService
@@ -74,7 +74,7 @@ extension MessageComposerView {
             let sentText = input
             // Clear the input field
             Task { @MainActor in input = "" }
-            do { try await messageService.performChatCompletionRequest(message: sentText, stream: true) }
+            do { try await messageService.send(message: sentText, stream: true) }
             catch {
                 handleError(error)
                 Task { @MainActor in input = sentText }

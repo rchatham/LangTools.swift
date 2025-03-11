@@ -6,11 +6,15 @@
 
 import SwiftUI
 
-struct ChatSettingsView: View {
-    @StateObject var viewModel: ViewModel
+public struct ChatSettingsView: View {
+    @ObservedObject public var viewModel: ViewModel
     @State private var isEditingSystemMessage = false
 
-    var body: some View {
+    public init(viewModel: ViewModel) {
+        self.viewModel = viewModel
+    }
+
+    public var body: some View {
         Form {
             Section(header: Text("Active Model")) {
                 Picker("Chat Models", selection: $viewModel.model) {
@@ -49,7 +53,7 @@ struct ChatSettingsView: View {
 }
 
 extension ChatSettingsView {
-    @MainActor class ViewModel: ObservableObject {
+    @MainActor public class ViewModel: ObservableObject {
         @Published var apiKey = ""
         @Published var enterApiKey = false
         @Published var model: Model = UserDefaults.model
@@ -60,7 +64,7 @@ extension ChatSettingsView {
 
         let clearMessages: () -> Void
 
-        init(clearMessages: @escaping () -> Void) {
+        public init(clearMessages: @escaping () -> Void) {
             self.clearMessages = clearMessages
         }
 
