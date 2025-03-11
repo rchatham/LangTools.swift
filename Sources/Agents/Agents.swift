@@ -72,6 +72,7 @@ extension Agent {
                 properties: [
                     "agent_name": .init(
                         type: "string",
+                        enumValues: (delegateAgents.isEmpty ? nil : delegateAgents.map { $0.name }),
                         description: "Name of the agent to transfer to"
                     ),
                     "reason": .init(
