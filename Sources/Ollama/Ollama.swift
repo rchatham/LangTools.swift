@@ -13,17 +13,18 @@ public final class Ollama: LangTools {
     public typealias Model = OllamaModel
     public typealias ErrorResponse = OllamaErrorResponse
 
-    private var configuration: OllamaConfiguration
+    public var configuration: OllamaConfiguration
+    public var session: URLSession { configuration.session }
 
     public struct OllamaConfiguration {
         public var baseURL: URL
+        public var session: URLSession
 
-        public init(baseURL: URL = URL(string: "http://localhost:11434")!) {
+        public init(baseURL: URL = URL(string: "http://localhost:11434")!, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
             self.baseURL = baseURL
+            self.session = session
         }
     }
-
-    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
 
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
@@ -41,17 +42,12 @@ public final class Ollama: LangTools {
         ]
     }
 
-    public init(baseURL: URL = URL(string: "http://localhost:11434")!) {
-        configuration = OllamaConfiguration(baseURL: baseURL)
+    public init(baseURL: URL = URL(string: "http://localhost:11434")!, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
+        configuration = OllamaConfiguration(baseURL: baseURL, session: session)
     }
 
     public init(configuration: OllamaConfiguration) {
         self.configuration = configuration
-    }
-
-    internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
-        session = URLSession(configuration: testURLSessionConfiguration, delegate: nil, delegateQueue: nil)
-        return self
     }
 
     public func prepare<Request: LangToolsRequest>(request: Request) throws -> URLRequest {
@@ -157,5 +153,13 @@ extension OpenAI.ChatCompletionRequest {
             top_logprobs: top_logprobs, user: user, response_type: response_type, seed: seed,
             tools: tools, tool_choice: tool_choice, parallel_tool_calls: parallel_tool_calls,
             choose: choose)
+    }
+}
+
+// MARK: - Testing
+extension Ollama {
+    internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
+        configuration.session = URLSession(configuration: testURLSessionConfiguration, delegate: session.delegate, delegateQueue: session.delegateQueue)
+        return self
     }
 }

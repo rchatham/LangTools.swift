@@ -29,3 +29,9 @@ class GeminiTests: XCTestCase {
     }
 }
 
+extension Gemini {
+    internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
+        openAI.configure(testURLSessionConfiguration: testURLSessionConfiguration)
+        return self
+    }
+}

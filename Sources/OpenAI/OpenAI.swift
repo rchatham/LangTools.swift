@@ -13,20 +13,21 @@ final public class OpenAI: LangTools {
     public typealias Model = OpenAIModel
     public typealias ErrorResponse = OpenAIErrorResponse
 
-    private var apiKey: String { configuration.apiKey }
     private var configuration: OpenAIConfiguration
+    private var apiKey: String { configuration.apiKey }
+    public var session: URLSession { configuration.session }
 
     public struct OpenAIConfiguration {
         public var baseURL: URL
         public let apiKey: String
+        public var session: URLSession
 
-        public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String) {
+        public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
             self.baseURL = baseURL
             self.apiKey = apiKey
+            self.session = session
         }
     }
-
-    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
 
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
@@ -39,17 +40,12 @@ final public class OpenAI: LangTools {
         ]
     }
 
-    public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String) {
+    public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
         configuration = OpenAIConfiguration(baseURL: baseURL, apiKey: apiKey)
     }
 
     public init(configuration: OpenAIConfiguration) {
         self.configuration = configuration
-    }
-
-    internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
-        session = URLSession(configuration: testURLSessionConfiguration, delegate: nil, delegateQueue: nil)
-        return self
     }
 
     public func prepare<Request: LangToolsRequest>(request: Request) throws -> URLRequest {
@@ -202,5 +198,13 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
 
     public static func ==(_ lhs: OpenAIModel, _ rhs: OpenAIModel) -> Bool {
         return lhs.id == rhs.id
+    }
+}
+
+// MARK: - Testing
+extension OpenAI {
+    internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
+        configuration.session = URLSession(configuration: testURLSessionConfiguration, delegate: session.delegate, delegateQueue: session.delegateQueue)
+        return self
     }
 }

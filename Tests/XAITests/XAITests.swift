@@ -29,3 +29,9 @@ class XAITests: XCTestCase {
     }
 }
 
+extension XAI {
+    internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
+        openAI.configure(testURLSessionConfiguration: testURLSessionConfiguration)
+        return self
+    }
+}

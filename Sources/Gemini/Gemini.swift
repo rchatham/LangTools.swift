@@ -19,17 +19,12 @@ public final class Gemini: LangTools {
         ]
     }
 
-    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
+    public var session: URLSession { openAI.session }
 
     let openAI: OpenAI
 
-    public init(baseURL: URL = URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/")!, apiKey: String) {
-        openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey))
-    }
-
-    internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
-        session = URLSession(configuration: testURLSessionConfiguration, delegate: nil, delegateQueue: nil)
-        return self
+    public init(baseURL: URL = URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
+        openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey, session: session))
     }
 
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
@@ -37,7 +32,7 @@ public final class Gemini: LangTools {
     }
 
     public static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
-        return try OpenAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools, toolEventHandler: toolEventHandler)
+        try OpenAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools, toolEventHandler: toolEventHandler)
     }
 }
 

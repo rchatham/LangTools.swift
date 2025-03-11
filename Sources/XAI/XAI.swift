@@ -19,17 +19,12 @@ public final class XAI: LangTools {
         ]
     }
 
-    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
+    public var session: URLSession { openAI.session }
 
     let openAI: OpenAI
 
     public init(baseURL: URL = URL(string: "https://api.x.ai/v1/")!, apiKey: String) {
         openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey))
-    }
-
-    internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
-        session = URLSession(configuration: testURLSessionConfiguration, delegate: nil, delegateQueue: nil)
-        return self
     }
 
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {

@@ -12,20 +12,21 @@ import LangTools
 public final class Anthropic: LangTools {
     public typealias ErrorResponse = AnthropicErrorResponse
 
+    private var configuration: AnthropicConfiguration
     private var apiKey: String { configuration.apiKey }
-    private var configuration: AnthropicConfiguration 
+    public var session: URLSession { configuration.session }
 
     public struct AnthropicConfiguration {
         public var baseURL: URL
         public let apiKey: String
+        public var session: URLSession
 
-        public init(baseURL: URL = URL(string: "https://api.anthropic.com/v1/")!, apiKey: String) {
+        public init(baseURL: URL = URL(string: "https://api.anthropic.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
             self.baseURL = baseURL
             self.apiKey = apiKey
+            self.session = session
         }
     }
-
-    public private(set) lazy var session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
 
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
@@ -33,17 +34,12 @@ public final class Anthropic: LangTools {
         ]
     }
 
-    public init(baseURL: URL = URL(string: "https://api.anthropic.com/v1/")!, apiKey: String) {
+    public init(baseURL: URL = URL(string: "https://api.anthropic.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
         configuration = AnthropicConfiguration(baseURL: baseURL, apiKey: apiKey)
     }
 
     public init(configuration: AnthropicConfiguration) {
         self.configuration = configuration
-    }
-
-    internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
-        session = URLSession(configuration: testURLSessionConfiguration, delegate: nil, delegateQueue: nil)
-        return self
     }
 
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
@@ -95,5 +91,13 @@ public extension Anthropic {
         case claude35Haiku_latest = "claude-3-5-haiku-latest"
         case claude35Haiku_20241022 = "claude-3-5-haiku-20241022"
         case claude3Haiku_20240307 = "claude-3-haiku-20240307"
+    }
+}
+
+// MARK: - Testing
+extension Anthropic {
+    internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
+        configuration.session = URLSession(configuration: testURLSessionConfiguration, delegate: session.delegate, delegateQueue: session.delegateQueue)
+        return self
     }
 }
