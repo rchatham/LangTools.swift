@@ -133,22 +133,9 @@ extension Array<Message> {
     }
 }
 
-extension Array<OpenAI.Tool> {
-    func toAnthropicTools() -> [Anthropic.Tool] {
-        return self.map {
-            Anthropic.Tool(
-                name: $0.name,
-                description: $0.description ?? "",
-                tool_schema: .init(
-                    properties: $0.tool_schema.properties.mapValues {
-                        Anthropic.Tool.InputSchema.Property(
-                            type: $0.type,
-                            enumValues: $0.enumValues,
-                            description: $0.description)
-                    },
-                    required: $0.tool_schema.required),
-                callback: $0.callback)
-        }
+extension Array<Tool> {
+    func convertTools<Tool: LangToolsTool>() -> [Tool] {
+        return self.map { .init($0) }
     }
 }
 

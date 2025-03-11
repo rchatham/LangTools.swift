@@ -24,12 +24,12 @@ class MessageService {
         self.networkClient = networkClient
     }
 
-    var tools: [OpenAI.Tool]? {
+    var tools: [Tool]? {
         return [
-            .function(.init(
+            .init(
                 name: "getCurrentWeather",
                 description: "Get the current weather",
-                parameters: .init(
+                tool_schema: .init(
                     properties: [
                         "location": .init(
                             type: "string",
@@ -42,18 +42,18 @@ class MessageService {
                     required: ["location", "format"]),
                 callback: { [weak self] in
                     self?.getCurrentWeather(location: $0["location"]!.stringValue!, format: $0["format"]!.stringValue!)
-                })),
-            .function(.init(
+                }),
+            .init(
                 name: "getAnswerToUniverse",
                 description: "The answer to the universe, life, and everything.",
-                parameters: .init(),
+                tool_schema: .init(),
                 callback: { _ in
                     "42"
-                })),
-            .function(.init(
+                }),
+            .init(
                 name: "getTopMichelinStarredRestaurants",
                 description: "Get the top Michelin starred restaurants near a location",
-                parameters: .init(
+                tool_schema: .init(
                     properties: [
                         "location": .init(
                             type: "string",
@@ -62,17 +62,17 @@ class MessageService {
                     required: ["location"]),
                 callback: { [weak self] in
                     self?.getTopMichelinStarredRestaurants(location: $0["location"]!.stringValue!)
-                })),
+                }),
 
             // Calendar agent tool
-            .function(.init(
+            .init(
                 name: "manage_calendar",
                 description: """
                     Manage calendar events - create, read, update, or delete calendar events. 
                     Can handle natural language requests like "Schedule a meeting tomorrow" or 
                     "What's on my calendar next week?"
                     """,
-                parameters: .init(
+                tool_schema: .init(
                     properties: [
                         "request": .init(
                             type: "string",
@@ -86,17 +86,17 @@ class MessageService {
                     }
                     // TODO: - decide if this should spin off a separate async Task and add a message when it returns
                     return await self?.handleCalendarRequest(request)
-                })),
+                }),
 
             // Reminder agent tool
-            .function(.init(
+            .init(
                 name: "manage_reminders",
                 description: """
                     Manage reminders - create, read, update, or complete reminders. create, edit, or update reminder lists. 
                     Can handle natural language requests like "Remind me to call mom tomorrow" or 
                     "What are my upcoming reminders?"
                     """,
-                parameters: .init(
+                tool_schema: .init(
                     properties: [
                         "request": .init(
                             type: "string",
@@ -109,17 +109,17 @@ class MessageService {
                         return "Invalid reminder request"
                     }
                     return await self?.handleReminderRequest(request)
-                })),
+                }),
 
             // Research agent tool
-            .function(.init(
+            .init(
                 name: "perform_research",
                 description: """
                     Perform in-depth research on topics using internet sources and AI analysis. \
                     Can handle natural language requests like "Research quantum computing advances" or \
                     "What are the latest developments in AI safety?"
                     """,
-                parameters: .init(
+                tool_schema: .init(
                     properties: [
                         "request": .init(
                             type: "string",
@@ -132,7 +132,7 @@ class MessageService {
                         return "Invalid research request"
                     }
                     return await self?.handleResearchRequest(request)
-                })),
+                }),
         ]
     }
 

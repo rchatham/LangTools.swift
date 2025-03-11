@@ -30,13 +30,13 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         keychainService.saveApiKey(apiKey: "", for: .serper)
     }
 
-    func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
+    func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
         let response = try await langToolchain.perform(request: request(messages: messages, model: model, tools: tools, toolChoice: toolChoice))
         guard let text = response.content?.text else { fatalError("the api should never return non text") }
         return Message(text: text, role: .assistant)
     }
 
-    func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<String, Error> {
+    func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<String, Error> {
         return try langToolchain.stream(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { $0.content?.text }
     }
 
@@ -47,19 +47,19 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         catch { print(error.localizedDescription) }
     }
 
-    func request(messages: [Message], model: Model, stream: Bool = false, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) -> any LangToolsChatRequest & LangToolsStreamableRequest {
+    func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) -> any LangToolsChatRequest & LangToolsStreamableRequest {
         if case .anthropic(let model) = model {
-            return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
+            return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.convertTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
         } else if case .openAI(let model) = model {
-            return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), /*n: 3,*/ stream: stream, tools: tools, tool_choice: toolChoice/*, choose: {_ in 2}*/)
+            return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), /*n: 3,*/ stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice/*, choose: {_ in 2}*/)
         } else if case .xAI(let model) = model {
-            return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice)
+            return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice)
         } else if case .gemini(let model) = model {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream/*, tools: tools, tool_choice: toolChoice*/)
         } else if case .ollama(let model) = model {
-            return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools)
+            return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil/*, tools: tools?.convertTools()*/)
         } else {
-            return Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
+            return Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.convertTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
         }
     }
 
