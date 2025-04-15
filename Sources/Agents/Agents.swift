@@ -91,7 +91,8 @@ extension Agent {
                 var context = context
                 context.parent = self
                 context.messages.append(langTool.systemMessage("You are a delegate agent of \(name), given the following reason provided from \(name), perform your function and respond back with your answer. Assume that if you do no have a tool to complete a task that it is \(name)'s responsibility to handle it further."))
-                context.messages.append(langTool.assistantMessage(reason))
+                // This next messages must be a user message for use with Anthropic, an assistant message will constrain the result to be a completion of the current message and may provide unexpected results. https://docs.anthropic.com/en/api/messages#:~:text=If%20the%20final%20message%20uses%20the%20assistant%20role%2C%20the%20response%20content%20will%20continue%20immediately%20from%20the%20content%20in%20that%20message.%20This%20can%20be%20used%20to%20constrain%20part%20of%20the%20model's%20response.
+                context.messages.append(langTool.userMessage(reason))
                 do {
                     return try await agent.execute(context: context)
                 } catch {
