@@ -234,7 +234,7 @@ extension Anthropic {
                     try container.encode(type, forKey: .type)
                     try container.encodeIfPresent(id, forKey: .id)
                     try container.encodeIfPresent(name, forKey: .name)
-                    try container.encode(try JSON(string: input), forKey: .input)
+                    if !input.isEmpty { try container.encode(try JSON(string: input), forKey: .input) }
                 }
             }
 
