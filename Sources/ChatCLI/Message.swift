@@ -5,8 +5,14 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import OpenAI
 import Anthropic
+#if canImport(SwiftUI)
+import SwiftUI
+#endif
 
 class Message: Codable, ObservableObject {
     let uuid: UUID

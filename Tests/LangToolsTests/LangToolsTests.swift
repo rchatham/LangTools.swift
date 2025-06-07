@@ -1,4 +1,7 @@
 import XCTest
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 @testable import TestUtils
 @testable import LangTools
 @testable import OpenAI

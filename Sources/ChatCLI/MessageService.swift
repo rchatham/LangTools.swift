@@ -5,11 +5,17 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import LangTools
 import OpenAI
 import Anthropic
 import XAI
 import Gemini
+#if canImport(SwiftUI)
+import SwiftUI
+#endif
 
 class MessageService: ObservableObject {
     var messages: [Message] = []
@@ -110,7 +116,10 @@ class MessageService: ObservableObject {
         messages.removeAll(where: { $0.uuid == id })
     }
 
-    @objc func getCurrentWeather(location: String, format: String) -> String {
+    #if canImport(Darwin)
+    @objc
+    #endif
+    func getCurrentWeather(location: String, format: String) -> String {
         return "27"
     }
 
