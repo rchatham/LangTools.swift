@@ -73,7 +73,7 @@ final public class OpenAI: LangTools {
             urlRequest.httpBody = request.httpBody
         } else {
             urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolError.invalidData }
+            do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolsError.invalidData }
         }
 
         return urlRequest

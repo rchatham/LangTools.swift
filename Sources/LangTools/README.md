@@ -94,7 +94,7 @@ public protocol LangToolsTool: Codable {
 The framework provides standard error types:
 
 ```swift
-public enum LangToolError: Error {
+public enum LangToolsError: Error {
     case invalidData
     case streamParsingFailure
     case invalidURL

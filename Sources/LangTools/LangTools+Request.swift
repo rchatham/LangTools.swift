@@ -8,6 +8,7 @@
 import Foundation
 
 
+// MARK: - LangToolsRequest
 public protocol LangToolsRequest: Encodable {
     associatedtype Response: Decodable
     associatedtype LangTool: LangTools
@@ -23,6 +24,7 @@ public extension LangToolsRequest {
 // MARK: - LangToolsChatRequest
 public protocol LangToolsChatRequest: LangToolsRequest where Response: LangToolsChatResponse, Response.Message == Message {
     associatedtype Message: LangToolsMessage
+    var model: LangTool.Model { get }
     var messages: [Message] { get set }
 
     init(model: LangTool.Model, messages: [any LangToolsMessage])
@@ -124,7 +126,6 @@ public protocol LangToolsMultipleChoiceChoice: Codable {
 //    var finish_reason: FinishReason? { get }
 }
 
-
 //public protocol LangToolsFinishReason: Codable {
 //
 //}
@@ -178,8 +179,14 @@ public protocol LangToolsToolMessageDelta: Codable {
     var tool_selection: [ToolSelection]? { get }
 }
 
+public struct LangToolsRequestInfo {
+    public var langTool: any LangTools
+    public var model: any RawRepresentable
+    public var messages: [any LangToolsMessage]
+}
+
 extension LangToolsToolCallingRequest {
-    func completion<Response: LangToolsToolCallingResponse>(response: Response) async throws -> Self? {
+    func completion<Response: LangToolsToolCallingResponse>(_ langTool: some LangTools, response: Response) async throws -> Self? {
         guard let tool_selections = response.tool_selection as? [Message.ToolSelection], !tool_selections.isEmpty else { return nil }
         var tool_results: [Message.ToolResult] = []
         for tool_selection in tool_selections {
@@ -191,7 +198,8 @@ extension LangToolsToolCallingRequest {
                 let missing = tool.tool_schema.required?.filter({ !args.keys.contains($0) })
                 guard missing?.isEmpty ?? true
                 else { throw LangToolsRequestError.missingRequiredFunctionArguments(missing!.joined(separator: ",")) }
-                guard let str = try await tool.callback?(args) else { toolEventHandler?(.toolCompleted(nil)); continue }
+                let info = LangToolsRequestInfo(langTool: langTool, model: model, messages: messages)
+                guard let str = try await tool.callback?(info, args) else { toolEventHandler?(.toolCompleted(nil)); continue }
                 tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: str))
             } catch {
                 tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: "\(error.localizedDescription)", is_error: true))
@@ -223,6 +231,7 @@ public enum LangToolsRequestError: Error {
     }
 }
 
+// MARK: - LangToolsTTSRequest
 public protocol LangToolsTTSRequest: LangToolsRequest where Response == Data {}
 
 public enum HTTPMethod: String {

@@ -17,15 +17,20 @@ public protocol LangTools {
 
     static var requestValidators: [(any LangToolsRequest) -> Bool] { get }
 
-    static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
+    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
+    func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
 
     var session: URLSession { get }
     func prepare(request: some LangToolsRequest) throws -> URLRequest
 }
 
 extension LangTools {
+    public func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> any LangToolsChatRequest {
+        try Self.chatRequest(model: model, messages: messages, tools: tools, toolEventHandler: toolEventHandler)
+    }
+
     public func canHandleRequest<Request: LangToolsRequest>(_ request: Request) -> Bool {
-        return Self.requestValidators.reduce(false) { $0 || $1(request) }
+        Self.requestValidators.reduce(false) { $0 || $1(request) }
     }
 
     public func perform<Request: LangToolsRequest>(request: Request, completion: @escaping (Result<Request.Response, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
@@ -46,8 +51,8 @@ extension LangTools {
 
     private func perform<Response: Decodable>(request: URLRequest) async throws -> Response {
         let (data, response) = try await session.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else { throw LangToolError.requestFailed }
-        guard httpResponse.statusCode == 200 else { throw LangToolError.responseUnsuccessful(statusCode: httpResponse.statusCode, Self.decodeError(data: data)) }
+        guard let httpResponse = response as? HTTPURLResponse else { throw LangToolsError.requestFailed }
+        guard httpResponse.statusCode == 200 else { throw LangToolsError.responseUnsuccessful(statusCode: httpResponse.statusCode, Self.decodeError(data: data)) }
         return Response.self == Data.self ? data as! Response : try Self.decodeResponse(data: data)
     }
 
@@ -59,10 +64,12 @@ extension LangTools {
             Task {
                 do {
                     let (bytes, response) = try await session.bytes(for: httpRequest)
-                    guard let httpResponse = response as? HTTPURLResponse else { return continuation.finish(throwing: LangToolError.requestFailed) }
+                    guard let httpResponse = response as? HTTPURLResponse else { return continuation.finish(throwing: LangToolsError.requestFailed) }
                     guard httpResponse.statusCode == 200 else {
-                        var error: Error?; do { error = try await bytes.lines.reduce("", +).data(using: .utf8).flatMap { Self.decodeError(data: $0) }} catch let _error { error = _error }
-                        return continuation.finish(throwing: LangToolError.responseUnsuccessful(statusCode: httpResponse.statusCode, error))
+                        var error: Error?;
+                        do { error = try await bytes.lines.reduce("", +).data(using: .utf8).flatMap { Self.decodeError(data: $0) }}
+                        catch let _error { error = _error }
+                        return continuation.finish(throwing: LangToolsError.responseUnsuccessful(statusCode: httpResponse.statusCode, error))
                     }
 
                     var combinedResponse = Request.Response.empty
@@ -84,16 +91,17 @@ extension LangTools {
                         }
                         if let response {
                             // If we were able to create a response object we update the decoded response with information from the request and return it before adding it to the combined response used to handle tool completions.
-                            continuation.yield(try request.update(response: response))
-                            combinedResponse = combinedResponse.combining(with: response)
+                            let updatedResponse = try request.update(response: response)
+                            continuation.yield(updatedResponse)
+                            combinedResponse = combinedResponse.combining(with: updatedResponse)
                         }
                     }
 
                     if let errorBuffer, !buffer.isEmpty {
-                        throw LangToolError.failiedToDecodeStream(buffer: buffer, error: errorBuffer)
+                        throw LangToolsError.failiedToDecodeStream(buffer: buffer, error: errorBuffer)
                     }
 
-                    if let completionRequest = try await completionRequest(request: request, response: try request.update(response: combinedResponse)) {
+                    if let completionRequest = try await completionRequest(request: request, response: combinedResponse) {
                         for try await response in stream(request: completionRequest) {
                             continuation.yield(try request.update(response: response))
                         }
@@ -117,7 +125,7 @@ extension LangTools {
 
     private func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) async throws -> Request? {
         guard let response = response as? any LangToolsToolCallingResponse else { return nil }
-        return try await (request as? any LangToolsToolCallingRequest)?.completion(response: response) as? Request
+        return try await (request as? any LangToolsToolCallingRequest)?.completion(self, response: response) as? Request
     }
 
     public static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
@@ -126,8 +134,9 @@ extension LangTools {
 }
 
 
-public enum LangToolError: Error {
+public enum LangToolsError: Error {
     case invalidData, streamParsingFailure, invalidURL, requestFailed, invalidContentType
+    case invalidArgument(String)
     case jsonParsingFailure(Error)
     case responseUnsuccessful(statusCode: Int, Error?)
     case apiError(Codable & Error)
@@ -139,7 +148,7 @@ public enum LangToolError: Error {
 public extension LangTools {
     static func decode<Response: Decodable>(completion: @escaping (Result<Response, Error>) -> Void) -> (Data) -> Void { return { completion(decode(data: $0)) }}
     static func decode<Response: Decodable>(data: Data) -> Result<Response, Error> { let d = JSONDecoder(); do { return .success(try decodeResponse(data: data, decoder: d)) } catch { return .failure(error) }}
-    static func decodeResponse<Response: Decodable>(data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> Response { do { return try decoder.decode(Response.self, from: data) } catch { throw decodeError(data: data, decoder: decoder) ?? LangToolError.jsonParsingFailure(error) }}
+    static func decodeResponse<Response: Decodable>(data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> Response { do { return try decoder.decode(Response.self, from: data) } catch { throw decodeError(data: data, decoder: decoder) ?? LangToolsError.jsonParsingFailure(error) }}
     static func decodeError(data: Data, decoder: JSONDecoder = JSONDecoder()) -> ErrorResponse? { return (try? decoder.decode(ErrorResponse.self, from: data)) }
 }
 
