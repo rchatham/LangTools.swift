@@ -141,16 +141,16 @@ public extension LangTools {
     static func decode<Response: Decodable>(data: Data) -> Result<Response, Error> { let d = JSONDecoder(); do { return .success(try decodeResponse(data: data, decoder: d)) } catch { return .failure(error) }}
     static func decodeResponse<Response: Decodable>(data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> Response { do { return try decoder.decode(Response.self, from: data) } catch { throw decodeError(data: data, decoder: decoder) ?? LangToolError.jsonParsingFailure(error) }}
     static func decodeError(data: Data, decoder: JSONDecoder = JSONDecoder()) -> ErrorResponse? { return (try? decoder.decode(ErrorResponse.self, from: data)) }
+}
 
-    func AsyncThrowingSingleItemStream<T>(value: @escaping () async throws -> T) -> AsyncThrowingStream<T, Error> {
-        return AsyncThrowingStream { cont in Task { do { cont.yield(try await value()) } catch { cont.finish(throwing: error) }; cont.finish() }}
-    }
-    func AsyncSingleErrorStream<T>(error: Error) -> AsyncThrowingStream<T, Error> {
-        return AsyncThrowingStream { $0.finish(throwing: error) }
-    }
-    func AsyncSingleErrorStream<T>(error: @escaping () async throws -> Error) -> AsyncThrowingStream<T, Error> {
-        return AsyncThrowingStream { cont in Task { cont.finish(throwing: try await error()) } }
-    }
+func AsyncThrowingSingleItemStream<T>(value: @escaping () async throws -> T) -> AsyncThrowingStream<T, Error> {
+    return AsyncThrowingStream { cont in Task { do { cont.yield(try await value()) } catch { cont.finish(throwing: error) }; cont.finish() }}
+}
+func AsyncSingleErrorStream<T>(error: Error) -> AsyncThrowingStream<T, Error> {
+    return AsyncThrowingStream { $0.finish(throwing: error) }
+}
+func AsyncSingleErrorStream<T>(error: @escaping () async throws -> Error) -> AsyncThrowingStream<T, Error> {
+    return AsyncThrowingStream { cont in Task { cont.finish(throwing: try await error()) } }
 }
 
 // MARK: - Utilities
