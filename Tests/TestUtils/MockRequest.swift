@@ -10,11 +10,11 @@ import LangTools
 
 
 struct MockLangTool: LangTools {
-    associatedtype Model = MockModel
+    typealias Model = MockModel
 
     static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
         guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
-        MockRequest(model: model, messages: messages)
+        return MockRequest(model: model, messages: messages)
     }
 
     typealias ErrorResponse = MockErrorResponse
@@ -25,7 +25,7 @@ struct MockLangTool: LangTools {
     }
 }
 
-enum MockModel: String, RawRepresentable {
+enum MockModel: String, RawRepresentable, Codable {
     case mockModel
 
     var rawValue: String { "mock-model" }
@@ -47,6 +47,7 @@ struct MockRequest: LangToolsChatRequest, LangToolsStreamableRequest, Encodable 
     typealias Response = MockResponse
     var stream: Bool?
     var messages: [MockMessage] = []
+    var model: MockModel = .mockModel
     init(stream: Bool? = nil) { self.stream = stream }
 }
 

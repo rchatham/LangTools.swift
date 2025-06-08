@@ -30,14 +30,14 @@ class MessageService: ObservableObject {
                             description: "The temperature unit to use. Infer this from the users location.")
                     ],
                     required: ["location", "format"]),
-                callback: { [weak self] in
-                    self?.getCurrentWeather(location: $0["location"]!.stringValue!, format: $0["format"]!.stringValue!)
+                callback: { [weak self] info, params in
+                    self?.getCurrentWeather(location: params["location"]!.stringValue!, format: params["format"]!.stringValue!)
                 })),
             .function(.init(
                 name: "getAnswerToUniverse",
                 description: "The answer to the universe, life, and everything.",
                 parameters: .init(),
-                callback: { _ in
+                callback: { _, _ in
                     "42"
                 })),
             .function(.init(
@@ -50,8 +50,8 @@ class MessageService: ObservableObject {
                             description: "The city and state, e.g. San Francisco, CA")
                     ],
                     required: ["location"]),
-                callback: { [weak self] in
-                    self?.getTopMichelinStarredRestaurants(location: $0["location"]!.stringValue!)
+                callback: { [weak self] info, params in
+                    self?.getTopMichelinStarredRestaurants(location: params["location"]!.stringValue!)
                 }))
         ]
     }
