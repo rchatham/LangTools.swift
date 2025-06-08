@@ -82,6 +82,8 @@ public enum AnthropicAPIErrorType: String, Codable {
 
 public extension Anthropic {
     enum Model: String, Codable, CaseIterable {
+        case claude37Sonnet_latest = "claude-3-7-sonnet-latest"
+        case claude37Sonnet_20250219 = "claude-3-7-sonnet-20250219"
         case claude3Opus_latest = "claude-3-opus-latest"
         case claude3Opus_20240229 = "claude-3-opus-20240229"
         case claude35Sonnet_latest = "claude-3-5-sonnet-latest"
