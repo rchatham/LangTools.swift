@@ -101,7 +101,7 @@ struct MainAgent<LangTool: LangTools>: Agent {
         
         // Initialize delegate agents
         delegateAgents = [
-            SpecialistAgent(langTool: langTool, model: model)
+            SpecialistAgent()
         ]
     }
 }
@@ -139,7 +139,7 @@ let context = AgentContext(messages: messages) { event in
 Execute an agent with a context:
 
 ```swift
-let agent = MyAgent(langTool: langTool, model: model)
+let agent = MyAgent()
 let context = AgentContext(messages: [
     LangToolsMessageImpl(role: .user, string: "Process this request")
 ])
