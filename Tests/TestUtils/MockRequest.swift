@@ -10,17 +10,11 @@ import LangTools
 
 
 struct MockLangTool: LangTools {
-    static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+    associatedtype Model = MockModel
+
+    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
         MockRequest(model: model, messages: messages)
-    }
-
-    enum Model: String, RawRepresentable {
-        case mockModel
-
-        var rawValue: String { "" }
-        init?(rawValue: String) {
-            return nil
-        }
     }
 
     typealias ErrorResponse = MockErrorResponse
@@ -28,6 +22,15 @@ struct MockLangTool: LangTools {
     var session: URLSession
     func prepare(request: some LangToolsRequest) throws -> URLRequest {
         return URLRequest(url: URL(string: "http://localhost:8080/v1/")!)
+    }
+}
+
+enum MockModel: String, RawRepresentable {
+    case mockModel
+
+    var rawValue: String { "mock-model" }
+    init?(rawValue: String) {
+        self = .mockModel
     }
 }
 

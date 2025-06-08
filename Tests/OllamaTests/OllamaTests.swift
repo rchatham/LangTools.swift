@@ -180,7 +180,7 @@ class OllamaTests: XCTestCase {
         do {
             _ = try await api.listModels()
             XCTFail("Expected error to be thrown")
-        } catch let error as LangToolError {
+        } catch let error as LangToolsError {
             if case .responseUnsuccessful(let statusCode, _) = error {
                 XCTAssertEqual(statusCode, 404)
             } else {
@@ -473,7 +473,7 @@ class OllamaTests: XCTestCase {
         do {
             _ = try await api.version()
             XCTFail("Expected error to be thrown")
-        } catch let error as LangToolError {
+        } catch let error as LangToolsError {
             if case .responseUnsuccessful(let statusCode, _) = error {
                 XCTAssertEqual(statusCode, 404)
             } else {

@@ -116,7 +116,7 @@ final class ModelRequestTests: XCTestCase {
         do {
             _ = try await api.perform(request: OpenAI.ListModelDataRequest())
             XCTFail("Expected error to be thrown")
-        } catch let error as LangToolError {
+        } catch let error as LangToolsError {
             if case .responseUnsuccessful(let code, let apiError) = error {
                 XCTAssertEqual(code, 401)
                 if let openAIError = apiError as? OpenAIErrorResponse {
@@ -147,7 +147,7 @@ final class ModelRequestTests: XCTestCase {
         do {
             _ = try await api.perform(request: OpenAI.RetrieveModelRequest(id: modelId))
             XCTFail("Expected error to be thrown")
-        } catch let error as LangToolError {
+        } catch let error as LangToolsError {
             if case .responseUnsuccessful(let code, let apiError) = error {
                 XCTAssertEqual(code, 404)
                 if let openAIError = apiError as? OpenAIErrorResponse {
