@@ -39,7 +39,7 @@ final class AnthropicToolCallEmptyInputTests: XCTestCase {
             name: "getAnswerToUniverse",
             description: "The answer to the universe, life, and everything.",
             tool_schema: .init(),
-            callback: { _ in
+            callback: { _,_ in
                 // Set up the completion response
                 MockURLProtocol.registerResponse(
                     for: Anthropic.MessageRequest.endpoint,
