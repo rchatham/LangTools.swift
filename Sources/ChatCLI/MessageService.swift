@@ -4,12 +4,12 @@
 //  Created by Reid Chatham on 3/31/23.
 //
 
+import Anthropic
 import Foundation
+import Gemini
 import LangTools
 import OpenAI
-import Anthropic
 import XAI
-import Gemini
 
 class MessageService: ObservableObject {
     var messages: [Message] = []
@@ -56,7 +56,62 @@ class MessageService: ObservableObject {
         ]
     }
 
-    func handleLangToolError(_ error: LangToolError) {
+    func performMessageCompletionRequest(message: String, stream: Bool = false) async throws {
+        do {
+            try await getChatCompletion(for: message, stream: stream)
+        } catch let error as LangToolsError {
+            handleLangToolsError(error)
+        } catch let error as LangToolsRequestError {
+            handleLangToolsRequestError(error)
+        } catch {
+            print("Unexpected error: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    func getChatCompletion(for message: String, stream: Bool) async throws {
+        await MainActor.run {
+            messages.append(Message(text: message, role: .user))
+        }
+
+        let toolChoice = (tools?.isEmpty ?? true) ? nil : OpenAI.ChatCompletionRequest.ToolChoice.auto
+        print("\rAssistant: ".yellow, terminator: "")
+        let uuid = UUID(); var content: String = ""
+        let stream = try streamChatCompletionRequest(
+            messages: messages,
+            stream: stream,
+            tools: tools,
+            toolChoice: toolChoice
+        )
+        for try await chunk in stream {
+            // hack to print new lines as long as they aren't the last one
+            if content.hasSuffix("\n") {
+                print("")
+            }
+
+            await MainActor.run {
+                print("\(chunk.trimingTrailingNewlines())", terminator: "")
+            }
+            fflush(stdout)
+
+            content += chunk
+            let message = Message(uuid: uuid, text: content.trimingTrailingNewlines(), role: .assistant)
+
+            if let last = messages.last, last.uuid == uuid {
+                messages[messages.endIndex - 1] = message
+            } else {
+                messages.append(message)
+            }
+        }
+
+        print("") // Add a newline after the complete response
+    }
+
+    func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<String, Error> {
+        return try langToolchain.stream(request: networkClient.request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { $0.content?.text }
+    }
+
+    func handleLangToolsError(_ error: LangToolsError) {
         switch error {
         case .jsonParsingFailure(let error):
             print("JSON parsing error: \(error.localizedDescription)")
@@ -73,10 +128,11 @@ class MessageService: ObservableObject {
             if let error { handleLangToolApiError(error) }
         case .streamParsingFailure:
             print("Failed to parse streaming response")
-        case .failiedToDecodeStream(buffer: let buffer, error: let error):
+        case .failiedToDecodeStream(let buffer, let error):
             print("Failed to decode stream: \(buffer), error: \(error.localizedDescription)")
         case .invalidContentType:
             print("Invalid content type")
+        default: break
         }
     }
 
