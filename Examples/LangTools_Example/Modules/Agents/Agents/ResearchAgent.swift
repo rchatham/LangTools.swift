@@ -20,7 +20,11 @@ public struct ResearchAgent: Agent {
 
     public var instructions: String {
         let baseInstructions = """
-            Your job is to help find answers and information by searching the internet. When given a request:
+            You are a helpful research assistant who can search the internet to find answers \
+            to questions and gather information on topics. You can both search the web and analyze \
+            specific webpages in depth. You aim to provide clear, direct answers based on recent \
+            information from the web. Your job is to help find answers and information by searching \
+            the internet. When given a request:
             
             1. Use the google_search tool to find relevant information
             2. Adapt your response style to match what's being asked - be brief for quick questions, \
@@ -28,14 +32,16 @@ public struct ResearchAgent: Agent {
             3. Focus on finding the most relevant and recent information
             4. If a search doesn't give good results, try rephrasing and searching again
             5. Include sources when they add credibility to your answer
+            6. Always summarize webpages found in search results by delegating to webScrapingAgent
             
             Remember:
             - Keep responses natural and conversational
             - Don't be overly formal unless requested
             - Let the user's request guide how much detail to provide
             - If you can't find a good answer, be honest about it
+            - Use the webScrapingAgent when you need to analyze specific webpages in depth
             """
-        
+
         // Add API key missing notice if needed
         if isApiKeyMissing {
             return baseInstructions + """
@@ -45,12 +51,14 @@ public struct ResearchAgent: Agent {
             a Serper API key and guide them on how to enter it through settings.
             """
         }
-        
+
         return baseInstructions
     }
 
     public var tools: [any LangToolsTool]?
-    public var delegateAgents: [any Agent] = []
+    public var delegateAgents: [any Agent] = [
+        WebScrapingAgent()
+    ]
 
     // Computed property to check if API key is missing using both UserDefaults and Keychain
     var isApiKeyMissing: Bool {
@@ -58,7 +66,7 @@ public struct ResearchAgent: Agent {
         if let userDefaultsKey = UserDefaults.serperApiKey, !userDefaultsKey.isEmpty {
             return false
         }
-        
+
         // Then check Keychain as backup
         let keychainKey = KeychainService().getApiKey(for: .serper)
         return keychainKey == nil || keychainKey?.isEmpty == true
@@ -67,31 +75,31 @@ public struct ResearchAgent: Agent {
     public init(serperApiKey: String? = nil) {
         // Try to get API key from UserDefaults first
         var apiKey = UserDefaults.serperApiKey
-        
+
         // If not in UserDefaults, try Keychain
         if apiKey == nil || apiKey?.isEmpty == true {
             apiKey = KeychainService().getApiKey(for: .serper)
-            
+
             // If we found a key in Keychain, sync it to UserDefaults
             if let apiKey = apiKey, !apiKey.isEmpty {
                 UserDefaults.serperApiKey = apiKey
             }
         }
-        
+
         // If explicit API key is provided, use that instead
         if let serperApiKey = serperApiKey, !serperApiKey.isEmpty {
             apiKey = serperApiKey
         }
-        
+
         setupTools(with: apiKey)
     }
-    
+
     mutating func setupTools(with apiKey: String?) {
         if let apiKey, !apiKey.isEmpty {
             // Update both UserDefaults and Keychain
             UserDefaults.serperApiKey = apiKey
             KeychainService().saveApiKey(apiKey: apiKey, for: .serper)
-            
+
             self.tools = [
                 SerperTool(apiKey: apiKey)
             ]
@@ -99,12 +107,12 @@ public struct ResearchAgent: Agent {
             self.tools = []
         }
     }
-    
+
     // Method to update API key
     mutating func updateApiKey(_ apiKey: String) {
         setupTools(with: apiKey)
     }
-    
+
     // Check if the agent has a valid API key
     var hasValidApiKey: Bool {
         return !isApiKeyMissing

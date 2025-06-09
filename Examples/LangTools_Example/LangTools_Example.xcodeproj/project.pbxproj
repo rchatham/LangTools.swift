@@ -44,6 +44,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		B17671D22DF7852A009503E4 /* WebScrapingAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebScrapingAgent.swift; sourceTree = "<group>"; };
+		B17671FF2DF78C8A009503E4 /* WebScraperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebScraperService.swift; sourceTree = "<group>"; };
 		B19FD1452DD54DEB00E7BEB5 /* CalendarService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarService.swift; sourceTree = "<group>"; };
 		B19FD14B2DD54DEB00E7BEB5 /* SerperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerperService.swift; sourceTree = "<group>"; };
 		B19FD14F2DD54DEB00E7BEB5 /* ToolSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolSettings.swift; sourceTree = "<group>"; };
@@ -154,6 +156,7 @@
 				B19FD1B12DD683A200E7BEB5 /* KeychainService.swift */,
 				B19FD14B2DD54DEB00E7BEB5 /* SerperService.swift */,
 				B19FD1452DD54DEB00E7BEB5 /* CalendarService.swift */,
+				B17671FF2DF78C8A009503E4 /* WebScraperService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -172,6 +175,7 @@
 				B19FD1B22DD683C900E7BEB5 /* CalendarAgent.swift */,
 				B19FD1B32DD683C900E7BEB5 /* ReminderAgent.swift */,
 				B19FD1B42DD683C900E7BEB5 /* ResearchAgent.swift */,
+				B17671D22DF7852A009503E4 /* WebScrapingAgent.swift */,
 			);
 			path = Agents;
 			sourceTree = "<group>";
