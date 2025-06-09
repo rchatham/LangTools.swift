@@ -4,19 +4,15 @@
 //  Created by Reid Chatham on 3/31/23.
 //
 
+import Agents
 import Foundation
 import LangTools
-import OpenAI
-import Anthropic
-import XAI
-import Gemini
-import Ollama
-import Agents
-import SwiftUI
+
+var useMultiAgent: Bool = false
 
 @Observable
-public class MessageService {
-    public let networkClient: NetworkClient
+public class MessageService: Sendable {
+    public let networkClient: NetworkClientProtocol
     public var messages: [Message] = []
     var tools: [Tool]?
 
@@ -29,7 +25,7 @@ public class MessageService {
         return tools?.filter { ToolSettings.shared.isToolEnabled(name: $0.name) }
     }
 
-    public init(networkClient: NetworkClient = NetworkClient.shared, agents: [Agent]? = nil, tools: [Tool]? = nil) {
+    public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [Agent]? = nil, tools: [Tool]? = nil) {
         self.networkClient = networkClient
         self.tools = agents?.map { .init(agent: $0, eventHandler: handleAgentEvent) } + tools
     }
@@ -39,11 +35,11 @@ public class MessageService {
             messages.append(Message(text: message, role: .user))
         }
 
-        var currentMessages = messages
-        currentMessages.insert(Message(text: systemMessage(), role: .system), at: 0)
-
-        var content: String = ""
         do {
+            var currentMessages = messages
+            currentMessages.insert(Message(text: systemMessage(), role: .system), at: 0)
+
+            var content: String = ""
             for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: filteredTools) {
                 content += chunk
                 guard let last = messages.last else { continue }
@@ -60,7 +56,7 @@ public class MessageService {
             }
         } catch {
             if messages.last?.isAssistant ?? false {
-                // TODO: - Should mark that the last message as errored
+                // TODO: - Should mark the last message as errored
             } else {
                 // remove last user message
                 await MainActor.run {
@@ -98,15 +94,6 @@ extension MessageService {
                 )
 
                 messages.insert(message, for: agent)
-//
-//            case .agentHandoff(let agent, let to, let reason):
-//                let message = Message.createHandoffEvent(
-//                    fromAgent: agent,
-//                    toAgent: to,
-//                    reason: reason
-//                )
-//
-//                messages.insert(message, for: agent)
 
             case .toolCalled(let agent, let tool, let args):
                 let message = Message.createToolCallEvent(
@@ -121,7 +108,7 @@ extension MessageService {
                 guard let result else { break }
                 let message = Message.createToolReturnedEvent(
                     agentName: agent,
-                    result: result // ?? "Missing agent result."
+                    result: result  // ?? "Missing agent result."
                 )
 
                 messages.insert(message, for: agent)

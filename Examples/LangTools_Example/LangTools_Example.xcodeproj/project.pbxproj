@@ -60,7 +60,6 @@
 		B19FD1C12DD683D600E7BEB5 /* Utilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utilities.swift; sourceTree = "<group>"; };
 		B19FD1C32DD683D800E7BEB5 /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
 		B19FD1C42DD683D800E7BEB5 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
-		B19FD1C52DD683D800E7BEB5 /* LangToolchain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LangToolchain.swift; sourceTree = "<group>"; };
 		B19FD1C62DD683D800E7BEB5 /* MessageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageService.swift; sourceTree = "<group>"; };
 		B19FD1C72DD683D800E7BEB5 /* NetworkClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkClient.swift; sourceTree = "<group>"; };
 		B19FD1C82DD683D800E7BEB5 /* OllamaService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaService.swift; sourceTree = "<group>"; };
@@ -210,7 +209,6 @@
 			children = (
 				B19FD1C32DD683D800E7BEB5 /* AudioPlayer.swift */,
 				B19FD1C42DD683D800E7BEB5 /* KeychainService.swift */,
-				B19FD1C52DD683D800E7BEB5 /* LangToolchain.swift */,
 				B19FD1C62DD683D800E7BEB5 /* MessageService.swift */,
 				B19FD1C72DD683D800E7BEB5 /* NetworkClient.swift */,
 				B19FD1C82DD683D800E7BEB5 /* OllamaService.swift */,

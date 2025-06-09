@@ -1,6 +1,5 @@
 //
 //  Utilities.swift
-//  LangTools_Example
 //
 //  Created by Reid Chatham on 11/21/24.
 //

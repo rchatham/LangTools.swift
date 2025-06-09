@@ -37,7 +37,7 @@ class MessageService: ObservableObject {
                 name: "getAnswerToUniverse",
                 description: "The answer to the universe, life, and everything.",
                 parameters: .init(),
-                callback: { _, _ in
+                callback: { _,_ in
                     "42"
                 })),
             .function(.init(

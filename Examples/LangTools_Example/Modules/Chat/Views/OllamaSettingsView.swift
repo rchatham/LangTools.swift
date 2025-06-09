@@ -9,10 +9,6 @@
 import SwiftUI
 import Ollama
 
-// OllamaService extension to add connection checking and URL updating
-extension OllamaService {
-}
-
 struct OllamaSettingsView: View {
     @StateObject private var viewModel = ViewModel()
     @Environment(\.dismiss) private var dismiss

@@ -42,7 +42,7 @@ public struct ChatSettingsView: View {
         mobileLayout
         #endif
     }
-    
+
     // macOS-specific layout
     private var macOSLayout: some View {
         HStack(spacing: 0) {
@@ -67,7 +67,7 @@ public struct ChatSettingsView: View {
                     }
                 }
                 .listStyle(PlainListStyle())
-                
+
                 Spacer()
             }
             .frame(width: 200)
@@ -75,10 +75,10 @@ public struct ChatSettingsView: View {
             #if os(macOS)
             .background(colorScheme == .dark ? Color(.controlBackgroundColor).opacity(0.5) : Color(.windowBackgroundColor).opacity(0.5))
             #endif
-            
+
             // Divider
             Divider()
-            
+
             // Content area
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -96,9 +96,9 @@ public struct ChatSettingsView: View {
                     }
 
                     Spacer()
-                    
+
                     Divider()
-                    
+
                     actionsSection
                         .padding(.vertical, 8)
                 }
@@ -110,9 +110,7 @@ public struct ChatSettingsView: View {
             #endif
         }
         .frame(minWidth: 700, minHeight: 500)
-        .onAppear {
-            viewModel.loadSettings()
-        }
+        .onAppear { viewModel.loadSettings() }
         .onDisappear {
             viewModel.saveSettings()
             viewModel.saveToolSettings()
@@ -126,9 +124,8 @@ public struct ChatSettingsView: View {
         }
         #endif
         .enterAPIKeyAlert(isPresented: $viewModel.enterApiKey, apiKey: $viewModel.apiKeyInputText)
-        .enterSerperAPIKeyAlert(isPresented: $viewModel.enterSerperApiKey, apiKey: $viewModel.serperApiKeyInputText)
     }
-    
+
     // iOS/iPadOS layout (unchanged)
     private var mobileLayout: some View {
         Form {
@@ -157,7 +154,7 @@ public struct ChatSettingsView: View {
                     }
                 }
             }
-            
+
             #if !os(watchOS) && !os(tvOS)
             Section(header: Text("Local Models")) {
                 Button(action: {
@@ -176,14 +173,6 @@ public struct ChatSettingsView: View {
 
             Button("Save Settings") { viewModel.saveSettings() }
             Button("Update API Key") { viewModel.enterApiKey = true }
-            
-            if viewModel.toolSettings.researchToolEnabled {
-                Button(UserDefaults.serperApiKey == nil || UserDefaults.serperApiKey?.isEmpty == true 
-                      ? "Add Serper API Key" : "Update Serper API Key") { 
-                    viewModel.enterSerperApiKey = true 
-                }
-            }
-            
             Button("Clear messages", role: .destructive) { viewModel.clearMessages() }
 
             Section(header: Text("AI Tools")) {
@@ -208,29 +197,9 @@ public struct ChatSettingsView: View {
                     viewModel.toolSettings.resetToDefaults()
                 }
             }
-
-            Section(header: Text("Advanced Parameters")) {
-                HStack {
-                    Text("Max Tokens")
-                    Spacer()
-                    TextField("Max Tokens", value: $viewModel.maxTokens, formatter: NumberFormatter())
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 100)
-                }
-
-                HStack {
-                    Text("Temperature")
-                    Spacer()
-                    TextField("Temperature", value: $viewModel.temperature, formatter: NumberFormatter())
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 100)
-                }
-            }
         }
         .navigationTitle("Settings")
-        .onAppear {
-            viewModel.loadSettings()
-        }
+        .onAppear { viewModel.loadSettings() }
         .onDisappear {
             viewModel.saveSettings()
             viewModel.saveToolSettings()
@@ -242,28 +211,27 @@ public struct ChatSettingsView: View {
             OllamaSettingsView()
         }
         .enterAPIKeyAlert(isPresented: $viewModel.enterApiKey, apiKey: $viewModel.apiKeyInputText)
-        .enterSerperAPIKeyAlert(isPresented: $viewModel.enterSerperApiKey, apiKey: $viewModel.serperApiKeyInputText)
     }
-    
+
     // MARK: - macOS Detail Views
-    
+
     private var generalSettingsView: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Model Selection")
                 .font(.title2)
                 .fontWeight(.semibold)
-            
+
             Divider()
-            
+
             VStack(alignment: .leading, spacing: 12) {
                 Text("Active Model")
                     .font(.headline)
-                
+
                 #if !os(watchOS) && !os(tvOS)
                 // Force refresh when OllamaService updates its models
                 // Note: OllamaService might not be available on all platforms
                 #endif
-                
+
                 GroupBox {
                     VStack(alignment: .leading, spacing: 16) {
                         Picker("", selection: $viewModel.model) {
@@ -273,51 +241,51 @@ public struct ChatSettingsView: View {
                         }
                         .pickerStyle(.menu)
                         .frame(maxWidth: 400)
-                        
+
                         Divider()
-                        
+
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Model Info")
                                 .font(.headline)
                                 .foregroundColor(.secondary)
-                            
+
                             Text(modelDescription(for: viewModel.model))
                                 .font(.body)
                         }
                     }
                     .padding(8)
                 }
-                
+
                 Button("Update API Key") { viewModel.enterApiKey = true }
                 .buttonStyle(.bordered)
                 .padding(.top, 8)
             }
         }
     }
-    
+
     private var systemPromptSettingsView: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("System Prompt")
                 .font(.title2)
                 .fontWeight(.semibold)
-            
+
             Divider()
-            
+
             VStack(alignment: .leading, spacing: 12) {
                 Text("Instructions for the AI")
                     .font(.headline)
-                
+
                 Text("The system prompt provides instructions to the AI that guide its behavior. This message sets the context for how the AI should respond.")
                     .font(.body)
                     .foregroundColor(.secondary)
                     .padding(.bottom, 8)
-                
+
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Current System Prompt")
                             .font(.headline)
                             .foregroundColor(.secondary)
-                        
+
                         ScrollView {
                             Text(viewModel.systemMessage)
                                 .font(.system(.body, design: .monospaced))
@@ -334,14 +302,14 @@ public struct ChatSettingsView: View {
                     }
                     .padding(8)
                 }
-                
+
                 HStack(spacing: 16) {
                     Button(action: {
                         viewModel.systemMessage = "You are a helpful AI assistant."
                     }) {
                         Text("Reset to Default")
                     }
-                    
+
                     Button(action: {
                         isEditingSystemMessage = true
                     }) {
@@ -354,36 +322,36 @@ public struct ChatSettingsView: View {
             }
         }
     }
-    
+
     private var advancedSettingsView: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Advanced Parameters")
                 .font(.title2)
                 .fontWeight(.semibold)
-            
+
             Divider()
-            
+
             VStack(alignment: .leading, spacing: 24) {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("Max Tokens")
                             .font(.headline)
-                        
+
                         Text("Maximum number of tokens to generate in the response. Higher values allow for longer outputs, but may increase processing time.")
                             .font(.body)
                             .foregroundColor(.secondary)
-                        
+
                         HStack {
                             TextField("", value: $viewModel.maxTokens, formatter: NumberFormatter())
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
                                 .frame(width: 80)
-                            
+
                             Slider(value: Binding(
                                 get: { Double(viewModel.maxTokens) },
                                 set: { viewModel.maxTokens = Int($0) }
                             ), in: 0...4096, step: 128)
                             .frame(maxWidth: 400)
-                            
+
                             Text("\(viewModel.maxTokens)")
                                 .monospacedDigit()
                                 .frame(width: 60)
@@ -391,24 +359,24 @@ public struct ChatSettingsView: View {
                     }
                     .padding(8)
                 }
-                
+
                 GroupBox {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("Temperature")
                             .font(.headline)
-                        
+
                         Text("Controls randomness in the response. Higher values (closer to 1) produce more creative results, while lower values (closer to 0) are more focused and deterministic.")
                             .font(.body)
                             .foregroundColor(.secondary)
-                        
+
                         HStack {
                             TextField("", value: $viewModel.temperature, formatter: NumberFormatter())
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
                                 .frame(width: 80)
-                            
+
                             Slider(value: $viewModel.temperature, in: 0...1, step: 0.01)
                             .frame(maxWidth: 400)
-                            
+
                             Text(String(format: "%.2f", viewModel.temperature))
                                 .monospacedDigit()
                                 .frame(width: 60)
@@ -419,24 +387,24 @@ public struct ChatSettingsView: View {
             }
         }
     }
-    
+
     private var localModelsSettingsView: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Local Models")
                 .font(.title2)
                 .fontWeight(.semibold)
-            
+
             Divider()
-            
+
             VStack(alignment: .leading, spacing: 12) {
                 Text("Manage Ollama Models")
                     .font(.headline)
-                
+
                 Text("Ollama allows you to run large language models locally on your Mac. Configure and manage your local models from here.")
                     .font(.body)
                     .foregroundColor(.secondary)
                     .padding(.bottom, 8)
-                
+
                 #if !os(watchOS) && !os(tvOS)
                 Button(action: {
                     showingOllamaSettings = true
@@ -444,7 +412,7 @@ public struct ChatSettingsView: View {
                     HStack {
                         Image(systemName: "cpu")
                             .frame(width: 24, height: 24)
-                        
+
                         Text("Configure Ollama Models")
                             .font(.body)
                     }
@@ -467,11 +435,11 @@ public struct ChatSettingsView: View {
             }
         }
     }
-    
+
     private var actionsSection: some View {
         HStack {
             Spacer()
-            
+
             Button(action: {
                 viewModel.saveSettings()
             }) {
@@ -480,7 +448,7 @@ public struct ChatSettingsView: View {
             }
             .keyboardShortcut("s", modifiers: [.command])
             .buttonStyle(.borderedProminent)
-            
+
             Button(action: {
                 viewModel.clearMessages()
             }) {
@@ -491,7 +459,7 @@ public struct ChatSettingsView: View {
             .foregroundColor(.red)
         }
     }
-    
+
     // Helper function to provide model descriptions
     private func modelDescription(for model: Model) -> String {
         switch model {
@@ -520,7 +488,7 @@ struct SystemMessageEditor: View {
     @Environment(\.colorScheme) private var colorScheme
     @Binding var systemMessage: String
     @State private var editedMessage: String = ""
-    
+
     var body: some View {
         #if os(macOS)
         macOSEditor
@@ -528,19 +496,19 @@ struct SystemMessageEditor: View {
         mobileEditor
         #endif
     }
-    
+
     private var macOSEditor: some View {
         VStack(spacing: 20) {
             Text("Edit System Message")
                 .font(.title2)
                 .fontWeight(.semibold)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            
+
             Text("The system message provides instructions to the AI that guide its behavior.")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            
+
             TextEditor(text: $editedMessage)
                 .font(.body)
                 .padding(8)
@@ -553,13 +521,13 @@ struct SystemMessageEditor: View {
                         .stroke(Color.blue.opacity(0.5), lineWidth: editedMessage != systemMessage ? 2 : 0)
                 )
                 .frame(minHeight: 250)
-            
+
             HStack(spacing: 16) {
                 HStack {
                     Text("Helpful defaults:")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    
+
                     Button(action: {
                         editedMessage = "You are a helpful AI assistant."
                     }) {
@@ -567,7 +535,7 @@ struct SystemMessageEditor: View {
                             .font(.caption)
                     }
                     .buttonStyle(.borderless)
-                    
+
                     Button(action: {
                         editedMessage = "You are a software development assistant skilled in SwiftUI, Swift, and iOS development. Provide concise, practical code examples and explanations."
                     }) {
@@ -576,14 +544,14 @@ struct SystemMessageEditor: View {
                     }
                     .buttonStyle(.borderless)
                 }
-                
+
                 Spacer()
-                
+
                 Button("Cancel") {
                     dismiss()
                 }
                 .keyboardShortcut(.escape, modifiers: [])
-                
+
                 Button("Save") {
                     systemMessage = editedMessage
                     dismiss()
@@ -602,7 +570,7 @@ struct SystemMessageEditor: View {
             editedMessage = systemMessage
         }
     }
-    
+
     private var mobileEditor: some View {
         NavigationView {
             VStack {
@@ -645,13 +613,11 @@ struct SystemMessageEditor: View {
 extension ChatSettingsView {
     @MainActor public class ViewModel: ObservableObject {
         @Published var enterApiKey = false
-        @Published var enterSerperApiKey = false
         @Published var model: Model = UserDefaults.model
         @Published var maxTokens = UserDefaults.maxTokens
         @Published var temperature = UserDefaults.temperature
         @Published var systemMessage = UserDefaults.systemMessage
         @Published var apiKeyInputText: String = ""
-        @Published var serperApiKeyInputText: String = ""
         @Published var toolSettings = ToolSettings.shared
 
         let clearMessages: () -> Void
@@ -665,7 +631,6 @@ extension ChatSettingsView {
             maxTokens = UserDefaults.maxTokens
             temperature = UserDefaults.temperature
             systemMessage = UserDefaults.systemMessage
-            serperApiKeyInputText = UserDefaults.serperApiKey ?? ""
         }
 
         func saveSettings() {
@@ -737,69 +702,50 @@ extension ChatSettingsView {
 
                                 Divider()
 
-                                VStack(alignment: .leading, spacing: 4) {
-                                    toolToggleRow(
-                                        title: "Research",
-                                        description: "Perform web research on topics using internet sources",
-                                        icon: "magnifyingglass",
-                                        isOn: $viewModel.toolSettings.researchToolEnabled
-                                    )
-                                    
-                                    if viewModel.toolSettings.researchToolEnabled {
-                                        HStack {
-                                            Text(UserDefaults.serperApiKey == nil || UserDefaults.serperApiKey?.isEmpty == true
-                                                ? "Serper API key: Not set"
-                                                : "Serper API key: Configured")
-                                                .font(.caption)
-                                                .foregroundColor(UserDefaults.serperApiKey == nil || UserDefaults.serperApiKey?.isEmpty == true
-                                                    ? .red : .green)
-                                                .padding(.leading, 36)
-                                            
-                                            Button(UserDefaults.serperApiKey == nil || UserDefaults.serperApiKey?.isEmpty == true
-                                                ? "Add API Key" : "Update API Key") {
-                                                viewModel.enterSerperApiKey = true
-                                            }
-                                            .buttonStyle(.borderless)
-                                            .font(.caption)
-                                        }
-                                    }
-                                }
+                                toolToggleRow(
+                                    title: "Research",
+                                    description: "Perform web research on topics using internet sources",
+                                    icon: "magnifyingglass",
+                                    isOn: $viewModel.toolSettings.researchToolEnabled
+                                )
 
-//                                Divider()
-//
-//                                toolToggleRow(
-//                                    title: "Maps",
-//                                    description: "Location search, directions, and travel time estimates",
-//                                    icon: "map",
-//                                    isOn: $viewModel.toolSettings.mapsToolEnabled
-//                                )
-//
-//                                Divider()
-//
-//                                toolToggleRow(
-//                                    title: "Contacts",
-//                                    description: "Create, search, update, or delete contacts",
-//                                    icon: "person.crop.circle",
-//                                    isOn: $viewModel.toolSettings.contactsToolEnabled
-//                                )
-//
-//                                Divider()
-//
-//                                toolToggleRow(
-//                                    title: "Weather",
-//                                    description: "Get current weather information for locations",
-//                                    icon: "cloud.sun.fill",
-//                                    isOn: $viewModel.toolSettings.weatherToolEnabled
-//                                )
-//
-//                                Divider()
-//
-//                                toolToggleRow(
-//                                    title: "Files",
-//                                    description: "Manage files and directories on your device",
-//                                    icon: "folder",
-//                                    isOn: $viewModel.toolSettings.filesToolEnabled
-//                                )
+                                Divider()
+
+                                toolToggleRow(
+                                    title: "Maps",
+                                    description: "Location search, directions, and travel time estimates",
+                                    icon: "map",
+                                    isOn: $viewModel.toolSettings.mapsToolEnabled
+                                )
+
+                                Divider()
+
+                                toolToggleRow(
+                                    title: "Contacts",
+                                    description: "Create, search, update, or delete contacts",
+                                    icon: "person.crop.circle",
+                                    isOn: $viewModel.toolSettings.contactsToolEnabled
+                                )
+
+                                Divider()
+
+                                toolToggleRow(
+                                    title: "Weather",
+                                    description: "Get current weather information for locations",
+                                    icon: "cloud.sun.fill",
+                                    isOn: $viewModel.toolSettings.weatherToolEnabled
+                                )
+
+                                #if DEBUG
+                                Divider()
+
+                                toolToggleRow(
+                                    title: "Files",
+                                    description: "Manage files and directories on your device",
+                                    icon: "folder",
+                                    isOn: $viewModel.toolSettings.filesToolEnabled
+                                )
+                                #endif
                             }
                             .padding(8)
                         }

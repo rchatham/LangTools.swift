@@ -7,8 +7,6 @@
 
 import Foundation
 import LangTools
-import Anthropic
-import OpenAI
 import Agents
 
 public struct ResearchAgent: Agent {

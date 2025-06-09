@@ -10,30 +10,23 @@ import OpenAI
 import Anthropic
 import Ollama
 
-public final class Message: Codable, ObservableObject, Identifiable, Equatable, Hashable {
+public final class Message: Codable, Sendable, ObservableObject, Identifiable, Equatable, Hashable {
     public let uuid: UUID
-    public let role: Role
-    @Published var contentType: ContentType
-    var imageDetail: ImageDetail?
+    public var role: Role
+    @Published public var contentType: ContentType
+    public var imageDetail: ImageDetail?
     public var id: UUID { uuid }
 
     public var text: String? {
         switch contentType {
-        case .null:
-            return nil
-        case .string(let str):
-            return str
-        case .array(let arr):
-            return arr.joined(separator: "\n")
-        case .agentEvent(let content):
-            return content.formattedText
+        case .null: return nil
+        case .string(let str): return str
+        case .array(let arr): return arr.joined(separator: "\n")
+        case .agentEvent(let content): return content.formattedText
         }
     }
 
-    public init(uuid: UUID = UUID(),
-         role: Role,
-         contentType: ContentType = .null,
-         imageDetail: ImageDetail? = nil) {
+    public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil) {
         self.uuid = uuid
         self.role = role
         self.contentType = contentType
@@ -41,14 +34,10 @@ public final class Message: Codable, ObservableObject, Identifiable, Equatable, 
     }
 
     // Helper initializer for regular messages
-    convenience init(text: String, role: Role) {
-        self.init(role: role, contentType: .string(text))
-    }
+    public convenience init(text: String, role: Role) { self.init(role: role, contentType: .string(text)) }
 
     // Coding keys for encoding/decoding
-    enum CodingKeys: CodingKey {
-        case uuid, role, contentType, imageDetail
-    }
+    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail }
 
     public required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -108,52 +97,18 @@ extension Message {
 //    case system, assistant, user
 //}
 
-extension Array<Message> {
-    func toOpenAIMessages() -> [OpenAI.Message] {
-        return self.map { message in
-            OpenAI.Message(role: message.role, content: message.text ?? "")
-        }
-    }
-    func toAnthropicMessages() -> [Anthropic.Message] {
-        return self.filter { $0.role != .system }.map { message in
-            Anthropic.Message(role: message.role.toAnthropicRole(), content: message.text ?? "")
-        }
-    }
-    func createAnthropicSystemMessage() -> String? {
-        return self.filter { $0.isSystem }.reduce("") { (!$0.isEmpty ? $0 + "\n---\n" : "") + ($1.text ?? "") }
-    }
-    func toOllamaMessages() -> [Ollama.Message] {
-        return self.map { message in
-            Ollama.Message(role: message.role.toOllamaRole(), content: message.text ?? "")
-        }
-    }
+public extension Array<Message> {
+    func toOpenAIMessages() -> [OpenAI.Message] { map { .init(role: $0.role, content: $0.text ?? "") } }
+    func toAnthropicMessages() -> [Anthropic.Message] { filter { $0.role != .system }.map { .init(role: .init($0.role), content: $0.text ?? "") } }
+    func createAnthropicSystemMessage() -> String? { filter { $0.isSystem }.reduce("") { (!$0.isEmpty ? $0 + "\n---\n" : "") + ($1.text ?? "") } }
+    func toOllamaMessages() -> [Ollama.Message] { map { .init(role: .init($0.role), content: $0.text ?? "") } }
 }
 
-extension Array<Tool> {
-    func convertTools<Tool: LangToolsTool>() -> [Tool] {
-        return self.map { .init($0) }
-    }
+public extension Array<Tool> {
+    func convertTools<Tool: LangToolsTool>() -> [Tool] { return self.map { .init($0) } }
 }
 
-extension OpenAI.Message.Role {
-    func toAnthropicRole() -> Anthropic.Role {
-        switch self {
-        case .assistant: return .assistant
-        case .user: return .user
-        default: fatalError("role not handled ya fool!")
-        }
-    }
-    func toOllamaRole() -> Ollama.Role {
-        switch self {
-        case .assistant: .assistant
-        case .user: .user
-        case .tool: .tool
-        case .system, .developer: .system
-        }
-    }
-}
-
-extension OpenAI.ChatCompletionRequest.ToolChoice {
+public extension OpenAI.ChatCompletionRequest.ToolChoice {
     func toAnthropicToolChoice() -> Anthropic.MessageRequest.ToolChoice? {
         switch self {
         case .none: return nil
@@ -164,23 +119,23 @@ extension OpenAI.ChatCompletionRequest.ToolChoice {
     }
 }
 
+// TODO: - support more types of content. i.e. images, video, audio, pdf, etc.
 public enum ContentType: Codable, Equatable, Hashable {
     case null
     case string(String)
+    // TODO: - support more types of content for array
     case array([String])
+    // TODO: - rename this as thread?
     case agentEvent(AgentEventContent)
 
     // Custom coding keys for encoding/decoding
-    private enum CodingKeys: String, CodingKey {
-        case type, content, children
-    }
+    private enum CodingKeys: String, CodingKey { case type, content, children }
 
     // Custom encoding
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .null:
-            try container.encode("null", forKey: .type)
+        case .null: try container.encode("null", forKey: .type)
         case .string(let str):
             try container.encode("string", forKey: .type)
             try container.encode(str, forKey: .content)
@@ -199,8 +154,7 @@ public enum ContentType: Codable, Equatable, Hashable {
         let type = try container.decode(String.self, forKey: .type)
 
         switch type {
-        case "null":
-            self = .null
+        // case "null": self = .null
         case "string":
             let content = try container.decode(String.self, forKey: .content)
             self = .string(content)
@@ -210,8 +164,7 @@ public enum ContentType: Codable, Equatable, Hashable {
         case "agentEvent":
             let content = try container.decode(AgentEventContent.self, forKey: .content)
             self = .agentEvent(content)
-        default:
-            self = .null
+        default: self = .null
         }
     }
 
@@ -257,9 +210,12 @@ public struct AgentEventContent: Codable, Equatable, Hashable {
         "\(type.icon) Agent '\(agentName)' \(details)"
     }
 
+    // TODO: - Re-evaluate the following implementation, it is very coupled with
+    // the insert function for [Message] and has implications for the way agent
+    // interactions are displayed in ChatUI.
     var hasCompleted: Bool {
-        if type == .completed || type == .failed { return true }
-        return children.contains { if case .agentEvent(let content) = $0.contentType { content.type == .completed || content.type == .failed } else { false } }
+        if [.completed, .failed].contains(type) { return true }
+        return children.contains { if case .agentEvent(let content) = $0.contentType { [.completed, .failed].contains(content.type) } else { false } }
     }
 
     public func hash(into hasher: inout Hasher) {
@@ -273,7 +229,6 @@ public struct AgentEventContent: Codable, Equatable, Hashable {
 public enum AgentEventType: String, Codable {
     case started
     case delegated
-    case handoff
     case toolCalled
     case toolCompleted
     case completed
@@ -284,7 +239,6 @@ public enum AgentEventType: String, Codable {
         switch self {
         case .started: return "🤖"
         case .delegated: return "🔄"
-        case .handoff: return "🤝"
         case .toolCalled: return "🛠️"
         case .toolCompleted: return "✅"
         case .completed: return "🏁"
@@ -296,18 +250,8 @@ public enum AgentEventType: String, Codable {
 
 // Factory methods for agent events
 extension Message {
-    static func agentEvent(
-        type: AgentEventType,
-        agentName: String,
-        details: String,
-        children: [Message] = []
-    ) -> Message {
-        let content = AgentEventContent(
-            type: type,
-            agentName: agentName,
-            details: details,
-            children: children
-        )
+    static func agentEvent(type: AgentEventType, agentName: String, details: String, children: [Message] = []) -> Message {
+        let content = AgentEventContent(type: type, agentName: agentName, details: details, children: children)
         return Message(role: .system, contentType: .agentEvent(content))
     }
 
@@ -329,20 +273,6 @@ extension Message {
             type: .delegated,
             agentName: fromAgent,
             details: "delegated to '\(toAgent)': \(reason)",
-            children: children
-        )
-    }
-
-    static func createHandoffEvent(
-        fromAgent: String,
-        toAgent: String,
-        reason: String,
-        children: [Message] = []
-    ) -> Message {
-        .agentEvent(
-            type: .handoff,
-            agentName: fromAgent,
-            details: "handed off to '\(toAgent)': \(reason)",
             children: children
         )
     }
@@ -381,7 +311,7 @@ extension Message {
             details: (is_error ? "failed: " : "completed: ") + result
         )
     }
-    
+
     static func createErrorEvent(
         agentName: String,
         error: String

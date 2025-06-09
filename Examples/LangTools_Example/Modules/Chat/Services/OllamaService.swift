@@ -1,6 +1,5 @@
 //
 //  OllamaService.swift
-//  App
 //
 //  Created by Reid Chatham on 2/25/25.
 //
