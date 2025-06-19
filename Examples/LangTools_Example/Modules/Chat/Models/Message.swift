@@ -15,6 +15,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
     public var role: Role
     @Published public var contentType: ContentType
     public var imageDetail: ImageDetail?
+    public let createdAt: Date
     public var id: UUID { uuid }
 
     public var text: String? {
@@ -26,18 +27,19 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         }
     }
 
-    public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil) {
+    public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil, createdAt: Date = Date()) {
         self.uuid = uuid
         self.role = role
         self.contentType = contentType
         self.imageDetail = imageDetail
+        self.createdAt = createdAt
     }
 
     // Helper initializer for regular messages
     public convenience init(text: String, role: Role) { self.init(role: role, contentType: .string(text)) }
 
     // Coding keys for encoding/decoding
-    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail }
+    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail, createdAt }
 
     public required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -45,6 +47,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         role = try container.decode(Role.self, forKey: .role)
         contentType = try container.decode(ContentType.self, forKey: .contentType)
         imageDetail = try container.decodeIfPresent(ImageDetail.self, forKey: .imageDetail)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -53,13 +56,15 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         try container.encode(role, forKey: .role)
         try container.encode(contentType, forKey: .contentType)
         try container.encodeIfPresent(imageDetail, forKey: .imageDetail)
+        try container.encode(createdAt, forKey: .createdAt)
     }
 
     public static func == (lhs: Message, rhs: Message) -> Bool {
         lhs.uuid == rhs.uuid &&
         lhs.role == rhs.role &&
         lhs.contentType == rhs.contentType &&
-        lhs.imageDetail == rhs.imageDetail
+        lhs.imageDetail == rhs.imageDetail &&
+        lhs.createdAt == rhs.createdAt
     }
 
     public func hash(into hasher: inout Hasher) {
@@ -67,6 +72,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         hasher.combine(role)
         hasher.combine(contentType)
         hasher.combine(imageDetail)
+        hasher.combine(createdAt)
     }
 }
 

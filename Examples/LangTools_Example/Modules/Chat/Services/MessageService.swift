@@ -47,7 +47,8 @@ public class MessageService: Sendable {
                     if chunk.isEmpty { continue }
                     content = chunk.trimingLeadingNewlines()
                 }
-                let message = Message(uuid: last.isAssistant ? last.uuid : UUID(), role: .assistant, contentType: .string(content.trimingTrailingNewlines()))
+                let messageUuid = last.isAssistant ? last.uuid : UUID()
+                let message = Message(uuid: messageUuid, role: .assistant, contentType: .string(content.trimingTrailingNewlines()))
 
                 await MainActor.run {
                     if last.uuid == message.uuid { messages[messages.count - 1] = message }
