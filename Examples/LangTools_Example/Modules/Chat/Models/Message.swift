@@ -206,13 +206,21 @@ public enum ImageDetail: String, Codable {
 }
 
 public struct AgentEventContent: Codable, Equatable, Hashable {
-    let type: AgentEventType
-    let agentName: String
-    let details: String
-    weak var parent: Message?
-    var children: [Message]
+    public let type: AgentEventType
+    public let agentName: String
+    public let details: String
+    public weak var parent: Message?
+    public var children: [Message]
+    
+    public init(type: AgentEventType, agentName: String, details: String, parent: Message? = nil, children: [Message] = []) {
+        self.type = type
+        self.agentName = agentName
+        self.details = details
+        self.parent = parent
+        self.children = children
+    }
 
-    var formattedText: String {
+    public var formattedText: String {
         "\(type.icon) Agent '\(agentName)' \(details)"
     }
 
@@ -241,7 +249,7 @@ public enum AgentEventType: String, Codable {
     case failed
     case error
 
-    var icon: String {
+    public var icon: String {
         switch self {
         case .started: return "🤖"
         case .delegated: return "🔄"
@@ -256,7 +264,7 @@ public enum AgentEventType: String, Codable {
 
 // Factory methods for agent events
 extension Message {
-    static func agentEvent(type: AgentEventType, agentName: String, details: String, children: [Message] = []) -> Message {
+    public static func agentEvent(type: AgentEventType, agentName: String, details: String, children: [Message] = []) -> Message {
         let content = AgentEventContent(type: type, agentName: agentName, details: details, children: children)
         return Message(role: .system, contentType: .agentEvent(content))
     }
