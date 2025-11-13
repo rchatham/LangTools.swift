@@ -103,7 +103,7 @@ public enum LangToolError: Error {
     case jsonParsingFailure(Error)
     case responseUnsuccessful(statusCode: Int, Error?)
     case apiError(Codable & Error)
-    case failiedToDecodeStream(buffer: String, error: Error)
+    case failedToDecodeStream(buffer: String, error: Error)
 }
 ```
 

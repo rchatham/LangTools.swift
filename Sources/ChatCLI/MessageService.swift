@@ -73,7 +73,7 @@ class MessageService: ObservableObject {
             if let error { handleLangToolApiError(error) }
         case .streamParsingFailure:
             print("Failed to parse streaming response")
-        case .failiedToDecodeStream(buffer: let buffer, error: let error):
+        case .failedToDecodeStream(buffer: let buffer, error: let error):
             print("Failed to decode stream: \(buffer), error: \(error.localizedDescription)")
         case .invalidContentType:
             print("Invalid content type")

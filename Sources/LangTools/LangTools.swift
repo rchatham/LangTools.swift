@@ -90,7 +90,7 @@ extension LangTools {
                     }
 
                     if let errorBuffer, !buffer.isEmpty {
-                        throw LangToolError.failiedToDecodeStream(buffer: buffer, error: errorBuffer)
+                        throw LangToolError.failedToDecodeStream(buffer: buffer, error: errorBuffer)
                     }
 
                     if let completionRequest = try await completionRequest(request: request, response: try request.update(response: combinedResponse)) {
@@ -131,7 +131,7 @@ public enum LangToolError: Error {
     case jsonParsingFailure(Error)
     case responseUnsuccessful(statusCode: Int, Error?)
     case apiError(Codable & Error)
-    case failiedToDecodeStream(buffer: String, error: Error)
+    case failedToDecodeStream(buffer: String, error: Error)
 }
 
 // MARK: - Helpers
