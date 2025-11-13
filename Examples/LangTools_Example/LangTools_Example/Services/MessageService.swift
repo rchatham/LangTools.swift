@@ -22,118 +22,16 @@ class MessageService {
 
     init(networkClient: NetworkClient = NetworkClient.shared) {
         self.networkClient = networkClient
+        registerTools()
     }
 
-    var tools: [Tool]? {
-        return [
-            .init(
-                name: "getCurrentWeather",
-                description: "Get the current weather",
-                tool_schema: .init(
-                    properties: [
-                        "location": .init(
-                            type: "string",
-                            description: "The city and state, e.g. San Francisco, CA"),
-                        "format": .init(
-                            type: "string",
-                            enumValues: ["celsius", "fahrenheit"],
-                            description: "The temperature unit to use. Infer this from the users location.")
-                    ],
-                    required: ["location", "format"]),
-                callback: { [weak self] in
-                    self?.getCurrentWeather(location: $0["location"]!.stringValue!, format: $0["format"]!.stringValue!)
-                }),
-            .init(
-                name: "getAnswerToUniverse",
-                description: "The answer to the universe, life, and everything.",
-                tool_schema: .init(),
-                callback: { _ in
-                    "42"
-                }),
-            .init(
-                name: "getTopMichelinStarredRestaurants",
-                description: "Get the top Michelin starred restaurants near a location",
-                tool_schema: .init(
-                    properties: [
-                        "location": .init(
-                            type: "string",
-                            description: "The city and state, e.g. San Francisco, CA")
-                    ],
-                    required: ["location"]),
-                callback: { [weak self] in
-                    self?.getTopMichelinStarredRestaurants(location: $0["location"]!.stringValue!)
-                }),
+    // MARK: - Tool Management
+    var tools: [OpenAI.Tool]? {
+        return ToolManager.shared.generateTools()
+    }
 
-            // Calendar agent tool
-            .init(
-                name: "manage_calendar",
-                description: """
-                    Manage calendar events - create, read, update, or delete calendar events. 
-                    Can handle natural language requests like "Schedule a meeting tomorrow" or 
-                    "What's on my calendar next week?"
-                    """,
-                tool_schema: .init(
-                    properties: [
-                        "request": .init(
-                            type: "string",
-                            description: "The calendar-related request in natural language"
-                        )
-                    ],
-                    required: ["request"]),
-                callback: { [weak self] args in
-                    guard let request = args["request"]?.stringValue else {
-                        return "Invalid calendar request"
-                    }
-                    // TODO: - decide if this should spin off a separate async Task and add a message when it returns
-                    return await self?.handleCalendarRequest(request)
-                }),
-
-            // Reminder agent tool
-            .init(
-                name: "manage_reminders",
-                description: """
-                    Manage reminders - create, read, update, or complete reminders. create, edit, or update reminder lists. 
-                    Can handle natural language requests like "Remind me to call mom tomorrow" or 
-                    "What are my upcoming reminders?"
-                    """,
-                tool_schema: .init(
-                    properties: [
-                        "request": .init(
-                            type: "string",
-                            description: "The reminder-related request in natural language"
-                        )
-                    ],
-                    required: ["request"]),
-                callback: { [weak self] args in
-                    guard let request = args["request"]?.stringValue else {
-                        return "Invalid reminder request"
-                    }
-                    return await self?.handleReminderRequest(request)
-                }),
-
-            // Research agent tool
-            .init(
-                name: "perform_research",
-                description: """
-                    Perform in-depth research on topics using internet sources and AI analysis. \
-                    Can handle natural language requests like "Research quantum computing advances" or \
-                    "What are the latest developments in AI safety?"
-                    """,
-                tool_schema: .init(
-                    properties: [
-                        "request": .init(
-                            type: "string",
-                            description: "The research request in natural language"
-                        )
-                    ],
-                    required: ["request"]),
-                callback: { [weak self] args in
-                    guard let request = args["request"]?.stringValue else {
-                        return "Invalid research request"
-                    }
-                    return await self?.handleResearchRequest(request)
-                }),
-        ]
+    var filteredTools: [OpenAI.Tool]? {
+        return ToolManager.shared.filteredTools()
     }
 
     func send(message: String, stream: Bool = false) async throws {
@@ -146,10 +44,10 @@ class MessageService {
             currentMessages.insert(Message(text: UserDefaults.systemMessage, role: .system), at: 0)
         }
 
-        let toolChoice = (tools?.isEmpty ?? true) ? nil : OpenAI.ChatCompletionRequest.ToolChoice.auto
+        let toolChoice = (filteredTools?.isEmpty ?? true) ? nil : OpenAI.ChatCompletionRequest.ToolChoice.auto
         var content: String = ""
         do {
-            for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: tools, toolChoice: toolChoice) {
+            for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: filteredTools, toolChoice: toolChoice) {
                 content += chunk
                 guard let last = messages.last else { continue }
                 if !last.isAssistant {
@@ -235,6 +133,208 @@ class MessageService {
         } catch {
             return "Failed to handle request: \(error.localizedDescription)"
         }
+    }
+
+    func handleMapsRequest(_ request: String) async -> String {
+        // Placeholder until a dedicated maps agent is integrated
+        return "Maps request handling not implemented: \(request)"
+    }
+
+    func handleContactsRequest(_ request: String) async -> String {
+        // Placeholder until a dedicated contacts agent is integrated
+        return "Contacts request handling not implemented: \(request)"
+    }
+
+    func handleWeatherRequest(_ request: String) async -> String {
+        // Placeholder until a dedicated weather agent is integrated
+        return "Weather request handling not implemented: \(request)"
+    }
+
+    func handleFileSystemRequest(_ request: String) async -> String {
+        // Placeholder until a dedicated file system agent is integrated
+        return "File system request handling not implemented: \(request)"
+    }
+
+    // MARK: - Tool Registration
+    func registerTools() {
+        let toolConfigurations = createToolConfigurations()
+        ToolManager.shared.register(toolConfigurations)
+    }
+
+    private func createToolConfigurations() -> [ToolConfiguration] {
+        return [
+            // Calendar tool
+            ToolConfiguration(
+                id: "manage_calendar",
+                displayName: "Calendar",
+                description: "Create, read, update, or delete calendar events",
+                iconName: "calendar",
+                isAgent: true,
+                callback: { [weak self] args in
+                    guard let request = args["request"]?.stringValue else {
+                        return "Invalid calendar request"
+                    }
+                    return await self?.handleCalendarRequest(request)
+                },
+                toolSchema: .init(
+                    properties: [
+                        "request": .init(
+                            type: "string",
+                            description: "The calendar-related request in natural language"
+                        )
+                    ],
+                    required: ["request"]
+                )
+            ),
+            
+            // Reminders tool
+            ToolConfiguration(
+                id: "manage_reminders",
+                displayName: "Reminders",
+                description: "Create, read, update, or complete reminders",
+                iconName: "list.bullet.clipboard",
+                isAgent: true,
+                callback: { [weak self] args in
+                    guard let request = args["request"]?.stringValue else {
+                        return "Invalid reminder request"
+                    }
+                    return await self?.handleReminderRequest(request)
+                },
+                toolSchema: .init(
+                    properties: [
+                        "request": .init(
+                            type: "string",
+                            description: "The reminder-related request in natural language"
+                        )
+                    ],
+                    required: ["request"]
+                )
+            ),
+            
+            // Research tool
+            ToolConfiguration(
+                id: "perform_research",
+                displayName: "Research",
+                description: "Perform web research on topics using internet sources",
+                iconName: "magnifyingglass",
+                isAgent: true,
+                callback: { [weak self] args in
+                    guard let request = args["request"]?.stringValue else {
+                        return "Invalid research request"
+                    }
+                    return await self?.handleResearchRequest(request)
+                },
+                toolSchema: .init(
+                    properties: [
+                        "request": .init(
+                            type: "string",
+                            description: "The research request in natural language"
+                        )
+                    ],
+                    required: ["request"]
+                )
+            ),
+            
+            // Maps tool
+            ToolConfiguration(
+                id: "manage_maps",
+                displayName: "Maps",
+                description: "Location search, directions, and travel time estimates",
+                iconName: "map",
+                isAgent: true,
+                callback: { [weak self] args in
+                    guard let request = args["request"]?.stringValue else {
+                        return "Invalid maps request"
+                    }
+                    return await self?.handleMapsRequest(request)
+                },
+                toolSchema: .init(
+                    properties: [
+                        "request": .init(
+                            type: "string",
+                            description: "The map-related request in natural language"
+                        )
+                    ],
+                    required: ["request"]
+                )
+            ),
+            
+            // Contacts tool
+            ToolConfiguration(
+                id: "manage_contacts",
+                displayName: "Contacts",
+                description: "Create, search, update, or delete contacts",
+                iconName: "person.crop.circle",
+                isAgent: true,
+                callback: { [weak self] args in
+                    guard let request = args["request"]?.stringValue else {
+                        return "Invalid contacts request"
+                    }
+                    return await self?.handleContactsRequest(request)
+                },
+                toolSchema: .init(
+                    properties: [
+                        "request": .init(
+                            type: "string",
+                            description: "The contact-related request in natural language"
+                        )
+                    ],
+                    required: ["request"]
+                )
+            ),
+            
+            // Weather tool
+            ToolConfiguration(
+                id: "get_weather_information",
+                displayName: "Weather",
+                description: "Get weather information for locations",
+                iconName: "cloud.sun.fill",
+                isAgent: true,
+                callback: { [weak self] args in
+                    guard let request = args["request"]?.stringValue else {
+                        return "Invalid weather request"
+                    }
+                    return await self?.handleWeatherRequest(request)
+                },
+                toolSchema: .init(
+                    properties: [
+                        "request": .init(
+                            type: "string",
+                            description: "The weather-related request in natural language"
+                        )
+                    ],
+                    required: ["request"]
+                )
+            ),
+            
+            // Files tool
+            ToolConfiguration(
+                id: "manage_files",
+                displayName: "Files",
+                description: "Manage files and directories on your device",
+                iconName: "folder",
+                isAgent: true,
+                callback: { [weak self] args in
+                    guard let request = args["request"]?.stringValue else {
+                        return "Invalid file system request"
+                    }
+                    return await self?.handleFileSystemRequest(request)
+                },
+                toolSchema: .init(
+                    properties: [
+                        "request": .init(
+                            type: "string",
+                            description: "The file system-related request in natural language"
+                        )
+                    ],
+                    required: ["request"]
+                )
+            )
+        ]
+    }
+
+    func logAvailableTools() {
+        ToolManager.shared.logTools()
     }
 
     func deleteMessage(id: UUID) { messages.removeAll(where: { $0.uuid == id }) }
