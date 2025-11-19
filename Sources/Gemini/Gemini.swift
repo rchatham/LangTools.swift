@@ -51,6 +51,7 @@ public struct GeminiErrorResponse: Error, Codable {
 public enum GeminiModel: String, CaseIterable {
     // Base models
     case gemini2Flash = "gemini-2.0-flash-exp"
+    case gemini2FlashThinking = "gemini-2.0-flash-thinking-exp"
     case gemini15Flash = "gemini-1.5-flash"
     case gemini15Flash8B = "gemini-1.5-flash-8b"
     case gemini15Pro = "gemini-1.5-pro"
