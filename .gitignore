@@ -6,3 +6,7 @@ xcuserdata/
 DerivedData/
 .swiftpm/
 .netrc
+
+# Claude Code local settings
+.claude/
+CLAUDE.md
