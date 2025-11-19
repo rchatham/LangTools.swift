@@ -79,31 +79,21 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
 
     func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) -> any LangToolsChatRequest & LangToolsStreamableRequest {
         switch model {
-        case .anthropic(let model):
-            return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.convertTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
-        case .openAI(let model):
-            return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), /*n: 3,*/ stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice/*, choose: {_ in 2}*/)
-        case .xAI(let model):
-            return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice)
-        case .gemini(let model):
-            return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream/*, tools: tools?.convertTools(), tool_choice: toolChoice*/)
-        case .ollama(let model):
-            return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools?.convertTools())
+        case .anthropic(let model): return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.convertTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
+        case .openAI(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), /*n: 3,*/ stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice/*, choose: {_ in 2}*/)
+        case .xAI(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice)
+        case .gemini(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream/*, tools: tools?.convertTools(), tool_choice: toolChoice*/)
+        case .ollama(let model): return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools?.convertTools())
         }
     }
 
     public func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) -> AgentContext {
         switch model {
-        case .anthropic(let model):
-            return AgentContext(langTool: langToolchain.langTool(Anthropic.self)!, model: model, messages: messages.toAnthropicMessages(), eventHandler: eventHandler)
-        case .gemini(let model):
-            return AgentContext(langTool: langToolchain.langTool(Gemini.self)!, model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
-        case .openAI(let model):
-            return AgentContext(langTool: langToolchain.langTool(OpenAI.self)!, model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
-        case .xAI(let model):
-            return AgentContext(langTool: langToolchain.langTool(XAI.self)!, model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
-        case .ollama(let model):
-            return AgentContext(langTool: langToolchain.langTool(Ollama.self)!, model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .anthropic(let model): return AgentContext(langTool: langToolchain.langTool(Anthropic.self)!, model: model, messages: messages.toAnthropicMessages(), eventHandler: eventHandler)
+        case .gemini(let model): return AgentContext(langTool: langToolchain.langTool(Gemini.self)!, model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .openAI(let model): return AgentContext(langTool: langToolchain.langTool(OpenAI.self)!, model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .xAI(let model): return AgentContext(langTool: langToolchain.langTool(XAI.self)!, model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .ollama(let model): return AgentContext(langTool: langToolchain.langTool(Ollama.self)!, model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
         }
     }
 
