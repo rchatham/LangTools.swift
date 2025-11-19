@@ -58,25 +58,52 @@ extension LangTools {
 
     public func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {
         guard request.stream ?? true else { return AsyncThrowingSingleItemStream(value: { try await perform(request: request) }) }
-        let httpRequest: URLRequest; do { httpRequest = try prepare(request: request.updating(stream: true)) } catch { return AsyncSingleErrorStream(error: error) }
+
+        print("📡 LangTools.stream() - Preparing HTTP request")
+        let httpRequest: URLRequest
+        do {
+            httpRequest = try prepare(request: request.updating(stream: true))
+            print("   ✅ HTTP request prepared")
+            print("   URL: \(httpRequest.url?.absoluteString ?? "nil")")
+        } catch {
+            print("   ❌ Failed to prepare request: \(error)")
+            return AsyncSingleErrorStream(error: error)
+        }
 
         return AsyncThrowingStream { continuation in
             Task {
                 do {
+                    print("   🌐 Calling session.bytes(for:)...")
                     let (bytes, response) = try await session.bytes(for: httpRequest)
-                    guard let httpResponse = response as? HTTPURLResponse else { return continuation.finish(throwing: LangToolsError.requestFailed) }
+                    print("   ✅ Got response from server")
+
+                    guard let httpResponse = response as? HTTPURLResponse else {
+                        print("   ❌ Response is not HTTPURLResponse")
+                        return continuation.finish(throwing: LangToolsError.requestFailed)
+                    }
+
+                    print("   Status code: \(httpResponse.statusCode)")
+
                     guard httpResponse.statusCode == 200 else {
+                        print("   ❌ Non-200 status code: \(httpResponse.statusCode)")
                         var error: Error?;
                         do { error = try await bytes.lines.reduce("", +).data(using: .utf8).flatMap { Self.decodeError(data: $0) }}
                         catch let _error { error = _error }
                         return continuation.finish(throwing: LangToolsError.responseUnsuccessful(statusCode: httpResponse.statusCode, error))
                     }
 
+                    print("   ✅ Status 200 - Processing stream...")
+
                     var combinedResponse = Request.Response.empty
                     // buffer used for responses that need multiple lines to decode
                     var errorBuffer: Error?
                     var buffer = ""
+                    var lineCount = 0
                     for try await line in bytes.lines {
+                        lineCount += 1
+                        if lineCount == 1 {
+                            print("   📥 Receiving streamed data...")
+                        }
                         // ensure line is a complete json object if not concat to previous line and continue
                         buffer += line
                         var response: Request.Response?
@@ -101,13 +128,20 @@ extension LangTools {
                         throw LangToolsError.failiedToDecodeStream(buffer: buffer, error: errorBuffer)
                     }
 
+                    print("   📊 Processed \(lineCount) lines from stream")
+
                     if let completionRequest = try await completionRequest(request: request, response: combinedResponse) {
+                        print("   🔄 Tool calling - making completion request...")
                         for try await response in stream(request: completionRequest) {
                             continuation.yield(try request.update(response: response))
                         }
                     }
+
+                    print("   ✅ Stream completed successfully")
                     continuation.finish()
                 } catch {
+                    print("   ❌ Stream error: \(error)")
+                    print("   Error type: \(type(of: error))")
                     continuation.finish(throwing: error)
                 }
             }

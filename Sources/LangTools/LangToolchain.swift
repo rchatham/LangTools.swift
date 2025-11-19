@@ -15,7 +15,10 @@ public struct LangToolchain {
     }
 
     public mutating func register<LangTool: LangTools>(_ langTools: LangTool) {
-        self.langTools[String(describing: LangTool.self)] = langTools
+        let key = String(describing: LangTool.self)
+        self.langTools[key] = langTools
+        print("🔧 LangToolchain: Registered provider '\(key)'")
+        print("   Total providers: \(self.langTools.count)")
     }
 
     public func langTool<LangTool: LangTools>(_ type: LangTool.Type) -> LangTool? {
@@ -25,7 +28,22 @@ public struct LangToolchain {
     private var langTools: [String:(any LangTools)] = [:]
 
     public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response {
-        guard let langTool = langTools.values.first(where: { $0.canHandleRequest(request) }) else { throw LangToolchainError.toolchainCannotHandleRequest }
+        print("🔍 LangToolchain.perform() called")
+        print("   Request type: \(type(of: request))")
+        print("   Registered providers: \(langTools.keys.joined(separator: ", "))")
+        print("   Checking which provider can handle request...")
+
+        for (key, tool) in langTools {
+            let canHandle = tool.canHandleRequest(request)
+            print("   - \(key): \(canHandle ? "✅ CAN handle" : "❌ cannot handle")")
+        }
+
+        guard let langTool = langTools.values.first(where: { $0.canHandleRequest(request) }) else {
+            print("   ⚠️ NO PROVIDER CAN HANDLE THIS REQUEST!")
+            throw LangToolchainError.toolchainCannotHandleRequest
+        }
+
+        print("   ✅ Using provider: \(type(of: langTool))")
         return try await langTool.perform(request: request)
     }
 
@@ -36,8 +54,23 @@ public struct LangToolchain {
     }
 
     public func stream<Request: LangToolsStreamableRequest>(request: Request) throws -> AsyncThrowingStream<any LangToolsStreamableResponse, Error> {
+        print("🌊 LangToolchain.stream() called")
+        print("   Request type: \(type(of: request))")
+        print("   Registered providers: \(langTools.keys.joined(separator: ", "))")
+        print("   Checking which provider can handle request...")
+
+        for (key, tool) in langTools {
+            let canHandle = tool.canHandleRequest(request)
+            print("   - \(key): \(canHandle ? "✅ CAN handle" : "❌ cannot handle")")
+        }
+
         guard let langTool = langTools.values.first(where: { $0.canHandleRequest(request) }) else {
-            throw LangToolchainError.toolchainCannotHandleRequest }
+            print("   ⚠️ NO PROVIDER CAN HANDLE THIS REQUEST!")
+            print("   This means no API key is configured or provider not registered")
+            throw LangToolchainError.toolchainCannotHandleRequest
+        }
+
+        print("   ✅ Using provider: \(type(of: langTool))")
         return langTool.stream(request: request).mapAsyncThrowingStream { $0 }
     }
 }
