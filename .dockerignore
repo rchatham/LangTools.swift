@@ -1,0 +1,37 @@
+# Git files
+.git
+.github
+.gitignore
+
+# Build artifacts
+.build
+.swiftpm
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+Packages/
+
+# macOS specific
+.DS_Store
+
+# Documentation and non-essential files
+*.md
+!Package.swift
+LICENSE
+
+# Examples and UI (not needed for container builds)
+Examples
+ChatUI
+
+# IDE files
+.vscode
+.idea
+
+# Credentials
+.netrc
+
+# Temporary files
+*.tmp
+*.log
+.tmp

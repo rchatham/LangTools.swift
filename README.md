@@ -22,6 +22,22 @@ dependencies: [
 ]
 ```
 
+### Docker (Linux)
+
+For Linux deployment and testing, Docker containers are available. See the [Docker Guide](DOCKER.md) for detailed instructions.
+
+Quick start:
+```bash
+# Development environment
+docker-compose run --rm langtools-dev
+
+# Run tests
+docker-compose run --rm langtools-test
+
+# Build the project
+docker-compose run --rm langtools-builder
+```
+
 ## Basic Usage
 
 ```swift
@@ -85,6 +101,7 @@ See individual module README files for detailed documentation and examples:
 - [XAI](Sources/XAI/README.md)
 - [Gemini](Sources/Gemini/README.md)
 - [Ollama](Sources/Ollama/README.md)
+- [Docker Guide](DOCKER.md) - Linux deployment and testing with Docker
 
 ## Contributing
 

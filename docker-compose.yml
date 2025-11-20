@@ -1,0 +1,66 @@
+services:
+  # Development environment with full build tools
+  langtools-dev:
+    build:
+      context: .
+      target: development
+      dockerfile: Dockerfile
+    image: langtools-dev:latest
+    container_name: langtools-dev
+    volumes:
+      - .:/workspace
+      - langtools-build-cache:/workspace/.build
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    environment:
+      - SWIFT_DETERMINISTIC_HASHING=1
+    command: /bin/bash
+
+  # Build environment
+  langtools-builder:
+    build:
+      context: .
+      target: builder
+      dockerfile: Dockerfile
+    image: langtools-builder:latest
+    container_name: langtools-builder
+    volumes:
+      - .:/workspace
+      - langtools-build-cache:/workspace/.build
+    working_dir: /workspace
+    command: swift build -c release
+
+  # Test environment
+  langtools-test:
+    build:
+      context: .
+      target: tester
+      dockerfile: Dockerfile
+    image: langtools-test:latest
+    container_name: langtools-test
+    volumes:
+      - .:/workspace
+      - langtools-build-cache:/workspace/.build
+    working_dir: /workspace
+    command: swift test
+
+  # ChatCLI runtime environment
+  chatcli:
+    build:
+      context: .
+      target: runtime
+      dockerfile: Dockerfile
+    image: langtools-chatcli:latest
+    container_name: langtools-chatcli
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - XAI_API_KEY=${XAI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    stdin_open: true
+    tty: true
+
+volumes:
+  langtools-build-cache:
+    driver: local
