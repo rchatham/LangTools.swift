@@ -5,6 +5,22 @@ import FoundationNetworking
 
 extension URLSession {
     #if !canImport(Darwin)
+    // Provide async/await wrapper for URLSession.dataTask on Linux
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        try await withCheckedThrowingContinuation { continuation in
+            let task = dataTask(with: request) { data, response, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else if let data = data, let response = response {
+                    continuation.resume(returning: (data, response))
+                } else {
+                    continuation.resume(throwing: URLError(.badServerResponse))
+                }
+            }
+            task.resume()
+        }
+    }
+
     // Provide a lightweight implementation of `bytes(for:)` for platforms where
     // this API is unavailable (e.g. Linux). The implementation loads the entire
     // response data and exposes it as an async sequence of bytes, with a `lines` property
