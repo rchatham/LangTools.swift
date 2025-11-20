@@ -34,7 +34,8 @@ public final class XAI: LangTools {
         try openAI.prepare(request: request)
     }
 
-    public static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+    public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
         return try OpenAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools, toolEventHandler: toolEventHandler)
     }
 }

@@ -110,9 +110,14 @@ extension Anthropic {
                 if let text = contentType.textContentType {
                     self = .text(try .init(text))
                 } else {
-                    // TODO: - implement audio and image
-                    fatalError("Implement audio and image first ya dingus!")
-                   // throw LangToolError.invalidContentType
+                    // Handle non-text content types
+                    print("⚠️ Anthropic.Content.init() - Non-text content type: \(Swift.type(of: contentType))")
+                    print("   Content: \(contentType)")
+
+                    // For now, convert to text representation
+                    // TODO: Implement proper audio and image support
+                    let textRepresentation = String(describing: contentType)
+                    self = .text(try .init(text: textRepresentation))
                 }
             }
 
@@ -234,7 +239,7 @@ extension Anthropic {
                     try container.encode(type, forKey: .type)
                     try container.encodeIfPresent(id, forKey: .id)
                     try container.encodeIfPresent(name, forKey: .name)
-                    try container.encode(try JSON(string: input), forKey: .input)
+                    if !input.isEmpty { try container.encode(try JSON(string: input), forKey: .input) }
                 }
             }
 

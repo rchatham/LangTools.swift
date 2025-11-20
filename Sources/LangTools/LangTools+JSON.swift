@@ -87,7 +87,10 @@ extension JSON {
         guard let data = string.data(using: .utf8) else {
             throw JSONError.invalidValue("Unable to convert string to UTF-8 data")
         }
+        try self.init(data: data)
+    }
 
+    public init(data: Data) throws {
         let decoder = JSONDecoder()
         self = try decoder.decode(JSON.self, from: data)
     }

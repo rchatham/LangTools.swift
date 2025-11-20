@@ -260,7 +260,7 @@ class OpenAITests: XCTestCase {
                         description: "The temperature unit to use. Infer this from the users location.")
                 ],
                 required: ["location", "format"]),
-            callback: { _ in
+            callback: { _,_ in
                 MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
                     return (.success(try self.getData(filename: "tool_call_stream_response", fileExtension: "txt")!), 200)
                 }

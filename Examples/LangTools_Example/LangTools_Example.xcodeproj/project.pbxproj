@@ -7,18 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		B1893C6D2D575D5000784929 /* Agents in Frameworks */ = {isa = PBXBuildFile; productRef = B1893C6C2D575D5000784929 /* Agents */; };
-		B19586DB2CD40C6900843DF5 /* Anthropic in Frameworks */ = {isa = PBXBuildFile; productRef = B19586DA2CD40C6900843DF5 /* Anthropic */; };
-		B19586DD2CD40C6900843DF5 /* LangTools in Frameworks */ = {isa = PBXBuildFile; productRef = B19586DC2CD40C6900843DF5 /* LangTools */; };
-		B19586DF2CD40C6900843DF5 /* OpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = B19586DE2CD40C6900843DF5 /* OpenAI */; };
-		B1D1EC722CA31C5F00AD7FA6 /* KeychainAccess in Frameworks */ = {isa = PBXBuildFile; productRef = B1D1EC712CA31C5F00AD7FA6 /* KeychainAccess */; };
-		B1E36A9E2D722E80007CB6B5 /* ChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = B1E36A9D2D722E80007CB6B5 /* ChatUI */; };
-		B1E419EF2D44C7830082C763 /* Anthropic in Frameworks */ = {isa = PBXBuildFile; productRef = B1E419EE2D44C7830082C763 /* Anthropic */; };
-		B1E419F12D44C7830082C763 /* Gemini in Frameworks */ = {isa = PBXBuildFile; productRef = B1E419F02D44C7830082C763 /* Gemini */; };
-		B1E419F32D44C7830082C763 /* LangTools in Frameworks */ = {isa = PBXBuildFile; productRef = B1E419F22D44C7830082C763 /* LangTools */; };
-		B1E419F52D44C7830082C763 /* Ollama in Frameworks */ = {isa = PBXBuildFile; productRef = B1E419F42D44C7830082C763 /* Ollama */; };
-		B1E419F72D44C7830082C763 /* OpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = B1E419F62D44C7830082C763 /* OpenAI */; };
-		B1E41A0A2D46B4B80082C763 /* XAI in Frameworks */ = {isa = PBXBuildFile; productRef = B1E41A092D46B4B80082C763 /* XAI */; };
+		B19FD1AE2DD6835000E7BEB5 /* Chat in Frameworks */ = {isa = PBXBuildFile; productRef = B19FD1AD2DD6835000E7BEB5 /* Chat */; };
+		B19FD1D02DD68BFD00E7BEB5 /* ExampleAgents in Frameworks */ = {isa = PBXBuildFile; productRef = B19FD1CF2DD68BFD00E7BEB5 /* ExampleAgents */; };
+		B1AD75142DC1833200C53CED /* ChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = B1AD75132DC1833200C53CED /* ChatUI */; };
+		B1F8B9C82DCA966700F86CED /* ChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = B1E36A9D2D722E80007CB6B5 /* ChatUI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -52,6 +44,29 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		B17671D22DF7852A009503E4 /* WebScrapingAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebScrapingAgent.swift; sourceTree = "<group>"; };
+		B17671FF2DF78C8A009503E4 /* WebScraperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebScraperService.swift; sourceTree = "<group>"; };
+		B19FD1452DD54DEB00E7BEB5 /* CalendarService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarService.swift; sourceTree = "<group>"; };
+		B19FD14B2DD54DEB00E7BEB5 /* SerperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerperService.swift; sourceTree = "<group>"; };
+		B19FD14F2DD54DEB00E7BEB5 /* ToolSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolSettings.swift; sourceTree = "<group>"; };
+		B19FD1A62DD6828B00E7BEB5 /* UserDefaults+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "UserDefaults+Extensions.swift"; sourceTree = "<group>"; };
+		B19FD1B12DD683A200E7BEB5 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
+		B19FD1B22DD683C900E7BEB5 /* CalendarAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarAgent.swift; sourceTree = "<group>"; };
+		B19FD1B32DD683C900E7BEB5 /* ReminderAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderAgent.swift; sourceTree = "<group>"; };
+		B19FD1B42DD683C900E7BEB5 /* ResearchAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResearchAgent.swift; sourceTree = "<group>"; };
+		B19FD1B92DD683CC00E7BEB5 /* SerperTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerperTool.swift; sourceTree = "<group>"; };
+		B19FD1BC2DD683D300E7BEB5 /* ChatSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSettingsView.swift; sourceTree = "<group>"; };
+		B19FD1BD2DD683D300E7BEB5 /* OllamaSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaSettingsView.swift; sourceTree = "<group>"; };
+		B19FD1BE2DD683D300E7BEB5 /* View+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "View+Extensions.swift"; sourceTree = "<group>"; };
+		B19FD1C02DD683D600E7BEB5 /* UserDefaults+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "UserDefaults+Extensions.swift"; sourceTree = "<group>"; };
+		B19FD1C12DD683D600E7BEB5 /* Utilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utilities.swift; sourceTree = "<group>"; };
+		B19FD1C32DD683D800E7BEB5 /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
+		B19FD1C42DD683D800E7BEB5 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
+		B19FD1C62DD683D800E7BEB5 /* MessageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageService.swift; sourceTree = "<group>"; };
+		B19FD1C72DD683D800E7BEB5 /* NetworkClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkClient.swift; sourceTree = "<group>"; };
+		B19FD1C82DD683D800E7BEB5 /* OllamaService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaService.swift; sourceTree = "<group>"; };
+		B19FD1CA2DD683DA00E7BEB5 /* Message.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Message.swift; sourceTree = "<group>"; };
+		B19FD1CB2DD683DA00E7BEB5 /* Model.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Model.swift; sourceTree = "<group>"; };
 		B1D1EBDF2CA2518F00AD7FA6 /* LangTools_Example.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LangTools_Example.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1D1EBEF2CA2519100AD7FA6 /* LangTools_ExampleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LangTools_ExampleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1D1EBF92CA2519100AD7FA6 /* LangTools_ExampleUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LangTools_ExampleUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -80,18 +95,10 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				B19586DD2CD40C6900843DF5 /* LangTools in Frameworks */,
-				B1E41A0A2D46B4B80082C763 /* XAI in Frameworks */,
-				B1D1EC722CA31C5F00AD7FA6 /* KeychainAccess in Frameworks */,
-				B1E419F32D44C7830082C763 /* LangTools in Frameworks */,
-				B1E36A9E2D722E80007CB6B5 /* ChatUI in Frameworks */,
-				B19586DF2CD40C6900843DF5 /* OpenAI in Frameworks */,
-				B1893C6D2D575D5000784929 /* Agents in Frameworks */,
-				B1E419F52D44C7830082C763 /* Ollama in Frameworks */,
-				B1E419F12D44C7830082C763 /* Gemini in Frameworks */,
-				B19586DB2CD40C6900843DF5 /* Anthropic in Frameworks */,
-				B1E419F72D44C7830082C763 /* OpenAI in Frameworks */,
-				B1E419EF2D44C7830082C763 /* Anthropic in Frameworks */,
+				B1F8B9C82DCA966700F86CED /* ChatUI in Frameworks */,
+				B19FD1AE2DD6835000E7BEB5 /* Chat in Frameworks */,
+				B19FD1D02DD68BFD00E7BEB5 /* ExampleAgents in Frameworks */,
+				B1AD75142DC1833200C53CED /* ChatUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,12 +119,123 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		B19FD17D2DD67EC000E7BEB5 /* Modules */ = {
+			isa = PBXGroup;
+			children = (
+				B19FD17F2DD67EE600E7BEB5 /* Agents */,
+				B19FD17E2DD67ED500E7BEB5 /* Chat */,
+			);
+			path = Modules;
+			sourceTree = "<group>";
+		};
+		B19FD17E2DD67ED500E7BEB5 /* Chat */ = {
+			isa = PBXGroup;
+			children = (
+				B19FD1CC2DD683DA00E7BEB5 /* Models */,
+				B19FD1C92DD683D800E7BEB5 /* Services */,
+				B19FD1C22DD683D600E7BEB5 /* Utilities */,
+				B19FD1BF2DD683D300E7BEB5 /* Views */,
+			);
+			path = Chat;
+			sourceTree = "<group>";
+		};
+		B19FD17F2DD67EE600E7BEB5 /* Agents */ = {
+			isa = PBXGroup;
+			children = (
+				B19FD1842DD67F2300E7BEB5 /* Utilities */,
+				B19FD1802DD67F0400E7BEB5 /* Services */,
+				B19FD1B52DD683C900E7BEB5 /* Agents */,
+				B19FD1BA2DD683CC00E7BEB5 /* Tools */,
+			);
+			path = Agents;
+			sourceTree = "<group>";
+		};
+		B19FD1802DD67F0400E7BEB5 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				B19FD1B12DD683A200E7BEB5 /* KeychainService.swift */,
+				B19FD14B2DD54DEB00E7BEB5 /* SerperService.swift */,
+				B19FD1452DD54DEB00E7BEB5 /* CalendarService.swift */,
+				B17671FF2DF78C8A009503E4 /* WebScraperService.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		B19FD1842DD67F2300E7BEB5 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				B19FD1A62DD6828B00E7BEB5 /* UserDefaults+Extensions.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		B19FD1B52DD683C900E7BEB5 /* Agents */ = {
+			isa = PBXGroup;
+			children = (
+				B19FD1B22DD683C900E7BEB5 /* CalendarAgent.swift */,
+				B19FD1B32DD683C900E7BEB5 /* ReminderAgent.swift */,
+				B19FD1B42DD683C900E7BEB5 /* ResearchAgent.swift */,
+				B17671D22DF7852A009503E4 /* WebScrapingAgent.swift */,
+			);
+			path = Agents;
+			sourceTree = "<group>";
+		};
+		B19FD1BA2DD683CC00E7BEB5 /* Tools */ = {
+			isa = PBXGroup;
+			children = (
+				B19FD1B92DD683CC00E7BEB5 /* SerperTool.swift */,
+			);
+			path = Tools;
+			sourceTree = "<group>";
+		};
+		B19FD1BF2DD683D300E7BEB5 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				B19FD1BC2DD683D300E7BEB5 /* ChatSettingsView.swift */,
+				B19FD1BD2DD683D300E7BEB5 /* OllamaSettingsView.swift */,
+				B19FD1BE2DD683D300E7BEB5 /* View+Extensions.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		B19FD1C22DD683D600E7BEB5 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				B19FD1C02DD683D600E7BEB5 /* UserDefaults+Extensions.swift */,
+				B19FD1C12DD683D600E7BEB5 /* Utilities.swift */,
+				B19FD14F2DD54DEB00E7BEB5 /* ToolSettings.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		B19FD1C92DD683D800E7BEB5 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				B19FD1C32DD683D800E7BEB5 /* AudioPlayer.swift */,
+				B19FD1C42DD683D800E7BEB5 /* KeychainService.swift */,
+				B19FD1C62DD683D800E7BEB5 /* MessageService.swift */,
+				B19FD1C72DD683D800E7BEB5 /* NetworkClient.swift */,
+				B19FD1C82DD683D800E7BEB5 /* OllamaService.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		B19FD1CC2DD683DA00E7BEB5 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				B19FD1CA2DD683DA00E7BEB5 /* Message.swift */,
+				B19FD1CB2DD683DA00E7BEB5 /* Model.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
 		B1D1EBD62CA2518E00AD7FA6 = {
 			isa = PBXGroup;
 			children = (
 				B1D1EBE12CA2518F00AD7FA6 /* LangTools_Example */,
 				B1D1EBF22CA2519100AD7FA6 /* LangTools_ExampleTests */,
 				B1D1EBFC2CA2519100AD7FA6 /* LangTools_ExampleUITests */,
+				B19FD17D2DD67EC000E7BEB5 /* Modules */,
 				B1E289D32D192BE200A1C327 /* Frameworks */,
 				B1D1EBE02CA2518F00AD7FA6 /* Products */,
 			);
@@ -161,18 +279,10 @@
 			);
 			name = LangTools_Example;
 			packageProductDependencies = (
-				B1D1EC712CA31C5F00AD7FA6 /* KeychainAccess */,
-				B19586DA2CD40C6900843DF5 /* Anthropic */,
-				B19586DC2CD40C6900843DF5 /* LangTools */,
-				B19586DE2CD40C6900843DF5 /* OpenAI */,
-				B1E419EE2D44C7830082C763 /* Anthropic */,
-				B1E419F02D44C7830082C763 /* Gemini */,
-				B1E419F22D44C7830082C763 /* LangTools */,
-				B1E419F42D44C7830082C763 /* Ollama */,
-				B1E419F62D44C7830082C763 /* OpenAI */,
-				B1E41A092D46B4B80082C763 /* XAI */,
-				B1893C6C2D575D5000784929 /* Agents */,
 				B1E36A9D2D722E80007CB6B5 /* ChatUI */,
+				B1AD75132DC1833200C53CED /* ChatUI */,
+				B19FD1AD2DD6835000E7BEB5 /* Chat */,
+				B19FD1CF2DD68BFD00E7BEB5 /* ExampleAgents */,
 			);
 			productName = LangTools_Example;
 			productReference = B1D1EBDF2CA2518F00AD7FA6 /* LangTools_Example.app */;
@@ -257,9 +367,8 @@
 			mainGroup = B1D1EBD62CA2518E00AD7FA6;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				B1D1EC702CA31C5F00AD7FA6 /* XCRemoteSwiftPackageReference "KeychainAccess" */,
-				B1E419ED2D44C7830082C763 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */,
-				B1E36A9C2D722E80007CB6B5 /* XCLocalSwiftPackageReference "../../ChatUI" */,
+				B1AD75122DC1833200C53CED /* XCRemoteSwiftPackageReference "ChatUI" */,
+				B19FD1AC2DD6835000E7BEB5 /* XCLocalSwiftPackageReference "../LangTools_Example" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B1D1EBE02CA2518F00AD7FA6 /* Products */;
@@ -467,7 +576,10 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "LangTools-Example-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = LangTools.swift;
+				INFOPLIST_KEY_LSApplicationCategoryType = "";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Uses access to read and schedule events on the calendar.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "To let the AI give you directions and have more context about you for more relevant results.";
+				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "To let the AI give you directions and have more context about you for more relevant results.";
 				INFOPLIST_KEY_NSRemindersUsageDescription = "Uses access to interact with reminders";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -505,7 +617,10 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "LangTools-Example-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = LangTools.swift;
+				INFOPLIST_KEY_LSApplicationCategoryType = "";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Uses access to read and schedule events on the calendar.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "To let the AI give you directions and have more context about you for more relevant results.";
+				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "To let the AI give you directions and have more context about you for more relevant results.";
 				INFOPLIST_KEY_NSRemindersUsageDescription = "Uses access to interact with reminders";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -644,78 +759,41 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		B1E36A9C2D722E80007CB6B5 /* XCLocalSwiftPackageReference "../../ChatUI" */ = {
+		B19FD1AC2DD6835000E7BEB5 /* XCLocalSwiftPackageReference "../LangTools_Example" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../ChatUI;
-		};
-		B1E419ED2D44C7830082C763 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../../LangTools.swift;
+			relativePath = ../LangTools_Example;
 		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		B1D1EC702CA31C5F00AD7FA6 /* XCRemoteSwiftPackageReference "KeychainAccess" */ = {
+		B1AD75122DC1833200C53CED /* XCRemoteSwiftPackageReference "ChatUI" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/kishikawakatsumi/KeychainAccess";
+			repositoryURL = "https://github.com/rchatham/ChatUI";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 4.0.0;
+				branch = main;
+				kind = branch;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		B1893C6C2D575D5000784929 /* Agents */ = {
+		B19FD1AD2DD6835000E7BEB5 /* Chat */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = B1E419ED2D44C7830082C763 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */;
-			productName = Agents;
+			productName = Chat;
 		};
-		B19586DA2CD40C6900843DF5 /* Anthropic */ = {
+		B19FD1CF2DD68BFD00E7BEB5 /* ExampleAgents */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = Anthropic;
+			package = B19FD1AC2DD6835000E7BEB5 /* XCLocalSwiftPackageReference "../LangTools_Example" */;
+			productName = ExampleAgents;
 		};
-		B19586DC2CD40C6900843DF5 /* LangTools */ = {
+		B1AD75132DC1833200C53CED /* ChatUI */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = LangTools;
-		};
-		B19586DE2CD40C6900843DF5 /* OpenAI */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = OpenAI;
-		};
-		B1D1EC712CA31C5F00AD7FA6 /* KeychainAccess */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = B1D1EC702CA31C5F00AD7FA6 /* XCRemoteSwiftPackageReference "KeychainAccess" */;
-			productName = KeychainAccess;
+			package = B1AD75122DC1833200C53CED /* XCRemoteSwiftPackageReference "ChatUI" */;
+			productName = ChatUI;
 		};
 		B1E36A9D2D722E80007CB6B5 /* ChatUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ChatUI;
-		};
-		B1E419EE2D44C7830082C763 /* Anthropic */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = Anthropic;
-		};
-		B1E419F02D44C7830082C763 /* Gemini */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = Gemini;
-		};
-		B1E419F22D44C7830082C763 /* LangTools */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = LangTools;
-		};
-		B1E419F42D44C7830082C763 /* Ollama */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = Ollama;
-		};
-		B1E419F62D44C7830082C763 /* OpenAI */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = OpenAI;
-		};
-		B1E41A092D46B4B80082C763 /* XAI */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = B1E419ED2D44C7830082C763 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */;
-			productName = XAI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
