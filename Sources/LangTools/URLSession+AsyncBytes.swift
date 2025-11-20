@@ -1,16 +1,14 @@
+import Foundation
 #if canImport(FoundationNetworking)
-import Foundation
 import FoundationNetworking
-#else
-import Foundation
 #endif
 
 extension URLSession {
     #if !canImport(Darwin)
     // Provide a lightweight implementation of `bytes(for:)` for platforms where
     // this API is unavailable (e.g. Linux). The implementation loads the entire
-    // response data and exposes it as an async sequence of lines, matching the
-    // interface used by Foundation on Apple platforms.
+    // response data and exposes it as an async sequence of bytes, with a `lines` property
+    // for line-based access, matching the interface used by Foundation on Apple platforms.
     struct AsyncBytes: AsyncSequence {
         public typealias Element = UInt8
         private let data: Data

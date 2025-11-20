@@ -67,11 +67,11 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     // MARK: - URLSessionWebSocketDelegate
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
-        // No-op implementation to satisfy protocol requirements on non-Apple platforms
+        // No-op implementation to satisfy URLSessionWebSocketDelegate protocol requirements
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
-        // No-op implementation to satisfy protocol requirements on non-Apple platforms
+        // No-op implementation to satisfy URLSessionWebSocketDelegate protocol requirements
     }
 }
 

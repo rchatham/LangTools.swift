@@ -1,3 +1,3 @@
 #if !canImport(SwiftUI)
-protocol ObservableObject {}
+protocol ObservableObject: AnyObject {}
 #endif

@@ -4,12 +4,12 @@
 //  Created by Reid Chatham on 2/13/23.
 //
 
-#if canImport(SwiftUI)
-import SwiftUI
-#endif
 import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
+#endif
+#if canImport(SwiftUI)
+import SwiftUI
 #endif
 
 extension UserDefaults {
