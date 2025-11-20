@@ -18,11 +18,14 @@ extension URLSession {
         }
 
         struct Iterator: AsyncIteratorProtocol {
-            private var data: Data
+            private let data: Data
+            private var index: Int = 0
             init(data: Data) { self.data = data }
             mutating func next() async throws -> UInt8? {
-                guard !data.isEmpty else { return nil }
-                return data.removeFirst()
+                guard index < data.count else { return nil }
+                let byte = data[index]
+                index += 1
+                return byte
             }
         }
 
