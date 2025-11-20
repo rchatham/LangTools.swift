@@ -16,11 +16,12 @@ struct ChatCLI {
         // Check and request API keys if needed
         try await checkAndRequestAPIKeys(messageService: messageService)
 
-        print("Chat CLI Started - Type 'exit' to quit or 'model' to change the active model")
+        print("Chat CLI Started")
+        print("Commands: 'exit', 'model', 'test'")
         print("Current model: \(UserDefaults.model.rawValue)")
 
         while true {
-            print("You: ".green, terminator: "")
+            print("\nYou: ".green, terminator: "")
             guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) else { continue }
 
             if input.lowercased() == "exit" {
@@ -30,6 +31,11 @@ struct ChatCLI {
 
             if input.lowercased() == "model" {
                 try await changeModel()
+                continue
+            }
+
+            if input.lowercased() == "test" {
+                await AgentTestRunner.runInteractiveTests(messageService: messageService)
                 continue
             }
 
@@ -69,7 +75,7 @@ struct ChatCLI {
         let newModel: Model? = switch choice {
             case "1": .openAI(.gpt35Turbo)
             case "2": .openAI(.gpt4)
-            case "3": .anthropic(.claude35Sonnet_20240620)
+            case "3": .anthropic(.claude35Sonnet_20241022)
             case "4": .gemini(.gemini15FlashLatest)
             case "5": .xAI(.grok)
             default: nil
