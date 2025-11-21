@@ -55,6 +55,7 @@ public struct XAIErrorResponse: Error, Codable {
 public enum XAIModel: String, CaseIterable {
     case grok = "grok-2-1212"
     case grokVision = "grok-2-vision-1212"
+    case grokBeta = "grok-beta"
 
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
 }

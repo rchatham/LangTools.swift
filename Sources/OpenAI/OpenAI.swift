@@ -141,9 +141,13 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let gpt4o = OpenAIModel(modelID: .gpt4o)
     public static let gpt4o_mini = OpenAIModel(modelID: .gpt4o_mini)
     public static let gpt4o_2024_05_13 = OpenAIModel(modelID: .gpt4o_2024_05_13)
+    public static let gpt4o_2024_08_06 = OpenAIModel(modelID: .gpt4o_2024_08_06)
+    public static let gpt4o_2024_11_20 = OpenAIModel(modelID: .gpt4o_2024_11_20)
+    public static let gpt4o_mini_2024_07_18 = OpenAIModel(modelID: .gpt4o_mini_2024_07_18)
     public static let gpt4o_realtimePreview = OpenAIModel(modelID: .gpt4o_realtimePreview)
     public static let gpt4o_miniRealtimePreview = OpenAIModel(modelID: .gpt4o_miniRealtimePreview)
     public static let gpt4o_audioPreview = OpenAIModel(modelID: .gpt4o_audioPreview)
+    public static let gpt4o_audioPreview_2024_10_01 = OpenAIModel(modelID: .gpt4o_audioPreview_2024_10_01)
     public static let chatGPT4o_latest = OpenAIModel(modelID: .chatGPT4o_latest)
     public static let o1 = OpenAIModel(modelID: .o1)
     public static let o1_mini = OpenAIModel(modelID: .o1_mini)
@@ -171,9 +175,13 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         case gpt4o = "gpt-4o"
         case gpt4o_mini = "gpt-4o-mini"
         case gpt4o_2024_05_13 = "gpt-4o-2024-05-13"
+        case gpt4o_2024_08_06 = "gpt-4o-2024-08-06"
+        case gpt4o_2024_11_20 = "gpt-4o-2024-11-20"
+        case gpt4o_mini_2024_07_18 = "gpt-4o-mini-2024-07-18"
         case gpt4o_realtimePreview = "gpt-4o-realtime-preview"
         case gpt4o_miniRealtimePreview = "gpt-4o-mini-realtime-preview"
         case gpt4o_audioPreview = "gpt-4o-audio-preview"
+        case gpt4o_audioPreview_2024_10_01 = "gpt-4o-audio-preview-2024-10-01"
         case chatGPT4o_latest = "chatgpt-4o-latest"
         case o1 = "o1"
         case o1_mini = "o1-mini"
