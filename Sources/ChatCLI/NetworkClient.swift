@@ -5,12 +5,17 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import LangTools
 import OpenAI
 import Anthropic
 import XAI
 import Gemini
+#if canImport(AVFAudio)
 import AVFAudio
+#endif
 
 
 typealias Role = OpenAI.Message.Role
@@ -57,6 +62,16 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
         }
+    }
+
+    // MARK: - URLSessionWebSocketDelegate
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        // No-op implementation to satisfy URLSessionWebSocketDelegate protocol requirements
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        // No-op implementation to satisfy URLSessionWebSocketDelegate protocol requirements
     }
 }
 

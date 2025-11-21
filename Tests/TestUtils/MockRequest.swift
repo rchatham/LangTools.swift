@@ -6,6 +6,9 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import LangTools
 
 
@@ -42,7 +45,7 @@ struct MockRequest: LangToolsChatRequest, LangToolsStreamableRequest, Encodable 
     typealias LangTool = MockLangTool
     typealias ToolResult = MockToolResult
 
-    static var url: URL { URL(filePath: "test") }
+    static var url: URL { URL(fileURLWithPath: "test") }
     static var endpoint: String { url.endpoint }
     typealias Response = MockResponse
     var stream: Bool?

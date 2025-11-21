@@ -4,7 +4,13 @@
 //  Created by Reid Chatham on 2/13/23.
 //
 
+import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+#if canImport(SwiftUI)
 import SwiftUI
+#endif
 
 extension UserDefaults {
     static var model: Model {
