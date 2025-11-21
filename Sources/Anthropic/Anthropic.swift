@@ -104,6 +104,16 @@ public extension Anthropic {
     enum Model: String, Codable, CaseIterable {
         case claude37Sonnet_latest = "claude-3-7-sonnet-latest"
         case claude37Sonnet_20250219 = "claude-3-7-sonnet-20250219"
+        
+        // Claude 4.x Models
+        case claude41Opus_latest = "claude-4-1-opus-latest"
+        case claude41Opus_20250805 = "claude-4-1-opus-20250805"
+        case claude45Sonnet_latest = "claude-4-5-sonnet-latest"
+        case claude45Sonnet_20250929 = "claude-4-5-sonnet-20250929"
+        case claude45Haiku_latest = "claude-4-5-haiku-latest"
+        case claude45Haiku_20251001 = "claude-4-5-haiku-20251001"
+        
+        // Claude 3.x Models
         case claude3Opus_latest = "claude-3-opus-latest"
         case claude3Opus_20240229 = "claude-3-opus-20240229"
         case claude35Sonnet_latest = "claude-3-5-sonnet-latest"
