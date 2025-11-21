@@ -128,7 +128,7 @@ extension LangTools {
                     }
 
                     if let errorBuffer, !buffer.isEmpty {
-                        throw LangToolsError.failiedToDecodeStream(buffer: buffer, error: errorBuffer)
+                        throw LangToolsError.failedToDecodeStream(buffer: buffer, error: errorBuffer)
                     }
 
                     print("   📊 Processed \(lineCount) lines from stream")
