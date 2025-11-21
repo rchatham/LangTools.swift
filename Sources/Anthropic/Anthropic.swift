@@ -6,6 +6,9 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import LangTools
 
 
@@ -43,12 +46,29 @@ public final class Anthropic: LangTools {
     }
 
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
-        var urlRequest = URLRequest(url: configuration.baseURL.appending(path: request.endpoint))
+        print("🔧 Anthropic.prepare() called")
+        print("   Base URL: \(configuration.baseURL)")
+        print("   Endpoint: \(request.endpoint)")
+        print("   API Key: \(apiKey.isEmpty ? "EMPTY" : "Set (length: \(apiKey.count))")")
+
+        let fullURL = configuration.baseURL.appending(path: request.endpoint)
+        print("   Full URL: \(fullURL)")
+
+        var urlRequest = URLRequest(url: fullURL)
         urlRequest.httpMethod = "POST"
         urlRequest.addValue("application/json", forHTTPHeaderField: "content-type")
         urlRequest.addValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         urlRequest.addValue(apiKey, forHTTPHeaderField: "x-api-key")
-        do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolError.invalidData }
+
+        do {
+            urlRequest.httpBody = try JSONEncoder().encode(request)
+            print("   ✅ Request body encoded successfully")
+        } catch {
+            print("   ❌ Failed to encode request: \(error)")
+            throw LangToolsError.invalidData
+        }
+
+        print("   ✅ URLRequest prepared successfully")
         return urlRequest
     }
 
@@ -82,6 +102,8 @@ public enum AnthropicAPIErrorType: String, Codable {
 
 public extension Anthropic {
     enum Model: String, Codable, CaseIterable {
+        case claude37Sonnet_latest = "claude-3-7-sonnet-latest"
+        case claude37Sonnet_20250219 = "claude-3-7-sonnet-20250219"
         case claude3Opus_latest = "claude-3-opus-latest"
         case claude3Opus_20240229 = "claude-3-opus-20240229"
         case claude35Sonnet_latest = "claude-3-5-sonnet-latest"

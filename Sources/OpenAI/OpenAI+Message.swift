@@ -198,7 +198,7 @@ public extension OpenAI {
                     } else {
                         // TODO: - implement audio and image
                         fatalError("Implement audio and image first ya dingus!")
-                        //throw LangToolError.invalidContentType
+                        //throw LangToolsError.invalidContentType
                     }
                 }
 

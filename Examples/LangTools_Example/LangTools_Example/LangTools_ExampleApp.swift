@@ -6,7 +6,11 @@
 //
 
 import SwiftUI
+import Chat
+import ExampleAgents
+
 import LangTools
+import Agents
 import OpenAI
 import Anthropic
 import Gemini
@@ -16,7 +20,6 @@ import ChatUI
 
 @main
 struct LangTools_ExampleApp: App {
-    var messageService = MessageService()
 
     init() {
         // Initialize Ollama on app startup
@@ -25,12 +28,15 @@ struct LangTools_ExampleApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ChatView(title: "LangTools.swift", messageService: messageService, settingsView: chatSettingsView)
+            let messageService = MessageService(agents: customAgents)
+            NavigationStack {
+                ChatView<MessageService, ChatSettingsView/*, EmptyView*/>(title: "LangTools.swift", messageService: messageService, settingsView: { chatSettingsView(messageService: messageService) })
+            }
         }
     }
 
     @ViewBuilder
-    func chatSettingsView() -> some View {
+    func chatSettingsView(messageService: MessageService) -> ChatSettingsView {
         ChatSettingsView(viewModel: ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages))
     }
 
@@ -43,19 +49,27 @@ struct LangTools_ExampleApp: App {
             }
         }
     }
+
+    var customAgents: [Agent] {
+        return [
+            CalendarAgent(),
+            ReminderAgent(),
+            ResearchAgent()
+        ]
+    }
 }
 
-extension MessageService: ChatMessageService {
-    var chatMessages: [Message] {
+extension MessageService: @retroactive ChatMessageService {
+    public var chatMessages: [Message] {
         get { messages }
         set { messages = newValue }
     }
 
-    typealias ChatMessage = Message
+    public typealias ChatMessage = Message
 
-    func handleError(error: any Error) -> ChatAlertInfo? {
+    public func handleError(error: any Error) -> ChatAlertInfo? {
         switch error {
-        case let error as LangToolError:
+        case let error as LangToolsError:
             switch error {
             case .jsonParsingFailure(let error):
                 return ChatAlertInfo(
@@ -111,6 +125,8 @@ extension MessageService: ChatMessageService {
                     title: "Invalid Content",
                     message: "The response contained an invalid content type."
                 )
+
+            default: return nil
             }
 
         case let error as LangToolsRequestError:
@@ -146,8 +162,8 @@ extension MessageService: ChatMessageService {
             }()
 
             let textBinding = Binding(
-                get: { self.apiKeyInput },
-                set: { self.apiKeyInput = $0 }
+                get: { apiKeyInput },
+                set: { apiKeyInput = $0 }
             )
 
             return ChatAlertInfo(
@@ -237,7 +253,10 @@ extension MessageService: ChatMessageService {
     }
 }
 
-extension Message: ChatMessageInfo {
-    var parentMessage: Message? { parent }
-    var childChatMessages: [Message] { childMessages }
+extension Message: @retroactive ChatMessageInfo {
+    public weak var parentMessage: Message? { parent }
+    public var childChatMessages: [Message] { childMessages }
 }
+
+// local variable used to store apiKey while passing from ui to app
+private var apiKeyInput: String = ""

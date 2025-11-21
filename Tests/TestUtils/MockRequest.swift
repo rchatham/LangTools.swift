@@ -6,21 +6,18 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import LangTools
 
 
 struct MockLangTool: LangTools {
-    static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
-        MockRequest(model: model, messages: messages)
-    }
+    typealias Model = MockModel
 
-    enum Model: String, RawRepresentable {
-        case mockModel
-
-        var rawValue: String { "" }
-        init?(rawValue: String) {
-            return nil
-        }
+    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
+        return MockRequest(model: model, messages: messages)
     }
 
     typealias ErrorResponse = MockErrorResponse
@@ -28,6 +25,15 @@ struct MockLangTool: LangTools {
     var session: URLSession
     func prepare(request: some LangToolsRequest) throws -> URLRequest {
         return URLRequest(url: URL(string: "http://localhost:8080/v1/")!)
+    }
+}
+
+enum MockModel: String, RawRepresentable, Codable {
+    case mockModel
+
+    var rawValue: String { "mock-model" }
+    init?(rawValue: String) {
+        self = .mockModel
     }
 }
 
@@ -39,11 +45,12 @@ struct MockRequest: LangToolsChatRequest, LangToolsStreamableRequest, Encodable 
     typealias LangTool = MockLangTool
     typealias ToolResult = MockToolResult
 
-    static var url: URL { URL(filePath: "test") }
+    static var url: URL { URL(fileURLWithPath: "test") }
     static var endpoint: String { url.endpoint }
     typealias Response = MockResponse
     var stream: Bool?
     var messages: [MockMessage] = []
+    var model: MockModel = .mockModel
     init(stream: Bool? = nil) { self.stream = stream }
 }
 

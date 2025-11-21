@@ -4,11 +4,17 @@
 //  Created by Reid Chatham on 2/13/23.
 //
 
+import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+#if canImport(SwiftUI)
 import SwiftUI
+#endif
 
 extension UserDefaults {
     static var model: Model {
-        get { standard.string(forKey: "model").flatMap(Model.init) ?? .openAI(.gpt35Turbo) }
+        get { standard.string(forKey: "model").flatMap(Model.init) ?? .anthropic(.claude35Sonnet_20241022) }
         set { standard.set(newValue.rawValue, forKey: "model") }
     }
     

@@ -1,6 +1,15 @@
 {
-  "originHash" : "e8beff679522ae9f569bf4c257d7bde48376c72959857ddff4d4ba75b61291c0",
+  "originHash" : "cd24b227f90a05fb2d78f72b4393273166c9da4c961eb9225cfbaf77f80eae79",
   "pins" : [
+    {
+      "identity" : "chatui",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rchatham/ChatUI",
+      "state" : {
+        "branch" : "main",
+        "revision" : "33787f542cc8eb565c128581c13d61c9a399469a"
+      }
+    },
     {
       "identity" : "keychainaccess",
       "kind" : "remoteSourceControl",
@@ -8,6 +17,15 @@
       "state" : {
         "revision" : "84e546727d66f1adc5439debad16270d0fdd04e7",
         "version" : "4.2.2"
+      }
+    },
+    {
+      "identity" : "swiftsoup",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/scinfu/SwiftSoup.git",
+      "state" : {
+        "revision" : "bba848db50462894e7fc0891d018dfecad4ef11e",
+        "version" : "2.8.7"
       }
     }
   ],

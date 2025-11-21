@@ -139,7 +139,7 @@ public extension LangToolsTextContentType {
         if let text = contentType.textContentType {
             self.init(text: text.text)
         } else {
-            throw LangToolError.invalidContentType
+            throw LangToolsError.invalidContentType
         }
     }
 
@@ -185,7 +185,7 @@ public extension LangToolsImageContentType {
         if let image = contentType.imageContentType {
             fatalError("implement image! \(image)")
         } else {
-            throw LangToolError.invalidContentType
+            throw LangToolsError.invalidContentType
         }
     }
 }
@@ -199,7 +199,7 @@ public extension LangToolsAudioContentType {
         if let audio = contentType.audioContentType {
             fatalError("implement audio! \(audio)")
         } else {
-            throw LangToolError.invalidContentType
+            throw LangToolsError.invalidContentType
         }
     }
 }

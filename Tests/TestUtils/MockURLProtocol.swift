@@ -6,6 +6,9 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 @testable import LangTools
 
 class MockURLProtocol: URLProtocol {
@@ -58,4 +61,20 @@ extension URLRequest {
 
 extension URLSessionTask {
     var path: String { currentRequest!.path }
+}
+
+extension MockURLProtocol {
+    static func registerResponse(for endpoint: String, data: Data, statusCode:
+    Int) {
+        MockURLProtocol.mockNetworkHandlers[endpoint] = { request in
+        (.success(data), statusCode) }
+    }
+
+    static var configuration: URLSessionConfiguration {
+        URLProtocol.registerClass(MockURLProtocol.self)
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        return config
+    }
+
 }

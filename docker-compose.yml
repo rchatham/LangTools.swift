@@ -1,0 +1,63 @@
+services:
+  # Default Swift 5.9 (matches Package.swift requirement)
+  langtools-swift-5-9:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SWIFT_VERSION: "5.9"
+    volumes:
+      - .:/workspace
+    environment:
+      - SWIFT_VERSION=5.9
+    command: swift test --parallel
+
+  # Swift 5.10 for forward compatibility testing
+  langtools-swift-5-10:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SWIFT_VERSION: "5.10"
+    volumes:
+      - .:/workspace
+    environment:
+      - SWIFT_VERSION=5.10
+    command: swift test --parallel
+
+  # Swift 6.0 for future compatibility testing
+  langtools-swift-6-0:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SWIFT_VERSION: "6.0"
+    volumes:
+      - .:/workspace
+    environment:
+      - SWIFT_VERSION=6.0
+    command: swift test --parallel
+
+  # Build-only service (no tests)
+  langtools-build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SWIFT_VERSION: "5.9"
+    volumes:
+      - .:/workspace
+    command: swift build -c release
+
+  # Interactive shell for debugging
+  langtools-shell:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SWIFT_VERSION: "5.9"
+    volumes:
+      - .:/workspace
+    stdin_open: true
+    tty: true
+    command: /bin/bash

@@ -6,6 +6,9 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import LangTools
 import OpenAI
 
@@ -71,7 +74,7 @@ public final class Ollama: LangTools {
 
         urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
         do { urlRequest.httpBody = try JSONEncoder().encode(request) }
-        catch { throw LangToolError.invalidData }
+        catch { throw LangToolsError.invalidData }
 
         return urlRequest
     }
