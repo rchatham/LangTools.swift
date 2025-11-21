@@ -128,7 +128,7 @@ extension LangTools {
                     }
 
                     if let errorBuffer, !buffer.isEmpty {
-                        throw LangToolsError.failiedToDecodeStream(buffer: buffer, error: errorBuffer)
+                        throw LangToolsError.failedToDecodeStream(buffer: buffer, error: errorBuffer)
                     }
 
                     print("   📊 Processed \(lineCount) lines from stream")
@@ -177,7 +177,7 @@ public enum LangToolsError: Error {
     case jsonParsingFailure(Error)
     case responseUnsuccessful(statusCode: Int, Error?)
     case apiError(Codable & Error)
-    case failiedToDecodeStream(buffer: String, error: Error)
+    case failedToDecodeStream(buffer: String, error: Error)
 }
 
 // MARK: - Helpers

@@ -114,7 +114,7 @@ extension MessageService: @retroactive ChatMessageService {
                     message: "Failed to parse the response stream."
                 )
 
-            case .failiedToDecodeStream(buffer: let buffer, error: let error):
+            case .failedToDecodeStream(buffer: let buffer, error: let error):
                 return ChatAlertInfo(
                     title: "Stream Decoding Error",
                     message: "Failed to decode stream data: \(buffer).\n\(error.localizedDescription)"
