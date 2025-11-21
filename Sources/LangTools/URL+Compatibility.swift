@@ -3,9 +3,10 @@ import Foundation
 import FoundationNetworking
 #endif
 
-// URL methods compatibility for Linux with Swift < 6.0
-// In Swift 6.0+, these methods are available on all platforms
-#if !canImport(Darwin) && swift(<6.0)
+// URL methods compatibility for Linux
+// These methods are Darwin-only in Swift < 6.0, but became available on all platforms in Swift 6.0
+#if !canImport(Darwin)
+#if compiler(<6.0)
 extension URL {
     /// Compatibility method for appending(path:) on Linux with Swift < 6.0
     public func appending(path: String) -> URL {
@@ -26,4 +27,5 @@ extension URL {
         self.init(fileURLWithPath: filePath)
     }
 }
+#endif
 #endif
