@@ -197,6 +197,127 @@ let tool = Tool(
 )
 ```
 
+## LangToolchain
+
+`LangToolchain` provides a unified interface for managing and routing requests to multiple LLM providers. It enables you to register different AI services and automatically routes requests to the appropriate provider based on the request type.
+
+### Overview
+
+When building applications that need to work with multiple LLM providers (OpenAI, Anthropic, Gemini, etc.), `LangToolchain` simplifies the process by:
+- Managing multiple LangTools provider instances
+- Automatically routing requests to the correct provider
+- Providing a single interface for both regular and streaming requests
+
+### Basic Usage
+
+```swift
+import LangTools
+import OpenAI
+import Anthropic
+
+// Create a toolchain
+var toolchain = LangToolchain()
+
+// Register providers
+toolchain.register(OpenAI(apiKey: "your-openai-key"))
+toolchain.register(Anthropic(apiKey: "your-anthropic-key"))
+
+// Perform requests - automatically routed to the correct provider
+let openAIRequest = OpenAI.ChatCompletionRequest(
+    model: .gpt4,
+    messages: [Message(role: .user, content: "Hello!")]
+)
+let response = try await toolchain.perform(request: openAIRequest)
+
+// Anthropic requests are also automatically routed
+let anthropicRequest = Anthropic.MessageRequest(
+    model: .claude35Sonnet_latest,
+    messages: [Anthropic.Message(role: .user, content: "Hello!")]
+)
+let anthropicResponse = try await toolchain.perform(request: anthropicRequest)
+```
+
+### Registration
+
+Register LangTools providers using the `register` method:
+
+```swift
+var toolchain = LangToolchain()
+
+// Register individual providers
+toolchain.register(OpenAI(apiKey: "your-openai-key"))
+toolchain.register(Anthropic(apiKey: "your-anthropic-key"))
+toolchain.register(XAI(apiKey: "your-xai-key"))
+toolchain.register(Gemini(apiKey: "your-gemini-key"))
+toolchain.register(Ollama()) // Ollama doesn't require an API key
+```
+
+You can also initialize with pre-registered providers:
+
+```swift
+let toolchain = LangToolchain(langTools: [
+    "OpenAI": OpenAI(apiKey: "your-openai-key"),
+    "Anthropic": Anthropic(apiKey: "your-anthropic-key")
+])
+```
+
+### Retrieving Specific Providers
+
+Access a specific registered provider using `langTool(_:)`:
+
+```swift
+if let openai = toolchain.langTool(OpenAI.self) {
+    // Use OpenAI-specific features
+    let audioRequest = OpenAI.AudioSpeechRequest(
+        model: .tts_1_hd,
+        input: "Hello!",
+        voice: .alloy
+    )
+    let audioData: Data = try await openai.perform(request: audioRequest)
+}
+```
+
+### Streaming Requests
+
+`LangToolchain` supports streaming responses:
+
+```swift
+let request = OpenAI.ChatCompletionRequest(
+    model: .gpt4,
+    messages: [Message(role: .user, content: "Write a story")],
+    stream: true
+)
+
+for try await chunk in toolchain.stream(request: request) {
+    if let text = chunk.choices[0].delta?.content {
+        print(text, terminator: "")
+    }
+}
+```
+
+### Error Handling
+
+`LangToolchain` throws `LangToolchainError.toolchainCannotHandleRequest` when no registered provider can handle a request:
+
+```swift
+do {
+    let response = try await toolchain.perform(request: someRequest)
+} catch LangToolchainError.toolchainCannotHandleRequest {
+    print("No registered provider can handle this request type")
+} catch {
+    print("Other error: \(error)")
+}
+```
+
+### Use Cases
+
+`LangToolchain` is particularly useful for:
+
+1. **Multi-Provider Applications**: Applications that need to support multiple LLM providers
+2. **Provider Abstraction**: Abstracting away the specific provider implementation details
+3. **Dynamic Provider Selection**: Routing requests based on user preferences or configuration
+4. **Fallback Strategies**: Implementing fallback logic when a provider is unavailable
+
 ## Additional Resources
 
 For implementation examples, see:
