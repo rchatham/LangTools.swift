@@ -45,6 +45,34 @@ let response = try await anthropic.perform(request:
 print(response.message?.content.text ?? "No response")
 ```
 
+## Quick Start with LangToolchain
+
+Use `LangToolchain` to manage multiple AI providers with automatic request routing:
+
+```swift
+import LangTools
+import OpenAI
+import Anthropic
+
+// Create and configure the toolchain
+var langToolchain = LangToolchain()
+langToolchain.register(OpenAI(apiKey: "your-openai-key"))
+langToolchain.register(Anthropic(apiKey: "your-anthropic-key"))
+
+// Requests are automatically routed to the correct provider
+let openAIRequest = OpenAI.ChatCompletionRequest(
+    model: .gpt4,
+    messages: [Message(role: .user, content: "Hello from OpenAI!")]
+)
+let openAIResponse = try await langToolchain.perform(request: openAIRequest)
+
+let anthropicRequest = Anthropic.MessageRequest(
+    model: .claude35Sonnet_latest,
+    messages: [Message(role: .user, content: "Hello from Anthropic!")]
+)
+let anthropicResponse = try await langToolchain.perform(request: anthropicRequest)
+```
+
 ## Quick Start with Agents
 
 ```swift
@@ -78,7 +106,7 @@ https://github.com/user-attachments/assets/ce9341fe-5eb2-43bc-a7f3-08b88019c981
 
 See individual module README files for detailed documentation and examples:
 
-- [LangTools](Sources/LangTools/README.md)
+- [LangTools](Sources/LangTools/README.md) - Core protocols and LangToolchain for unified multi-provider management
 - [Agents](Sources/Agents/README.md)
 - [OpenAI](Sources/OpenAI/README.md)
 - [Anthropic](Sources/Anthropic/README.md)
