@@ -225,7 +225,7 @@ toolchain.register(Anthropic(apiKey: "your-anthropic-key"))
 // Perform requests - automatically routed to the correct provider
 let openAIRequest = OpenAI.ChatCompletionRequest(
     model: .gpt4,
-    messages: [Message(role: .user, content: "Hello!")]
+    messages: [OpenAI.Message(role: .user, content: "Hello!")]
 )
 let response = try await toolchain.perform(request: openAIRequest)
 
@@ -284,12 +284,12 @@ if let openai = toolchain.langTool(OpenAI.self) {
 ```swift
 let request = OpenAI.ChatCompletionRequest(
     model: .gpt4,
-    messages: [Message(role: .user, content: "Write a story")],
+    messages: [OpenAI.Message(role: .user, content: "Write a story")],
     stream: true
 )
 
 for try await chunk in toolchain.stream(request: request) {
-    if let text = chunk.choices[0].delta?.content {
+    if let text = chunk.choices.first?.delta?.content {
         print(text, terminator: "")
     }
 }
