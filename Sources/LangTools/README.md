@@ -89,6 +89,135 @@ public protocol LangToolsTool: Codable {
 }
 ```
 
+## LangToolchain
+
+`LangToolchain` is a unified interface for managing multiple LLM providers. It allows you to register different AI services (OpenAI, Anthropic, XAI, Gemini, Ollama) and automatically routes requests to the appropriate provider based on the request type.
+
+### Overview
+
+The `LangToolchain` provides:
+- **Provider Registration**: Register multiple LLM providers in a single toolchain
+- **Automatic Request Routing**: Requests are automatically routed to the provider that can handle them
+- **Unified API**: Use `perform` and `stream` methods regardless of which provider handles the request
+- **Provider Access**: Retrieve specific providers when needed for direct access
+
+### Basic Usage
+
+#### Initialize and Register Providers
+
+```swift
+import LangTools
+import OpenAI
+import Anthropic
+import Gemini
+
+// Create a toolchain instance
+var langToolchain = LangToolchain()
+
+// Register your AI providers
+langToolchain.register(OpenAI(apiKey: "your-openai-key"))
+langToolchain.register(Anthropic(apiKey: "your-anthropic-key"))
+langToolchain.register(Gemini(apiKey: "your-gemini-key"))
+```
+
+#### Perform Requests
+
+The toolchain automatically routes requests to the correct provider:
+
+```swift
+// OpenAI request - automatically routed to OpenAI provider
+let openAIRequest = OpenAI.ChatCompletionRequest(
+    model: .gpt4,
+    messages: [OpenAI.Message(role: .user, content: "Hello!")]
+)
+let openAIResponse = try await langToolchain.perform(request: openAIRequest)
+
+// Anthropic request - automatically routed to Anthropic provider
+let anthropicRequest = Anthropic.MessageRequest(
+    model: .claude35Sonnet_latest,
+    messages: [Anthropic.Message(role: .user, content: "Hello!")]
+)
+let anthropicResponse = try await langToolchain.perform(request: anthropicRequest)
+```
+
+#### Streaming Responses
+
+The toolchain supports streaming for providers that implement it:
+
+```swift
+let request = OpenAI.ChatCompletionRequest(
+    model: .gpt4,
+    messages: [OpenAI.Message(role: .user, content: "Write a story")],
+    stream: true
+)
+
+for try await chunk in langToolchain.stream(request: request) {
+    if let text = chunk.choices.first?.delta?.content {
+        print(text, terminator: "")
+    }
+}
+```
+
+#### Accessing Specific Providers
+
+When you need direct access to a specific provider:
+
+```swift
+// Get a specific provider from the toolchain
+if let openai = langToolchain.langTool(OpenAI.self) {
+    // Use OpenAI-specific features
+    let audioRequest = OpenAI.AudioSpeechRequest(
+        model: .tts_1_hd,
+        input: "Hello, world!",
+        voice: .alloy
+    )
+    let audioData = try await openai.perform(request: audioRequest)
+}
+```
+
+### Error Handling
+
+The toolchain throws `LangToolchainError` when no registered provider can handle a request:
+
+```swift
+do {
+    let response = try await langToolchain.perform(request: request)
+} catch LangToolchainError.toolchainCannotHandleRequest {
+    print("No provider registered can handle this request")
+} catch {
+    print("Error: \(error)")
+}
+```
+
+### Use with Agents
+
+The toolchain works seamlessly with the Agents framework:
+
+```swift
+import Agents
+
+// Get a specific provider for agent context
+if let anthropic = langToolchain.langTool(Anthropic.self) {
+    let context = AgentContext(
+        langTool: anthropic,
+        model: .claude35Sonnet_latest,
+        messages: messages,
+        eventHandler: { event in
+            // Handle agent events
+        }
+    )
+    let result = try await myAgent.execute(context: context)
+}
+```
+
+### Best Practices
+
+1. **Register providers at startup**: Initialize your toolchain and register all providers during app initialization
+2. **Use automatic routing**: Let the toolchain route requests automatically for cleaner code
+3. **Access providers directly when needed**: Use `langTool(_:)` for provider-specific features like audio
+4. **Handle routing errors**: Always catch `LangToolchainError.toolchainCannotHandleRequest`
+5. **Consider provider availability**: Some providers may not require API keys (e.g., local Ollama)
+
 ## Error Handling
 
 The framework provides standard error types:
