@@ -128,14 +128,14 @@ The toolchain automatically routes requests to the correct provider:
 // OpenAI request - automatically routed to OpenAI provider
 let openAIRequest = OpenAI.ChatCompletionRequest(
     model: .gpt4,
-    messages: [Message(role: .user, content: "Hello!")]
+    messages: [OpenAI.Message(role: .user, content: "Hello!")]
 )
 let openAIResponse = try await langToolchain.perform(request: openAIRequest)
 
 // Anthropic request - automatically routed to Anthropic provider
 let anthropicRequest = Anthropic.MessageRequest(
     model: .claude35Sonnet_latest,
-    messages: [Message(role: .user, content: "Hello!")]
+    messages: [Anthropic.Message(role: .user, content: "Hello!")]
 )
 let anthropicResponse = try await langToolchain.perform(request: anthropicRequest)
 ```
@@ -147,7 +147,7 @@ The toolchain supports streaming for providers that implement it:
 ```swift
 let request = OpenAI.ChatCompletionRequest(
     model: .gpt4,
-    messages: [Message(role: .user, content: "Write a story")],
+    messages: [OpenAI.Message(role: .user, content: "Write a story")],
     stream: true
 )
 

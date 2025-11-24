@@ -62,13 +62,13 @@ langToolchain.register(Anthropic(apiKey: "your-anthropic-key"))
 // Requests are automatically routed to the correct provider
 let openAIRequest = OpenAI.ChatCompletionRequest(
     model: .gpt4,
-    messages: [Message(role: .user, content: "Hello from OpenAI!")]
+    messages: [OpenAI.Message(role: .user, content: "Hello from OpenAI!")]
 )
 let openAIResponse = try await langToolchain.perform(request: openAIRequest)
 
 let anthropicRequest = Anthropic.MessageRequest(
     model: .claude35Sonnet_latest,
-    messages: [Message(role: .user, content: "Hello from Anthropic!")]
+    messages: [Anthropic.Message(role: .user, content: "Hello from Anthropic!")]
 )
 let anthropicResponse = try await langToolchain.perform(request: anthropicRequest)
 ```
