@@ -16,6 +16,9 @@ public class MessageService: Sendable {
     public var messages: [Message] = []
     var tools: [Tool]?
 
+    /// Callback fired when a message is added or modified (for persistence)
+    public var messageUpdatedCallback: ((Message) -> Void)?
+
     /// Returns a filtered list of tools based on tool settings
     var filteredTools: [Tool]? {
         // Return nil if master tool switch is disabled
@@ -31,8 +34,10 @@ public class MessageService: Sendable {
     }
 
     public func send(message: String, stream: Bool = false) async throws {
+        let userMessage = Message(text: message, role: .user)
         await MainActor.run {
-            messages.append(Message(text: message, role: .user))
+            messages.append(userMessage)
+            messageUpdatedCallback?(userMessage)
         }
 
         do {
@@ -53,6 +58,7 @@ public class MessageService: Sendable {
                 await MainActor.run {
                     if last.uuid == message.uuid { messages[messages.count - 1] = message }
                     else { messages.append(message) }
+                    messageUpdatedCallback?(message)
                 }
             }
         } catch {
@@ -79,77 +85,75 @@ public class MessageService: Sendable {
 extension MessageService {
     func handleAgentEvent(_ event: AgentEvent) {
         Task { @MainActor in
+
             switch event {
             case .started(let agent, let parent, let task):
+                let message = Message.createAgentStartEvent(agentName: agent, task: task)
                 if let parent {
-                    messages.insert(.createStartEvent(agentName: agent, task: task), for: parent)
+                    messages.append(message, for: parent)
                 } else {
-                    messages.append(.createStartEvent(agentName: agent, task: task))
+                    messages.append(message)
                 }
 
             case .agentTransfer(let agent, let to, let reason):
-                let message = Message.createDelegationEvent(
+                let message = Message.createAgentDelegationEvent(
                     fromAgent: agent,
                     toAgent: to,
                     reason: reason
                 )
-
-                messages.insert(message, for: agent)
+                messages.append(message, for: agent)
 
             case .toolCalled(let agent, let tool, let args):
-                let message = Message.createToolCallEvent(
+                let message = Message.createAgentToolCallEvent(
                     agentName: agent,
                     tool: tool,
                     arguments: args
                 )
-
-                messages.insert(message, for: agent)
+                messages.append(message, for: agent)
 
             case .toolCompleted(let agent, let result):
                 guard let result else { break }
-                let message = Message.createToolReturnedEvent(
+                let message = Message.createAgentToolReturnedEvent(
                     agentName: agent,
-                    result: result  // ?? "Missing agent result."
+                    result: result
                 )
-
-                messages.insert(message, for: agent)
+                messages.append(message, for: agent)
 
             case .completed(let agent, let result, let is_error):
-                let message = Message.createCompletionEvent(
+                let message = Message.createAgentCompletionEvent(
                     agentName: agent,
                     result: result,
                     is_error: is_error
                 )
-
-                messages.insert(message, for: agent)
+                messages.append(message, for: agent)
 
             case .error(let agent, let error):
-                let message = Message.createErrorEvent(
+                let message = Message.createAgentErrorEvent(
                     agentName: agent,
                     error: error
                 )
-
-                messages.insert(message, for: agent)
+                messages.append(message, for: agent)
 
             default: fatalError("we are not testing this right now")
             }
+
+            // Notify about message change for persistence
+            if let message = messages.last { messageUpdatedCallback?(message) }
         }
     }
 }
 
 extension Array<Message> {
-    mutating func insert(_ message: Message, for agent: String) {
-        for (idx, msg) in self.enumerated() {
-            if case .agentEvent(var content) = msg.contentType, !content.hasCompleted {
-                if content.agentName == agent {
-                    content.children.append(message)
-                    self[idx].contentType = .agentEvent(content)
-                    return
-                } else if content.children.contains(message, for: agent) {
-                    content.children.insert(message, for: agent)
-                    self[idx].contentType = .agentEvent(content)
-                    return
-                }
+    mutating func append(_ message: Message, for agent: String) {
+        if let msg = last, case .agentEvent(var content) = msg.contentType, !content.hasCompleted {
+            if content.agentName == agent {
+                content.children.append(message)
+                self.last?.contentType = .agentEvent(content)
+                return
+            } else if content.children.contains(message, for: agent) {
+                content.children.append(message, for: agent)
+                self.last?.contentType = .agentEvent(content)
+                return
             }
         }
         self.append(message)

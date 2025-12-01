@@ -269,7 +269,7 @@ extension Message {
         return Message(role: .system, contentType: .agentEvent(content))
     }
 
-    static func createStartEvent(agentName: String, task: String) -> Message {
+    static func createAgentStartEvent(agentName: String, task: String) -> Message {
         .agentEvent(
             type: .started,
             agentName: agentName,
@@ -277,7 +277,7 @@ extension Message {
         )
     }
 
-    static func createDelegationEvent(
+    static func createAgentDelegationEvent(
         fromAgent: String,
         toAgent: String,
         reason: String,
@@ -291,7 +291,7 @@ extension Message {
         )
     }
 
-    static func createToolCallEvent(
+    static func createAgentToolCallEvent(
         agentName: String,
         tool: String,
         arguments: String
@@ -303,7 +303,7 @@ extension Message {
         )
     }
 
-    static func createToolReturnedEvent(
+    static func createAgentToolReturnedEvent(
         agentName: String,
         result: String
     ) -> Message {
@@ -314,7 +314,7 @@ extension Message {
         )
     }
 
-    static func createCompletionEvent(
+    static func createAgentCompletionEvent(
         agentName: String,
         result: String,
         is_error: Bool = false
@@ -326,7 +326,7 @@ extension Message {
         )
     }
 
-    static func createErrorEvent(
+    static func createAgentErrorEvent(
         agentName: String,
         error: String
     ) -> Message {
