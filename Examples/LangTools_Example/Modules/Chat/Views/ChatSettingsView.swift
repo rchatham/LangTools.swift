@@ -197,6 +197,13 @@ public struct ChatSettingsView: View {
                     viewModel.toolSettings.resetToDefaults()
                 }
             }
+
+            Section(header: Text("Display")) {
+                Toggle("Rich Content Cards", isOn: $viewModel.toolSettings.richContentEnabled)
+                Text("Display weather, contacts, and events as visual cards below messages")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
         }
         .navigationTitle("Settings")
         .onAppear { viewModel.loadSettings() }
@@ -751,11 +758,26 @@ extension ChatSettingsView {
                         }
                         .frame(maxHeight: 300)
                     }
+
                 } else {
                     Text("Enable AI Tools to configure individual tools")
                         .foregroundColor(.secondary)
                         .font(.callout)
                         .padding(.vertical, 8)
+                }
+
+                // Rich Content Cards toggle (independent of tools master switch)
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Rich Content Cards", isOn: $viewModel.toolSettings.richContentEnabled)
+                            .toggleStyle(SwitchToggleStyle())
+                            .padding(.vertical, 4)
+
+                        Text("Display weather, contacts, and events as visual cards below messages instead of plain text.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(8)
                 }
 
                 // Reset button
