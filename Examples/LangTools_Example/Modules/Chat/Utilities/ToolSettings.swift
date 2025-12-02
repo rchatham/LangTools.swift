@@ -9,9 +9,9 @@ import Foundation
 import SwiftUI
 
 /// Represents settings for all available tools in the app
-class ToolSettings: ObservableObject {
+public class ToolSettings: ObservableObject {
     // Singleton instance
-    static let shared = ToolSettings()
+    public static let shared = ToolSettings()
 
     /// Master switch to enable/disable all tools
     @Published var toolsEnabled: Bool {
@@ -59,6 +59,11 @@ class ToolSettings: ObservableObject {
         didSet { saveSettings() }
     }
 
+    /// Enable/disable rich content cards (weather, contacts, events displayed as visual cards)
+    @Published public var richContentEnabled: Bool {
+        didSet { saveSettings() }
+    }
+
     private init() {
         // Load settings from UserDefaults, defaulting to true if not set
         self.toolsEnabled = UserDefaults.standard.bool(forKey: "toolsEnabled")
@@ -69,6 +74,7 @@ class ToolSettings: ObservableObject {
         self.contactsToolEnabled = UserDefaults.standard.bool(forKey: "contactsToolEnabled")
         self.weatherToolEnabled = UserDefaults.standard.bool(forKey: "weatherToolEnabled")
         self.filesToolEnabled = UserDefaults.standard.bool(forKey: "filesToolEnabled")
+        self.richContentEnabled = UserDefaults.standard.object(forKey: "richContentEnabled") as? Bool ?? true
 
         // If this is first launch, set defaults
         if !UserDefaults.standard.bool(forKey: "toolSettingsInitialized") {
@@ -86,6 +92,7 @@ class ToolSettings: ObservableObject {
         UserDefaults.standard.set(contactsToolEnabled, forKey: "contactsToolEnabled")
         UserDefaults.standard.set(weatherToolEnabled, forKey: "weatherToolEnabled")
         UserDefaults.standard.set(filesToolEnabled, forKey: "filesToolEnabled")
+        UserDefaults.standard.set(richContentEnabled, forKey: "richContentEnabled")
     }
 
     func resetToDefaults() {
@@ -97,6 +104,7 @@ class ToolSettings: ObservableObject {
         contactsToolEnabled = true
         weatherToolEnabled = true
         filesToolEnabled = true
+        richContentEnabled = true
         saveSettings()
     }
 
