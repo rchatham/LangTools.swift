@@ -204,6 +204,23 @@ public struct ChatSettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+
+            Section(header: Text("Voice Input")) {
+                Toggle("Enable Voice Input", isOn: $viewModel.toolSettings.voiceInputEnabled)
+                    .toggleStyle(SwitchToggleStyle())
+
+                if viewModel.toolSettings.voiceInputEnabled {
+                    Picker("Speech Provider", selection: $viewModel.toolSettings.sttProviderRawValue) {
+                        Text("Apple Speech").tag("Apple Speech")
+                        Text("OpenAI Whisper").tag("OpenAI Whisper")
+                        Text("WhisperKit").tag("WhisperKit")
+                    }
+
+                    Text("Apple Speech: On-device, private\nOpenAI Whisper: Cloud, high accuracy\nWhisperKit: On-device ML (coming soon)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
         }
         .navigationTitle("Settings")
         .onAppear { viewModel.loadSettings() }
@@ -780,6 +797,41 @@ extension ChatSettingsView {
                     .padding(8)
                 }
 
+                // Voice Input settings
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Voice Input", isOn: $viewModel.toolSettings.voiceInputEnabled)
+                            .toggleStyle(SwitchToggleStyle())
+                            .padding(.vertical, 4)
+
+                        Text("Enable the microphone button to dictate messages using speech-to-text.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        if viewModel.toolSettings.voiceInputEnabled {
+                            Divider()
+
+                            Text("Speech Provider")
+                                .font(.headline)
+
+                            Picker("", selection: $viewModel.toolSettings.sttProviderRawValue) {
+                                Text("Apple Speech").tag("Apple Speech")
+                                Text("OpenAI Whisper").tag("OpenAI Whisper")
+                                Text("WhisperKit").tag("WhisperKit")
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(maxWidth: 400)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                providerDescription(for: viewModel.toolSettings.sttProviderRawValue)
+                            }
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(8)
+                }
+
                 // Reset button
                 Button(action: {
                     viewModel.toolSettings.resetToDefaults()
@@ -789,6 +841,19 @@ extension ChatSettingsView {
                 .buttonStyle(.bordered)
                 .padding(.top, 8)
             }
+        }
+    }
+
+    private func providerDescription(for provider: String) -> some View {
+        switch provider {
+        case "Apple Speech":
+            return Text("On-device processing. Private and fast, no API key required. Works offline with supported languages.")
+        case "OpenAI Whisper":
+            return Text("Cloud-based processing. High accuracy across many languages. Requires OpenAI API key.")
+        case "WhisperKit":
+            return Text("On-device ML inference. High accuracy, works offline. Requires model download (coming soon).")
+        default:
+            return Text("Select a speech recognition provider.")
         }
     }
 
