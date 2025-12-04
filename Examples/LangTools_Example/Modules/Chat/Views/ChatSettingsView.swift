@@ -290,6 +290,61 @@ public struct ChatSettingsView: View {
                 .buttonStyle(.bordered)
                 .padding(.top, 8)
             }
+
+            Divider()
+                .padding(.vertical, 8)
+
+            // Voice Input Section
+            Text("Voice Input")
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 12) {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Voice Input", isOn: $viewModel.toolSettings.voiceInputEnabled)
+                            .toggleStyle(SwitchToggleStyle())
+                            .padding(.vertical, 4)
+
+                        Text("Enable the microphone button to dictate messages using speech-to-text.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        if viewModel.toolSettings.voiceInputEnabled {
+                            Divider()
+
+                            Text("Speech Provider")
+                                .font(.headline)
+
+                            Picker("", selection: $viewModel.toolSettings.sttProviderRawValue) {
+                                Text("Apple Speech").tag("Apple Speech")
+                                Text("OpenAI Whisper").tag("OpenAI Whisper")
+                                Text("WhisperKit").tag("WhisperKit")
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(maxWidth: 400)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                providerDescription(for: viewModel.toolSettings.sttProviderRawValue)
+                            }
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                            Divider()
+
+                            Toggle("Replace send button", isOn: $viewModel.toolSettings.voiceButtonReplaceSend)
+                                .toggleStyle(SwitchToggleStyle())
+
+                            Text("Show microphone button in place of send button when text field is empty")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(8)
+                }
+            }
         }
     }
 
@@ -799,50 +854,6 @@ extension ChatSettingsView {
                         Text("Display weather, contacts, and events as visual cards below messages instead of plain text.")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                    }
-                    .padding(8)
-                }
-
-                // Voice Input settings
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Toggle("Voice Input", isOn: $viewModel.toolSettings.voiceInputEnabled)
-                            .toggleStyle(SwitchToggleStyle())
-                            .padding(.vertical, 4)
-
-                        Text("Enable the microphone button to dictate messages using speech-to-text.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-
-                        if viewModel.toolSettings.voiceInputEnabled {
-                            Divider()
-
-                            Text("Speech Provider")
-                                .font(.headline)
-
-                            Picker("", selection: $viewModel.toolSettings.sttProviderRawValue) {
-                                Text("Apple Speech").tag("Apple Speech")
-                                Text("OpenAI Whisper").tag("OpenAI Whisper")
-                                Text("WhisperKit").tag("WhisperKit")
-                            }
-                            .pickerStyle(.segmented)
-                            .frame(maxWidth: 400)
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                providerDescription(for: viewModel.toolSettings.sttProviderRawValue)
-                            }
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-
-                            Divider()
-
-                            Toggle("Replace send button", isOn: $viewModel.toolSettings.voiceButtonReplaceSend)
-                                .toggleStyle(SwitchToggleStyle())
-
-                            Text("Show microphone button in place of send button when text field is empty")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
                     }
                     .padding(8)
                 }
