@@ -219,6 +219,12 @@ public struct ChatSettingsView: View {
                     Text("Apple Speech: On-device, private\nOpenAI Whisper: Cloud, high accuracy\nWhisperKit: On-device ML (coming soon)")
                         .font(.caption)
                         .foregroundColor(.secondary)
+
+                    Toggle("Replace send button", isOn: $viewModel.toolSettings.voiceButtonReplaceSend)
+
+                    Text("Show microphone in place of send button when empty")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             }
         }
@@ -827,6 +833,15 @@ extension ChatSettingsView {
                             }
                             .font(.caption)
                             .foregroundColor(.secondary)
+
+                            Divider()
+
+                            Toggle("Replace send button", isOn: $viewModel.toolSettings.voiceButtonReplaceSend)
+                                .toggleStyle(SwitchToggleStyle())
+
+                            Text("Show microphone button in place of send button when text field is empty")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
                     }
                     .padding(8)

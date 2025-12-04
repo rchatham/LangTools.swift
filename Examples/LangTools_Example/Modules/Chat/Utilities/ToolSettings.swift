@@ -76,6 +76,11 @@ public class ToolSettings: ObservableObject {
         didSet { saveSettings() }
     }
 
+    /// When true, microphone button replaces send button when text field is empty
+    @Published public var voiceButtonReplaceSend: Bool {
+        didSet { saveSettings() }
+    }
+
     private init() {
         // Load settings from UserDefaults, defaulting to true if not set
         self.toolsEnabled = UserDefaults.standard.bool(forKey: "toolsEnabled")
@@ -89,6 +94,7 @@ public class ToolSettings: ObservableObject {
         self.richContentEnabled = UserDefaults.standard.object(forKey: "richContentEnabled") as? Bool ?? true
         self.voiceInputEnabled = UserDefaults.standard.object(forKey: "voiceInputEnabled") as? Bool ?? true
         self.sttProviderRawValue = UserDefaults.standard.string(forKey: "sttProviderRawValue") ?? "Apple Speech"
+        self.voiceButtonReplaceSend = UserDefaults.standard.object(forKey: "voiceButtonReplaceSend") as? Bool ?? false
 
         // If this is first launch, set defaults
         if !UserDefaults.standard.bool(forKey: "toolSettingsInitialized") {
@@ -109,6 +115,7 @@ public class ToolSettings: ObservableObject {
         UserDefaults.standard.set(richContentEnabled, forKey: "richContentEnabled")
         UserDefaults.standard.set(voiceInputEnabled, forKey: "voiceInputEnabled")
         UserDefaults.standard.set(sttProviderRawValue, forKey: "sttProviderRawValue")
+        UserDefaults.standard.set(voiceButtonReplaceSend, forKey: "voiceButtonReplaceSend")
     }
 
     func resetToDefaults() {
@@ -123,6 +130,7 @@ public class ToolSettings: ObservableObject {
         richContentEnabled = true
         voiceInputEnabled = true
         sttProviderRawValue = "Apple Speech"
+        voiceButtonReplaceSend = false
         saveSettings()
     }
 
