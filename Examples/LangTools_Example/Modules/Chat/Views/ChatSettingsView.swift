@@ -215,8 +215,27 @@ public struct ChatSettingsView: View {
                         Text("OpenAI Whisper").tag("OpenAI Whisper")
                         Text("WhisperKit").tag("WhisperKit")
                     }
+                    .onChange(of: viewModel.toolSettings.sttProviderRawValue) { _, newValue in
+                        // Trigger preload when WhisperKit is selected
+                        if newValue == "WhisperKit" {
+                            viewModel.preloadWhisperKit()
+                        }
+                    }
 
-                    Text("Apple Speech: On-device, private\nOpenAI Whisper: Cloud, high accuracy\nWhisperKit: On-device ML (coming soon)")
+                    // Show WhisperKit loading state
+                    if viewModel.toolSettings.sttProviderRawValue == "WhisperKit" {
+                        HStack {
+                            if viewModel.whisperKitIsLoading {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Text(viewModel.whisperKitStatusDescription)
+                                .font(.caption)
+                                .foregroundColor(viewModel.whisperKitIsLoading ? .secondary : .green)
+                        }
+                    }
+
+                    Text("Apple Speech: On-device, private\nOpenAI Whisper: Cloud, high accuracy\nWhisperKit: On-device ML")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
@@ -325,9 +344,27 @@ public struct ChatSettingsView: View {
                             }
                             .pickerStyle(.segmented)
                             .frame(maxWidth: 400)
+                            .onChange(of: viewModel.toolSettings.sttProviderRawValue) { _, newValue in
+                                if newValue == "WhisperKit" {
+                                    viewModel.preloadWhisperKit()
+                                }
+                            }
 
                             VStack(alignment: .leading, spacing: 4) {
                                 providerDescription(for: viewModel.toolSettings.sttProviderRawValue)
+
+                                // Show WhisperKit loading state
+                                if viewModel.toolSettings.sttProviderRawValue == "WhisperKit" {
+                                    HStack(spacing: 8) {
+                                        if viewModel.whisperKitIsLoading {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                        }
+                                        Text(viewModel.whisperKitStatusDescription)
+                                            .foregroundColor(viewModel.whisperKitIsLoading ? .secondary : .green)
+                                    }
+                                    .padding(.top, 4)
+                                }
                             }
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -707,6 +744,12 @@ extension ChatSettingsView {
 
         let clearMessages: () -> Void
 
+        /// Callback to trigger WhisperKit preload (set by app)
+        public var onPreloadWhisperKit: (() -> Void)?
+
+        /// Callback to get WhisperKit loading state (set by app)
+        public var getWhisperKitState: (() -> (isLoading: Bool, description: String))?
+
         public init(clearMessages: @escaping () -> Void) {
             self.clearMessages = clearMessages
         }
@@ -727,6 +770,21 @@ extension ChatSettingsView {
 
         func saveToolSettings() {
             toolSettings.saveSettings()
+        }
+
+        /// Trigger WhisperKit preload
+        func preloadWhisperKit() {
+            onPreloadWhisperKit?()
+        }
+
+        /// Whether WhisperKit is currently loading
+        var whisperKitIsLoading: Bool {
+            getWhisperKitState?().isLoading ?? false
+        }
+
+        /// WhisperKit status description
+        var whisperKitStatusDescription: String {
+            getWhisperKitState?().description ?? "Not initialized"
         }
     }
 }
@@ -877,7 +935,7 @@ extension ChatSettingsView {
         case "OpenAI Whisper":
             return Text("Cloud-based processing. High accuracy across many languages. Requires OpenAI API key.")
         case "WhisperKit":
-            return Text("On-device ML inference. High accuracy, works offline. Requires model download (coming soon).")
+            return Text("On-device ML inference. High accuracy, works offline. Downloads model on first use.")
         default:
             return Text("Select a speech recognition provider.")
         }
