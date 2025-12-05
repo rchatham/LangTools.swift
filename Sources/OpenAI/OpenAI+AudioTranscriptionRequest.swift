@@ -151,15 +151,15 @@ extension OpenAI {
 }
 
 extension OpenAI.AudioTranscriptionRequest: MultipartFormDataEncodableRequest {
-    var httpBody: Data {
-        MultipartRequest()
+    func multipartFormData() -> (body: Data, contentType: String) {
+        let request = MultipartRequest()
             .file(fileName: fileType.fileName, contentType: fileType.contentType, fileData: file)
             .add(key: "model", value: model.rawValue)
             .add(key: "prompt", value: prompt)
             .add(key: "temperature", value: temperature)
             .add(key: "language", value: language)
             .add(key: "response_format", value: responseFormat)
-            .httpBody
+        return (body: request.httpBody, contentType: request.httpContentTypeHeadeValue)
     }
 }
 
