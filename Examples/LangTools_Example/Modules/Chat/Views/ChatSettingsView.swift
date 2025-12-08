@@ -222,7 +222,7 @@ public struct ChatSettingsView: View {
                         }
                     }
 
-                    // Show WhisperKit loading state
+                    // Show WhisperKit-specific options
                     if viewModel.toolSettings.sttProviderRawValue == "WhisperKit" {
                         HStack {
                             if viewModel.whisperKitIsLoading {
@@ -233,6 +233,21 @@ public struct ChatSettingsView: View {
                                 .font(.caption)
                                 .foregroundColor(viewModel.whisperKitIsLoading ? .secondary : .green)
                         }
+
+                        Picker("Model Size", selection: $viewModel.toolSettings.whisperKitModelSize) {
+                            Text("Tiny (~40MB)").tag("tiny")
+                            Text("Base (~75MB)").tag("base")
+                            Text("Small (~250MB)").tag("small")
+                            Text("Medium (~750MB)").tag("medium")
+                            Text("Large-v3 (~1.5GB)").tag("large-v3")
+                        }
+                        .onChange(of: viewModel.toolSettings.whisperKitModelSize) { _, _ in
+                            viewModel.preloadWhisperKit()
+                        }
+
+                        Text("Larger models are more accurate but slower")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
 
                     Text("Apple Speech: On-device, private\nOpenAI Whisper: Cloud, high accuracy\nWhisperKit: On-device ML")
@@ -244,6 +259,66 @@ public struct ChatSettingsView: View {
                     Text("Show microphone in place of send button when empty")
                         .font(.caption)
                         .foregroundColor(.secondary)
+
+                    Picker("Language", selection: $viewModel.toolSettings.sttLanguage) {
+                        Text("Auto-detect").tag("auto")
+                        Text("English").tag("en")
+                        Text("Spanish").tag("es")
+                        Text("French").tag("fr")
+                        Text("German").tag("de")
+                        Text("Italian").tag("it")
+                        Text("Portuguese").tag("pt")
+                        Text("Chinese").tag("zh")
+                        Text("Japanese").tag("ja")
+                        Text("Korean").tag("ko")
+                        Text("Arabic").tag("ar")
+                        Text("Russian").tag("ru")
+                        Text("Hindi").tag("hi")
+                    }
+
+                    Text("Select the language you'll be speaking")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Toggle("Auto-stop on silence", isOn: $viewModel.toolSettings.autoStopOnSilence)
+
+                    if viewModel.toolSettings.autoStopOnSilence {
+                        Picker("Silence timeout", selection: $viewModel.toolSettings.silenceTimeoutSeconds) {
+                            Text("1 second").tag(1.0)
+                            Text("1.5 seconds").tag(1.5)
+                            Text("2 seconds").tag(2.0)
+                            Text("3 seconds").tag(3.0)
+                            Text("5 seconds").tag(5.0)
+                        }
+
+                        Text("Stop recording after this duration of silence")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Toggle("Real-time transcription", isOn: $viewModel.toolSettings.streamingTranscriptionEnabled)
+
+                    Text("Show transcribed text as you speak")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    if viewModel.toolSettings.streamingTranscriptionEnabled &&
+                       viewModel.toolSettings.sttProviderRawValue == "OpenAI Whisper" {
+
+                        Toggle("Simulated streaming", isOn: $viewModel.toolSettings.enableOpenAISimulatedStreaming)
+
+                        if viewModel.toolSettings.enableOpenAISimulatedStreaming {
+                            Picker("Update interval", selection: $viewModel.toolSettings.streamingChunkIntervalSeconds) {
+                                Text("2 seconds").tag(2.0)
+                                Text("3 seconds").tag(3.0)
+                                Text("5 seconds").tag(5.0)
+                            }
+
+                            Text("More frequent updates = more API calls")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    }
                 }
             }
         }
@@ -353,7 +428,7 @@ public struct ChatSettingsView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 providerDescription(for: viewModel.toolSettings.sttProviderRawValue)
 
-                                // Show WhisperKit loading state
+                                // Show WhisperKit-specific options
                                 if viewModel.toolSettings.sttProviderRawValue == "WhisperKit" {
                                     HStack(spacing: 8) {
                                         if viewModel.whisperKitIsLoading {
@@ -364,6 +439,30 @@ public struct ChatSettingsView: View {
                                             .foregroundColor(viewModel.whisperKitIsLoading ? .secondary : .green)
                                     }
                                     .padding(.top, 4)
+
+                                    Divider()
+                                        .padding(.vertical, 4)
+
+                                    Text("Model Size")
+                                        .font(.headline)
+                                        .foregroundColor(.primary)
+
+                                    Picker("", selection: $viewModel.toolSettings.whisperKitModelSize) {
+                                        Text("Tiny (~40MB)").tag("tiny")
+                                        Text("Base (~75MB)").tag("base")
+                                        Text("Small (~250MB)").tag("small")
+                                        Text("Medium (~750MB)").tag("medium")
+                                        Text("Large-v3 (~1.5GB)").tag("large-v3")
+                                    }
+                                    .pickerStyle(.menu)
+                                    .frame(maxWidth: 200)
+                                    .onChange(of: viewModel.toolSettings.whisperKitModelSize) { _, _ in
+                                        // Reload WhisperKit with new model
+                                        viewModel.preloadWhisperKit()
+                                    }
+
+                                    Text("Larger models are more accurate but slower and use more memory.")
+                                        .foregroundColor(.secondary)
                                 }
                             }
                             .font(.caption)
@@ -377,6 +476,105 @@ public struct ChatSettingsView: View {
                             Text("Show microphone button in place of send button when text field is empty")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
+
+                            Divider()
+
+                            Text("Language")
+                                .font(.headline)
+
+                            Picker("", selection: $viewModel.toolSettings.sttLanguage) {
+                                Text("Auto-detect").tag("auto")
+                                Divider()
+                                Text("English").tag("en")
+                                Text("Spanish").tag("es")
+                                Text("French").tag("fr")
+                                Text("German").tag("de")
+                                Text("Italian").tag("it")
+                                Text("Portuguese").tag("pt")
+                                Text("Chinese").tag("zh")
+                                Text("Japanese").tag("ja")
+                                Text("Korean").tag("ko")
+                                Text("Arabic").tag("ar")
+                                Text("Russian").tag("ru")
+                                Text("Hindi").tag("hi")
+                            }
+                            .pickerStyle(.menu)
+                            .frame(maxWidth: 200)
+
+                            Text("Select the language you'll be speaking. Auto-detect works best for most cases.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            Divider()
+
+                            Text("Auto-Stop on Silence")
+                                .font(.headline)
+
+                            Toggle("Enable auto-stop", isOn: $viewModel.toolSettings.autoStopOnSilence)
+                                .toggleStyle(SwitchToggleStyle())
+
+                            if viewModel.toolSettings.autoStopOnSilence {
+                                HStack {
+                                    Text("Silence timeout:")
+                                    Picker("", selection: $viewModel.toolSettings.silenceTimeoutSeconds) {
+                                        Text("1 second").tag(1.0)
+                                        Text("1.5 seconds").tag(1.5)
+                                        Text("2 seconds").tag(2.0)
+                                        Text("3 seconds").tag(3.0)
+                                        Text("5 seconds").tag(5.0)
+                                    }
+                                    .pickerStyle(.menu)
+                                    .frame(maxWidth: 150)
+                                }
+                            }
+
+                            Text("Automatically stop recording when no speech is detected for the specified duration.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            Divider()
+
+                            Text("Real-time Transcription")
+                                .font(.headline)
+
+                            Toggle("Show partial results", isOn: $viewModel.toolSettings.streamingTranscriptionEnabled)
+                                .toggleStyle(SwitchToggleStyle())
+
+                            Text("Display transcribed text as you speak, before recording is complete.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            if viewModel.toolSettings.streamingTranscriptionEnabled &&
+                               viewModel.toolSettings.sttProviderRawValue == "OpenAI Whisper" {
+
+                                Toggle("Simulated streaming", isOn: $viewModel.toolSettings.enableOpenAISimulatedStreaming)
+                                    .toggleStyle(SwitchToggleStyle())
+
+                                if viewModel.toolSettings.enableOpenAISimulatedStreaming {
+                                    HStack {
+                                        Text("Update interval:")
+                                        Picker("", selection: $viewModel.toolSettings.streamingChunkIntervalSeconds) {
+                                            Text("2 seconds").tag(2.0)
+                                            Text("3 seconds").tag(3.0)
+                                            Text("5 seconds").tag(5.0)
+                                        }
+                                        .pickerStyle(.menu)
+                                        .frame(maxWidth: 150)
+                                    }
+
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .foregroundColor(.orange)
+                                        Text("More frequent updates = more API calls and costs")
+                                            .foregroundColor(.orange)
+                                    }
+                                    .font(.caption)
+                                }
+
+                                Text("OpenAI's API doesn't support native streaming. Simulated streaming sends audio chunks periodically for partial results.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                     .padding(8)
