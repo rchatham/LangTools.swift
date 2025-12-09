@@ -933,7 +933,9 @@ struct SystemMessageEditor: View {
 extension ChatSettingsView {
     @MainActor public class ViewModel: ObservableObject {
         @Published var enterApiKey = false
-        @Published var model: Model = UserDefaults.model
+        @Published var model: Model = UserDefaults.model {
+            didSet { UserDefaults.model = model }
+        }
         @Published var maxTokens = UserDefaults.maxTokens
         @Published var temperature = UserDefaults.temperature
         @Published var systemMessage = UserDefaults.systemMessage
