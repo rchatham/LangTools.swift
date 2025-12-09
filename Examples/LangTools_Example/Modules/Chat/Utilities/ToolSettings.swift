@@ -9,9 +9,9 @@ import Foundation
 import SwiftUI
 
 /// Represents settings for all available tools in the app
-class ToolSettings: ObservableObject {
+public class ToolSettings: ObservableObject {
     // Singleton instance
-    static let shared = ToolSettings()
+    public static let shared = ToolSettings()
 
     /// Master switch to enable/disable all tools
     @Published var toolsEnabled: Bool {
@@ -59,6 +59,65 @@ class ToolSettings: ObservableObject {
         didSet { saveSettings() }
     }
 
+    /// Enable/disable rich content cards (weather, contacts, events displayed as visual cards)
+    @Published public var richContentEnabled: Bool {
+        didSet { saveSettings() }
+    }
+
+    // MARK: - Voice Input (STT) Settings
+
+    /// Enable/disable voice input
+    @Published public var voiceInputEnabled: Bool {
+        didSet { saveSettings() }
+    }
+
+    /// Selected STT provider type (stored as raw string value)
+    @Published public var sttProviderRawValue: String {
+        didSet { saveSettings() }
+    }
+
+    /// When true, microphone button replaces send button when text field is empty
+    @Published public var voiceButtonReplaceSend: Bool {
+        didSet { saveSettings() }
+    }
+
+    /// Selected language for STT (ISO-639-1 code or "auto" for auto-detect)
+    @Published public var sttLanguage: String {
+        didSet { saveSettings() }
+    }
+
+    /// Selected WhisperKit model size (tiny, base, small, medium, large-v3)
+    @Published public var whisperKitModelSize: String {
+        didSet { saveSettings() }
+    }
+
+    /// Enable auto-stop recording on silence
+    @Published public var autoStopOnSilence: Bool {
+        didSet { saveSettings() }
+    }
+
+    /// Duration of silence (in seconds) before auto-stopping recording
+    @Published public var silenceTimeoutSeconds: Double {
+        didSet { saveSettings() }
+    }
+
+    // MARK: - Streaming Settings
+
+    /// Enable streaming transcription (show partial results as you speak)
+    @Published public var streamingTranscriptionEnabled: Bool {
+        didSet { saveSettings() }
+    }
+
+    /// Enable simulated streaming for OpenAI (periodic API calls during recording)
+    @Published public var enableOpenAISimulatedStreaming: Bool {
+        didSet { saveSettings() }
+    }
+
+    /// Chunk interval in seconds for OpenAI simulated streaming
+    @Published public var streamingChunkIntervalSeconds: Double {
+        didSet { saveSettings() }
+    }
+
     private init() {
         // Load settings from UserDefaults, defaulting to true if not set
         self.toolsEnabled = UserDefaults.standard.bool(forKey: "toolsEnabled")
@@ -69,6 +128,17 @@ class ToolSettings: ObservableObject {
         self.contactsToolEnabled = UserDefaults.standard.bool(forKey: "contactsToolEnabled")
         self.weatherToolEnabled = UserDefaults.standard.bool(forKey: "weatherToolEnabled")
         self.filesToolEnabled = UserDefaults.standard.bool(forKey: "filesToolEnabled")
+        self.richContentEnabled = UserDefaults.standard.object(forKey: "richContentEnabled") as? Bool ?? true
+        self.voiceInputEnabled = UserDefaults.standard.object(forKey: "voiceInputEnabled") as? Bool ?? true
+        self.sttProviderRawValue = UserDefaults.standard.string(forKey: "sttProviderRawValue") ?? "Apple Speech"
+        self.voiceButtonReplaceSend = UserDefaults.standard.object(forKey: "voiceButtonReplaceSend") as? Bool ?? false
+        self.sttLanguage = UserDefaults.standard.string(forKey: "sttLanguage") ?? "auto"
+        self.whisperKitModelSize = UserDefaults.standard.string(forKey: "whisperKitModelSize") ?? "base"
+        self.autoStopOnSilence = UserDefaults.standard.object(forKey: "autoStopOnSilence") as? Bool ?? true
+        self.silenceTimeoutSeconds = UserDefaults.standard.object(forKey: "silenceTimeoutSeconds") as? Double ?? 2.0
+        self.streamingTranscriptionEnabled = UserDefaults.standard.object(forKey: "streamingTranscriptionEnabled") as? Bool ?? true
+        self.enableOpenAISimulatedStreaming = UserDefaults.standard.object(forKey: "enableOpenAISimulatedStreaming") as? Bool ?? true
+        self.streamingChunkIntervalSeconds = UserDefaults.standard.object(forKey: "streamingChunkIntervalSeconds") as? Double ?? 3.0
 
         // If this is first launch, set defaults
         if !UserDefaults.standard.bool(forKey: "toolSettingsInitialized") {
@@ -86,6 +156,17 @@ class ToolSettings: ObservableObject {
         UserDefaults.standard.set(contactsToolEnabled, forKey: "contactsToolEnabled")
         UserDefaults.standard.set(weatherToolEnabled, forKey: "weatherToolEnabled")
         UserDefaults.standard.set(filesToolEnabled, forKey: "filesToolEnabled")
+        UserDefaults.standard.set(richContentEnabled, forKey: "richContentEnabled")
+        UserDefaults.standard.set(voiceInputEnabled, forKey: "voiceInputEnabled")
+        UserDefaults.standard.set(sttProviderRawValue, forKey: "sttProviderRawValue")
+        UserDefaults.standard.set(voiceButtonReplaceSend, forKey: "voiceButtonReplaceSend")
+        UserDefaults.standard.set(sttLanguage, forKey: "sttLanguage")
+        UserDefaults.standard.set(whisperKitModelSize, forKey: "whisperKitModelSize")
+        UserDefaults.standard.set(autoStopOnSilence, forKey: "autoStopOnSilence")
+        UserDefaults.standard.set(silenceTimeoutSeconds, forKey: "silenceTimeoutSeconds")
+        UserDefaults.standard.set(streamingTranscriptionEnabled, forKey: "streamingTranscriptionEnabled")
+        UserDefaults.standard.set(enableOpenAISimulatedStreaming, forKey: "enableOpenAISimulatedStreaming")
+        UserDefaults.standard.set(streamingChunkIntervalSeconds, forKey: "streamingChunkIntervalSeconds")
     }
 
     func resetToDefaults() {
@@ -97,6 +178,17 @@ class ToolSettings: ObservableObject {
         contactsToolEnabled = true
         weatherToolEnabled = true
         filesToolEnabled = true
+        richContentEnabled = true
+        voiceInputEnabled = true
+        sttProviderRawValue = "Apple Speech"
+        voiceButtonReplaceSend = false
+        sttLanguage = "auto"
+        whisperKitModelSize = "base"
+        autoStopOnSilence = true
+        silenceTimeoutSeconds = 2.0
+        streamingTranscriptionEnabled = true
+        enableOpenAISimulatedStreaming = true
+        streamingChunkIntervalSeconds = 3.0
         saveSettings()
     }
 
