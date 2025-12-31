@@ -17,6 +17,7 @@ public struct ChatSettingsView: View {
         case advanced = "Advanced"
         case localModels = "Local Models"
         case tools = "Tools"
+        case backend = "Backend"
 
         var id: String { self.rawValue }
 
@@ -27,6 +28,7 @@ public struct ChatSettingsView: View {
             case .advanced: return "slider.horizontal.3"
             case .localModels: return "cpu"
             case .tools: return "hammer.fill"
+            case .backend: return "server.rack"
             }
         }
     }
@@ -93,6 +95,8 @@ public struct ChatSettingsView: View {
                         localModelsSettingsView
                     case .tools:
                         toolsSettingsView
+                    case .backend:
+                        backendSettingsView
                     }
 
                     Spacer()
@@ -203,6 +207,63 @@ public struct ChatSettingsView: View {
                 Text("Display weather, contacts, and events as visual cards below messages")
                     .font(.caption)
                     .foregroundColor(.secondary)
+            }
+
+            Section(header: Text("Backend")) {
+                let modes = viewModel.backendModes
+                ForEach(0..<modes.count, id: \.self) { index in
+                    let mode = modes[index]
+                    Button {
+                        viewModel.setBackendMode(mode)
+                    } label: {
+                        HStack {
+                            Image(systemName: mode.iconName)
+                                .foregroundColor(viewModel.currentBackendMode.rawValue == mode.rawValue ? .blue : .secondary)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(mode.displayName)
+                                    .foregroundColor(.primary)
+                                Text(mode.description)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            if viewModel.currentBackendMode.rawValue == mode.rawValue {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                }
+
+                if viewModel.isDirectModeWithoutKeys {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                        Text("No API keys configured")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+                }
+
+                if viewModel.currentBackendMode.rawValue == "direct" && !viewModel.availableDirectProviders.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Available Providers:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        HStack(spacing: 8) {
+                            ForEach(viewModel.availableDirectProviders, id: \.self) { provider in
+                                Text(provider)
+                                    .font(.caption2)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.green.opacity(0.2))
+                                    .foregroundColor(.green)
+                                    .cornerRadius(4)
+                            }
+                        }
+                    }
+                }
             }
 
             Section(header: Text("Voice Input")) {
@@ -926,8 +987,46 @@ extension ChatSettingsView {
         /// Callback to get WhisperKit loading state (set by app)
         public var getWhisperKitState: (() -> (isLoading: Bool, description: String))?
 
+        // MARK: - Backend Settings Callbacks
+        /// Callback to get available backend modes (set by app)
+        public var getBackendModes: (() -> [any BackendModeInfo])?
+
+        /// Callback to get current backend mode (set by app)
+        public var getCurrentBackendMode: (() -> any BackendModeInfo)?
+
+        /// Callback to set backend mode (set by app)
+        public var onSetBackendMode: ((any BackendModeInfo) -> Void)?
+
+        /// Callback to check if direct mode can be used (set by app)
+        public var getCanUseDirectMode: (() -> Bool)?
+
+        /// Callback to get available direct providers (set by app)
+        public var getAvailableDirectProviders: (() -> [String])?
+
         public init(clearMessages: @escaping () -> Void) {
             self.clearMessages = clearMessages
+        }
+
+        // MARK: - Backend Settings Computed Properties
+        var backendModes: [any BackendModeInfo] {
+            getBackendModes?() ?? []
+        }
+
+        var currentBackendMode: any BackendModeInfo {
+            getCurrentBackendMode?() ?? DefaultBackendModeInfo()
+        }
+
+        var isDirectModeWithoutKeys: Bool {
+            currentBackendMode.rawValue == "direct" && !(getCanUseDirectMode?() ?? true)
+        }
+
+        var availableDirectProviders: [String] {
+            getAvailableDirectProviders?() ?? []
+        }
+
+        func setBackendMode(_ mode: any BackendModeInfo) {
+            onSetBackendMode?(mode)
+            objectWillChange.send()
         }
 
         func loadSettings() {
@@ -1142,5 +1241,134 @@ extension ChatSettingsView {
                 .labelsHidden()
         }
     }
+
+    // MARK: - Backend Settings View
+    var backendSettingsView: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Backend Configuration")
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("API Routing Mode")
+                    .font(.headline)
+
+                Text("Choose how API requests are routed. Changes take effect immediately.")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 16) {
+                        let modes = viewModel.backendModes
+                        ForEach(0..<modes.count, id: \.self) { index in
+                            let mode = modes[index]
+                            backendModeRow(
+                                rawValue: mode.rawValue,
+                                displayName: mode.displayName,
+                                description: mode.description,
+                                iconName: mode.iconName,
+                                isSelected: viewModel.currentBackendMode.rawValue == mode.rawValue,
+                                onTap: { viewModel.setBackendMode(mode) }
+                            )
+                            if index < modes.count - 1 {
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(8)
+                }
+
+                // Warning for direct mode if no API keys
+                if viewModel.isDirectModeWithoutKeys {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                        Text("No API keys configured. Please add at least one API key in General settings.")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+                    .padding(.top, 4)
+                }
+
+                // Show available providers in direct mode
+                if viewModel.currentBackendMode.rawValue == "direct" && !viewModel.availableDirectProviders.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Available Providers")
+                            .font(.headline)
+                            .padding(.top, 12)
+
+                        Text("The following providers have API keys configured:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        HStack(spacing: 8) {
+                            ForEach(viewModel.availableDirectProviders, id: \.self) { provider in
+                                Text(provider)
+                                    .font(.caption)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.green.opacity(0.2))
+                                    .foregroundColor(.green)
+                                    .cornerRadius(4)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func backendModeRow(
+        rawValue: String,
+        displayName: String,
+        description: String,
+        iconName: String,
+        isSelected: Bool,
+        onTap: @escaping () -> Void
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: iconName)
+                .foregroundColor(isSelected ? .blue : .secondary)
+                .frame(width: 24, height: 24)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(displayName)
+                    .font(.headline)
+                Text(description)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.blue)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onTap()
+        }
+    }
+}
+
+// MARK: - Backend Mode Info Protocol
+// This allows the Chat module to work with BackendMode without direct dependency
+public protocol BackendModeInfo: Hashable {
+    var rawValue: String { get }
+    var displayName: String { get }
+    var description: String { get }
+    var iconName: String { get }
+}
+
+// Default implementation for when callbacks aren't set
+struct DefaultBackendModeInfo: BackendModeInfo {
+    var rawValue: String { "unknown" }
+    var displayName: String { "Unknown" }
+    var description: String { "Backend mode not configured" }
+    var iconName: String { "questionmark.circle" }
 }
 
