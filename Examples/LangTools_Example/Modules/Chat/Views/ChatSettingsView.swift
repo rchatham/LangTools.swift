@@ -49,31 +49,26 @@ public struct ChatSettingsView: View {
     private var macOSLayout: some View {
         HStack(spacing: 0) {
             // Sidebar
-            VStack {
-                List {
-                    ForEach(SettingsTab.allCases) { tab in
-                        Button(action: {
-                            selectedTab = tab
-                        }) {
-                            HStack {
-                                Image(systemName: tab.icon)
-                                    .frame(width: 24)
-                                Text(tab.rawValue)
-                                Spacer()
-                            }
+            List {
+                ForEach(SettingsTab.allCases) { tab in
+                    Button(action: {
+                        selectedTab = tab
+                    }) {
+                        HStack {
+                            Image(systemName: tab.icon)
+                                .frame(width: 24)
+                            Text(tab.rawValue)
+                            Spacer()
                         }
-                        .buttonStyle(PlainButtonStyle())
-                        .padding(.vertical, 4)
-                        .background(selectedTab == tab ? (colorScheme == .dark ? Color.gray.opacity(0.3) : Color.blue.opacity(0.1)) : Color.clear)
-                        .cornerRadius(6)
                     }
+                    .buttonStyle(PlainButtonStyle())
+                    .padding(.vertical, 4)
+                    .background(selectedTab == tab ? (colorScheme == .dark ? Color.gray.opacity(0.3) : Color.blue.opacity(0.1)) : Color.clear)
+                    .cornerRadius(6)
                 }
-                .listStyle(PlainListStyle())
-
-                Spacer()
             }
+            .listStyle(PlainListStyle())
             .frame(width: 200)
-            .padding(.vertical)
             #if os(macOS)
             .background(colorScheme == .dark ? Color(.controlBackgroundColor).opacity(0.5) : Color(.windowBackgroundColor).opacity(0.5))
             #endif
