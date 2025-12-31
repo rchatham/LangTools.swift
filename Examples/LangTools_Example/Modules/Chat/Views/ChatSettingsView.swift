@@ -50,6 +50,13 @@ public struct ChatSettingsView: View {
         HStack(spacing: 0) {
             // Sidebar
             List {
+                #if os(macOS)
+                // Spacer for navigation bar
+                Color.clear.frame(height: 40)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                #endif
+
                 ForEach(SettingsTab.allCases) { tab in
                     Button(action: {
                         selectedTab = tab
