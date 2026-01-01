@@ -8,6 +8,13 @@
 import Foundation
 import SwiftUI
 
+/// Available speech-to-text provider options
+public enum STTProvider: String, CaseIterable, Codable {
+    case appleSpeech = "Apple Speech"
+    case openAIWhisper = "OpenAI Whisper"
+    case whisperKit = "WhisperKit"
+}
+
 /// Represents settings for all available tools in the app
 public class ToolSettings: ObservableObject {
     // Singleton instance
@@ -71,8 +78,8 @@ public class ToolSettings: ObservableObject {
         didSet { saveSettings() }
     }
 
-    /// Selected STT provider type (stored as raw string value)
-    @Published public var sttProviderRawValue: String {
+    /// Selected STT provider type
+    @Published public var sttProvider: STTProvider {
         didSet { saveSettings() }
     }
 
@@ -130,7 +137,15 @@ public class ToolSettings: ObservableObject {
         self.filesToolEnabled = UserDefaults.standard.bool(forKey: "filesToolEnabled")
         self.richContentEnabled = UserDefaults.standard.object(forKey: "richContentEnabled") as? Bool ?? true
         self.voiceInputEnabled = UserDefaults.standard.object(forKey: "voiceInputEnabled") as? Bool ?? true
-        self.sttProviderRawValue = UserDefaults.standard.string(forKey: "sttProviderRawValue") ?? "Apple Speech"
+        
+        // Load STT provider, converting from raw string if necessary
+        if let rawValue = UserDefaults.standard.string(forKey: "sttProviderRawValue"),
+           let provider = STTProvider(rawValue: rawValue) {
+            self.sttProvider = provider
+        } else {
+            self.sttProvider = .appleSpeech
+        }
+        
         self.voiceButtonReplaceSend = UserDefaults.standard.object(forKey: "voiceButtonReplaceSend") as? Bool ?? false
         self.sttLanguage = UserDefaults.standard.string(forKey: "sttLanguage") ?? "auto"
         self.whisperKitModelSize = UserDefaults.standard.string(forKey: "whisperKitModelSize") ?? "base"
@@ -158,7 +173,7 @@ public class ToolSettings: ObservableObject {
         UserDefaults.standard.set(filesToolEnabled, forKey: "filesToolEnabled")
         UserDefaults.standard.set(richContentEnabled, forKey: "richContentEnabled")
         UserDefaults.standard.set(voiceInputEnabled, forKey: "voiceInputEnabled")
-        UserDefaults.standard.set(sttProviderRawValue, forKey: "sttProviderRawValue")
+        UserDefaults.standard.set(sttProvider.rawValue, forKey: "sttProviderRawValue")
         UserDefaults.standard.set(voiceButtonReplaceSend, forKey: "voiceButtonReplaceSend")
         UserDefaults.standard.set(sttLanguage, forKey: "sttLanguage")
         UserDefaults.standard.set(whisperKitModelSize, forKey: "whisperKitModelSize")
@@ -180,7 +195,7 @@ public class ToolSettings: ObservableObject {
         filesToolEnabled = true
         richContentEnabled = true
         voiceInputEnabled = true
-        sttProviderRawValue = "Apple Speech"
+        sttProvider = .appleSpeech
         voiceButtonReplaceSend = false
         sttLanguage = "auto"
         whisperKitModelSize = "base"

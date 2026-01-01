@@ -210,20 +210,20 @@ public struct ChatSettingsView: View {
                     .toggleStyle(SwitchToggleStyle())
 
                 if viewModel.toolSettings.voiceInputEnabled {
-                    Picker("Speech Provider", selection: $viewModel.toolSettings.sttProviderRawValue) {
-                        Text("Apple Speech").tag("Apple Speech")
-                        Text("OpenAI Whisper").tag("OpenAI Whisper")
-                        Text("WhisperKit").tag("WhisperKit")
+                    Picker("Speech Provider", selection: $viewModel.toolSettings.sttProvider) {
+                        ForEach(STTProvider.allCases, id: \.self) { provider in
+                            Text(provider.rawValue).tag(provider)
+                        }
                     }
-                    .onChange(of: viewModel.toolSettings.sttProviderRawValue) { _, newValue in
+                    .onChange(of: viewModel.toolSettings.sttProvider) { _, newValue in
                         // Trigger preload when WhisperKit is selected
-                        if newValue == "WhisperKit" {
+                        if newValue == .whisperKit {
                             viewModel.preloadWhisperKit()
                         }
                     }
 
                     // Show WhisperKit-specific options
-                    if viewModel.toolSettings.sttProviderRawValue == "WhisperKit" {
+                    if viewModel.toolSettings.sttProvider == .whisperKit {
                         HStack {
                             if viewModel.whisperKitIsLoading {
                                 ProgressView()
@@ -303,7 +303,7 @@ public struct ChatSettingsView: View {
                         .foregroundColor(.secondary)
 
                     if viewModel.toolSettings.streamingTranscriptionEnabled &&
-                       viewModel.toolSettings.sttProviderRawValue == "OpenAI Whisper" {
+                       viewModel.toolSettings.sttProvider == .openAIWhisper {
 
                         Toggle("Simulated streaming", isOn: $viewModel.toolSettings.enableOpenAISimulatedStreaming)
 
@@ -412,24 +412,24 @@ public struct ChatSettingsView: View {
                             Text("Speech Provider")
                                 .font(.headline)
 
-                            Picker("", selection: $viewModel.toolSettings.sttProviderRawValue) {
-                                Text("Apple Speech").tag("Apple Speech")
-                                Text("OpenAI Whisper").tag("OpenAI Whisper")
-                                Text("WhisperKit").tag("WhisperKit")
+                            Picker("", selection: $viewModel.toolSettings.sttProvider) {
+                                ForEach(STTProvider.allCases, id: \.self) { provider in
+                                    Text(provider.rawValue).tag(provider)
+                                }
                             }
                             .pickerStyle(.segmented)
                             .frame(maxWidth: 400)
-                            .onChange(of: viewModel.toolSettings.sttProviderRawValue) { _, newValue in
-                                if newValue == "WhisperKit" {
+                            .onChange(of: viewModel.toolSettings.sttProvider) { _, newValue in
+                                if newValue == .whisperKit {
                                     viewModel.preloadWhisperKit()
                                 }
                             }
 
                             VStack(alignment: .leading, spacing: 4) {
-                                providerDescription(for: viewModel.toolSettings.sttProviderRawValue)
+                                providerDescription(for: viewModel.toolSettings.sttProvider)
 
                                 // Show WhisperKit-specific options
-                                if viewModel.toolSettings.sttProviderRawValue == "WhisperKit" {
+                                if viewModel.toolSettings.sttProvider == .whisperKit {
                                     HStack(spacing: 8) {
                                         if viewModel.whisperKitIsLoading {
                                             ProgressView()
@@ -545,7 +545,7 @@ public struct ChatSettingsView: View {
                                 .foregroundColor(.secondary)
 
                             if viewModel.toolSettings.streamingTranscriptionEnabled &&
-                               viewModel.toolSettings.sttProviderRawValue == "OpenAI Whisper" {
+                               viewModel.toolSettings.sttProvider == .openAIWhisper {
 
                                 Toggle("Simulated streaming", isOn: $viewModel.toolSettings.enableOpenAISimulatedStreaming)
                                     .toggleStyle(SwitchToggleStyle())
@@ -1128,16 +1128,14 @@ extension ChatSettingsView {
         }
     }
 
-    private func providerDescription(for provider: String) -> some View {
+    private func providerDescription(for provider: STTProvider) -> some View {
         switch provider {
-        case "Apple Speech":
+        case .appleSpeech:
             return Text("On-device processing. Private and fast, no API key required. Works offline with supported languages.")
-        case "OpenAI Whisper":
+        case .openAIWhisper:
             return Text("Cloud-based processing. High accuracy across many languages. Requires OpenAI API key.")
-        case "WhisperKit":
+        case .whisperKit:
             return Text("On-device ML inference. High accuracy, works offline. Downloads model on first use.")
-        default:
-            return Text("Select a speech recognition provider.")
         }
     }
 
