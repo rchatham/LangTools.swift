@@ -254,8 +254,8 @@ public class ToolSettings: ObservableObject {
         
         self.autoStopOnSilence = UserDefaults.standard.object(forKey: "autoStopOnSilence") as? Bool ?? true
         
-        // Load silence timeout
-        if let rawValue = UserDefaults.standard.object(forKey: "silenceTimeout") as? Double,
+        // Load silence timeout (maintain old key for backward compatibility)
+        if let rawValue = UserDefaults.standard.object(forKey: "silenceTimeoutSeconds") as? Double,
            let timeout = SilenceTimeout(rawValue: rawValue) {
             self.silenceTimeout = timeout
         } else {
@@ -265,8 +265,8 @@ public class ToolSettings: ObservableObject {
         self.streamingTranscriptionEnabled = UserDefaults.standard.object(forKey: "streamingTranscriptionEnabled") as? Bool ?? true
         self.enableOpenAISimulatedStreaming = UserDefaults.standard.object(forKey: "enableOpenAISimulatedStreaming") as? Bool ?? true
         
-        // Load streaming chunk interval
-        if let rawValue = UserDefaults.standard.object(forKey: "streamingChunkInterval") as? Double,
+        // Load streaming chunk interval (maintain old key for backward compatibility)
+        if let rawValue = UserDefaults.standard.object(forKey: "streamingChunkIntervalSeconds") as? Double,
            let interval = StreamingChunkInterval(rawValue: rawValue) {
             self.streamingChunkInterval = interval
         } else {
@@ -296,10 +296,10 @@ public class ToolSettings: ObservableObject {
         UserDefaults.standard.set(sttLanguage.rawValue, forKey: "sttLanguage")
         UserDefaults.standard.set(whisperKitModelSize.rawValue, forKey: "whisperKitModelSize")
         UserDefaults.standard.set(autoStopOnSilence, forKey: "autoStopOnSilence")
-        UserDefaults.standard.set(silenceTimeout.rawValue, forKey: "silenceTimeout")
+        UserDefaults.standard.set(silenceTimeout.rawValue, forKey: "silenceTimeoutSeconds")
         UserDefaults.standard.set(streamingTranscriptionEnabled, forKey: "streamingTranscriptionEnabled")
         UserDefaults.standard.set(enableOpenAISimulatedStreaming, forKey: "enableOpenAISimulatedStreaming")
-        UserDefaults.standard.set(streamingChunkInterval.rawValue, forKey: "streamingChunkInterval")
+        UserDefaults.standard.set(streamingChunkInterval.rawValue, forKey: "streamingChunkIntervalSeconds")
     }
 
     func resetToDefaults() {
