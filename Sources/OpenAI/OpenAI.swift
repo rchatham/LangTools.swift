@@ -71,9 +71,10 @@ final public class OpenAI: LangTools {
 
         if Request.httpMethod == .get { return urlRequest }
 
-        if let request = (request as? MultipartFormDataEncodableRequest) {
-            urlRequest.addValue("multipart/form-data", forHTTPHeaderField: "Content-Type")
-            urlRequest.httpBody = request.httpBody
+        if let multipartRequest = (request as? MultipartFormDataEncodableRequest) {
+            let formData = multipartRequest.multipartFormData()
+            urlRequest.addValue(formData.contentType, forHTTPHeaderField: "Content-Type")
+            urlRequest.httpBody = formData.body
         } else {
             urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
             do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolsError.invalidData }

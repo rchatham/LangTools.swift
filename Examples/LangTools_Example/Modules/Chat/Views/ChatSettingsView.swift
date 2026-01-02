@@ -197,6 +197,116 @@ public struct ChatSettingsView: View {
                     viewModel.toolSettings.resetToDefaults()
                 }
             }
+
+            Section(header: Text("Display")) {
+                Toggle("Rich Content Cards", isOn: $viewModel.toolSettings.richContentEnabled)
+                Text("Display weather, contacts, and events as visual cards below messages")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section(header: Text("Voice Input")) {
+                Toggle("Enable Voice Input", isOn: $viewModel.toolSettings.voiceInputEnabled)
+                    .toggleStyle(SwitchToggleStyle())
+
+                if viewModel.toolSettings.voiceInputEnabled {
+                    Picker("Speech Provider", selection: $viewModel.toolSettings.sttProvider) {
+                        ForEach(STTProvider.allCases, id: \.self) { provider in
+                            Text(provider.rawValue).tag(provider)
+                        }
+                    }
+                    .onChange(of: viewModel.toolSettings.sttProvider) { _, newValue in
+                        // Trigger preload when WhisperKit is selected
+                        if newValue == .whisperKit {
+                            viewModel.preloadWhisperKit()
+                        }
+                    }
+
+                    // Show WhisperKit-specific options
+                    if viewModel.toolSettings.sttProvider == .whisperKit {
+                        HStack {
+                            if viewModel.whisperKitIsLoading {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Text(viewModel.whisperKitStatusDescription)
+                                .font(.caption)
+                                .foregroundColor(viewModel.whisperKitIsLoading ? .secondary : .green)
+                        }
+
+                        Picker("Model Size", selection: $viewModel.toolSettings.whisperKitModelSize) {
+                            ForEach(WhisperKitModelSize.allCases, id: \.self) { size in
+                                Text(size.displayName).tag(size)
+                            }
+                        }
+                        .onChange(of: viewModel.toolSettings.whisperKitModelSize) { _, _ in
+                            viewModel.preloadWhisperKit()
+                        }
+
+                        Text("Larger models are more accurate but slower")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Text("Apple Speech: On-device, private\nOpenAI Whisper: Cloud, high accuracy\nWhisperKit: On-device ML")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Toggle("Replace send button", isOn: $viewModel.toolSettings.voiceButtonReplaceSend)
+
+                    Text("Show microphone in place of send button when empty")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Picker("Language", selection: $viewModel.toolSettings.sttLanguage) {
+                        ForEach(STTLanguage.allCases, id: \.self) { language in
+                            Text(language.displayName).tag(language)
+                        }
+                    }
+
+                    Text("Select the language you'll be speaking")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Toggle("Auto-stop on silence", isOn: $viewModel.toolSettings.autoStopOnSilence)
+
+                    if viewModel.toolSettings.autoStopOnSilence {
+                        Picker("Silence timeout", selection: $viewModel.toolSettings.silenceTimeout) {
+                            ForEach(SilenceTimeout.allCases, id: \.self) { timeout in
+                                Text(timeout.displayName).tag(timeout)
+                            }
+                        }
+
+                        Text("Stop recording after this duration of silence")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Toggle("Real-time transcription", isOn: $viewModel.toolSettings.streamingTranscriptionEnabled)
+
+                    Text("Show transcribed text as you speak")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    if viewModel.toolSettings.streamingTranscriptionEnabled &&
+                       viewModel.toolSettings.sttProvider == .openAIWhisper {
+
+                        Toggle("Simulated streaming", isOn: $viewModel.toolSettings.enableOpenAISimulatedStreaming)
+
+                        if viewModel.toolSettings.enableOpenAISimulatedStreaming {
+                            Picker("Update interval", selection: $viewModel.toolSettings.streamingChunkInterval) {
+                                ForEach(StreamingChunkInterval.allCases, id: \.self) { interval in
+                                    Text(interval.displayName).tag(interval)
+                                }
+                            }
+
+                            Text("More frequent updates = more API calls")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    }
+                }
+            }
         }
         .navigationTitle("Settings")
         .onAppear { viewModel.loadSettings() }
@@ -259,6 +369,192 @@ public struct ChatSettingsView: View {
                 Button("Update API Key") { viewModel.enterApiKey = true }
                 .buttonStyle(.bordered)
                 .padding(.top, 8)
+            }
+
+            Divider()
+                .padding(.vertical, 8)
+
+            // Voice Input Section
+            Text("Voice Input")
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 12) {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Voice Input", isOn: $viewModel.toolSettings.voiceInputEnabled)
+                            .toggleStyle(SwitchToggleStyle())
+                            .padding(.vertical, 4)
+
+                        Text("Enable the microphone button to dictate messages using speech-to-text.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        if viewModel.toolSettings.voiceInputEnabled {
+                            Divider()
+
+                            Text("Speech Provider")
+                                .font(.headline)
+
+                            Picker("", selection: $viewModel.toolSettings.sttProvider) {
+                                ForEach(STTProvider.allCases, id: \.self) { provider in
+                                    Text(provider.rawValue).tag(provider)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(maxWidth: 400)
+                            .onChange(of: viewModel.toolSettings.sttProvider) { _, newValue in
+                                if newValue == .whisperKit {
+                                    viewModel.preloadWhisperKit()
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                providerDescription(for: viewModel.toolSettings.sttProvider)
+
+                                // Show WhisperKit-specific options
+                                if viewModel.toolSettings.sttProvider == .whisperKit {
+                                    HStack(spacing: 8) {
+                                        if viewModel.whisperKitIsLoading {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                        }
+                                        Text(viewModel.whisperKitStatusDescription)
+                                            .foregroundColor(viewModel.whisperKitIsLoading ? .secondary : .green)
+                                    }
+                                    .padding(.top, 4)
+
+                                    Divider()
+                                        .padding(.vertical, 4)
+
+                                    Text("Model Size")
+                                        .font(.headline)
+                                        .foregroundColor(.primary)
+
+                                    Picker("", selection: $viewModel.toolSettings.whisperKitModelSize) {
+                                        ForEach(WhisperKitModelSize.allCases, id: \.self) { size in
+                                            Text(size.displayName).tag(size)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .frame(maxWidth: 200)
+                                    .onChange(of: viewModel.toolSettings.whisperKitModelSize) { _, _ in
+                                        // Reload WhisperKit with new model
+                                        viewModel.preloadWhisperKit()
+                                    }
+
+                                    Text("Larger models are more accurate but slower and use more memory.")
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                            Divider()
+
+                            Toggle("Replace send button", isOn: $viewModel.toolSettings.voiceButtonReplaceSend)
+                                .toggleStyle(SwitchToggleStyle())
+
+                            Text("Show microphone button in place of send button when text field is empty")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            Divider()
+
+                            Text("Language")
+                                .font(.headline)
+
+                            Picker("", selection: $viewModel.toolSettings.sttLanguage) {
+                                ForEach(STTLanguage.allCases, id: \.self) { language in
+                                    if language == .auto {
+                                        Text(language.displayName).tag(language)
+                                        Divider()
+                                    } else {
+                                        Text(language.displayName).tag(language)
+                                    }
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(maxWidth: 200)
+
+                            Text("Select the language you'll be speaking. Auto-detect works best for most cases.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            Divider()
+
+                            Text("Auto-Stop on Silence")
+                                .font(.headline)
+
+                            Toggle("Enable auto-stop", isOn: $viewModel.toolSettings.autoStopOnSilence)
+                                .toggleStyle(SwitchToggleStyle())
+
+                            if viewModel.toolSettings.autoStopOnSilence {
+                                HStack {
+                                    Text("Silence timeout:")
+                                    Picker("", selection: $viewModel.toolSettings.silenceTimeout) {
+                                        ForEach(SilenceTimeout.allCases, id: \.self) { timeout in
+                                            Text(timeout.displayName).tag(timeout)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .frame(maxWidth: 150)
+                                }
+                            }
+
+                            Text("Automatically stop recording when no speech is detected for the specified duration.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            Divider()
+
+                            Text("Real-time Transcription")
+                                .font(.headline)
+
+                            Toggle("Show partial results", isOn: $viewModel.toolSettings.streamingTranscriptionEnabled)
+                                .toggleStyle(SwitchToggleStyle())
+
+                            Text("Display transcribed text as you speak, before recording is complete.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            if viewModel.toolSettings.streamingTranscriptionEnabled &&
+                               viewModel.toolSettings.sttProvider == .openAIWhisper {
+
+                                Toggle("Simulated streaming", isOn: $viewModel.toolSettings.enableOpenAISimulatedStreaming)
+                                    .toggleStyle(SwitchToggleStyle())
+
+                                if viewModel.toolSettings.enableOpenAISimulatedStreaming {
+                                    HStack {
+                                        Text("Update interval:")
+                                        Picker("", selection: $viewModel.toolSettings.streamingChunkInterval) {
+                                            ForEach(StreamingChunkInterval.allCases, id: \.self) { interval in
+                                                Text(interval.displayName).tag(interval)
+                                            }
+                                        }
+                                        .pickerStyle(.menu)
+                                        .frame(maxWidth: 150)
+                                    }
+
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .foregroundColor(.orange)
+                                        Text("More frequent updates = more API calls and costs")
+                                            .foregroundColor(.orange)
+                                    }
+                                    .font(.caption)
+                                }
+
+                                Text("OpenAI's API doesn't support native streaming. Simulated streaming sends audio chunks periodically for partial results.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .padding(8)
+                }
             }
         }
     }
@@ -613,7 +909,9 @@ struct SystemMessageEditor: View {
 extension ChatSettingsView {
     @MainActor public class ViewModel: ObservableObject {
         @Published var enterApiKey = false
-        @Published var model: Model = UserDefaults.model
+        @Published var model: Model = UserDefaults.model {
+            didSet { UserDefaults.model = model }
+        }
         @Published var maxTokens = UserDefaults.maxTokens
         @Published var temperature = UserDefaults.temperature
         @Published var systemMessage = UserDefaults.systemMessage
@@ -621,6 +919,12 @@ extension ChatSettingsView {
         @Published var toolSettings = ToolSettings.shared
 
         let clearMessages: () -> Void
+
+        /// Callback to trigger WhisperKit preload (set by app)
+        public var onPreloadWhisperKit: (() -> Void)?
+
+        /// Callback to get WhisperKit loading state (set by app)
+        public var getWhisperKitState: (() -> (isLoading: Bool, description: String))?
 
         public init(clearMessages: @escaping () -> Void) {
             self.clearMessages = clearMessages
@@ -642,6 +946,21 @@ extension ChatSettingsView {
 
         func saveToolSettings() {
             toolSettings.saveSettings()
+        }
+
+        /// Trigger WhisperKit preload
+        func preloadWhisperKit() {
+            onPreloadWhisperKit?()
+        }
+
+        /// Whether WhisperKit is currently loading
+        var whisperKitIsLoading: Bool {
+            getWhisperKitState?().isLoading ?? false
+        }
+
+        /// WhisperKit status description
+        var whisperKitStatusDescription: String {
+            getWhisperKitState?().description ?? "Not initialized"
         }
     }
 }
@@ -751,11 +1070,26 @@ extension ChatSettingsView {
                         }
                         .frame(maxHeight: 300)
                     }
+
                 } else {
                     Text("Enable AI Tools to configure individual tools")
                         .foregroundColor(.secondary)
                         .font(.callout)
                         .padding(.vertical, 8)
+                }
+
+                // Rich Content Cards toggle (independent of tools master switch)
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Rich Content Cards", isOn: $viewModel.toolSettings.richContentEnabled)
+                            .toggleStyle(SwitchToggleStyle())
+                            .padding(.vertical, 4)
+
+                        Text("Display weather, contacts, and events as visual cards below messages instead of plain text.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(8)
                 }
 
                 // Reset button
@@ -767,6 +1101,17 @@ extension ChatSettingsView {
                 .buttonStyle(.bordered)
                 .padding(.top, 8)
             }
+        }
+    }
+
+    private func providerDescription(for provider: STTProvider) -> some View {
+        switch provider {
+        case .appleSpeech:
+            return Text("On-device processing. Private and fast, no API key required. Works offline with supported languages.")
+        case .openAIWhisper:
+            return Text("Cloud-based processing. High accuracy across many languages. Requires OpenAI API key.")
+        case .whisperKit:
+            return Text("On-device ML inference. High accuracy, works offline. Downloads model on first use.")
         }
     }
 
