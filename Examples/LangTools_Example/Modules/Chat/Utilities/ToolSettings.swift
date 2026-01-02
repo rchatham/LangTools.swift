@@ -15,6 +15,26 @@ public enum STTProvider: String, CaseIterable, Codable {
     case whisperKit = "WhisperKit"
 }
 
+/// Available WhisperKit model sizes
+public enum WhisperKitModelSize: String, CaseIterable, Codable {
+    case tiny = "tiny"
+    case base = "base"
+    case small = "small"
+    case medium = "medium"
+    case largeV3 = "large-v3"
+    
+    /// Display name with approximate size
+    public var displayName: String {
+        switch self {
+        case .tiny: return "Tiny (~40MB)"
+        case .base: return "Base (~75MB)"
+        case .small: return "Small (~250MB)"
+        case .medium: return "Medium (~750MB)"
+        case .largeV3: return "Large-v3 (~1.5GB)"
+        }
+    }
+}
+
 /// Represents settings for all available tools in the app
 public class ToolSettings: ObservableObject {
     // Singleton instance
@@ -93,8 +113,8 @@ public class ToolSettings: ObservableObject {
         didSet { saveSettings() }
     }
 
-    /// Selected WhisperKit model size (tiny, base, small, medium, large-v3)
-    @Published public var whisperKitModelSize: String {
+    /// Selected WhisperKit model size
+    @Published public var whisperKitModelSize: WhisperKitModelSize {
         didSet { saveSettings() }
     }
 
@@ -148,7 +168,15 @@ public class ToolSettings: ObservableObject {
         
         self.voiceButtonReplaceSend = UserDefaults.standard.object(forKey: "voiceButtonReplaceSend") as? Bool ?? false
         self.sttLanguage = UserDefaults.standard.string(forKey: "sttLanguage") ?? "auto"
-        self.whisperKitModelSize = UserDefaults.standard.string(forKey: "whisperKitModelSize") ?? "base"
+        
+        // Load WhisperKit model size, converting from raw string if necessary
+        if let rawValue = UserDefaults.standard.string(forKey: "whisperKitModelSize"),
+           let modelSize = WhisperKitModelSize(rawValue: rawValue) {
+            self.whisperKitModelSize = modelSize
+        } else {
+            self.whisperKitModelSize = .base
+        }
+        
         self.autoStopOnSilence = UserDefaults.standard.object(forKey: "autoStopOnSilence") as? Bool ?? true
         self.silenceTimeoutSeconds = UserDefaults.standard.object(forKey: "silenceTimeoutSeconds") as? Double ?? 2.0
         self.streamingTranscriptionEnabled = UserDefaults.standard.object(forKey: "streamingTranscriptionEnabled") as? Bool ?? true
@@ -176,7 +204,7 @@ public class ToolSettings: ObservableObject {
         UserDefaults.standard.set(sttProvider.rawValue, forKey: "sttProviderRawValue")
         UserDefaults.standard.set(voiceButtonReplaceSend, forKey: "voiceButtonReplaceSend")
         UserDefaults.standard.set(sttLanguage, forKey: "sttLanguage")
-        UserDefaults.standard.set(whisperKitModelSize, forKey: "whisperKitModelSize")
+        UserDefaults.standard.set(whisperKitModelSize.rawValue, forKey: "whisperKitModelSize")
         UserDefaults.standard.set(autoStopOnSilence, forKey: "autoStopOnSilence")
         UserDefaults.standard.set(silenceTimeoutSeconds, forKey: "silenceTimeoutSeconds")
         UserDefaults.standard.set(streamingTranscriptionEnabled, forKey: "streamingTranscriptionEnabled")
@@ -198,7 +226,7 @@ public class ToolSettings: ObservableObject {
         sttProvider = .appleSpeech
         voiceButtonReplaceSend = false
         sttLanguage = "auto"
-        whisperKitModelSize = "base"
+        whisperKitModelSize = .base
         autoStopOnSilence = true
         silenceTimeoutSeconds = 2.0
         streamingTranscriptionEnabled = true

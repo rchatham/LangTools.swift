@@ -235,11 +235,9 @@ public struct ChatSettingsView: View {
                         }
 
                         Picker("Model Size", selection: $viewModel.toolSettings.whisperKitModelSize) {
-                            Text("Tiny (~40MB)").tag("tiny")
-                            Text("Base (~75MB)").tag("base")
-                            Text("Small (~250MB)").tag("small")
-                            Text("Medium (~750MB)").tag("medium")
-                            Text("Large-v3 (~1.5GB)").tag("large-v3")
+                            ForEach(WhisperKitModelSize.allCases, id: \.self) { modelSize in
+                                Text(modelSize.displayName).tag(modelSize)
+                            }
                         }
                         .onChange(of: viewModel.toolSettings.whisperKitModelSize) { _, _ in
                             viewModel.preloadWhisperKit()
@@ -448,11 +446,9 @@ public struct ChatSettingsView: View {
                                         .foregroundColor(.primary)
 
                                     Picker("", selection: $viewModel.toolSettings.whisperKitModelSize) {
-                                        Text("Tiny (~40MB)").tag("tiny")
-                                        Text("Base (~75MB)").tag("base")
-                                        Text("Small (~250MB)").tag("small")
-                                        Text("Medium (~750MB)").tag("medium")
-                                        Text("Large-v3 (~1.5GB)").tag("large-v3")
+                                        ForEach(WhisperKitModelSize.allCases, id: \.self) { modelSize in
+                                            Text(modelSize.displayName).tag(modelSize)
+                                        }
                                     }
                                     .pickerStyle(.menu)
                                     .frame(maxWidth: 200)
