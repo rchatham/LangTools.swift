@@ -58,7 +58,8 @@ public enum WhisperKitModelSize: String, CaseIterable, Codable {
     case medium = "medium"
     case largeV3 = "large-v3"
     
-    var displayName: String {
+    /// Display name with approximate size
+    public var displayName: String {
         switch self {
         case .tiny: return "Tiny (~40MB)"
         case .base: return "Base (~75MB)"
