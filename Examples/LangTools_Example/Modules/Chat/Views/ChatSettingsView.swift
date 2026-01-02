@@ -235,11 +235,9 @@ public struct ChatSettingsView: View {
                         }
 
                         Picker("Model Size", selection: $viewModel.toolSettings.whisperKitModelSize) {
-                            Text("Tiny (~40MB)").tag("tiny")
-                            Text("Base (~75MB)").tag("base")
-                            Text("Small (~250MB)").tag("small")
-                            Text("Medium (~750MB)").tag("medium")
-                            Text("Large-v3 (~1.5GB)").tag("large-v3")
+                            ForEach(WhisperKitModelSize.allCases, id: \.self) { size in
+                                Text(size.displayName).tag(size)
+                            }
                         }
                         .onChange(of: viewModel.toolSettings.whisperKitModelSize) { _, _ in
                             viewModel.preloadWhisperKit()
@@ -261,19 +259,9 @@ public struct ChatSettingsView: View {
                         .foregroundColor(.secondary)
 
                     Picker("Language", selection: $viewModel.toolSettings.sttLanguage) {
-                        Text("Auto-detect").tag("auto")
-                        Text("English").tag("en")
-                        Text("Spanish").tag("es")
-                        Text("French").tag("fr")
-                        Text("German").tag("de")
-                        Text("Italian").tag("it")
-                        Text("Portuguese").tag("pt")
-                        Text("Chinese").tag("zh")
-                        Text("Japanese").tag("ja")
-                        Text("Korean").tag("ko")
-                        Text("Arabic").tag("ar")
-                        Text("Russian").tag("ru")
-                        Text("Hindi").tag("hi")
+                        ForEach(STTLanguage.allCases, id: \.self) { language in
+                            Text(language.displayName).tag(language)
+                        }
                     }
 
                     Text("Select the language you'll be speaking")
@@ -283,12 +271,10 @@ public struct ChatSettingsView: View {
                     Toggle("Auto-stop on silence", isOn: $viewModel.toolSettings.autoStopOnSilence)
 
                     if viewModel.toolSettings.autoStopOnSilence {
-                        Picker("Silence timeout", selection: $viewModel.toolSettings.silenceTimeoutSeconds) {
-                            Text("1 second").tag(1.0)
-                            Text("1.5 seconds").tag(1.5)
-                            Text("2 seconds").tag(2.0)
-                            Text("3 seconds").tag(3.0)
-                            Text("5 seconds").tag(5.0)
+                        Picker("Silence timeout", selection: $viewModel.toolSettings.silenceTimeout) {
+                            ForEach(SilenceTimeout.allCases, id: \.self) { timeout in
+                                Text(timeout.displayName).tag(timeout)
+                            }
                         }
 
                         Text("Stop recording after this duration of silence")
@@ -308,10 +294,10 @@ public struct ChatSettingsView: View {
                         Toggle("Simulated streaming", isOn: $viewModel.toolSettings.enableOpenAISimulatedStreaming)
 
                         if viewModel.toolSettings.enableOpenAISimulatedStreaming {
-                            Picker("Update interval", selection: $viewModel.toolSettings.streamingChunkIntervalSeconds) {
-                                Text("2 seconds").tag(2.0)
-                                Text("3 seconds").tag(3.0)
-                                Text("5 seconds").tag(5.0)
+                            Picker("Update interval", selection: $viewModel.toolSettings.streamingChunkInterval) {
+                                ForEach(StreamingChunkInterval.allCases, id: \.self) { interval in
+                                    Text(interval.displayName).tag(interval)
+                                }
                             }
 
                             Text("More frequent updates = more API calls")
@@ -448,11 +434,9 @@ public struct ChatSettingsView: View {
                                         .foregroundColor(.primary)
 
                                     Picker("", selection: $viewModel.toolSettings.whisperKitModelSize) {
-                                        Text("Tiny (~40MB)").tag("tiny")
-                                        Text("Base (~75MB)").tag("base")
-                                        Text("Small (~250MB)").tag("small")
-                                        Text("Medium (~750MB)").tag("medium")
-                                        Text("Large-v3 (~1.5GB)").tag("large-v3")
+                                        ForEach(WhisperKitModelSize.allCases, id: \.self) { size in
+                                            Text(size.displayName).tag(size)
+                                        }
                                     }
                                     .pickerStyle(.menu)
                                     .frame(maxWidth: 200)
@@ -483,20 +467,14 @@ public struct ChatSettingsView: View {
                                 .font(.headline)
 
                             Picker("", selection: $viewModel.toolSettings.sttLanguage) {
-                                Text("Auto-detect").tag("auto")
-                                Divider()
-                                Text("English").tag("en")
-                                Text("Spanish").tag("es")
-                                Text("French").tag("fr")
-                                Text("German").tag("de")
-                                Text("Italian").tag("it")
-                                Text("Portuguese").tag("pt")
-                                Text("Chinese").tag("zh")
-                                Text("Japanese").tag("ja")
-                                Text("Korean").tag("ko")
-                                Text("Arabic").tag("ar")
-                                Text("Russian").tag("ru")
-                                Text("Hindi").tag("hi")
+                                ForEach(STTLanguage.allCases, id: \.self) { language in
+                                    if language == .auto {
+                                        Text(language.displayName).tag(language)
+                                        Divider()
+                                    } else {
+                                        Text(language.displayName).tag(language)
+                                    }
+                                }
                             }
                             .pickerStyle(.menu)
                             .frame(maxWidth: 200)
@@ -516,12 +494,10 @@ public struct ChatSettingsView: View {
                             if viewModel.toolSettings.autoStopOnSilence {
                                 HStack {
                                     Text("Silence timeout:")
-                                    Picker("", selection: $viewModel.toolSettings.silenceTimeoutSeconds) {
-                                        Text("1 second").tag(1.0)
-                                        Text("1.5 seconds").tag(1.5)
-                                        Text("2 seconds").tag(2.0)
-                                        Text("3 seconds").tag(3.0)
-                                        Text("5 seconds").tag(5.0)
+                                    Picker("", selection: $viewModel.toolSettings.silenceTimeout) {
+                                        ForEach(SilenceTimeout.allCases, id: \.self) { timeout in
+                                            Text(timeout.displayName).tag(timeout)
+                                        }
                                     }
                                     .pickerStyle(.menu)
                                     .frame(maxWidth: 150)
@@ -553,10 +529,10 @@ public struct ChatSettingsView: View {
                                 if viewModel.toolSettings.enableOpenAISimulatedStreaming {
                                     HStack {
                                         Text("Update interval:")
-                                        Picker("", selection: $viewModel.toolSettings.streamingChunkIntervalSeconds) {
-                                            Text("2 seconds").tag(2.0)
-                                            Text("3 seconds").tag(3.0)
-                                            Text("5 seconds").tag(5.0)
+                                        Picker("", selection: $viewModel.toolSettings.streamingChunkInterval) {
+                                            ForEach(StreamingChunkInterval.allCases, id: \.self) { interval in
+                                                Text(interval.displayName).tag(interval)
+                                            }
                                         }
                                         .pickerStyle(.menu)
                                         .frame(maxWidth: 150)

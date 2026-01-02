@@ -15,6 +15,94 @@ public enum STTProvider: String, CaseIterable, Codable {
     case whisperKit = "WhisperKit"
 }
 
+/// Available language options for speech-to-text
+public enum STTLanguage: String, CaseIterable, Codable {
+    case auto = "auto"
+    case english = "en"
+    case spanish = "es"
+    case french = "fr"
+    case german = "de"
+    case italian = "it"
+    case portuguese = "pt"
+    case chinese = "zh"
+    case japanese = "ja"
+    case korean = "ko"
+    case arabic = "ar"
+    case russian = "ru"
+    case hindi = "hi"
+    
+    var displayName: String {
+        switch self {
+        case .auto: return "Auto-detect"
+        case .english: return "English"
+        case .spanish: return "Spanish"
+        case .french: return "French"
+        case .german: return "German"
+        case .italian: return "Italian"
+        case .portuguese: return "Portuguese"
+        case .chinese: return "Chinese"
+        case .japanese: return "Japanese"
+        case .korean: return "Korean"
+        case .arabic: return "Arabic"
+        case .russian: return "Russian"
+        case .hindi: return "Hindi"
+        }
+    }
+}
+
+/// Available WhisperKit model sizes
+public enum WhisperKitModelSize: String, CaseIterable, Codable {
+    case tiny = "tiny"
+    case base = "base"
+    case small = "small"
+    case medium = "medium"
+    case largeV3 = "large-v3"
+    
+    var displayName: String {
+        switch self {
+        case .tiny: return "Tiny (~40MB)"
+        case .base: return "Base (~75MB)"
+        case .small: return "Small (~250MB)"
+        case .medium: return "Medium (~750MB)"
+        case .largeV3: return "Large-v3 (~1.5GB)"
+        }
+    }
+}
+
+/// Available silence timeout durations
+public enum SilenceTimeout: Double, CaseIterable, Codable {
+    case oneSecond = 1.0
+    case oneAndHalfSeconds = 1.5
+    case twoSeconds = 2.0
+    case threeSeconds = 3.0
+    case fiveSeconds = 5.0
+    
+    var displayName: String {
+        switch self {
+        case .oneSecond: return "1 second"
+        case .oneAndHalfSeconds: return "1.5 seconds"
+        case .twoSeconds: return "2 seconds"
+        case .threeSeconds: return "3 seconds"
+        case .fiveSeconds: return "5 seconds"
+        }
+    }
+}
+
+/// Available streaming chunk intervals
+public enum StreamingChunkInterval: Double, CaseIterable, Codable {
+    case twoSeconds = 2.0
+    case threeSeconds = 3.0
+    case fiveSeconds = 5.0
+    
+    var displayName: String {
+        switch self {
+        case .twoSeconds: return "2 seconds"
+        case .threeSeconds: return "3 seconds"
+        case .fiveSeconds: return "5 seconds"
+        }
+    }
+}
+
 /// Represents settings for all available tools in the app
 public class ToolSettings: ObservableObject {
     // Singleton instance
@@ -88,13 +176,13 @@ public class ToolSettings: ObservableObject {
         didSet { saveSettings() }
     }
 
-    /// Selected language for STT (ISO-639-1 code or "auto" for auto-detect)
-    @Published public var sttLanguage: String {
+    /// Selected language for STT
+    @Published public var sttLanguage: STTLanguage {
         didSet { saveSettings() }
     }
 
-    /// Selected WhisperKit model size (tiny, base, small, medium, large-v3)
-    @Published public var whisperKitModelSize: String {
+    /// Selected WhisperKit model size
+    @Published public var whisperKitModelSize: WhisperKitModelSize {
         didSet { saveSettings() }
     }
 
@@ -103,8 +191,8 @@ public class ToolSettings: ObservableObject {
         didSet { saveSettings() }
     }
 
-    /// Duration of silence (in seconds) before auto-stopping recording
-    @Published public var silenceTimeoutSeconds: Double {
+    /// Duration of silence before auto-stopping recording
+    @Published public var silenceTimeout: SilenceTimeout {
         didSet { saveSettings() }
     }
 
@@ -120,8 +208,8 @@ public class ToolSettings: ObservableObject {
         didSet { saveSettings() }
     }
 
-    /// Chunk interval in seconds for OpenAI simulated streaming
-    @Published public var streamingChunkIntervalSeconds: Double {
+    /// Chunk interval for OpenAI simulated streaming
+    @Published public var streamingChunkInterval: StreamingChunkInterval {
         didSet { saveSettings() }
     }
 
@@ -147,13 +235,43 @@ public class ToolSettings: ObservableObject {
         }
         
         self.voiceButtonReplaceSend = UserDefaults.standard.object(forKey: "voiceButtonReplaceSend") as? Bool ?? false
-        self.sttLanguage = UserDefaults.standard.string(forKey: "sttLanguage") ?? "auto"
-        self.whisperKitModelSize = UserDefaults.standard.string(forKey: "whisperKitModelSize") ?? "base"
+        
+        // Load STT language
+        if let rawValue = UserDefaults.standard.string(forKey: "sttLanguage"),
+           let language = STTLanguage(rawValue: rawValue) {
+            self.sttLanguage = language
+        } else {
+            self.sttLanguage = .auto
+        }
+        
+        // Load WhisperKit model size
+        if let rawValue = UserDefaults.standard.string(forKey: "whisperKitModelSize"),
+           let modelSize = WhisperKitModelSize(rawValue: rawValue) {
+            self.whisperKitModelSize = modelSize
+        } else {
+            self.whisperKitModelSize = .base
+        }
+        
         self.autoStopOnSilence = UserDefaults.standard.object(forKey: "autoStopOnSilence") as? Bool ?? true
-        self.silenceTimeoutSeconds = UserDefaults.standard.object(forKey: "silenceTimeoutSeconds") as? Double ?? 2.0
+        
+        // Load silence timeout
+        if let rawValue = UserDefaults.standard.object(forKey: "silenceTimeout") as? Double,
+           let timeout = SilenceTimeout(rawValue: rawValue) {
+            self.silenceTimeout = timeout
+        } else {
+            self.silenceTimeout = .twoSeconds
+        }
+        
         self.streamingTranscriptionEnabled = UserDefaults.standard.object(forKey: "streamingTranscriptionEnabled") as? Bool ?? true
         self.enableOpenAISimulatedStreaming = UserDefaults.standard.object(forKey: "enableOpenAISimulatedStreaming") as? Bool ?? true
-        self.streamingChunkIntervalSeconds = UserDefaults.standard.object(forKey: "streamingChunkIntervalSeconds") as? Double ?? 3.0
+        
+        // Load streaming chunk interval
+        if let rawValue = UserDefaults.standard.object(forKey: "streamingChunkInterval") as? Double,
+           let interval = StreamingChunkInterval(rawValue: rawValue) {
+            self.streamingChunkInterval = interval
+        } else {
+            self.streamingChunkInterval = .threeSeconds
+        }
 
         // If this is first launch, set defaults
         if !UserDefaults.standard.bool(forKey: "toolSettingsInitialized") {
@@ -175,13 +293,13 @@ public class ToolSettings: ObservableObject {
         UserDefaults.standard.set(voiceInputEnabled, forKey: "voiceInputEnabled")
         UserDefaults.standard.set(sttProvider.rawValue, forKey: "sttProviderRawValue")
         UserDefaults.standard.set(voiceButtonReplaceSend, forKey: "voiceButtonReplaceSend")
-        UserDefaults.standard.set(sttLanguage, forKey: "sttLanguage")
-        UserDefaults.standard.set(whisperKitModelSize, forKey: "whisperKitModelSize")
+        UserDefaults.standard.set(sttLanguage.rawValue, forKey: "sttLanguage")
+        UserDefaults.standard.set(whisperKitModelSize.rawValue, forKey: "whisperKitModelSize")
         UserDefaults.standard.set(autoStopOnSilence, forKey: "autoStopOnSilence")
-        UserDefaults.standard.set(silenceTimeoutSeconds, forKey: "silenceTimeoutSeconds")
+        UserDefaults.standard.set(silenceTimeout.rawValue, forKey: "silenceTimeout")
         UserDefaults.standard.set(streamingTranscriptionEnabled, forKey: "streamingTranscriptionEnabled")
         UserDefaults.standard.set(enableOpenAISimulatedStreaming, forKey: "enableOpenAISimulatedStreaming")
-        UserDefaults.standard.set(streamingChunkIntervalSeconds, forKey: "streamingChunkIntervalSeconds")
+        UserDefaults.standard.set(streamingChunkInterval.rawValue, forKey: "streamingChunkInterval")
     }
 
     func resetToDefaults() {
@@ -197,13 +315,13 @@ public class ToolSettings: ObservableObject {
         voiceInputEnabled = true
         sttProvider = .appleSpeech
         voiceButtonReplaceSend = false
-        sttLanguage = "auto"
-        whisperKitModelSize = "base"
+        sttLanguage = .auto
+        whisperKitModelSize = .base
         autoStopOnSilence = true
-        silenceTimeoutSeconds = 2.0
+        silenceTimeout = .twoSeconds
         streamingTranscriptionEnabled = true
         enableOpenAISimulatedStreaming = true
-        streamingChunkIntervalSeconds = 3.0
+        streamingChunkInterval = .threeSeconds
         saveSettings()
     }
 
