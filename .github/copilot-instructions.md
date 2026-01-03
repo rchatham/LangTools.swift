@@ -156,7 +156,7 @@ swift test --filter LangToolsTests      # Specific test target
 3. Define provider-specific request/response types
 4. Add tests in `Tests/[ProviderName]Tests/`
 5. Update `Package.swift` with new target
-6. Add documentation in module README.md
+6. Add documentation in `Sources/[ProviderName]/README.md`
 
 ### Adding a New Tool
 1. Conform to `LangToolsTool` protocol
@@ -199,7 +199,7 @@ swift test --filter LangToolsTests      # Specific test target
 ## Git Workflow
 
 ### Ignored Files
-- `.DS_Store`, `.build/`, `build/`, `DerivedData/`
+- `.DS_Store`, `/.build`, `build/`, `DerivedData/`
 - `xcuserdata/`, `.swiftpm/`
 - `.claude/`, `CLAUDE.md` (Claude Code local settings)
 - `.netrc` (credentials)
