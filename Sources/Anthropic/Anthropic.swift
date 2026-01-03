@@ -61,7 +61,12 @@ public final class Anthropic: LangTools {
         urlRequest.addValue(apiKey, forHTTPHeaderField: "x-api-key")
 
         do {
-            urlRequest.httpBody = try JSONEncoder().encode(request)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
+            urlRequest.httpBody = try encoder.encode(request)
+            if let bodyString = String(data: urlRequest.httpBody!, encoding: .utf8) {
+                print("   📝 Request body:\n\(bodyString)")
+            }
             print("   ✅ Request body encoded successfully")
         } catch {
             print("   ❌ Failed to encode request: \(error)")
