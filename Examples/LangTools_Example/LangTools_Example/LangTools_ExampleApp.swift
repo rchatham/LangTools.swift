@@ -30,14 +30,14 @@ struct LangTools_ExampleApp: App {
         WindowGroup {
             let messageService = MessageService(agents: customAgents)
             NavigationStack {
-                ChatView<MessageService, ChatSettingsView/*, EmptyView*/>(title: "LangTools.swift", messageService: messageService, settingsView: { chatSettingsView(messageService: messageService) })
+                ChatView<MessageService>(title: "LangTools.swift", messageService: messageService, settingsView: { chatSettingsView(messageService: messageService) })
             }
         }
     }
 
     @ViewBuilder
-    func chatSettingsView(messageService: MessageService) -> ChatSettingsView {
-        ChatSettingsView(viewModel: ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages))
+    func chatSettingsView(messageService: MessageService) -> AnyView {
+        AnyView(ChatSettingsView(viewModel: ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages)))
     }
 
     func initializeOllama() {
