@@ -29,8 +29,14 @@ struct LangTools_ExampleApp: App {
     var body: some Scene {
         WindowGroup {
             let messageService = MessageService(agents: customAgents)
+            let voiceInputHandler = VoiceInputHandlerExample.shared
             NavigationStack {
-                ChatView<MessageService>(title: "LangTools.swift", messageService: messageService, settingsView: { chatSettingsView(messageService: messageService) })
+                ChatView<MessageService>(
+                    title: "LangTools.swift",
+                    messageService: messageService,
+                    voiceInputHandler: voiceInputHandler,
+                    settingsView: { chatSettingsView(messageService: messageService) }
+                )
             }
         }
     }
