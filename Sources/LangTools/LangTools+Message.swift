@@ -182,11 +182,10 @@ public extension LangToolsImageContentType {
 //    var type: String { "image" } // TODO: verify this
 
     init(_ contentType: any LangToolsContentType) throws {
-        if let image = contentType.imageContentType {
-            fatalError("implement image! \(image)")
-        } else {
+        guard let image = contentType.imageContentType as? Self else {
             throw LangToolsError.invalidContentType
         }
+        self = image
     }
 }
 
@@ -196,11 +195,10 @@ public extension LangToolsAudioContentType {
 //    var type: String { "audio" } // TODO: verify this
 
     init(_ contentType: any LangToolsContentType) throws {
-        if let audio = contentType.audioContentType {
-            fatalError("implement audio! \(audio)")
-        } else {
+        guard let audio = contentType.audioContentType as? Self else {
             throw LangToolsError.invalidContentType
         }
+        self = audio
     }
 }
 
