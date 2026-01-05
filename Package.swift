@@ -40,6 +40,7 @@ let package = Package(
         .testTarget(name: "XAITests", dependencies: ["XAI", "OpenAI", "TestUtils"]),
         .testTarget(name: "GeminiTests", dependencies: ["Gemini", "OpenAI", "TestUtils"]),
         .testTarget(name: "OllamaTests", dependencies: ["Ollama", "OpenAI", "TestUtils"]),
+        .testTarget(name: "AppleSpeechTests", dependencies: ["AppleSpeech"]),
 
         // Executable target
         .executableTarget(name: "ChatCLI", dependencies: ["LangTools", "OpenAI", "Anthropic", "XAI", "Gemini", "Ollama"]),
