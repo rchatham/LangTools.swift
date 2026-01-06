@@ -8,6 +8,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import Chat
 import ChatUI
 import Speech
 import AVFoundation
@@ -31,19 +32,30 @@ public class VoiceInputHandlerExample: ObservableObject, VoiceInputHandler {
     public var isProcessing: Bool { _isProcessing }
     public var audioLevel: Float { _audioLevel }
     public var statusDescription: String { _statusDescription }
-    public var isEnabled: Bool { true } // Always enabled in example
-    public var replaceSendButton: Bool { false } // Show both buttons
+    public var isEnabled: Bool { settings.voiceInputEnabled }
+    public var replaceSendButton: Bool { settings.voiceButtonReplaceSend }
 
     // MARK: - Private Properties
 
+    private let settings: ToolSettings
     private var audioEngine: AVAudioEngine?
     private var audioFile: AVAudioFile?
     private var tempFileURL: URL?
     private var transcribedText: String = ""
+    private var settingsCancellable: AnyCancellable?
 
     public static let shared = VoiceInputHandlerExample()
 
-    private init() {}
+    private init(settings: ToolSettings = .shared) {
+        self.settings = settings
+
+        // Forward settings changes to trigger view updates (matches App pattern)
+        settingsCancellable = settings.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+    }
 
     // MARK: - VoiceInputHandler Methods
 
@@ -89,8 +101,7 @@ public class VoiceInputHandlerExample: ObservableObject, VoiceInputHandler {
         do {
             try startAudioRecording()
         } catch {
-            _statusDescription = "Failed to start recording"
-            print("[VoiceInputHandlerExample] Error starting recording: \(error)")
+            handleRecordingError(error, context: "starting recording")
         }
     }
 
@@ -129,34 +140,61 @@ public class VoiceInputHandlerExample: ObservableObject, VoiceInputHandler {
             _statusDescription = transcript.isEmpty ? "No speech detected" : "Complete"
             _isProcessing = false
         } catch {
-            _statusDescription = error.localizedDescription
             _isProcessing = false
-            print("[VoiceInputHandlerExample] Transcription error: \(error)")
+            handleRecordingError(error, context: "transcribing audio")
         }
     }
 
     private func requestPermissions() async -> Bool {
-        // Request microphone permission
-        let micStatus = await withCheckedContinuation { continuation in
+        // Request microphone permission (platform-specific)
+        let micStatus: Bool
+        #if os(iOS)
+        micStatus = await withCheckedContinuation { continuation in
             AVAudioApplication.requestRecordPermission { granted in
                 continuation.resume(returning: granted)
             }
         }
+        #elseif os(macOS)
+        // macOS: Check if permission is granted (no runtime request API)
+        // User must manually enable in System Settings > Privacy & Security > Microphone
+        micStatus = true  // Assume granted; will fail at audio engine start if denied
+        print("[VoiceInputHandlerExample] macOS: Microphone permission must be granted in System Settings")
+        #else
+        micStatus = false
+        #endif
 
-        guard micStatus else { return false }
+        guard micStatus else {
+            #if os(macOS)
+            _statusDescription = "Microphone permission required (System Settings)"
+            #else
+            _statusDescription = "Microphone permission denied"
+            #endif
+            return false
+        }
 
         // Request speech recognition permission
         let speechStatus = await AppleSpeech.requestAuthorization()
-        return speechStatus == .authorized
+        guard speechStatus == .authorized else {
+            _statusDescription = "Speech recognition permission denied"
+            return false
+        }
+
+        return true
     }
 
     // MARK: - Audio Recording
 
     private func startAudioRecording() throws {
+        // Configure audio session (platform-specific)
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
         try session.setActive(true)
+        #elseif os(macOS)
+        // macOS: AVAudioSession exists but behaves differently
+        // Use default audio input device; no category/mode required
+        // Audio engine will use system default microphone
+        print("[VoiceInputHandlerExample] macOS: Using default audio input device")
         #endif
 
         audioEngine = AVAudioEngine()
@@ -239,34 +277,76 @@ public class VoiceInputHandlerExample: ObservableObject, VoiceInputHandler {
 
         // Read CAF and convert to WAV
         let inputFile = try AVAudioFile(forReading: tempCAF)
+        let inputFormat = inputFile.processingFormat
+
+        // Validate format compatibility
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw NSError(domain: "VoiceInput", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "Invalid audio format: sample rate or channel count is zero"
+            ])
+        }
+
         guard let inputBuffer = AVAudioPCMBuffer(
-            pcmFormat: inputFile.processingFormat,
+            pcmFormat: inputFormat,
             frameCapacity: AVAudioFrameCount(inputFile.length)
         ) else {
-            throw NSError(domain: "VoiceInput", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not create audio buffer"])
+            throw NSError(domain: "VoiceInput", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: "Could not create audio buffer"
+            ])
         }
 
         try inputFile.read(into: inputBuffer)
 
-        // Create WAV file with same format
+        // Use input format's properties for maximum cross-platform compatibility
+        // 16-bit integer PCM is more widely compatible than 32-bit float
         let wavSettings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: inputFile.processingFormat.sampleRate,
-            AVNumberOfChannelsKey: inputFile.processingFormat.channelCount,
-            AVLinearPCMBitDepthKey: 32,
-            AVLinearPCMIsFloatKey: true,
+            AVSampleRateKey: inputFormat.sampleRate,  // Use actual rate from recording
+            AVNumberOfChannelsKey: inputFormat.channelCount,
+            AVLinearPCMBitDepthKey: 16,  // 16-bit is more compatible than 32-bit
+            AVLinearPCMIsFloatKey: false,  // Use integer PCM for broader compatibility
             AVLinearPCMIsBigEndianKey: false,
             AVLinearPCMIsNonInterleaved: false
         ]
 
+        print("[VoiceInputHandlerExample] Converting audio: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount) channel(s)")
+
         let outputFile = try AVAudioFile(
             forWriting: tempWAV,
             settings: wavSettings,
-            commonFormat: inputFile.processingFormat.commonFormat,
-            interleaved: inputFile.processingFormat.isInterleaved
+            commonFormat: .pcmFormatInt16,  // Explicitly use 16-bit integer format
+            interleaved: true
         )
         try outputFile.write(from: inputBuffer)
 
         return tempWAV
+    }
+
+    // MARK: - Error Handling
+
+    private func handleRecordingError(_ error: Error, context: String) {
+        let errorDescription = error.localizedDescription
+        print("[VoiceInputHandlerExample] Error \(context): \(error)")
+
+        // Provide platform-specific guidance
+        #if os(macOS)
+        if errorDescription.contains("microphone") || errorDescription.contains("permission") || errorDescription.contains("1852797029") {
+            print("⚠️  macOS: Grant microphone permission in System Settings > Privacy & Security > Microphone")
+            _statusDescription = "Microphone permission required (System Settings)"
+        } else if errorDescription.contains("audio") || errorDescription.contains("recording") {
+            print("⚠️  macOS: Check that microphone is connected and enabled in System Settings > Sound > Input")
+            _statusDescription = "Audio error: \(errorDescription)"
+        } else {
+            _statusDescription = "Error \(context): \(errorDescription)"
+        }
+        #else
+        if errorDescription.contains("permission") {
+            _statusDescription = "Permission denied: Check Settings > Privacy"
+        } else if errorDescription.contains("audio") || errorDescription.contains("recording") {
+            _statusDescription = "Audio error: \(errorDescription)"
+        } else {
+            _statusDescription = "Error \(context): \(errorDescription)"
+        }
+        #endif
     }
 }

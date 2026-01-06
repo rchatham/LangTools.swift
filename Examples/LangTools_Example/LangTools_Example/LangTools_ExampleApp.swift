@@ -20,6 +20,9 @@ import ChatUI
 
 @main
 struct LangTools_ExampleApp: App {
+    // Use @StateObject so SwiftUI observes voiceInputHandler.objectWillChange
+    // This enables instant UI updates when settings change
+    @StateObject private var voiceInputHandler = VoiceInputHandlerExample.shared
 
     init() {
         // Initialize Ollama on app startup
@@ -29,13 +32,12 @@ struct LangTools_ExampleApp: App {
     var body: some Scene {
         WindowGroup {
             let messageService = MessageService(agents: customAgents)
-            let voiceInputHandler = VoiceInputHandlerExample.shared
             NavigationStack {
                 ChatView<MessageService>(
                     title: "LangTools.swift",
                     messageService: messageService,
-                    voiceInputHandler: voiceInputHandler,
-                    settingsView: { chatSettingsView(messageService: messageService) }
+                    settingsView: { chatSettingsView(messageService: messageService) },
+                    voiceInputHandler: voiceInputHandler
                 )
             }
         }
