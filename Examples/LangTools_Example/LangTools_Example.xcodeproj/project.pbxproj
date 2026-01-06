@@ -7,9 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B181AE852F0C3945001DAA40 /* AppleSpeech in Frameworks */ = {isa = PBXBuildFile; productRef = B181AE842F0C3945001DAA40 /* AppleSpeech */; };
+		B181AE882F0C8048001DAA40 /* ChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = B181AE872F0C8048001DAA40 /* ChatUI */; };
 		B19FD1AE2DD6835000E7BEB5 /* Chat in Frameworks */ = {isa = PBXBuildFile; productRef = B19FD1AD2DD6835000E7BEB5 /* Chat */; };
 		B19FD1D02DD68BFD00E7BEB5 /* ExampleAgents in Frameworks */ = {isa = PBXBuildFile; productRef = B19FD1CF2DD68BFD00E7BEB5 /* ExampleAgents */; };
-		B1AD75142DC1833200C53CED /* ChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = B1AD75132DC1833200C53CED /* ChatUI */; };
 		B1F8B9C82DCA966700F86CED /* ChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = B1E36A9D2D722E80007CB6B5 /* ChatUI */; };
 /* End PBXBuildFile section */
 
@@ -95,10 +96,11 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B181AE882F0C8048001DAA40 /* ChatUI in Frameworks */,
 				B1F8B9C82DCA966700F86CED /* ChatUI in Frameworks */,
+				B181AE852F0C3945001DAA40 /* AppleSpeech in Frameworks */,
 				B19FD1AE2DD6835000E7BEB5 /* Chat in Frameworks */,
 				B19FD1D02DD68BFD00E7BEB5 /* ExampleAgents in Frameworks */,
-				B1AD75142DC1833200C53CED /* ChatUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -280,9 +282,10 @@
 			name = LangTools_Example;
 			packageProductDependencies = (
 				B1E36A9D2D722E80007CB6B5 /* ChatUI */,
-				B1AD75132DC1833200C53CED /* ChatUI */,
 				B19FD1AD2DD6835000E7BEB5 /* Chat */,
 				B19FD1CF2DD68BFD00E7BEB5 /* ExampleAgents */,
+				B181AE842F0C3945001DAA40 /* AppleSpeech */,
+				B181AE872F0C8048001DAA40 /* ChatUI */,
 			);
 			productName = LangTools_Example;
 			productReference = B1D1EBDF2CA2518F00AD7FA6 /* LangTools_Example.app */;
@@ -367,8 +370,9 @@
 			mainGroup = B1D1EBD62CA2518E00AD7FA6;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				B1AD75122DC1833200C53CED /* XCRemoteSwiftPackageReference "ChatUI" */,
 				B19FD1AC2DD6835000E7BEB5 /* XCLocalSwiftPackageReference "../LangTools_Example" */,
+				B181AE832F0C3945001DAA40 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */,
+				B181AE862F0C8048001DAA40 /* XCLocalSwiftPackageReference "../../../ChatUI" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B1D1EBE02CA2518F00AD7FA6 /* Products */;
@@ -580,7 +584,9 @@
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Uses access to read and schedule events on the calendar.";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "To let the AI give you directions and have more context about you for more relevant results.";
 				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "To let the AI give you directions and have more context about you for more relevant results.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "For voice transcription.";
 				INFOPLIST_KEY_NSRemindersUsageDescription = "Uses access to interact with reminders";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "For voice transcription.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -621,7 +627,9 @@
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Uses access to read and schedule events on the calendar.";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "To let the AI give you directions and have more context about you for more relevant results.";
 				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "To let the AI give you directions and have more context about you for more relevant results.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "For voice transcription.";
 				INFOPLIST_KEY_NSRemindersUsageDescription = "Uses access to interact with reminders";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "For voice transcription.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -759,24 +767,29 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		B181AE832F0C3945001DAA40 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../../LangTools.swift;
+		};
+		B181AE862F0C8048001DAA40 /* XCLocalSwiftPackageReference "../../../ChatUI" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../../ChatUI;
+		};
 		B19FD1AC2DD6835000E7BEB5 /* XCLocalSwiftPackageReference "../LangTools_Example" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../LangTools_Example;
 		};
 /* End XCLocalSwiftPackageReference section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		B1AD75122DC1833200C53CED /* XCRemoteSwiftPackageReference "ChatUI" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/rchatham/ChatUI";
-			requirement = {
-				branch = main;
-				kind = branch;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
 /* Begin XCSwiftPackageProductDependency section */
+		B181AE842F0C3945001DAA40 /* AppleSpeech */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AppleSpeech;
+		};
+		B181AE872F0C8048001DAA40 /* ChatUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ChatUI;
+		};
 		B19FD1AD2DD6835000E7BEB5 /* Chat */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Chat;
@@ -785,11 +798,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B19FD1AC2DD6835000E7BEB5 /* XCLocalSwiftPackageReference "../LangTools_Example" */;
 			productName = ExampleAgents;
-		};
-		B1AD75132DC1833200C53CED /* ChatUI */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = B1AD75122DC1833200C53CED /* XCRemoteSwiftPackageReference "ChatUI" */;
-			productName = ChatUI;
 		};
 		B1E36A9D2D722E80007CB6B5 /* ChatUI */ = {
 			isa = XCSwiftPackageProductDependency;
