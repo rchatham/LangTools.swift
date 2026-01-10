@@ -25,6 +25,7 @@ class ToolSettings: ObservableObject {
                 contactsToolEnabled = false
                 weatherToolEnabled = false
                 filesToolEnabled = false
+                emailToolEnabled = false
             }
             saveSettings()
         }
@@ -59,6 +60,10 @@ class ToolSettings: ObservableObject {
         didSet { saveSettings() }
     }
 
+    @Published var emailToolEnabled: Bool {
+        didSet { saveSettings() }
+    }
+
     private init() {
         // Load settings from UserDefaults, defaulting to true if not set
         self.toolsEnabled = UserDefaults.standard.bool(forKey: "toolsEnabled")
@@ -69,6 +74,7 @@ class ToolSettings: ObservableObject {
         self.contactsToolEnabled = UserDefaults.standard.bool(forKey: "contactsToolEnabled")
         self.weatherToolEnabled = UserDefaults.standard.bool(forKey: "weatherToolEnabled")
         self.filesToolEnabled = UserDefaults.standard.bool(forKey: "filesToolEnabled")
+        self.emailToolEnabled = UserDefaults.standard.bool(forKey: "emailToolEnabled")
 
         // If this is first launch, set defaults
         if !UserDefaults.standard.bool(forKey: "toolSettingsInitialized") {
@@ -86,6 +92,7 @@ class ToolSettings: ObservableObject {
         UserDefaults.standard.set(contactsToolEnabled, forKey: "contactsToolEnabled")
         UserDefaults.standard.set(weatherToolEnabled, forKey: "weatherToolEnabled")
         UserDefaults.standard.set(filesToolEnabled, forKey: "filesToolEnabled")
+        UserDefaults.standard.set(emailToolEnabled, forKey: "emailToolEnabled")
     }
 
     func resetToDefaults() {
@@ -97,6 +104,7 @@ class ToolSettings: ObservableObject {
         contactsToolEnabled = true
         weatherToolEnabled = true
         filesToolEnabled = true
+        emailToolEnabled = true
         saveSettings()
     }
 
@@ -119,6 +127,8 @@ class ToolSettings: ObservableObject {
             return weatherToolEnabled
         case "manage_files":
             return filesToolEnabled
+        case "manage_email", "emailagent":
+            return emailToolEnabled
         default:
             // Unknown tools default to enabled if master switch is on
             return true
