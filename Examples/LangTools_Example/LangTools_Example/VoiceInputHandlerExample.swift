@@ -78,7 +78,8 @@ public class VoiceInputHandlerExample: ObservableObject, VoiceInputHandler {
 
     public func getTranscribedText() -> String? {
         let text = transcribedText
-        transcribedText = "" // Clear after retrieval
+        print("[VoiceInputHandlerExample] getTranscribedText: '\(text)'")
+        // Don't clear here - clear in startRecording() instead (matches App pattern)
         return text.isEmpty ? nil : text
     }
 

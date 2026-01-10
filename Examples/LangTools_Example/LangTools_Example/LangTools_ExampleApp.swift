@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Chat
+import Audio
 import ExampleAgents
 
 import LangTools
@@ -22,7 +23,7 @@ import ChatUI
 struct LangTools_ExampleApp: App {
     // Use @StateObject so SwiftUI observes voiceInputHandler.objectWillChange
     // This enables instant UI updates when settings change
-    @StateObject private var voiceInputHandler = VoiceInputHandlerExample.shared
+    @StateObject private var voiceInputHandler = VoiceInputHandlerAdapter()
 
     init() {
         // Initialize Ollama on app startup
@@ -45,7 +46,23 @@ struct LangTools_ExampleApp: App {
 
     @ViewBuilder
     func chatSettingsView(messageService: MessageService) -> AnyView {
-        AnyView(ChatSettingsView(viewModel: ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages)))
+        let viewModel = ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages)
+
+        // Wire up WhisperKit state from voice input handler
+        viewModel.onPreloadWhisperKit = { [weak voiceInputHandler] in
+            voiceInputHandler?.preloadWhisperKit()
+        }
+        viewModel.getWhisperKitState = { [weak voiceInputHandler] in
+            guard let handler = voiceInputHandler else {
+                return (isLoading: false, description: "Not available")
+            }
+            return (
+                isLoading: handler.whisperKitLoadingState.isLoading,
+                description: handler.whisperKitLoadingState.description
+            )
+        }
+
+        return AnyView(ChatSettingsView(viewModel: viewModel))
     }
 
     func initializeOllama() {

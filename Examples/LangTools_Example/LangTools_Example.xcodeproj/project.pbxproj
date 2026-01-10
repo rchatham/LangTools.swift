@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		B181AE852F0C3945001DAA40 /* AppleSpeech in Frameworks */ = {isa = PBXBuildFile; productRef = B181AE842F0C3945001DAA40 /* AppleSpeech */; };
 		B181AE882F0C8048001DAA40 /* ChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = B181AE872F0C8048001DAA40 /* ChatUI */; };
+		B181AEA02F1065F1001DAA40 /* Audio in Frameworks */ = {isa = PBXBuildFile; productRef = B181AE9F2F1065F1001DAA40 /* Audio */; };
 		B19FD1AE2DD6835000E7BEB5 /* Chat in Frameworks */ = {isa = PBXBuildFile; productRef = B19FD1AD2DD6835000E7BEB5 /* Chat */; };
 		B19FD1D02DD68BFD00E7BEB5 /* ExampleAgents in Frameworks */ = {isa = PBXBuildFile; productRef = B19FD1CF2DD68BFD00E7BEB5 /* ExampleAgents */; };
 		B1F8B9C82DCA966700F86CED /* ChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = B1E36A9D2D722E80007CB6B5 /* ChatUI */; };
@@ -47,6 +48,15 @@
 /* Begin PBXFileReference section */
 		B17671D22DF7852A009503E4 /* WebScrapingAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebScrapingAgent.swift; sourceTree = "<group>"; };
 		B17671FF2DF78C8A009503E4 /* WebScraperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebScraperService.swift; sourceTree = "<group>"; };
+		B181AE892F0F1ACC001DAA40 /* AudioConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioConverter.swift; sourceTree = "<group>"; };
+		B181AE8A2F0F1ACC001DAA40 /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
+		B181AE8B2F0F1ACC001DAA40 /* AVAudioEngineRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVAudioEngineRecorder.swift; sourceTree = "<group>"; };
+		B181AE902F0F1C92001DAA40 /* STTService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = STTService.swift; sourceTree = "<group>"; };
+		B181AE912F0F1C92001DAA40 /* VoiceInputHandlerAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputHandlerAdapter.swift; sourceTree = "<group>"; };
+		B181AE962F10657E001DAA40 /* AppleSpeechSTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSpeechSTTProvider.swift; sourceTree = "<group>"; };
+		B181AE972F10657E001DAA40 /* OpenAISTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAISTTProvider.swift; sourceTree = "<group>"; };
+		B181AE982F10657E001DAA40 /* WhisperKitSTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperKitSTTProvider.swift; sourceTree = "<group>"; };
+		B181AE9A2F10657E001DAA40 /* STTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = STTProvider.swift; sourceTree = "<group>"; };
 		B19FD1452DD54DEB00E7BEB5 /* CalendarService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarService.swift; sourceTree = "<group>"; };
 		B19FD14B2DD54DEB00E7BEB5 /* SerperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerperService.swift; sourceTree = "<group>"; };
 		B19FD14F2DD54DEB00E7BEB5 /* ToolSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolSettings.swift; sourceTree = "<group>"; };
@@ -99,6 +109,7 @@
 				B181AE882F0C8048001DAA40 /* ChatUI in Frameworks */,
 				B1F8B9C82DCA966700F86CED /* ChatUI in Frameworks */,
 				B181AE852F0C3945001DAA40 /* AppleSpeech in Frameworks */,
+				B181AEA02F1065F1001DAA40 /* Audio in Frameworks */,
 				B19FD1AE2DD6835000E7BEB5 /* Chat in Frameworks */,
 				B19FD1D02DD68BFD00E7BEB5 /* ExampleAgents in Frameworks */,
 			);
@@ -121,9 +132,34 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		B181AE8C2F0F1ACC001DAA40 /* Audio */ = {
+			isa = PBXGroup;
+			children = (
+				B181AE992F10657E001DAA40 /* Providers */,
+				B181AE9A2F10657E001DAA40 /* STTProvider.swift */,
+				B181AE892F0F1ACC001DAA40 /* AudioConverter.swift */,
+				B181AE8A2F0F1ACC001DAA40 /* AudioPlayer.swift */,
+				B181AE8B2F0F1ACC001DAA40 /* AVAudioEngineRecorder.swift */,
+				B181AE902F0F1C92001DAA40 /* STTService.swift */,
+				B181AE912F0F1C92001DAA40 /* VoiceInputHandlerAdapter.swift */,
+			);
+			path = Audio;
+			sourceTree = "<group>";
+		};
+		B181AE992F10657E001DAA40 /* Providers */ = {
+			isa = PBXGroup;
+			children = (
+				B181AE962F10657E001DAA40 /* AppleSpeechSTTProvider.swift */,
+				B181AE972F10657E001DAA40 /* OpenAISTTProvider.swift */,
+				B181AE982F10657E001DAA40 /* WhisperKitSTTProvider.swift */,
+			);
+			path = Providers;
+			sourceTree = "<group>";
+		};
 		B19FD17D2DD67EC000E7BEB5 /* Modules */ = {
 			isa = PBXGroup;
 			children = (
+				B181AE8C2F0F1ACC001DAA40 /* Audio */,
 				B19FD17F2DD67EE600E7BEB5 /* Agents */,
 				B19FD17E2DD67ED500E7BEB5 /* Chat */,
 			);
@@ -286,6 +322,7 @@
 				B19FD1CF2DD68BFD00E7BEB5 /* ExampleAgents */,
 				B181AE842F0C3945001DAA40 /* AppleSpeech */,
 				B181AE872F0C8048001DAA40 /* ChatUI */,
+				B181AE9F2F1065F1001DAA40 /* Audio */,
 			);
 			productName = LangTools_Example;
 			productReference = B1D1EBDF2CA2518F00AD7FA6 /* LangTools_Example.app */;
@@ -789,6 +826,11 @@
 		B181AE872F0C8048001DAA40 /* ChatUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ChatUI;
+		};
+		B181AE9F2F1065F1001DAA40 /* Audio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B19FD1AC2DD6835000E7BEB5 /* XCLocalSwiftPackageReference "../LangTools_Example" */;
+			productName = Audio;
 		};
 		B19FD1AD2DD6835000E7BEB5 /* Chat */ = {
 			isa = XCSwiftPackageProductDependency;

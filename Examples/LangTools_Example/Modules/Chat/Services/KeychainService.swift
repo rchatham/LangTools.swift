@@ -7,20 +7,24 @@
 import Foundation
 import KeychainAccess
 
-class KeychainService {
+public class KeychainService {
+    public static let shared = KeychainService()
+
     let keychain = Keychain(service: "com.reidchatham.LangTools_Example")
 
-    func saveApiKey(apiKey: String, for service: APIService) {
+    public init() {}
+
+    public func saveApiKey(apiKey: String, for service: APIService) {
         do { try keychain.set(apiKey, key: "\(service.rawValue):apiKey")}
         catch { print("Error saving API key to keychain: \(error)")}
     }
 
-    func getApiKey(for service: APIService) -> String? {
+    public func getApiKey(for service: APIService) -> String? {
         do { return try keychain.getString("\(service.rawValue):apiKey") }
         catch { print("Error fetching API key from keychain: \(error)"); return nil}
     }
 
-    func deleteApiKey(for service: APIService) {
+    public func deleteApiKey(for service: APIService) {
         do { try keychain.remove("\(service.rawValue):apiKey")}
         catch { print("Error deleting API key from keychain: \(error)")}
     }
