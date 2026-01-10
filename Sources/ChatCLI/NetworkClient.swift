@@ -13,8 +13,9 @@ import OpenAI
 import Anthropic
 import XAI
 import Gemini
-#if canImport(AVFAudio)
-import AVFAudio
+import Ollama
+#if canImport(AVFoundation)
+import AVFoundation
 #endif
 
 
@@ -25,22 +26,30 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 
     private var userDefaults: UserDefaults { .standard }
 
+    #if canImport(AVFoundation)
+    private var audioPlayer: AVAudioPlayer?
+    #endif
+
     override init() {
         super.init()
         APIService.allCases.forEach { llm in UserDefaults.getApiKey(for: llm).flatMap { register($0, for: llm) } }
+
+        // Register Ollama without API key
+        langToolchain.register(Ollama())
     }
 
     func request(messages: [Message], model: Model, stream: Bool = false, tools: [OpenAI.Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) -> any LangToolsChatRequest & LangToolsStreamableRequest {
-        if case .anthropic(let model) = model {
+        switch model {
+        case .anthropic(let model):
             return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
-        } else if case .openAI(let model) = model {
+        case .openAI(let model):
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), n: 3, stream: stream, tools: tools, tool_choice: toolChoice, choose: {_ in 2})
-        } else if case .xAI(let model) = model {
+        case .xAI(let model):
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice)
-        } else if case .gemini(let model) = model {
+        case .gemini(let model):
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream/*, tools: tools, tool_choice: toolChoice*/)
-        } else {
-            return Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
+        case .ollama(let model):
+            return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools)
         }
     }
 
@@ -64,6 +73,33 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    // MARK: - Audio Playback
+
+    func playAudio(for text: String) async throws {
+        let audioReq = OpenAI.AudioSpeechRequest(model: .tts_1_hd, input: text, voice: .alloy, responseFormat: .mp3, speed: 1.2)
+        let audioResponse: Data = try await langToolchain.perform(request: audioReq)
+
+        #if canImport(AVFoundation) && os(macOS)
+        do {
+            audioPlayer = try AVAudioPlayer(data: audioResponse)
+            guard let player = audioPlayer else {
+                throw NetworkError.audioPlaybackFailed
+            }
+            player.prepareToPlay()
+            player.play()
+
+            // Wait for playback to complete
+            while player.isPlaying {
+                try await Task.sleep(nanoseconds: 100_000_000) // 0.1 second
+            }
+        } catch {
+            throw NetworkError.audioPlaybackFailed
+        }
+        #else
+        print("Audio playback is not supported on this platform")
+        #endif
+    }
+
     // MARK: - URLSessionWebSocketDelegate
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
@@ -84,6 +120,7 @@ extension NetworkClient {
         case missingApiKey
         case emptyApiKey
         case incompatibleRequest
+        case audioPlaybackFailed
     }
 }
 
@@ -100,3 +137,26 @@ extension String {
         return String(self[...index])
     }
 }
+
+// MARK: - Message Extensions for Ollama
+
+extension Array<Message> {
+    func toOllamaMessages() -> [Ollama.Message] {
+        return self.map { message in
+            Ollama.Message(role: message.role.toOllamaRole(), content: message.text ?? "")
+        }
+    }
+}
+
+extension OpenAI.Message.Role {
+    func toOllamaRole() -> Ollama.Role {
+        switch self {
+        case .assistant: return .assistant
+        case .user: return .user
+        case .system: return .system
+        case .tool: return .tool
+        case .function: return .tool
+        }
+    }
+}
+

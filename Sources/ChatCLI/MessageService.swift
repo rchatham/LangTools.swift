@@ -11,6 +11,7 @@ import FoundationNetworking
 #endif
 import Gemini
 import LangTools
+import Ollama
 import OpenAI
 import XAI
 #if canImport(SwiftUI)
@@ -152,6 +153,8 @@ class MessageService: ObservableObject {
             print("Gemini API error: \(error.error)")
         case let error as AnthropicErrorResponse:
             print("Anthropic API error: \(error.error)")
+        case let error as OllamaErrorResponse:
+            print("Ollama API error: \(error.error)")
         default:
             print("Unknown API error: \(error)")
         }
@@ -170,6 +173,10 @@ class MessageService: ObservableObject {
 
     func deleteMessage(id: UUID) {
         messages.removeAll(where: { $0.uuid == id })
+    }
+
+    func clearMessages() {
+        messages.removeAll()
     }
 
     #if canImport(Darwin)
