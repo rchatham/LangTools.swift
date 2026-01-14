@@ -9,6 +9,7 @@ LangTools is a Swift framework for working with Large Language Models (LLMs) and
 - 🤝 **Extensible Agent System**: Build specialized AI assistants with tools and delegation
 - 📝 **Streaming Support**: Handle streaming responses from AI models
 - 🛠️ **Tool Integration**: Add custom capabilities to your AI interactions
+- ☁️ **Cloud Deployment**: Deploy agents to DigitalOcean for background execution
 
 ## Installation
 
@@ -107,7 +108,8 @@ https://github.com/user-attachments/assets/ce9341fe-5eb2-43bc-a7f3-08b88019c981
 See individual module README files for detailed documentation and examples:
 
 - [LangTools](Sources/LangTools/README.md) - Core protocols and LangToolchain for unified multi-provider management
-- [Agents](Sources/Agents/README.md)
+- [Agents](Sources/Agents/README.md) - Agent framework for building specialized AI assistants
+- [CloudAgents](Sources/CloudAgents/README.md) - Cloud deployment for background agent execution
 - [OpenAI](Sources/OpenAI/README.md)
 - [Anthropic](Sources/Anthropic/README.md)
 - [XAI](Sources/XAI/README.md)

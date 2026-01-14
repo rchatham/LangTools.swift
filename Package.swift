@@ -13,6 +13,7 @@ let package = Package(
     products: [
         .library(name: "LangTools", targets: ["LangTools"]),
         .library(name: "Agents", targets: ["Agents"]),
+        .library(name: "CloudAgents", targets: ["CloudAgents"]),
         .library(name: "OpenAI", targets: ["OpenAI"]),
         .library(name: "Anthropic", targets: ["Anthropic"]),
         .library(name: "XAI", targets: ["XAI"]),
@@ -24,6 +25,7 @@ let package = Package(
         // Targets
         .target(name: "LangTools", resources: [.process("README.md")]),
         .target(name: "Agents", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
+        .target(name: "CloudAgents", dependencies: [.target(name: "LangTools"), .target(name: "Agents")], resources: [.process("README.md")]),
         .target(name: "OpenAI", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
         .target(name: "Anthropic", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
         .target(name: "XAI", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
@@ -33,6 +35,7 @@ let package = Package(
 
         // Test targets
         .testTarget(name: "LangToolsTests", dependencies: ["LangTools", "OpenAI", "TestUtils"]),
+        .testTarget(name: "CloudAgentsTests", dependencies: ["CloudAgents", "TestUtils"]),
         .testTarget(name: "OpenAITests", dependencies: ["OpenAI", "TestUtils"]),
         .testTarget(name: "AnthropicTests", dependencies: ["Anthropic", "TestUtils"]),
         .testTarget(name: "XAITests", dependencies: ["XAI", "OpenAI", "TestUtils"]),
