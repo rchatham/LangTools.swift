@@ -18,6 +18,9 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
     private let settings: ToolSettings // TODO: - refactor ToolSettings out of Audio to avoid importing Chat
     private var cancellables = Set<AnyCancellable>()
 
+    /// Unified audio level monitor for UI visualization (separate from transcription)
+    private let audioLevelMonitor = AudioLevelMonitor()
+
     /// Partial transcription text for streaming display
     @Published public private(set) var partialText: String = ""
 
@@ -60,6 +63,14 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
             .receive(on: RunLoop.main)
             .sink { [weak self] text in
                 self?.partialText = text
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
+        // Forward audio level changes from monitor to trigger view updates
+        audioLevelMonitor.$audioLevel
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
                 self?.objectWillChange.send()
             }
             .store(in: &cancellables)
@@ -142,7 +153,7 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
     }
 
     public var audioLevel: Float {
-        sttService.audioLevel
+        audioLevelMonitor.audioLevel
     }
 
     public var statusDescription: String {
@@ -162,14 +173,23 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
             // Stop recording and transcribe
             if let transcription = await sttService.stopRecording() {
                 print("[VoiceInputHandlerAdapter] Transcription complete: '\(transcription)'")
+                // Store result for UI consumption (bypasses SwiftUI observation issues with protocol existentials)
+                self.pendingTranscribedText = transcription
             }
+            // Stop audio level monitoring after transcription completes
+            audioLevelMonitor.stop()
         } else {
+            // Start audio level monitoring before recording begins
+            audioLevelMonitor.start()
             // Start recording
             await sttService.startRecording()
         }
     }
 
     public func cancelRecording() {
+        // Stop audio level monitoring immediately
+        audioLevelMonitor.stop()
+
         // For the simplified service, we don't have a separate cancel method
         // Just clear the state
         Task {

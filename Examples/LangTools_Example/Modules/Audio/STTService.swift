@@ -50,7 +50,6 @@ public class STTService: ObservableObject {
     @Published public private(set) var isProcessing: Bool = false
     @Published public private(set) var transcribedText: String = ""
     @Published public private(set) var partialTranscription: String = ""
-    @Published public private(set) var audioLevel: Float = 0.0
     @Published public private(set) var status: STTStatus = .idle
     @Published public private(set) var error: STTError?
 
@@ -294,19 +293,6 @@ public class STTService: ObservableObject {
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
             guard let self = self else { return }
             self.recognitionRequest?.append(buffer)
-
-            if let channelData = buffer.floatChannelData?[0] {
-                let frameLength = Int(buffer.frameLength)
-                var sum: Float = 0
-                for i in 0..<frameLength {
-                    sum += abs(channelData[i])
-                }
-                let average = sum / Float(frameLength)
-
-                Task { @MainActor in
-                    self.audioLevel = average * 10
-                }
-            }
         }
 
         audioEngine.prepare()
@@ -317,7 +303,6 @@ public class STTService: ObservableObject {
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
-        audioLevel = 0.0
 
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(false)
@@ -459,11 +444,13 @@ public class STTService: ObservableObject {
             print("[STTService] stopWhisperKitStreaming: no WhisperKit provider")
             return
         }
-        _ = await provider.stopStreamingTranscription()
+        let result = await provider.stopStreamingTranscription()
 
-        // CRITICAL: Preserve the partial transcription as the final result
-        // WhisperKit streaming updates partialTranscription, but getTranscribedText() reads transcribedText
-        if !partialTranscription.isEmpty {
+        // Use the result from provider if available, otherwise fall back to partialTranscription
+        if !result.isEmpty {
+            print("[STTService] stopWhisperKitStreaming: using provider result '\(result)'")
+            transcribedText = result
+        } else if !partialTranscription.isEmpty {
             print("[STTService] stopWhisperKitStreaming: copying partialTranscription to transcribedText")
             transcribedText = partialTranscription
         }
@@ -606,7 +593,6 @@ public class STTService: ObservableObject {
 public protocol VoiceInputService: AnyObject {
     var isRecording: Bool { get }
     var isProcessing: Bool { get }
-    var audioLevel: Float { get }
     var statusDescription: String { get }
 
     func toggleRecording() async

@@ -50,6 +50,12 @@ public class WhisperKitSTTProvider: STTProviderProtocol, ObservableObject {
     private var currentModelVariant: String?
     private var audioStreamTranscriber: AudioStreamTranscriber?
 
+    /// Continuation for waiting on final transcription when stopping
+    private var finalTranscriptionContinuation: CheckedContinuation<String, Never>?
+
+    /// Last transcribed text (used for timeout fallback)
+    private var lastTranscribedText: String = ""
+
     /// Get the configured model variant from settings
     private var configuredModelVariant: String {
         ToolSettings.shared.whisperKitModelSize.rawValue
@@ -334,6 +340,11 @@ public class WhisperKitSTTProvider: STTProviderProtocol, ObservableObject {
             let unconfirmedText = newState.unconfirmedSegments.map { self.stripSpecialTokens($0.text) }.joined(separator: " ")
             let fullText = (confirmedText + " " + unconfirmedText).trimmingCharacters(in: .whitespacesAndNewlines)
 
+            // Store latest text for timeout fallback
+            if !fullText.isEmpty {
+                self.lastTranscribedText = fullText
+            }
+
             // Determine if this is final (recording stopped)
             let isFinal = !newState.isRecording && oldState.isRecording
 
@@ -345,6 +356,13 @@ public class WhisperKitSTTProvider: STTProviderProtocol, ObservableObject {
             }
 
             if isFinal {
+                // Resume continuation with final text (if waiting)
+                if let continuation = self.finalTranscriptionContinuation {
+                    self.finalTranscriptionContinuation = nil
+                    print("[WhisperKit] Resuming continuation with final text: '\(fullText)'")
+                    continuation.resume(returning: fullText)
+                }
+
                 Task { @MainActor [weak self] in
                     self?.isStreaming = false
                 }
@@ -363,16 +381,41 @@ public class WhisperKitSTTProvider: STTProviderProtocol, ObservableObject {
     public func stopStreamingTranscription() async -> String {
         print("[WhisperKit] Stopping streaming transcription...")
 
-        let transcriber = audioStreamTranscriber
-        Task.detached {
-            await transcriber?.stopStreamTranscription()
+        guard isStreaming else {
+            print("[WhisperKit] Not streaming, returning last text: '\(lastTranscribedText)'")
+            return lastTranscribedText
+        }
+
+        // Use continuation to wait for final callback
+        let result = await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
+            self.finalTranscriptionContinuation = continuation
+
+            // Stop the transcriber (will trigger isFinal callback)
+            let transcriber = audioStreamTranscriber
+            Task.detached {
+                await transcriber?.stopStreamTranscription()
+            }
+
+            // Timeout fallback after 2 seconds
+            Task {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if let cont = self.finalTranscriptionContinuation {
+                    self.finalTranscriptionContinuation = nil
+                    print("[WhisperKit] Timeout - returning last text: '\(self.lastTranscribedText)'")
+                    cont.resume(returning: self.lastTranscribedText)
+                }
+            }
         }
 
         await MainActor.run {
             isStreaming = false
         }
 
-        return ""
+        // Clear for next session
+        lastTranscribedText = ""
+
+        print("[WhisperKit] Final transcription: '\(result)'")
+        return result
     }
     #endif
 
