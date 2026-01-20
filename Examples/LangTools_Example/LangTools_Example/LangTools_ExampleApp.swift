@@ -32,20 +32,50 @@ struct LangTools_ExampleApp: App {
 
     var body: some Scene {
         WindowGroup {
-            let messageService = MessageService(agents: customAgents)
-            NavigationStack {
-                ChatView<MessageService>(
-                    title: "LangTools.swift",
-                    messageService: messageService,
-                    settingsView: { chatSettingsView(messageService: messageService) },
-                    voiceInputHandler: voiceInputHandler
-                )
-            }
+            // Each window gets its own ChatContainerView with independent MessageService
+            ChatContainerView(voiceInputHandler: voiceInputHandler)
         }
     }
 
-    @ViewBuilder
-    func chatSettingsView(messageService: MessageService) -> AnyView {
+    func initializeOllama() {
+        // Initialize OllamaService to start background refresh
+        Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second after app launch
+            await MainActor.run {
+                OllamaService.shared.refreshModels()
+            }
+        }
+    }
+}
+
+/// Per-window container that holds the MessageService @StateObject
+/// Each window creates a new instance, giving each window independent chat state
+struct ChatContainerView: View {
+    @StateObject private var messageService: MessageService
+    @ObservedObject var voiceInputHandler: VoiceInputHandlerAdapter
+
+    init(voiceInputHandler: VoiceInputHandlerAdapter) {
+        let agents: [Agent] = [
+            CalendarAgent(),
+            ReminderAgent(),
+            ResearchAgent()
+        ]
+        _messageService = StateObject(wrappedValue: MessageService(agents: agents))
+        self.voiceInputHandler = voiceInputHandler
+    }
+
+    var body: some View {
+        NavigationStack {
+            ChatView<MessageService>(
+                title: "LangTools.swift",
+                messageService: messageService,
+                settingsView: { chatSettingsView },
+                voiceInputHandler: voiceInputHandler
+            )
+        }
+    }
+
+    private var chatSettingsView: AnyView {
         let viewModel = ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages)
 
         // Wire up WhisperKit state from voice input handler
@@ -63,24 +93,6 @@ struct LangTools_ExampleApp: App {
         }
 
         return AnyView(ChatSettingsView(viewModel: viewModel))
-    }
-
-    func initializeOllama() {
-        // Initialize OllamaService to start background refresh
-        Task {
-            try? await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second after app launch
-            await MainActor.run {
-                OllamaService.shared.refreshModels()
-            }
-        }
-    }
-
-    var customAgents: [Agent] {
-        return [
-            CalendarAgent(),
-            ReminderAgent(),
-            ResearchAgent()
-        ]
     }
 }
 
