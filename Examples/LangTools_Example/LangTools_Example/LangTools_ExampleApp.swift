@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Chat
+import Audio
 import ExampleAgents
 
 import LangTools
@@ -20,6 +21,9 @@ import ChatUI
 
 @main
 struct LangTools_ExampleApp: App {
+    // Use @StateObject so SwiftUI observes voiceInputHandler.objectWillChange
+    // This enables instant UI updates when settings change
+    @StateObject private var voiceInputHandler = VoiceInputHandlerAdapter()
 
     init() {
         // Initialize Ollama on app startup
@@ -28,16 +32,9 @@ struct LangTools_ExampleApp: App {
 
     var body: some Scene {
         WindowGroup {
-            let messageService = MessageService(agents: customAgents)
-            NavigationStack {
-                ChatView<MessageService, ChatSettingsView/*, EmptyView*/>(title: "LangTools.swift", messageService: messageService, settingsView: { chatSettingsView(messageService: messageService) })
-            }
+            // Each window gets its own ChatContainerView with independent MessageService
+            ChatContainerView(voiceInputHandler: voiceInputHandler)
         }
-    }
-
-    @ViewBuilder
-    func chatSettingsView(messageService: MessageService) -> ChatSettingsView {
-        ChatSettingsView(viewModel: ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages))
     }
 
     func initializeOllama() {
@@ -49,13 +46,53 @@ struct LangTools_ExampleApp: App {
             }
         }
     }
+}
 
-    var customAgents: [Agent] {
-        return [
+/// Per-window container that holds the MessageService @StateObject
+/// Each window creates a new instance, giving each window independent chat state
+struct ChatContainerView: View {
+    @StateObject private var messageService: MessageService
+    @ObservedObject var voiceInputHandler: VoiceInputHandlerAdapter
+
+    init(voiceInputHandler: VoiceInputHandlerAdapter) {
+        let agents: [Agent] = [
             CalendarAgent(),
             ReminderAgent(),
             ResearchAgent()
         ]
+        _messageService = StateObject(wrappedValue: MessageService(agents: agents))
+        self.voiceInputHandler = voiceInputHandler
+    }
+
+    var body: some View {
+        NavigationStack {
+            ChatView<MessageService>(
+                title: "LangTools.swift",
+                messageService: messageService,
+                settingsView: { chatSettingsView },
+                voiceInputHandler: voiceInputHandler
+            )
+        }
+    }
+
+    private var chatSettingsView: AnyView {
+        let viewModel = ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages)
+
+        // Wire up WhisperKit state from voice input handler
+        viewModel.onPreloadWhisperKit = { [weak voiceInputHandler] in
+            voiceInputHandler?.preloadWhisperKit()
+        }
+        viewModel.getWhisperKitState = { [weak voiceInputHandler] in
+            guard let handler = voiceInputHandler else {
+                return (isLoading: false, description: "Not available")
+            }
+            return (
+                isLoading: handler.whisperKitLoadingState.isLoading,
+                description: handler.whisperKitLoadingState.description
+            )
+        }
+
+        return AnyView(ChatSettingsView(viewModel: viewModel))
     }
 }
 

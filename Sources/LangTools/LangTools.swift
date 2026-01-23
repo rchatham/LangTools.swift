@@ -90,8 +90,18 @@ extension LangTools {
                     guard httpResponse.statusCode == 200 else {
                         print("   ❌ Non-200 status code: \(httpResponse.statusCode)")
                         var error: Error?;
-                        do { error = try await bytes.lines.reduce("", +).data(using: .utf8).flatMap { Self.decodeError(data: $0) }}
-                        catch let _error { error = _error }
+                        do {
+                            let errorBody = try await bytes.lines.reduce("", +)
+                            print("   📄 Error response body: \(errorBody)")
+                            error = errorBody.data(using: .utf8).flatMap { Self.decodeError(data: $0) }
+                            if let decodedError = error {
+                                print("   🔍 Decoded error: \(decodedError)")
+                            }
+                        }
+                        catch let _error {
+                            print("   ⚠️ Error reading response: \(_error)")
+                            error = _error
+                        }
                         return continuation.finish(throwing: LangToolsError.responseUnsuccessful(statusCode: httpResponse.statusCode, error))
                     }
 

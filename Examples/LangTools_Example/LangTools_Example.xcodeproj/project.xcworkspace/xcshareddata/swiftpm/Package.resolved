@@ -1,15 +1,6 @@
 {
-  "originHash" : "cd24b227f90a05fb2d78f72b4393273166c9da4c961eb9225cfbaf77f80eae79",
+  "originHash" : "ada1c3b1690b6fbcc35e46a857c3b334f0ffbac7da9710dc16f1101d42062afa",
   "pins" : [
-    {
-      "identity" : "chatui",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/rchatham/ChatUI",
-      "state" : {
-        "branch" : "main",
-        "revision" : "9df082f33f6d68a72414f614f4ef0743c7cbb91a"
-      }
-    },
     {
       "identity" : "keychainaccess",
       "kind" : "remoteSourceControl",

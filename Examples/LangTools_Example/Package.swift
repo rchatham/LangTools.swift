@@ -15,14 +15,19 @@ let package = Package(
             name: "Chat",
             targets: ["Chat"]),
         .library(
+            name: "Audio",
+            targets: ["Audio"]),
+        .library(
             name: "ExampleAgents",
             targets: ["ExampleAgents"]),
     ],
     dependencies: [
         .package(path: "../../"),
+        .package(path: "../../../ChatUI/"),
         .package(url: "https://github.com/kishikawakatsumi/KeychainAccess.git", from: "4.0.0"),
         .package(url: "https://github.com/malcommac/SwiftLocation.git", from: "6.0.0"),
         .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.6.0"),
+        .package(path: "../../../../WhisperKit/"),
     ],
     targets: [
         .target(
@@ -35,9 +40,20 @@ let package = Package(
                 .product(name: "XAI", package: "langtools.swift"),
                 .product(name: "Gemini", package: "langtools.swift"),
                 .product(name: "Ollama", package: "langtools.swift"),
+                .product(name: "AppleSpeech", package: "langtools.swift"),
                 "KeychainAccess",
             ],
             path: "Modules/Chat"),
+        .target(
+            name: "Audio",
+            dependencies: [
+                .product(name: "ChatUI", package: "ChatUI"),
+                .product(name: "OpenAI", package: "langtools.swift"),
+                .product(name: "LangTools", package: "langtools.swift"),
+                .product(name: "WhisperKit", package: "WhisperKit", condition: .when(platforms: [.macOS, .iOS])),
+                "Chat",
+            ],
+            path: "Modules/Audio"),
         .target(
             name: "ExampleAgents",
             dependencies: [
