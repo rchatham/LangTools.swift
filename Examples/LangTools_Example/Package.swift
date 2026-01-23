@@ -25,9 +25,8 @@ let package = Package(
         .package(path: "../../"),
         .package(path: "../../../ChatUI/"),
         .package(url: "https://github.com/kishikawakatsumi/KeychainAccess.git", from: "4.0.0"),
-        .package(url: "https://github.com/malcommac/SwiftLocation.git", from: "6.0.0"),
         .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.6.0"),
-        .package(path: "../../../../WhisperKit/"),
+        .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.9.0"),
     ],
     targets: [
         .target(
