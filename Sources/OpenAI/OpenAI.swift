@@ -16,8 +16,8 @@ final public class OpenAI: LangTools {
     public typealias Model = OpenAIModel
     public typealias ErrorResponse = OpenAIErrorResponse
 
-    private var configuration: OpenAIConfiguration
-    private var apiKey: String { configuration.apiKey }
+    fileprivate var configuration: OpenAIConfiguration
+    fileprivate var apiKey: String { configuration.apiKey }
     public var session: URLSession { configuration.session }
 
     public struct OpenAIConfiguration {
@@ -39,7 +39,9 @@ final public class OpenAI: LangTools {
             { $0 is AudioTranscriptionRequest },
             { $0 is ListModelDataRequest },
             { $0 is RetrieveModelRequest },
-            { $0 is DeleteFineTunedModelRequest }
+            { $0 is DeleteFineTunedModelRequest },
+            { $0 is RealtimeSessionCreateRequest },
+            { $0 is RealtimeTranscriptionSessionCreateRequest }
         ]
     }
 
