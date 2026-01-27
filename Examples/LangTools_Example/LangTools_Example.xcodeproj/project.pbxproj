@@ -78,6 +78,7 @@
 		B19FD1C82DD683D800E7BEB5 /* OllamaService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaService.swift; sourceTree = "<group>"; };
 		B19FD1CA2DD683DA00E7BEB5 /* Message.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Message.swift; sourceTree = "<group>"; };
 		B19FD1CB2DD683DA00E7BEB5 /* Model.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Model.swift; sourceTree = "<group>"; };
+		B1AE5A3C2F24484D0092EB9D /* Package.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Package.swift; sourceTree = "<group>"; };
 		B1D1EBDF2CA2518F00AD7FA6 /* LangTools_Example.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LangTools_Example.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1D1EBEF2CA2519100AD7FA6 /* LangTools_ExampleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LangTools_ExampleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1D1EBF92CA2519100AD7FA6 /* LangTools_ExampleUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LangTools_ExampleUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -270,6 +271,7 @@
 		B1D1EBD62CA2518E00AD7FA6 = {
 			isa = PBXGroup;
 			children = (
+				B1AE5A3C2F24484D0092EB9D /* Package.swift */,
 				B1D1EBE12CA2518F00AD7FA6 /* LangTools_Example */,
 				B1D1EBF22CA2519100AD7FA6 /* LangTools_ExampleTests */,
 				B1D1EBFC2CA2519100AD7FA6 /* LangTools_ExampleUITests */,
