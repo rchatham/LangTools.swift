@@ -161,7 +161,7 @@
 			isa = PBXGroup;
 			children = (
 				B181AE8C2F0F1ACC001DAA40 /* Audio */,
-				B19FD17F2DD67EE600E7BEB5 /* Agents */,
+				B19FD17F2DD67EE600E7BEB5 /* ExampleAgents */,
 				B19FD17E2DD67ED500E7BEB5 /* Chat */,
 			);
 			path = Modules;
@@ -178,7 +178,7 @@
 			path = Chat;
 			sourceTree = "<group>";
 		};
-		B19FD17F2DD67EE600E7BEB5 /* Agents */ = {
+		B19FD17F2DD67EE600E7BEB5 /* ExampleAgents */ = {
 			isa = PBXGroup;
 			children = (
 				B19FD1842DD67F2300E7BEB5 /* Utilities */,
@@ -186,7 +186,7 @@
 				B19FD1B52DD683C900E7BEB5 /* Agents */,
 				B19FD1BA2DD683CC00E7BEB5 /* Tools */,
 			);
-			path = Agents;
+			path = ExampleAgents;
 			sourceTree = "<group>";
 		};
 		B19FD1802DD67F0400E7BEB5 /* Services */ = {

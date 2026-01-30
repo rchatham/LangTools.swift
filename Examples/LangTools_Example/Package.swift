@@ -60,6 +60,6 @@ let package = Package(
                 "KeychainAccess",
                 "SwiftSoup",
             ],
-            path: "Modules/Agents"),
+            path: "Modules/ExampleAgents"),
     ]
 )
