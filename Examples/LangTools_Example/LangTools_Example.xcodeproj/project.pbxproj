@@ -7,12 +7,19 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		B181AE852F0C3945001DAA40 /* AppleSpeech in Frameworks */ = {isa = PBXBuildFile; productRef = B181AE842F0C3945001DAA40 /* AppleSpeech */; };
-		B181AE882F0C8048001DAA40 /* ChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = B181AE872F0C8048001DAA40 /* ChatUI */; };
-		B181AEA02F1065F1001DAA40 /* Audio in Frameworks */ = {isa = PBXBuildFile; productRef = B181AE9F2F1065F1001DAA40 /* Audio */; };
-		B19FD1AE2DD6835000E7BEB5 /* Chat in Frameworks */ = {isa = PBXBuildFile; productRef = B19FD1AD2DD6835000E7BEB5 /* Chat */; };
-		B19FD1D02DD68BFD00E7BEB5 /* ExampleAgents in Frameworks */ = {isa = PBXBuildFile; productRef = B19FD1CF2DD68BFD00E7BEB5 /* ExampleAgents */; };
-		B1F8B9C82DCA966700F86CED /* ChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = B1E36A9D2D722E80007CB6B5 /* ChatUI */; };
+		B19B31A92F2C997800645F8A /* ChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31A82F2C997800645F8A /* ChatUI */; };
+		B19B31AB2F2C99C300645F8A /* AppleSpeech in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31AA2F2C99C300645F8A /* AppleSpeech */; };
+		B19B31AD2F2C99C300645F8A /* LangTools in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31AC2F2C99C300645F8A /* LangTools */; };
+		B19B31AF2F2C99C300645F8A /* Ollama in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31AE2F2C99C300645F8A /* Ollama */; };
+		B19B31B22F2C9A0600645F8A /* AppleSpeech in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31B12F2C9A0600645F8A /* AppleSpeech */; };
+		B19B31B42F2C9A0600645F8A /* LangTools in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31B32F2C9A0600645F8A /* LangTools */; };
+		B19B31B62F2C9A0600645F8A /* Ollama in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31B52F2C9A0600645F8A /* Ollama */; };
+		B19B31B92F2D205700645F8A /* Audio in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31B82F2D205700645F8A /* Audio */; };
+		B19B31BB2F2D205700645F8A /* Chat in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31BA2F2D205700645F8A /* Chat */; };
+		B19B31BD2F2D205700645F8A /* ExampleAgents in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31BC2F2D205700645F8A /* ExampleAgents */; };
+		B1E4E5132F314EF400AE11AA /* Audio in Frameworks */ = {isa = PBXBuildFile; productRef = B1E4E5122F314EF400AE11AA /* Audio */; };
+		B1E4E5152F314EF400AE11AA /* Chat in Frameworks */ = {isa = PBXBuildFile; productRef = B1E4E5142F314EF400AE11AA /* Chat */; };
+		B1E4E5172F314EF400AE11AA /* ExampleAgents in Frameworks */ = {isa = PBXBuildFile; productRef = B1E4E5162F314EF400AE11AA /* ExampleAgents */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -107,12 +114,19 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				B181AE882F0C8048001DAA40 /* ChatUI in Frameworks */,
-				B1F8B9C82DCA966700F86CED /* ChatUI in Frameworks */,
-				B181AE852F0C3945001DAA40 /* AppleSpeech in Frameworks */,
-				B181AEA02F1065F1001DAA40 /* Audio in Frameworks */,
-				B19FD1AE2DD6835000E7BEB5 /* Chat in Frameworks */,
-				B19FD1D02DD68BFD00E7BEB5 /* ExampleAgents in Frameworks */,
+				B1E4E5132F314EF400AE11AA /* Audio in Frameworks */,
+				B19B31B42F2C9A0600645F8A /* LangTools in Frameworks */,
+				B19B31B62F2C9A0600645F8A /* Ollama in Frameworks */,
+				B19B31AF2F2C99C300645F8A /* Ollama in Frameworks */,
+				B1E4E5152F314EF400AE11AA /* Chat in Frameworks */,
+				B19B31B22F2C9A0600645F8A /* AppleSpeech in Frameworks */,
+				B1E4E5172F314EF400AE11AA /* ExampleAgents in Frameworks */,
+				B19B31AD2F2C99C300645F8A /* LangTools in Frameworks */,
+				B19B31A92F2C997800645F8A /* ChatUI in Frameworks */,
+				B19B31AB2F2C99C300645F8A /* AppleSpeech in Frameworks */,
+				B19B31BD2F2D205700645F8A /* ExampleAgents in Frameworks */,
+				B19B31BB2F2D205700645F8A /* Chat in Frameworks */,
+				B19B31B92F2D205700645F8A /* Audio in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -319,12 +333,19 @@
 			);
 			name = LangTools_Example;
 			packageProductDependencies = (
-				B1E36A9D2D722E80007CB6B5 /* ChatUI */,
-				B19FD1AD2DD6835000E7BEB5 /* Chat */,
-				B19FD1CF2DD68BFD00E7BEB5 /* ExampleAgents */,
-				B181AE842F0C3945001DAA40 /* AppleSpeech */,
-				B181AE872F0C8048001DAA40 /* ChatUI */,
-				B181AE9F2F1065F1001DAA40 /* Audio */,
+				B19B31A82F2C997800645F8A /* ChatUI */,
+				B19B31AA2F2C99C300645F8A /* AppleSpeech */,
+				B19B31AC2F2C99C300645F8A /* LangTools */,
+				B19B31AE2F2C99C300645F8A /* Ollama */,
+				B19B31B12F2C9A0600645F8A /* AppleSpeech */,
+				B19B31B32F2C9A0600645F8A /* LangTools */,
+				B19B31B52F2C9A0600645F8A /* Ollama */,
+				B19B31B82F2D205700645F8A /* Audio */,
+				B19B31BA2F2D205700645F8A /* Chat */,
+				B19B31BC2F2D205700645F8A /* ExampleAgents */,
+				B1E4E5122F314EF400AE11AA /* Audio */,
+				B1E4E5142F314EF400AE11AA /* Chat */,
+				B1E4E5162F314EF400AE11AA /* ExampleAgents */,
 			);
 			productName = LangTools_Example;
 			productReference = B1D1EBDF2CA2518F00AD7FA6 /* LangTools_Example.app */;
@@ -409,9 +430,9 @@
 			mainGroup = B1D1EBD62CA2518E00AD7FA6;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				B19FD1AC2DD6835000E7BEB5 /* XCLocalSwiftPackageReference "../LangTools_Example" */,
-				B181AE832F0C3945001DAA40 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */,
-				B181AE862F0C8048001DAA40 /* XCLocalSwiftPackageReference "../../../ChatUI" */,
+				B19B31A72F2C997800645F8A /* XCLocalSwiftPackageReference "../../../ChatUI" */,
+				B19B31B02F2C9A0600645F8A /* XCLocalSwiftPackageReference "../../../LangTools.swift" */,
+				B1E4E5112F314EF400AE11AA /* XCLocalSwiftPackageReference "../LangTools_Example" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B1D1EBE02CA2518F00AD7FA6 /* Products */;
@@ -806,46 +827,72 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		B181AE832F0C3945001DAA40 /* XCLocalSwiftPackageReference "../../../LangTools.swift" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../../LangTools.swift;
-		};
-		B181AE862F0C8048001DAA40 /* XCLocalSwiftPackageReference "../../../ChatUI" */ = {
+		B19B31A72F2C997800645F8A /* XCLocalSwiftPackageReference "../../../ChatUI" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../../ChatUI;
 		};
-		B19FD1AC2DD6835000E7BEB5 /* XCLocalSwiftPackageReference "../LangTools_Example" */ = {
+		B19B31B02F2C9A0600645F8A /* XCLocalSwiftPackageReference "../../../LangTools.swift" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../../LangTools.swift;
+		};
+		B1E4E5112F314EF400AE11AA /* XCLocalSwiftPackageReference "../LangTools_Example" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../LangTools_Example;
 		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		B181AE842F0C3945001DAA40 /* AppleSpeech */ = {
+		B19B31A82F2C997800645F8A /* ChatUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ChatUI;
+		};
+		B19B31AA2F2C99C300645F8A /* AppleSpeech */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = AppleSpeech;
 		};
-		B181AE872F0C8048001DAA40 /* ChatUI */ = {
+		B19B31AC2F2C99C300645F8A /* LangTools */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = ChatUI;
+			productName = LangTools;
 		};
-		B181AE9F2F1065F1001DAA40 /* Audio */ = {
+		B19B31AE2F2C99C300645F8A /* Ollama */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = B19FD1AC2DD6835000E7BEB5 /* XCLocalSwiftPackageReference "../LangTools_Example" */;
+			productName = Ollama;
+		};
+		B19B31B12F2C9A0600645F8A /* AppleSpeech */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AppleSpeech;
+		};
+		B19B31B32F2C9A0600645F8A /* LangTools */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LangTools;
+		};
+		B19B31B52F2C9A0600645F8A /* Ollama */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Ollama;
+		};
+		B19B31B82F2D205700645F8A /* Audio */ = {
+			isa = XCSwiftPackageProductDependency;
 			productName = Audio;
 		};
-		B19FD1AD2DD6835000E7BEB5 /* Chat */ = {
+		B19B31BA2F2D205700645F8A /* Chat */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Chat;
 		};
-		B19FD1CF2DD68BFD00E7BEB5 /* ExampleAgents */ = {
+		B19B31BC2F2D205700645F8A /* ExampleAgents */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = B19FD1AC2DD6835000E7BEB5 /* XCLocalSwiftPackageReference "../LangTools_Example" */;
 			productName = ExampleAgents;
 		};
-		B1E36A9D2D722E80007CB6B5 /* ChatUI */ = {
+		B1E4E5122F314EF400AE11AA /* Audio */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = ChatUI;
+			productName = Audio;
+		};
+		B1E4E5142F314EF400AE11AA /* Chat */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Chat;
+		};
+		B1E4E5162F314EF400AE11AA /* ExampleAgents */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ExampleAgents;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
