@@ -111,7 +111,9 @@ final class SessionManager {
         }
 
         let data = try Data(contentsOf: fileURL)
-        return try JSONDecoder().decode(SavedSession.self, from: data)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(SavedSession.self, from: data)
     }
 
     /// Save a session
@@ -153,9 +155,12 @@ final class SessionManager {
 
         let jsonFiles = files.filter { $0.pathExtension == "json" }
 
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
         return jsonFiles.compactMap { fileURL -> SavedSession? in
             guard let data = try? Data(contentsOf: fileURL),
-                  let session = try? JSONDecoder().decode(SavedSession.self, from: data) else {
+                  let session = try? decoder.decode(SavedSession.self, from: data) else {
                 return nil
             }
             return session
