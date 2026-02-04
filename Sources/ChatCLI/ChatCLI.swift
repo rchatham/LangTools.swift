@@ -4,6 +4,7 @@ import OpenAI
 import Anthropic
 import XAI
 import Gemini
+import SwiftTUI
 
 var langToolchain = LangToolchain()
 let messageService = MessageService()
@@ -12,12 +13,25 @@ let networkClient = NetworkClient.shared
 @main
 struct ChatCLI {
     static func main() async throws {
+        // Check for --tui flag to use SwiftTUI interface
+        let useTUI = CommandLine.arguments.contains("--tui")
 
+        if useTUI {
+            // Launch SwiftTUI application
+            Application(rootView: MainView()).start()
+        } else {
+            // Traditional CLI mode
+            try await runTraditionalCLI()
+        }
+    }
+
+    /// Run the traditional CLI interface
+    static func runTraditionalCLI() async throws {
         // Check and request API keys if needed
         try await checkAndRequestAPIKeys(messageService: messageService)
 
         print("Chat CLI Started")
-        print("Commands: 'exit', 'model', 'test'")
+        print("Commands: 'exit', 'model', 'test', or use --tui for SwiftTUI mode")
         print("Current model: \(UserDefaults.model.rawValue)")
 
         while true {

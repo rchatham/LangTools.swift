@@ -7,6 +7,12 @@ DerivedData/
 .swiftpm/
 .netrc
 
+# Build artifacts
+*.o
+*.d
+*.swiftdeps
+*.swiftdeps~
+
 # Claude Code local settings
 .claude/
 CLAUDE.md
