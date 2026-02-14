@@ -117,6 +117,7 @@ public protocol LangToolsContentType: Codable  {
     var textContentType: LangToolsTextContentType? { get }
     var imageContentType: LangToolsImageContentType? { get }
     var audioContentType: LangToolsAudioContentType? { get }
+    var toolResultContentType: LangToolsToolResultContentType? { get }
 
     init(_ contentType: any LangToolsContentType) throws
 }
@@ -125,6 +126,7 @@ public extension LangToolsContentType {
     var textContentType: LangToolsTextContentType? { self as? LangToolsTextContentType }
     var imageContentType: LangToolsImageContentType? { self as? LangToolsImageContentType }
     var audioContentType: LangToolsAudioContentType? { self as? LangToolsAudioContentType }
+    var toolResultContentType: LangToolsToolResultContentType? { self as? LangToolsToolResultContentType }
 }
 
 public protocol LangToolsTextContentType: LangToolsContentType {
@@ -202,6 +204,12 @@ public extension LangToolsAudioContentType {
             throw LangToolsError.invalidContentType
         }
     }
+}
+
+public protocol LangToolsToolResultContentType: LangToolsContentType, LangToolsToolSelectionResult {}
+
+public extension LangToolsToolResultContentType {
+    var type: String { "tool_result" }
 }
 
 //public struct LangToolsImageContent: Codable {
