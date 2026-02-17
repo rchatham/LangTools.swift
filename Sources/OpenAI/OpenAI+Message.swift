@@ -195,10 +195,18 @@ public extension OpenAI {
                 public init(_ contentType: any LangToolsContentType) throws {
                     if let text = contentType.textContentType {
                         self = .text(try .init(text))
+                    } else if let image = contentType.imageContentType {
+                        guard let openAIImage = image as? ImageContent else {
+                            throw LangToolsError.invalidContentType
+                        }
+                        self = .image(openAIImage)
+                    } else if let audio = contentType.audioContentType {
+                        guard let openAIAudio = audio as? AudioContent else {
+                            throw LangToolsError.invalidContentType
+                        }
+                        self = .audio(openAIAudio)
                     } else {
-                        // TODO: - implement audio and image
-                        fatalError("Implement audio and image first ya dingus!")
-                        //throw LangToolsError.invalidContentType
+                        throw LangToolsError.invalidContentType
                     }
                 }
 
