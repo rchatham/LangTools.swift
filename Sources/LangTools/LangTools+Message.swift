@@ -206,6 +206,23 @@ public extension LangToolsAudioContentType {
     }
 }
 
+/// A content type that represents a tool result within a message's content array.
+///
+/// Conform to this protocol to enable cross-provider tool result conversion. Both
+/// ``OpenAI/Message/Content/ToolResultContent`` and ``Anthropic/Message/Content/ContentType/ToolResult``
+/// conform to this protocol, which allows converting tool results between providers using
+/// the generic ``LangToolsContentType/init(_:)`` initializer.
+///
+/// **Relationship to `LangToolsToolSelectionResult`:**
+/// `LangToolsToolSelectionResult` represents the result of a completed tool call (with fields
+/// like `tool_selection_id`, `result`, and `is_error`). This protocol extends that with
+/// `LangToolsContentType` so that tool results can be embedded in a message's content array —
+/// as required by providers like Anthropic and OpenAI when returning tool results to the model.
+///
+/// **Field mapping across providers:**
+/// - Generic `tool_selection_id` → OpenAI's `tool_call_id` / Anthropic's `tool_use_id`
+/// - Generic `result` → the string content of the tool output
+/// - Generic `is_error` → Anthropic's `is_error` flag (OpenAI excludes this from encoding)
 public protocol LangToolsToolResultContentType: LangToolsContentType, LangToolsToolSelectionResult {}
 
 public extension LangToolsToolResultContentType {

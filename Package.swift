@@ -34,7 +34,7 @@ let package = Package(
         .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], path: "Tests/TestUtils", resources: [.process("Resources/")]),
 
         // Test targets
-        .testTarget(name: "LangToolsTests", dependencies: ["LangTools", "OpenAI", "TestUtils"]),
+        .testTarget(name: "LangToolsTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils"]),
         .testTarget(name: "OpenAITests", dependencies: ["OpenAI", "TestUtils"]),
         .testTarget(name: "AnthropicTests", dependencies: ["Anthropic", "TestUtils"]),
         .testTarget(name: "XAITests", dependencies: ["XAI", "OpenAI", "TestUtils"]),
