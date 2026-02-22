@@ -227,6 +227,14 @@ public extension OpenAI {
                     }
                 }
 
+                public var textContentType: LangToolsTextContentType? {
+                    if case .text(let txt) = self { return txt } else { return nil }
+                }
+
+                public var toolResultContentType: LangToolsToolResultContentType? {
+                    if case .toolResult(let tool) = self { return tool } else { return nil }
+                }
+
                 public init(from decoder: Decoder) throws {
                     let container = try decoder.singleValueContainer()
                     if let text = try? container.decode(TextContent.self) { self = .text(text) }

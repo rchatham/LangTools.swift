@@ -145,6 +145,14 @@ extension Anthropic {
                 }
             }
 
+            public var textContentType: LangToolsTextContentType? {
+                if case .text(let txt) = self { return txt } else { return nil }
+            }
+
+            public var toolResultContentType: LangToolsToolResultContentType? {
+                if case .toolResult(let result) = self { return result } else { return nil }
+            }
+
             var textContent: TextContent? { if case .text(let text) = self { return text } else { return nil }}
             var imageContent: ImageContent? { if case .image(let img) = self { return img } else { return nil }}
             var toolUse: ToolUse? { if case .toolUse(let toolUse) = self { return toolUse } else { return nil }}
