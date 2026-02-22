@@ -53,15 +53,25 @@ public struct GeminiErrorResponse: Error, Codable {
 }
 
 public enum GeminiModel: String, CaseIterable {
-    // Base models
+    // MARK: - Gemini 3.x Models (February 2026)
+    case gemini3FlashPreview = "gemini-3-flash-preview"
+    case gemini3ProImage = "gemini-3-pro-image"
+    case gemini31Pro = "gemini-3.1-pro"
+
+    // MARK: - Gemini 2.5 Models
+    case gemini25Flash = "gemini-2.5-flash"
+    case gemini25FlashLite = "gemini-2.5-flash-lite"
+
+    // MARK: - Gemini 2.0 Models (Retiring March 31, 2026)
     case gemini2Flash = "gemini-2.0-flash-exp"
     case gemini2FlashThinking = "gemini-2.0-flash-thinking-exp"
+
+    // MARK: - Gemini 1.5 Models
     case gemini15Flash = "gemini-1.5-flash"
     case gemini15Flash8B = "gemini-1.5-flash-8b"
     case gemini15Pro = "gemini-1.5-pro"
-    case gemini10Pro = "gemini-1.0-pro"
 
-    // Versioned models
+    // MARK: - Gemini 1.5 Versioned Models
     case gemini15FlashLatest = "gemini-1.5-flash-latest"
     case gemini15Flash001 = "gemini-1.5-flash-001"
     case gemini15Flash002 = "gemini-1.5-flash-002"
@@ -70,6 +80,9 @@ public enum GeminiModel: String, CaseIterable {
     case gemini15ProLatest = "gemini-1.5-pro-latest"
     case gemini15Pro001 = "gemini-1.5-pro-001"
     case gemini15Pro002 = "gemini-1.5-pro-002"
+
+    // MARK: - Gemini 1.0 Models (Legacy)
+    case gemini10Pro = "gemini-1.0-pro"
 
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
 }

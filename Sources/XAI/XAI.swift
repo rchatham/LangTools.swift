@@ -53,8 +53,20 @@ public struct XAIErrorResponse: Error, Codable {
 }
 
 public enum XAIModel: String, CaseIterable {
+    // MARK: - Grok 4 Models (2026)
+    case grok4 = "grok-4"
+    case grok4_1_fast = "grok-4.1-fast"
+
+    // MARK: - Grok 3 Models
+    case grok3 = "grok-3"
+    case grok3_mini = "grok-3-mini"
+
+    // MARK: - Grok 2 Models
     case grok = "grok-2-1212"
     case grokVision = "grok-2-vision-1212"
+    case grok2_image = "grok-2-image-1212"
+
+    // MARK: - Grok Beta (Legacy)
     case grokBeta = "grok-beta"
 
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }

@@ -102,7 +102,9 @@ public enum OpenAIModelType {
 public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRepresentable {
     public static var allCases: [OpenAIModel] = openAIModels
     public static var chatModels: [OpenAIModel] { allCases.filter({ $0.type == .chat }) }
-    public static var reasoning: [OpenAIModel] { [.o1, .o1_mini, .o1_preview, .o3_mini] }
+    public static var reasoning: [OpenAIModel] { [.o1, .o1_mini, .o1_preview, .o3_mini, .o4_mini] }
+    public static var codex: [OpenAIModel] { [.gpt51_codex, .gpt53_codex] }
+    public static var searchPreview: [OpenAIModel] { [.gpt4o_searchPreview, .gpt4o_mini_searchPreview] }
     static let openAIModels: [OpenAIModel] = ModelID.allCases.map { OpenAIModel(modelID: $0) }
 
     public init?(rawValue: String) {
@@ -153,7 +155,30 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let o1 = OpenAIModel(modelID: .o1)
     public static let o1_mini = OpenAIModel(modelID: .o1_mini)
     public static let o3_mini = OpenAIModel(modelID: .o3_mini)
+    public static let o4_mini = OpenAIModel(modelID: .o4_mini)
     public static let o1_preview = OpenAIModel(modelID: .o1_preview)
+
+    // GPT-4o Search Preview
+    public static let gpt4o_searchPreview = OpenAIModel(modelID: .gpt4o_searchPreview)
+    public static let gpt4o_mini_searchPreview = OpenAIModel(modelID: .gpt4o_mini_searchPreview)
+
+    // GPT-4.1 Family
+    public static let gpt41 = OpenAIModel(modelID: .gpt41)
+    public static let gpt41_mini = OpenAIModel(modelID: .gpt41_mini)
+    public static let gpt41_nano = OpenAIModel(modelID: .gpt41_nano)
+
+    // GPT-5 Family
+    public static let gpt5 = OpenAIModel(modelID: .gpt5)
+    public static let gpt5_mini = OpenAIModel(modelID: .gpt5_mini)
+    public static let gpt5_nano = OpenAIModel(modelID: .gpt5_nano)
+    public static let gpt5_1 = OpenAIModel(modelID: .gpt5_1)
+    public static let gpt5_2 = OpenAIModel(modelID: .gpt5_2)
+    public static let gpt5_3 = OpenAIModel(modelID: .gpt5_3)
+
+    // Codex Models
+    public static let gpt51_codex = OpenAIModel(modelID: .gpt51_codex)
+    public static let gpt53_codex = OpenAIModel(modelID: .gpt53_codex)
+
     public static let tts_1 = OpenAIModel(modelID: .tts_1)
     public static let tts_1_hd = OpenAIModel(modelID: .tts_1_hd)
     public static let whisper = OpenAIModel(modelID: .whisper)
@@ -162,17 +187,22 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let textEmbedding3Small = OpenAIModel(modelID: .textEmbedding3Small)
 
     public enum ModelID: String, Codable, CaseIterable {
+        // MARK: - GPT-3.5 Models (Legacy)
         case gpt35Turbo = "gpt-3.5-turbo"
         case gpt35Turbo_0301 = "gpt-3.5-turbo-0301"
         case gpt35Turbo_1106 = "gpt-3.5-turbo-1106"
         case gpt35Turbo_16k = "gpt-3.5-turbo-16k"
         case gpt35Turbo_Instruct = "gpt-3.5-turbo-instruct"
+
+        // MARK: - GPT-4 Models
         case gpt4 = "gpt-4"
         case gpt4Turbo = "gpt-4-turbo"
         case gpt4_0613 = "gpt-4-0613"
         case gpt4Turbo_1106Preview = "gpt-4-1106-preview"
         case gpt4_VisionPreview = "gpt-4-vision-preview"
         case gpt4_32k_0613 = "gpt-4-32k-0613"
+
+        // MARK: - GPT-4o Models
         case gpt4o = "gpt-4o"
         case gpt4o_mini = "gpt-4o-mini"
         case gpt4o_2024_05_13 = "gpt-4o-2024-05-13"
@@ -184,13 +214,43 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         case gpt4o_audioPreview = "gpt-4o-audio-preview"
         case gpt4o_audioPreview_2024_10_01 = "gpt-4o-audio-preview-2024-10-01"
         case chatGPT4o_latest = "chatgpt-4o-latest"
+
+        // MARK: - GPT-4o Search Preview Models
+        case gpt4o_searchPreview = "gpt-4o-search-preview"
+        case gpt4o_mini_searchPreview = "gpt-4o-mini-search-preview"
+
+        // MARK: - GPT-4.1 Models
+        case gpt41 = "gpt-4.1"
+        case gpt41_mini = "gpt-4.1-mini"
+        case gpt41_nano = "gpt-4.1-nano"
+
+        // MARK: - GPT-5 Models
+        case gpt5 = "gpt-5"
+        case gpt5_mini = "gpt-5-mini"
+        case gpt5_nano = "gpt-5-nano"
+        case gpt5_1 = "gpt-5.1"
+        case gpt5_2 = "gpt-5.2"
+        case gpt5_3 = "gpt-5.3"
+
+        // MARK: - Codex Models
+        case gpt51_codex = "gpt-5.1-codex"
+        case gpt53_codex = "gpt-5.3-codex"
+
+        // MARK: - Reasoning Models (o-series)
         case o1 = "o1"
         case o1_mini = "o1-mini"
-        case o3_mini = "o3-mini"
         case o1_preview = "o1-preview"
+        case o3_mini = "o3-mini"
+        case o4_mini = "o4-mini"
+
+        // MARK: - Text-to-Speech Models
         case tts_1 = "tts-1"
         case tts_1_hd = "tts-1-hd"
+
+        // MARK: - Speech-to-Text Models
         case whisper = "whisper-1"
+
+        // MARK: - Embedding Models
         case textEmbeddingAda002 = "text-embedding-ada-002"
         case textEmbedding3Large = "text-embedding-3-large"
         case textEmbedding3Small = "text-embedding-3-small"
