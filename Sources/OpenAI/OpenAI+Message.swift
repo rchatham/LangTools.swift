@@ -235,6 +235,13 @@ public extension OpenAI {
                     if case .toolResult(let tool) = self { return tool } else { return nil }
                 }
 
+                public var imageContentType: LangToolsImageContentType? {
+                    if case .image(let img) = self { return img } else { return nil }
+                }
+
+                public var audioContentType: LangToolsAudioContentType? {
+                    if case .audio(let audio) = self { return audio } else { return nil }
+                }
                 public init(from decoder: Decoder) throws {
                     let container = try decoder.singleValueContainer()
                     if let text = try? container.decode(TextContent.self) { self = .text(text) }

@@ -149,6 +149,9 @@ extension Anthropic {
                 if case .text(let txt) = self { return txt } else { return nil }
             }
 
+            public var imageContentType: LangToolsImageContentType? {
+                if case .image(let img) = self { return img } else { return nil }
+            }
             public var toolResultContentType: LangToolsToolResultContentType? {
                 if case .toolResult(let result) = self { return result } else { return nil }
             }
