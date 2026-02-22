@@ -195,10 +195,15 @@ public extension OpenAI {
                 public init(_ contentType: any LangToolsContentType) throws {
                     if let text = contentType.textContentType {
                         self = .text(try .init(text))
+                    } else if let toolResult = contentType.toolResultContentType {
+                        self = .toolResult(ToolResultContent(
+                            tool_selection_id: toolResult.tool_selection_id,
+                            result: toolResult.result,
+                            is_error: toolResult.is_error
+                        ))
                     } else {
                         // TODO: - implement audio and image
-                        fatalError("Implement audio and image first ya dingus!")
-                        //throw LangToolsError.invalidContentType
+                        throw LangToolsError.invalidContentType
                     }
                 }
 
@@ -313,7 +318,7 @@ public extension OpenAI {
                 }
             }
 
-            public struct ToolResultContent: LangToolsToolSelectionResult {
+            public struct ToolResultContent: LangToolsToolResultContentType {
                 public var tool_selection_id: String
                 public var result: String
                 public var is_error: Bool = false
@@ -321,6 +326,15 @@ public extension OpenAI {
                     self.tool_selection_id = tool_selection_id
                     self.result = result
                     self.is_error = is_error
+                }
+                public init(_ contentType: any LangToolsContentType) throws {
+                    if let toolResult = contentType.toolResultContentType {
+                        tool_selection_id = toolResult.tool_selection_id
+                        result = toolResult.result
+                        is_error = toolResult.is_error
+                    } else {
+                        throw LangToolsError.invalidContentType
+                    }
                 }
                 enum CodingKeys: CodingKey { case tool_selection_id, result }
             }
