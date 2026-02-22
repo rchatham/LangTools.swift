@@ -102,7 +102,7 @@ public enum OpenAIModelType {
 public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRepresentable {
     public static var allCases: [OpenAIModel] = openAIModels
     public static var chatModels: [OpenAIModel] { allCases.filter({ $0.type == .chat }) }
-    public static var reasoning: [OpenAIModel] { [.o1, .o1_mini, .o1_preview, .o3_mini, .o4_mini] }
+    public static var reasoning: [OpenAIModel] { [.o1, .o1_mini, .o3_mini, .o4_mini] }
     public static var codex: [OpenAIModel] { [.gpt51_codex, .gpt53_codex] }
     public static var searchPreview: [OpenAIModel] { [.gpt4o_searchPreview, .gpt4o_mini_searchPreview] }
     static let openAIModels: [OpenAIModel] = ModelID.allCases.map { OpenAIModel(modelID: $0) }
@@ -130,15 +130,25 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         id.hasPrefix("whisper") ? .stt : .chat
     }
 
+    // MARK: - Deprecated GPT-3.5 Models
+    @available(*, deprecated, message: "GPT-3.5 models are deprecated. Use gpt4o_mini or newer models.")
     public static let gpt35Turbo = OpenAIModel(modelID: .gpt35Turbo)
+    @available(*, deprecated, message: "GPT-3.5 models are deprecated. Use gpt4o_mini or newer models.")
     public static let gpt35Turbo_0301 = OpenAIModel(modelID: .gpt35Turbo_0301)
+    @available(*, deprecated, message: "GPT-3.5 models are deprecated. Use gpt4o_mini or newer models.")
     public static let gpt35Turbo_1106 = OpenAIModel(modelID: .gpt35Turbo_1106)
+    @available(*, deprecated, message: "GPT-3.5 models are deprecated. Use gpt4o_mini or newer models.")
     public static let gpt35Turbo_16k = OpenAIModel(modelID: .gpt35Turbo_16k)
+    @available(*, deprecated, message: "GPT-3.5 models are deprecated. Use gpt4o_mini or newer models.")
     public static let gpt35TurboInstruct = OpenAIModel(modelID: .gpt35Turbo_Instruct)
+
+    // MARK: - GPT-4 Models
     public static let gpt4 = OpenAIModel(modelID: .gpt4)
     public static let gpt4Turbo = OpenAIModel(modelID: .gpt4Turbo)
     public static let gpt4_0613 = OpenAIModel(modelID: .gpt4_0613)
+    @available(*, deprecated, message: "Preview model deprecated. Use gpt4Turbo or gpt4o instead.")
     public static let gpt4Turbo_1106Preview = OpenAIModel(modelID: .gpt4Turbo_1106Preview)
+    @available(*, deprecated, message: "Preview model deprecated. Use gpt4o with vision capabilities instead.")
     public static let gpt4VisionPreview = OpenAIModel(modelID: .gpt4_VisionPreview)
     public static let gpt4_32k_0613 = OpenAIModel(modelID: .gpt4_32k_0613)
     public static let gpt4o = OpenAIModel(modelID: .gpt4o)
@@ -156,6 +166,7 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let o1_mini = OpenAIModel(modelID: .o1_mini)
     public static let o3_mini = OpenAIModel(modelID: .o3_mini)
     public static let o4_mini = OpenAIModel(modelID: .o4_mini)
+    @available(*, deprecated, message: "Preview model deprecated. Use o1 instead.")
     public static let o1_preview = OpenAIModel(modelID: .o1_preview)
 
     // GPT-4o Search Preview
@@ -182,6 +193,7 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let tts_1 = OpenAIModel(modelID: .tts_1)
     public static let tts_1_hd = OpenAIModel(modelID: .tts_1_hd)
     public static let whisper = OpenAIModel(modelID: .whisper)
+    @available(*, deprecated, message: "Use textEmbedding3Small or textEmbedding3Large instead.")
     public static let textEmbeddingAda002 = OpenAIModel(modelID: .textEmbeddingAda002)
     public static let textEmbedding3Large = OpenAIModel(modelID: .textEmbedding3Large)
     public static let textEmbedding3Small = OpenAIModel(modelID: .textEmbedding3Small)

@@ -132,15 +132,32 @@ public extension Anthropic {
         // MARK: - Claude 3.5 Models
         case claude35Sonnet_latest = "claude-3-5-sonnet-latest"
         case claude35Sonnet_20241022 = "claude-3-5-sonnet-20241022"
-        case claude35Sonnet_20240620 = "claude-3-5-sonnet-20240620"  // Deprecated
+        /// Deprecated: This model version has been retired. Use claude35Sonnet_20241022 or newer.
+        case claude35Sonnet_20240620 = "claude-3-5-sonnet-20240620"
         case claude35Haiku_latest = "claude-3-5-haiku-latest"
         case claude35Haiku_20241022 = "claude-3-5-haiku-20241022"
 
-        // MARK: - Claude 3 Models (Legacy)
+        // MARK: - Claude 3 Models (Legacy - Deprecated)
+        /// Deprecated: Use Claude 4.x models for better performance.
         case claude3Opus_latest = "claude-3-opus-latest"
+        /// Deprecated: Use Claude 4.x models for better performance.
         case claude3Opus_20240229 = "claude-3-opus-20240229"
+        /// Deprecated: Use Claude 4.x models for better performance.
         case claude3Sonnet_20240229 = "claude-3-sonnet-20240229"
+        /// Deprecated: Use Claude 4.x models for better performance.
         case claude3Haiku_20240307 = "claude-3-haiku-20240307"
+
+        /// Returns true if this model is deprecated and should be migrated away from.
+        public var isDeprecated: Bool {
+            switch self {
+            case .claude35Sonnet_20240620,
+                 .claude3Opus_latest, .claude3Opus_20240229,
+                 .claude3Sonnet_20240229, .claude3Haiku_20240307:
+                return true
+            default:
+                return false
+            }
+        }
     }
 }
 

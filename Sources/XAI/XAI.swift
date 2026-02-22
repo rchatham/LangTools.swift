@@ -67,9 +67,20 @@ public enum XAIModel: String, CaseIterable {
     case grok2_image = "grok-2-image-1212"
 
     // MARK: - Grok Beta (Legacy)
+    /// Deprecated: Use grok (grok-2-1212) or newer models instead.
     case grokBeta = "grok-beta"
 
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
+
+    /// Returns true if this model is deprecated.
+    public var isDeprecated: Bool {
+        switch self {
+        case .grokBeta:
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 extension OpenAIModel {

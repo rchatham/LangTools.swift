@@ -63,7 +63,9 @@ public enum GeminiModel: String, CaseIterable {
     case gemini25FlashLite = "gemini-2.5-flash-lite"
 
     // MARK: - Gemini 2.0 Models (Retiring March 31, 2026)
+    /// Deprecated: Retiring March 31, 2026. Use gemini25Flash instead.
     case gemini2Flash = "gemini-2.0-flash-exp"
+    /// Deprecated: Retiring March 31, 2026. Use gemini25Flash instead.
     case gemini2FlashThinking = "gemini-2.0-flash-thinking-exp"
 
     // MARK: - Gemini 1.5 Models
@@ -82,9 +84,20 @@ public enum GeminiModel: String, CaseIterable {
     case gemini15Pro002 = "gemini-1.5-pro-002"
 
     // MARK: - Gemini 1.0 Models (Legacy)
+    /// Deprecated: Use Gemini 1.5 or newer models for better performance.
     case gemini10Pro = "gemini-1.0-pro"
 
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
+
+    /// Returns true if this model is deprecated or scheduled for retirement.
+    public var isDeprecated: Bool {
+        switch self {
+        case .gemini2Flash, .gemini2FlashThinking, .gemini10Pro:
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 extension OpenAIModel {
