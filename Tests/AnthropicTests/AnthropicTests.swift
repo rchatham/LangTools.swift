@@ -140,64 +140,55 @@ class AnthropicTests: XCTestCase {
     func testNewClaude4ModelsAvailable() throws {
         // Test that new Claude 4.x models are available in the enum
         let allModels = Anthropic.Model.allCases
-        
-        // Test Claude 4.1 Opus models
-        XCTAssertTrue(allModels.contains(.claude41Opus_latest))
-        XCTAssertTrue(allModels.contains(.claude41Opus_20250805))
-        
-        // Test Claude 4.5 Sonnet models
-        XCTAssertTrue(allModels.contains(.claude45Sonnet_latest))
+
+        // Test Claude 4.6 models
+        XCTAssertTrue(allModels.contains(.claude46Opus))
+        XCTAssertTrue(allModels.contains(.claude46Sonnet))
+
+        // Test Claude 4.5 models
+        XCTAssertTrue(allModels.contains(.claude45Opus_20251101))
         XCTAssertTrue(allModels.contains(.claude45Sonnet_20250929))
-        
-        // Test Claude 4.5 Haiku models
-        XCTAssertTrue(allModels.contains(.claude45Haiku_latest))
         XCTAssertTrue(allModels.contains(.claude45Haiku_20251001))
+
+        // Test Claude 4.1 Opus
+        XCTAssertTrue(allModels.contains(.claude41Opus_20250805))
     }
-    
+
     func testNewClaude4ModelsEncodable() throws {
         // Test that new models can be encoded to correct string values
         let encoder = JSONEncoder()
-        
-        // Claude 4.1 Opus
-        let opus41Latest = try encoder.encode(Anthropic.Model.claude41Opus_latest)
-        XCTAssertEqual(String(data: opus41Latest, encoding: .utf8), "\"claude-4-1-opus-latest\"")
-        
-        let opus41Dated = try encoder.encode(Anthropic.Model.claude41Opus_20250805)
-        XCTAssertEqual(String(data: opus41Dated, encoding: .utf8), "\"claude-4-1-opus-20250805\"")
-        
-        // Claude 4.5 Sonnet
-        let sonnet45Latest = try encoder.encode(Anthropic.Model.claude45Sonnet_latest)
-        XCTAssertEqual(String(data: sonnet45Latest, encoding: .utf8), "\"claude-4-5-sonnet-latest\"")
-        
-        let sonnet45Dated = try encoder.encode(Anthropic.Model.claude45Sonnet_20250929)
-        XCTAssertEqual(String(data: sonnet45Dated, encoding: .utf8), "\"claude-4-5-sonnet-20250929\"")
-        
+
+        // Claude 4.6 Opus
+        let opus46 = try encoder.encode(Anthropic.Model.claude46Opus)
+        XCTAssertEqual(String(data: opus46, encoding: .utf8), "\"claude-opus-4-6\"")
+
+        // Claude 4.6 Sonnet
+        let sonnet46 = try encoder.encode(Anthropic.Model.claude46Sonnet)
+        XCTAssertEqual(String(data: sonnet46, encoding: .utf8), "\"claude-sonnet-4-6\"")
+
         // Claude 4.5 Haiku
-        let haiku45Latest = try encoder.encode(Anthropic.Model.claude45Haiku_latest)
-        XCTAssertEqual(String(data: haiku45Latest, encoding: .utf8), "\"claude-4-5-haiku-latest\"")
-        
         let haiku45Dated = try encoder.encode(Anthropic.Model.claude45Haiku_20251001)
-        XCTAssertEqual(String(data: haiku45Dated, encoding: .utf8), "\"claude-4-5-haiku-20251001\"")
+        XCTAssertEqual(String(data: haiku45Dated, encoding: .utf8), "\"claude-haiku-4-5-20251001\"")
     }
-    
+
     func testNewClaude4ModelsDecodable() throws {
         // Test that new models can be decoded from string values
         let decoder = JSONDecoder()
-        
-        // Claude 4.1 Opus
-        let opus41LatestData = "\"claude-4-1-opus-latest\"".data(using: .utf8)!
-        let opus41Latest = try decoder.decode(Anthropic.Model.self, from: opus41LatestData)
-        XCTAssertEqual(opus41Latest, .claude41Opus_latest)
-        
-        // Claude 4.5 Sonnet
-        let sonnet45LatestData = "\"claude-4-5-sonnet-latest\"".data(using: .utf8)!
-        let sonnet45Latest = try decoder.decode(Anthropic.Model.self, from: sonnet45LatestData)
-        XCTAssertEqual(sonnet45Latest, .claude45Sonnet_latest)
-        
+
+        // Claude 4.6 Opus
+        let opus46Data = "\"claude-opus-4-6\"".data(using: .utf8)!
+        let opus46 = try decoder.decode(Anthropic.Model.self, from: opus46Data)
+        XCTAssertEqual(opus46, .claude46Opus)
+
+        // Claude 4.6 Sonnet
+        let sonnet46Data = "\"claude-sonnet-4-6\"".data(using: .utf8)!
+        let sonnet46 = try decoder.decode(Anthropic.Model.self, from: sonnet46Data)
+        XCTAssertEqual(sonnet46, .claude46Sonnet)
+
         // Claude 4.5 Haiku
-        let haiku45LatestData = "\"claude-4-5-haiku-latest\"".data(using: .utf8)!
-        let haiku45Latest = try decoder.decode(Anthropic.Model.self, from: haiku45LatestData)
-        XCTAssertEqual(haiku45Latest, .claude45Haiku_latest)
+        let haiku45Data = "\"claude-haiku-4-5-20251001\"".data(using: .utf8)!
+        let haiku45 = try decoder.decode(Anthropic.Model.self, from: haiku45Data)
+        XCTAssertEqual(haiku45, .claude45Haiku_20251001)
     }
 }
 

@@ -53,46 +53,54 @@ public struct GeminiErrorResponse: Error, Codable {
 }
 
 public enum GeminiModel: String, CaseIterable {
-    // MARK: - Gemini 3.x Models (February 2026)
+    // MARK: - Gemini 3.x Models - Active
+    case gemini3Pro = "gemini-3-pro"
+    case gemini3ProPreview = "gemini-3-pro-preview"
+    case gemini3Flash = "gemini-3-flash"
     case gemini3FlashPreview = "gemini-3-flash-preview"
-    case gemini3ProImage = "gemini-3-pro-image"
     case gemini31Pro = "gemini-3.1-pro"
 
-    // MARK: - Gemini 2.5 Models
+    // MARK: - Gemini 2.5 Models (Retiring June 17, 2026)
+    /// Deprecated: Retiring June 17, 2026. Use gemini3Flash instead.
     case gemini25Flash = "gemini-2.5-flash"
+    /// Deprecated: Retiring June 17, 2026. Use gemini3Flash instead.
     case gemini25FlashLite = "gemini-2.5-flash-lite"
+    /// Deprecated: Retiring June 17, 2026. Use gemini3Pro instead.
+    case gemini25Pro = "gemini-2.5-pro"
 
-    // MARK: - Gemini 2.0 Models (Retiring March 31, 2026)
-    /// Deprecated: Retiring March 31, 2026. Use gemini25Flash instead.
-    case gemini2Flash = "gemini-2.0-flash-exp"
-    /// Deprecated: Retiring March 31, 2026. Use gemini25Flash instead.
-    case gemini2FlashThinking = "gemini-2.0-flash-thinking-exp"
+    // MARK: - Gemini 2.0 Models (Retiring June 1, 2026)
+    /// Deprecated: Retiring June 1, 2026. Use gemini25Flash instead.
+    case gemini2Flash = "gemini-2.0-flash"
+    /// Deprecated: Retiring June 1, 2026. Use gemini25FlashLite instead.
+    case gemini2FlashLite = "gemini-2.0-flash-lite"
 
-    // MARK: - Gemini 1.5 Models
+    // MARK: - Retired Models (return 404 errors)
+    /// Retired: Returns 404. Use gemini3Flash instead.
     case gemini15Flash = "gemini-1.5-flash"
+    /// Retired: Returns 404. Use gemini3Flash instead.
     case gemini15Flash8B = "gemini-1.5-flash-8b"
+    /// Retired: Returns 404. Use gemini3Pro instead.
     case gemini15Pro = "gemini-1.5-pro"
-
-    // MARK: - Gemini 1.5 Versioned Models
-    case gemini15FlashLatest = "gemini-1.5-flash-latest"
-    case gemini15Flash001 = "gemini-1.5-flash-001"
-    case gemini15Flash002 = "gemini-1.5-flash-002"
-    case gemini15Flash8BLatest = "gemini-1.5-flash-8b-latest"
-    case gemini15Flash8B001 = "gemini-1.5-flash-8b-001"
-    case gemini15ProLatest = "gemini-1.5-pro-latest"
-    case gemini15Pro001 = "gemini-1.5-pro-001"
-    case gemini15Pro002 = "gemini-1.5-pro-002"
-
-    // MARK: - Gemini 1.0 Models (Legacy)
-    /// Deprecated: Use Gemini 1.5 or newer models for better performance.
+    /// Retired: Returns 404. Use gemini3Pro instead.
     case gemini10Pro = "gemini-1.0-pro"
 
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
 
-    /// Returns true if this model is deprecated or scheduled for retirement.
+    /// Returns true if this model is deprecated (still works but retiring soon).
     public var isDeprecated: Bool {
         switch self {
-        case .gemini2Flash, .gemini2FlashThinking, .gemini10Pro:
+        case .gemini25Flash, .gemini25FlashLite, .gemini25Pro,
+             .gemini2Flash, .gemini2FlashLite:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Returns true if this model is retired and will return 404 errors.
+    public var isRetired: Bool {
+        switch self {
+        case .gemini15Flash, .gemini15Flash8B, .gemini15Pro, .gemini10Pro:
             return true
         default:
             return false

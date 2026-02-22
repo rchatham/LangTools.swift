@@ -64,20 +64,20 @@ struct ChatCLI {
         print("")
         print("\nAvailable models:")
         print("1. OpenAI GPT-4o mini")
-        print("2. OpenAI GPT-4o")
+        print("2. OpenAI GPT-5.2")
         print("3. Anthropic Claude 4.6 Sonnet")
-        print("4. Gemini 2.5 Flash")
-        print("5. XAI Grok 4")
+        print("4. Gemini 3 Flash")
+        print("5. XAI Grok 4 Fast")
 
         print("\nSelect model (1-5): ", terminator: "")
         guard let choice = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
 
         let newModel: Model? = switch choice {
             case "1": .openAI(.gpt4o_mini)
-            case "2": .openAI(.gpt4o)
-            case "3": .anthropic(.claude46Sonnet_latest)
-            case "4": .gemini(.gemini25Flash)
-            case "5": .xAI(.grok4)
+            case "2": .openAI(.gpt5_2)
+            case "3": .anthropic(.claude46Sonnet)
+            case "4": .gemini(.gemini3Flash)
+            case "5": .xAI(.grok4FastReasoning)
             default: nil
         }
         if let newModel {

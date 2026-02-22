@@ -53,21 +53,35 @@ public struct XAIErrorResponse: Error, Codable {
 }
 
 public enum XAIModel: String, CaseIterable {
-    // MARK: - Grok 4 Models (2026)
-    case grok4 = "grok-4"
-    case grok4_1_fast = "grok-4.1-fast"
+    // MARK: - Grok 4.1 Models - Active
+    case grok41FastReasoning = "grok-4-1-fast-reasoning"
+    case grok41FastNonReasoning = "grok-4-1-fast-non-reasoning"
 
-    // MARK: - Grok 3 Models
+    // MARK: - Grok 4 Models - Active
+    case grok4FastReasoning = "grok-4-fast-reasoning"
+    case grok4FastNonReasoning = "grok-4-fast-non-reasoning"
+    case grok4_0709 = "grok-4-0709"
+
+    // MARK: - Grok 3 Models - Active
     case grok3 = "grok-3"
     case grok3_mini = "grok-3-mini"
 
-    // MARK: - Grok 2 Models
-    case grok = "grok-2-1212"
-    case grokVision = "grok-2-vision-1212"
-    case grok2_image = "grok-2-image-1212"
+    // MARK: - Grok Code Models - Active
+    case grokCodeFast = "grok-code-fast-1"
 
-    // MARK: - Grok Beta (Legacy)
-    /// Deprecated: Use grok (grok-2-1212) or newer models instead.
+    // MARK: - Grok 2 Models - Active
+    case grok2Vision = "grok-2-vision-1212"
+    case grok2Image = "grok-2-image-1212"
+
+    // MARK: - Image Generation Models - Active
+    case grokImagineImage = "grok-imagine-image"
+    case grokImagineImagePro = "grok-imagine-image-pro"
+    case grokImagineVideo = "grok-imagine-video"
+
+    // MARK: - Legacy Models
+    /// Legacy: Use grok3 or grok4FastReasoning for better performance.
+    case grok = "grok-2-1212"
+    /// Deprecated: Use grok3 or newer models instead.
     case grokBeta = "grok-beta"
 
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }

@@ -161,6 +161,7 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let gpt4o_miniRealtimePreview = OpenAIModel(modelID: .gpt4o_miniRealtimePreview)
     public static let gpt4o_audioPreview = OpenAIModel(modelID: .gpt4o_audioPreview)
     public static let gpt4o_audioPreview_2024_10_01 = OpenAIModel(modelID: .gpt4o_audioPreview_2024_10_01)
+    @available(*, deprecated, message: "Removed from API February 17, 2026. Use gpt5_2 instead.")
     public static let chatGPT4o_latest = OpenAIModel(modelID: .chatGPT4o_latest)
     public static let o1 = OpenAIModel(modelID: .o1)
     public static let o1_mini = OpenAIModel(modelID: .o1_mini)

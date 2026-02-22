@@ -107,52 +107,61 @@ public enum AnthropicAPIErrorType: String, Codable {
 
 public extension Anthropic {
     enum Model: String, Codable, CaseIterable {
-        // MARK: - Claude 4.6 Models (February 2026)
-        case claude46Opus_latest = "claude-opus-4-6-latest"
+        // MARK: - Claude 4.6 Models (February 2026) - Active
+        case claude46Opus = "claude-opus-4-6"
         case claude46Opus_20260205 = "claude-opus-4-6-20260205"
-        case claude46Sonnet_latest = "claude-sonnet-4-6-latest"
+        case claude46Sonnet = "claude-sonnet-4-6"
         case claude46Sonnet_20260217 = "claude-sonnet-4-6-20260217"
 
-        // MARK: - Claude 4.5 Models
-        case claude45Opus_latest = "claude-opus-4-5-latest"
+        // MARK: - Claude 4.5 Models - Active
         case claude45Opus_20251101 = "claude-opus-4-5-20251101"
-        case claude45Sonnet_latest = "claude-4-5-sonnet-latest"
-        case claude45Sonnet_20250929 = "claude-4-5-sonnet-20250929"
-        case claude45Haiku_latest = "claude-4-5-haiku-latest"
-        case claude45Haiku_20251001 = "claude-4-5-haiku-20251001"
+        case claude45Sonnet_20250929 = "claude-sonnet-4-5-20250929"
+        case claude45Haiku_20251001 = "claude-haiku-4-5-20251001"
 
-        // MARK: - Claude 4.1 Models
-        case claude41Opus_latest = "claude-4-1-opus-latest"
-        case claude41Opus_20250805 = "claude-4-1-opus-20250805"
+        // MARK: - Claude 4.1 Models - Active
+        case claude41Opus_20250805 = "claude-opus-4-1-20250805"
 
-        // MARK: - Claude 3.7 Models
-        case claude37Sonnet_latest = "claude-3-7-sonnet-latest"
-        case claude37Sonnet_20250219 = "claude-3-7-sonnet-20250219"
+        // MARK: - Claude 4 Models - Active
+        case claude4Opus_20250514 = "claude-opus-4-20250514"
+        case claude4Sonnet_20250514 = "claude-sonnet-4-20250514"
 
-        // MARK: - Claude 3.5 Models
-        case claude35Sonnet_latest = "claude-3-5-sonnet-latest"
-        case claude35Sonnet_20241022 = "claude-3-5-sonnet-20241022"
-        /// Deprecated: This model version has been retired. Use claude35Sonnet_20241022 or newer.
-        case claude35Sonnet_20240620 = "claude-3-5-sonnet-20240620"
-        case claude35Haiku_latest = "claude-3-5-haiku-latest"
-        case claude35Haiku_20241022 = "claude-3-5-haiku-20241022"
-
-        // MARK: - Claude 3 Models (Legacy - Deprecated)
-        /// Deprecated: Use Claude 4.x models for better performance.
-        case claude3Opus_latest = "claude-3-opus-latest"
-        /// Deprecated: Use Claude 4.x models for better performance.
-        case claude3Opus_20240229 = "claude-3-opus-20240229"
-        /// Deprecated: Use Claude 4.x models for better performance.
-        case claude3Sonnet_20240229 = "claude-3-sonnet-20240229"
-        /// Deprecated: Use Claude 4.x models for better performance.
+        // MARK: - Claude 3 Haiku (Deprecated - Retiring April 20, 2026)
+        /// Deprecated: Retiring April 20, 2026. Use claude45Haiku_20251001 instead.
         case claude3Haiku_20240307 = "claude-3-haiku-20240307"
 
-        /// Returns true if this model is deprecated and should be migrated away from.
+        // MARK: - Retired Models (kept for backward compatibility, will return errors)
+        /// Retired: February 19, 2026. Use claude46Opus instead.
+        case claude37Sonnet_20250219 = "claude-3-7-sonnet-20250219"
+        /// Retired: February 19, 2026. Use claude45Haiku_20251001 instead.
+        case claude35Haiku_20241022 = "claude-3-5-haiku-20241022"
+        /// Retired: October 28, 2025. Use claude46Opus instead.
+        case claude35Sonnet_20241022 = "claude-3-5-sonnet-20241022"
+        /// Retired: October 28, 2025. Use claude46Opus instead.
+        case claude35Sonnet_20240620 = "claude-3-5-sonnet-20240620"
+        /// Retired: January 5, 2026. Use claude46Opus instead.
+        case claude3Opus_20240229 = "claude-3-opus-20240229"
+        /// Retired: July 21, 2025. Use claude46Opus instead.
+        case claude3Sonnet_20240229 = "claude-3-sonnet-20240229"
+
+        /// Returns true if this model is deprecated (still works but retiring soon).
         public var isDeprecated: Bool {
             switch self {
-            case .claude35Sonnet_20240620,
-                 .claude3Opus_latest, .claude3Opus_20240229,
-                 .claude3Sonnet_20240229, .claude3Haiku_20240307:
+            case .claude3Haiku_20240307:
+                return true
+            default:
+                return false
+            }
+        }
+
+        /// Returns true if this model is retired and will return errors.
+        public var isRetired: Bool {
+            switch self {
+            case .claude37Sonnet_20250219,
+                 .claude35Haiku_20241022,
+                 .claude35Sonnet_20241022,
+                 .claude35Sonnet_20240620,
+                 .claude3Opus_20240229,
+                 .claude3Sonnet_20240229:
                 return true
             default:
                 return false
