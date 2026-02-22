@@ -81,7 +81,7 @@ public class OllamaService: ObservableObject {
         ollama.configuration.baseURL = url
     }
 
-    func checkConnection() async throws -> Bool {
+    public func checkConnection() async throws -> Bool {
         do {
             // Attempt to get Ollama version as a quick connection test
             _ = try await self.ollama.version()

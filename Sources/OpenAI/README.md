@@ -149,18 +149,57 @@ let audioData = try await openai.perform(request: request)
 
 ### Speech-to-Text
 
+Basic transcription with OpenAI's Whisper model:
+
 ```swift
+let audioData = try Data(contentsOf: audioFileURL)
 let request = OpenAI.AudioTranscriptionRequest(
-    file: audioFileData,
-    fileType: .mp3,
-    model: .whisper,
-    prompt: "This is a conversation about weather.",
-    language: "en"
+    file: audioData,
+    fileType: .mp3
 )
 
 let transcription = try await openai.perform(request: request)
-print(transcription.text)
+print(transcription.text)  // The transcribed text
 ```
+
+Advanced transcription with all options:
+
+```swift
+let request = OpenAI.AudioTranscriptionRequest(
+    file: audioData,
+    fileType: .wav,
+    prompt: "Context about the audio content",        // Optional: Guide the model
+    temperature: 0.2,                                 // Optional: 0-1, lower = more deterministic
+    language: "en",                                   // Optional: ISO-639-1 code for better accuracy
+    responseFormat: .verboseJson,                     // Optional: json, text, srt, vtt, verboseJson
+    timestamp_granularities: [.word, .segment]        // Optional: Get word/segment timestamps
+)
+
+let response = try await openai.perform(request: request)
+
+// Access the transcribed text
+print(response.text)
+
+// Access word-level timestamps (if requested)
+if let words = response.words {
+    for word in words {
+        print("\(word.word): \(word.start)s - \(word.end)s")
+    }
+}
+
+// Access segments with quality metrics (if verbose_json format)
+if let segments = response.segments {
+    for segment in segments where !segment.hasQualityIssues {
+        print("\(segment.text) [\(segment.start)s - \(segment.end)s]")
+    }
+}
+
+// Detected language and duration
+print("Language: \(response.language ?? "unknown")")
+print("Duration: \(response.duration ?? 0)s")
+```
+
+Supported audio formats: `.flac`, `.mp3`, `.mp4`, `.mpeg`, `.mpga`, `.m4a`, `.ogg`, `.wav`, `.webm`
 
 ### Embeddings
 

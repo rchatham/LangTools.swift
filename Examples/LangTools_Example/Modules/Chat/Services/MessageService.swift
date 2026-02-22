@@ -13,7 +13,13 @@ var useMultiAgent: Bool = false
 @Observable
 public class MessageService: Sendable {
     public let networkClient: NetworkClientProtocol
-    public var messages: [Message] = []
+    public var messages: [Message] = [] {
+        didSet {
+            if let last = messages.last {
+                messageUpdatedCallback?(last)
+            }
+        }
+    }
     var tools: [Tool]?
 
     /// Callback fired when a message is added or modified (for persistence)
@@ -37,7 +43,6 @@ public class MessageService: Sendable {
         let userMessage = Message(text: message, role: .user)
         await MainActor.run {
             messages.append(userMessage)
-            messageUpdatedCallback?(userMessage)
         }
 
         do {
@@ -47,18 +52,16 @@ public class MessageService: Sendable {
             var content: String = ""
             for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: filteredTools) {
                 content += chunk
-                guard let last = messages.last else { continue }
-                if !last.isAssistant {
+                if !(messages.last?.isAssistant ?? false) {
                     if chunk.isEmpty { continue }
                     content = chunk.trimingLeadingNewlines()
                 }
-                let messageUuid = last.isAssistant ? last.uuid : UUID()
+                let messageUuid = if let last = messages.last, last.isAssistant { last.uuid } else { UUID() }
                 let message = Message(uuid: messageUuid, role: .assistant, contentType: .string(content.trimingTrailingNewlines()))
 
                 await MainActor.run {
-                    if last.uuid == message.uuid { messages[messages.count - 1] = message }
+                    if let last = messages.last, last.uuid == message.uuid { messages[messages.count - 1] = message }
                     else { messages.append(message) }
-                    messageUpdatedCallback?(message)
                 }
             }
         } catch {
@@ -136,9 +139,6 @@ extension MessageService {
 
             default: fatalError("we are not testing this right now")
             }
-
-            // Notify about message change for persistence
-            if let message = messages.last { messageUpdatedCallback?(message) }
         }
     }
 }

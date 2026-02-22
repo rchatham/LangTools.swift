@@ -234,6 +234,15 @@ public enum LangToolsRequestError: Error {
 // MARK: - LangToolsTTSRequest
 public protocol LangToolsTTSRequest: LangToolsRequest where Response == Data {}
 
+// MARK: - LangToolsSTTRequest
+/// Protocol for Speech-to-Text requests
+/// Transcribes audio data to text
+///
+/// Note: Unlike chat streaming, STT streaming is handled by providers internally
+/// using AsyncThrowingStream<String, Error> for partial transcription results.
+/// Providers that support streaming should document this in their implementation.
+public protocol LangToolsSTTRequest: LangToolsRequest where Response == String {}
+
 public enum HTTPMethod: String {
     case get = "GET"
     case post = "POST"
