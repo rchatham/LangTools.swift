@@ -43,7 +43,7 @@ class AnthropicTests: XCTestCase {
                 usage: .init(input_tokens: 10, output_tokens: 25)).data()), 200)
         }
         let messages = [Anthropic.Message(role: .user, content: "Hey!")]
-        let response = try await api.perform(request: Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages))
+        let response = try await api.perform(request: Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages))
         guard case .string(let str) = response.message?.content, str == "Hi! My name is Claude." else { return XCTFail("Failed to decode content") }
     }
 
@@ -61,7 +61,7 @@ class AnthropicTests: XCTestCase {
         }
         let messages = [Anthropic.Message(role: .user, content: "Hey!")]
         var results: [Anthropic.MessageResponse] = []
-        for try await response in api.stream(request: Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages)) {
+        for try await response in api.stream(request: Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages)) {
             results.append(response)
         }
         guard let content = results.first?.message?.content.string else { return XCTFail("Failed to decode content") }
@@ -74,7 +74,7 @@ class AnthropicTests: XCTestCase {
             return (.success(try self.getData(filename: "message_stream_response", fileExtension: "txt")!), 200)
         }
         var results: [Anthropic.MessageResponse] = []
-        for try await response in api.stream(request: Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: [.init(role: .user, content: "Hi")], stream: true)) {
+        for try await response in api.stream(request: Anthropic.MessageRequest(model: .claude46Sonnet, messages: [.init(role: .user, content: "Hi")], stream: true)) {
             results.append(response)
         }
         let content = results.reduce("") { $0 + ($1.message?.content.string ?? $1.stream?.delta?.text ?? "") }
@@ -87,7 +87,7 @@ class AnthropicTests: XCTestCase {
         MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { request in
             return (.success(try self.getData(filename: "message_stream_tool_use_response", fileExtension: "txt")!), 200)
         }
-        let request = Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: [.init(role: .user, content: "Hi")], stream: true)
+        let request = Anthropic.MessageRequest(model: .claude46Sonnet, messages: [.init(role: .user, content: "Hi")], stream: true)
         var results: [Anthropic.MessageResponse] = []
         for try await response in api.stream(request: request) {
             results.append(response)
@@ -123,7 +123,7 @@ class AnthropicTests: XCTestCase {
                 }
                 return "27"
             })]
-        let request = Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: [.init(role: .user, content: "Hi")], stream: true, tools: tools)
+        let request = Anthropic.MessageRequest(model: .claude46Sonnet, messages: [.init(role: .user, content: "Hi")], stream: true, tools: tools)
         var results: [Anthropic.MessageResponse] = []
         for try await response in api.stream(request: request) {
             results.append(response)
