@@ -52,7 +52,9 @@ public struct XAIErrorResponse: Error, Codable {
     }
 }
 
-public enum XAIModel: String, CaseIterable {
+// CaseIterable is declared in the extension below rather than here to allow
+// @available(*, deprecated) on individual cases without breaking synthesis.
+public enum XAIModel: String {
     // MARK: - Grok 4.1 Models - Active
     case grok41FastReasoning = "grok-4-1-fast-reasoning"
     case grok41FastNonReasoning = "grok-4-1-fast-non-reasoning"
@@ -85,6 +87,25 @@ public enum XAIModel: String, CaseIterable {
     case grokBeta = "grok-beta"
 
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
+}
+
+// MARK: - CaseIterable
+// Manual implementation required: @available(*, deprecated) on enum cases
+// breaks synthesized CaseIterable conformance in Swift.
+extension XAIModel: CaseIterable {
+    public static var allCases: [XAIModel] {
+        let active: [XAIModel] = [
+            .grok41FastReasoning, .grok41FastNonReasoning,
+            .grok4FastReasoning, .grok4FastNonReasoning, .grok4_0709,
+            .grok3, .grok3_mini,
+            .grokCodeFast,
+            .grok2Vision, .grok2Image,
+            .grokImagineImage, .grokImagineImagePro, .grokImagineVideo,
+        ]
+        // Use rawValue init to include deprecated cases without re-triggering warnings.
+        let legacy = ["grok-2-1212", "grok-beta"].compactMap(XAIModel.init(rawValue:))
+        return active + legacy
+    }
 }
 
 extension OpenAIModel {
