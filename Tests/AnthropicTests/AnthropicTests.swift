@@ -43,7 +43,7 @@ class AnthropicTests: XCTestCase {
                 usage: .init(input_tokens: 10, output_tokens: 25)).data()), 200)
         }
         let messages = [Anthropic.Message(role: .user, content: "Hey!")]
-        let response = try await api.perform(request: Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages))
+        let response = try await api.perform(request: Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages))
         guard case .string(let str) = response.message?.content, str == "Hi! My name is Claude." else { return XCTFail("Failed to decode content") }
     }
 
@@ -61,7 +61,7 @@ class AnthropicTests: XCTestCase {
         }
         let messages = [Anthropic.Message(role: .user, content: "Hey!")]
         var results: [Anthropic.MessageResponse] = []
-        for try await response in api.stream(request: Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages)) {
+        for try await response in api.stream(request: Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages)) {
             results.append(response)
         }
         guard let content = results.first?.message?.content.string else { return XCTFail("Failed to decode content") }
@@ -74,7 +74,7 @@ class AnthropicTests: XCTestCase {
             return (.success(try self.getData(filename: "message_stream_response", fileExtension: "txt")!), 200)
         }
         var results: [Anthropic.MessageResponse] = []
-        for try await response in api.stream(request: Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: [.init(role: .user, content: "Hi")], stream: true)) {
+        for try await response in api.stream(request: Anthropic.MessageRequest(model: .claude46Sonnet, messages: [.init(role: .user, content: "Hi")], stream: true)) {
             results.append(response)
         }
         let content = results.reduce("") { $0 + ($1.message?.content.string ?? $1.stream?.delta?.text ?? "") }
@@ -87,7 +87,7 @@ class AnthropicTests: XCTestCase {
         MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { request in
             return (.success(try self.getData(filename: "message_stream_tool_use_response", fileExtension: "txt")!), 200)
         }
-        let request = Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: [.init(role: .user, content: "Hi")], stream: true)
+        let request = Anthropic.MessageRequest(model: .claude46Sonnet, messages: [.init(role: .user, content: "Hi")], stream: true)
         var results: [Anthropic.MessageResponse] = []
         for try await response in api.stream(request: request) {
             results.append(response)
@@ -123,7 +123,7 @@ class AnthropicTests: XCTestCase {
                 }
                 return "27"
             })]
-        let request = Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: [.init(role: .user, content: "Hi")], stream: true, tools: tools)
+        let request = Anthropic.MessageRequest(model: .claude46Sonnet, messages: [.init(role: .user, content: "Hi")], stream: true, tools: tools)
         var results: [Anthropic.MessageResponse] = []
         for try await response in api.stream(request: request) {
             results.append(response)
@@ -189,6 +189,37 @@ class AnthropicTests: XCTestCase {
         let haiku45Data = "\"claude-haiku-4-5-20251001\"".data(using: .utf8)!
         let haiku45 = try decoder.decode(Anthropic.Model.self, from: haiku45Data)
         XCTAssertEqual(haiku45, .claude45Haiku_20251001)
+    }
+
+    func testIsDeprecatedProperty() throws {
+        // Deprecated models should return true
+        XCTAssertTrue(Anthropic.Model.claude3Haiku_20240307.isDeprecated)
+
+        // Active models should return false
+        XCTAssertFalse(Anthropic.Model.claude46Opus.isDeprecated)
+        XCTAssertFalse(Anthropic.Model.claude46Sonnet.isDeprecated)
+        XCTAssertFalse(Anthropic.Model.claude45Haiku_20251001.isDeprecated)
+
+        // Retired models are not "deprecated" (they are retired)
+        XCTAssertFalse(Anthropic.Model.claude37Sonnet_20250219.isDeprecated)
+        XCTAssertFalse(Anthropic.Model.claude3Opus_20240229.isDeprecated)
+    }
+
+    func testIsRetiredProperty() throws {
+        // Retired models should return true
+        XCTAssertTrue(Anthropic.Model.claude37Sonnet_20250219.isRetired)
+        XCTAssertTrue(Anthropic.Model.claude35Haiku_20241022.isRetired)
+        XCTAssertTrue(Anthropic.Model.claude35Sonnet_20241022.isRetired)
+        XCTAssertTrue(Anthropic.Model.claude35Sonnet_20240620.isRetired)
+        XCTAssertTrue(Anthropic.Model.claude3Opus_20240229.isRetired)
+        XCTAssertTrue(Anthropic.Model.claude3Sonnet_20240229.isRetired)
+
+        // Active models should return false
+        XCTAssertFalse(Anthropic.Model.claude46Opus.isRetired)
+        XCTAssertFalse(Anthropic.Model.claude46Sonnet.isRetired)
+
+        // Deprecated (but not yet retired) models should return false
+        XCTAssertFalse(Anthropic.Model.claude3Haiku_20240307.isRetired)
     }
 }
 

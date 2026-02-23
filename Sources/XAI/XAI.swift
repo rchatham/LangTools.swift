@@ -79,17 +79,17 @@ public enum XAIModel: String, CaseIterable {
     case grokImagineVideo = "grok-imagine-video"
 
     // MARK: - Legacy Models
-    /// Legacy: Use grok3 or grok4FastReasoning for better performance.
+    @available(*, deprecated, message: "Legacy model. Use grok3 or grok4FastReasoning for better performance.")
     case grok = "grok-2-1212"
-    /// Deprecated: Use grok3 or newer models instead.
+    @available(*, deprecated, message: "Use grok3 or newer models instead.")
     case grokBeta = "grok-beta"
 
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
 
     /// Returns true if this model is deprecated.
     public var isDeprecated: Bool {
-        switch self {
-        case .grokBeta:
+        switch rawValue {
+        case "grok-beta", "grok-2-1212":
             return true
         default:
             return false

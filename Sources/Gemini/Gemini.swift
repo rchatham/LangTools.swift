@@ -61,36 +61,36 @@ public enum GeminiModel: String, CaseIterable {
     case gemini31Pro = "gemini-3.1-pro"
 
     // MARK: - Gemini 2.5 Models (Retiring June 17, 2026)
-    /// Deprecated: Retiring June 17, 2026. Use gemini3Flash instead.
+    @available(*, deprecated, message: "Retiring June 17, 2026. Use gemini3Flash instead.")
     case gemini25Flash = "gemini-2.5-flash"
-    /// Deprecated: Retiring June 17, 2026. Use gemini3Flash instead.
+    @available(*, deprecated, message: "Retiring June 17, 2026. Use gemini3Flash instead.")
     case gemini25FlashLite = "gemini-2.5-flash-lite"
-    /// Deprecated: Retiring June 17, 2026. Use gemini3Pro instead.
+    @available(*, deprecated, message: "Retiring June 17, 2026. Use gemini3Pro instead.")
     case gemini25Pro = "gemini-2.5-pro"
 
     // MARK: - Gemini 2.0 Models (Retiring June 1, 2026)
-    /// Deprecated: Retiring June 1, 2026. Use gemini25Flash instead.
+    @available(*, deprecated, message: "Retiring June 1, 2026. Use gemini3Flash instead.")
     case gemini2Flash = "gemini-2.0-flash"
-    /// Deprecated: Retiring June 1, 2026. Use gemini25FlashLite instead.
+    @available(*, deprecated, message: "Retiring June 1, 2026. Use gemini3FlashLite instead.")
     case gemini2FlashLite = "gemini-2.0-flash-lite"
 
     // MARK: - Retired Models (return 404 errors)
-    /// Retired: Returns 404. Use gemini3Flash instead.
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Flash instead.")
     case gemini15Flash = "gemini-1.5-flash"
-    /// Retired: Returns 404. Use gemini3Flash instead.
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Flash instead.")
     case gemini15Flash8B = "gemini-1.5-flash-8b"
-    /// Retired: Returns 404. Use gemini3Pro instead.
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Pro instead.")
     case gemini15Pro = "gemini-1.5-pro"
-    /// Retired: Returns 404. Use gemini3Pro instead.
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Pro instead.")
     case gemini10Pro = "gemini-1.0-pro"
 
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
 
     /// Returns true if this model is deprecated (still works but retiring soon).
     public var isDeprecated: Bool {
-        switch self {
-        case .gemini25Flash, .gemini25FlashLite, .gemini25Pro,
-             .gemini2Flash, .gemini2FlashLite:
+        switch rawValue {
+        case "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro",
+             "gemini-2.0-flash", "gemini-2.0-flash-lite":
             return true
         default:
             return false
@@ -99,8 +99,8 @@ public enum GeminiModel: String, CaseIterable {
 
     /// Returns true if this model is retired and will return 404 errors.
     public var isRetired: Bool {
-        switch self {
-        case .gemini15Flash, .gemini15Flash8B, .gemini15Pro, .gemini10Pro:
+        switch rawValue {
+        case "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-1.0-pro":
             return true
         default:
             return false
