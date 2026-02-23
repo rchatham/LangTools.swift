@@ -43,6 +43,12 @@ class XAITests: XCTestCase {
         XCTAssertEqual(XAIModel.grok.rawValue, "grok-2-1212")
     }
 
+    func testGrokVisionBackwardCompatAlias() throws {
+        // grokVision is a deprecated alias for grok2Vision; both resolve to the same raw value
+        XCTAssertEqual(XAIModel.grokVision.rawValue, XAIModel.grok2Vision.rawValue)
+        XCTAssertEqual(XAIModel.grokVision.rawValue, "grok-2-vision-1212")
+    }
+
     func testXAIIsDeprecatedProperty() throws {
         // Deprecated models should return true
         XCTAssertTrue(XAIModel.grokBeta.isDeprecated)

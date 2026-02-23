@@ -84,6 +84,10 @@ public enum XAIModel: String, CaseIterable {
     @available(*, deprecated, message: "Use grok3 or newer models instead.")
     case grokBeta = "grok-beta"
 
+    /// Deprecated alias for `grok2Vision`.
+    @available(*, deprecated, renamed: "grok2Vision")
+    public static var grokVision: XAIModel { .grok2Vision }
+
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
 
     /// Returns true if this model is deprecated.
