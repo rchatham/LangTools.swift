@@ -73,17 +73,18 @@ public enum GeminiModel: String {
     // MARK: - Gemini 2.0 Models (Retiring June 1, 2026)
     @available(*, deprecated, message: "Retiring June 1, 2026. Use gemini3Flash instead.")
     case gemini2Flash = "gemini-2.0-flash"
-    @available(*, deprecated, message: "Retiring June 1, 2026. Use gemini3Flash instead.")
+
+    @available(*, deprecated, message: "Retiring June 1, 2026. Use gemini3FlashLite instead.")
     case gemini2FlashLite = "gemini-2.0-flash-lite"
 
     // MARK: - Retired Models (return 404 errors)
-    @available(*, deprecated, message: "Retired. Returns 404. Use gemini3Flash instead.")
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Flash instead.")
     case gemini15Flash = "gemini-1.5-flash"
-    @available(*, deprecated, message: "Retired. Returns 404. Use gemini3Flash instead.")
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Flash instead.")
     case gemini15Flash8B = "gemini-1.5-flash-8b"
-    @available(*, deprecated, message: "Retired. Returns 404. Use gemini3Pro instead.")
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Pro instead.")
     case gemini15Pro = "gemini-1.5-pro"
-    @available(*, deprecated, message: "Retired. Returns 404. Use gemini3Pro instead.")
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Pro instead.")
     case gemini10Pro = "gemini-1.0-pro"
 
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }

@@ -190,5 +190,36 @@ class AnthropicTests: XCTestCase {
         let haiku45 = try decoder.decode(Anthropic.Model.self, from: haiku45Data)
         XCTAssertEqual(haiku45, .claude45Haiku_20251001)
     }
+
+    func testIsDeprecatedProperty() throws {
+        // Deprecated models should return true
+        XCTAssertTrue(Anthropic.Model.claude3Haiku_20240307.isDeprecated)
+
+        // Active models should return false
+        XCTAssertFalse(Anthropic.Model.claude46Opus.isDeprecated)
+        XCTAssertFalse(Anthropic.Model.claude46Sonnet.isDeprecated)
+        XCTAssertFalse(Anthropic.Model.claude45Haiku_20251001.isDeprecated)
+
+        // Retired models are not "deprecated" (they are retired)
+        XCTAssertFalse(Anthropic.Model.claude37Sonnet_20250219.isDeprecated)
+        XCTAssertFalse(Anthropic.Model.claude3Opus_20240229.isDeprecated)
+    }
+
+    func testIsRetiredProperty() throws {
+        // Retired models should return true
+        XCTAssertTrue(Anthropic.Model.claude37Sonnet_20250219.isRetired)
+        XCTAssertTrue(Anthropic.Model.claude35Haiku_20241022.isRetired)
+        XCTAssertTrue(Anthropic.Model.claude35Sonnet_20241022.isRetired)
+        XCTAssertTrue(Anthropic.Model.claude35Sonnet_20240620.isRetired)
+        XCTAssertTrue(Anthropic.Model.claude3Opus_20240229.isRetired)
+        XCTAssertTrue(Anthropic.Model.claude3Sonnet_20240229.isRetired)
+
+        // Active models should return false
+        XCTAssertFalse(Anthropic.Model.claude46Opus.isRetired)
+        XCTAssertFalse(Anthropic.Model.claude46Sonnet.isRetired)
+
+        // Deprecated (but not yet retired) models should return false
+        XCTAssertFalse(Anthropic.Model.claude3Haiku_20240307.isRetired)
+    }
 }
 

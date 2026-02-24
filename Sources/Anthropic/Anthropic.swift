@@ -132,17 +132,17 @@ public extension Anthropic {
         case claude3Haiku_20240307 = "claude-3-haiku-20240307"
 
         // MARK: - Retired Models (kept for backward compatibility, will return errors)
-        @available(*, deprecated, message: "Retired February 19, 2026. Will return errors. Use claude46Sonnet instead.")
+        @available(*, deprecated, message: "Retired February 19, 2026. Will return API errors. Use claude46Sonnet instead.")
         case claude37Sonnet_20250219 = "claude-3-7-sonnet-20250219"
-        @available(*, deprecated, message: "Retired February 19, 2026. Will return errors. Use claude45Haiku_20251001 instead.")
+        @available(*, deprecated, message: "Retired February 19, 2026. Will return API errors. Use claude45Haiku_20251001 instead.")
         case claude35Haiku_20241022 = "claude-3-5-haiku-20241022"
-        @available(*, deprecated, message: "Retired October 28, 2025. Will return errors. Use claude46Sonnet instead.")
+        @available(*, deprecated, message: "Retired October 28, 2025. Will return API errors. Use claude46Sonnet instead.")
         case claude35Sonnet_20241022 = "claude-3-5-sonnet-20241022"
-        @available(*, deprecated, message: "Retired October 28, 2025. Will return errors. Use claude46Sonnet instead.")
+        @available(*, deprecated, message: "Retired October 28, 2025. Will return API errors. Use claude46Sonnet instead.")
         case claude35Sonnet_20240620 = "claude-3-5-sonnet-20240620"
-        @available(*, deprecated, message: "Retired January 5, 2026. Will return errors. Use claude46Opus instead.")
+        @available(*, deprecated, message: "Retired January 5, 2026. Will return API errors. Use claude46Opus instead.")
         case claude3Opus_20240229 = "claude-3-opus-20240229"
-        @available(*, deprecated, message: "Retired July 21, 2025. Will return errors. Use claude46Sonnet instead.")
+        @available(*, deprecated, message: "Retired July 21, 2025. Will return API errors. Use claude46Opus instead.")
         case claude3Sonnet_20240229 = "claude-3-sonnet-20240229"
     }
 }
