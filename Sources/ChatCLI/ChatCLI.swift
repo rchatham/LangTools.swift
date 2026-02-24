@@ -63,21 +63,21 @@ struct ChatCLI {
     static func changeModel() async throws {
         print("")
         print("\nAvailable models:")
-        print("1. OpenAI GPT-3.5")
-        print("2. OpenAI GPT-4")
-        print("3. Anthropic Claude")
-        print("4. Gemini")
-        print("5. XAI")
+        print("1. OpenAI GPT-4o mini")
+        print("2. OpenAI GPT-5.2")
+        print("3. Anthropic Claude 4.6 Sonnet")
+        print("4. Gemini 3 Flash")
+        print("5. XAI Grok 4 Fast")
 
         print("\nSelect model (1-5): ", terminator: "")
         guard let choice = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
 
         let newModel: Model? = switch choice {
-            case "1": .openAI(.gpt35Turbo)
-            case "2": .openAI(.gpt4)
-            case "3": .anthropic(.claude35Sonnet_20241022)
-            case "4": .gemini(.gemini15FlashLatest)
-            case "5": .xAI(.grok)
+            case "1": .openAI(.gpt4o_mini)
+            case "2": .openAI(.gpt5_2)
+            case "3": .anthropic(.claude46Sonnet)
+            case "4": .gemini(.gemini3Flash)
+            case "5": .xAI(.grok4FastReasoning)
             default: nil
         }
         if let newModel {

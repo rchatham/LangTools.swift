@@ -26,7 +26,7 @@ extension OpenAI {
         /// A unique identifier representing your end-user
         public let user: String?
 
-        public init(input: Input, model: Model = .textEmbeddingAda002, encoding_format: EncodingFormat? = nil, dimensions: Int? = nil, user: String? = nil) {
+        public init(input: Input, model: Model = .textEmbedding3Small, encoding_format: EncodingFormat? = nil, dimensions: Int? = nil, user: String? = nil) {
             self.input = input
             self.model = model
             self.encoding_format = encoding_format

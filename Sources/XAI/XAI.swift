@@ -52,12 +52,77 @@ public struct XAIErrorResponse: Error, Codable {
     }
 }
 
-public enum XAIModel: String, CaseIterable {
+// CaseIterable is declared in the extension below rather than here to allow
+// @available(*, deprecated) on individual cases without breaking synthesis.
+public enum XAIModel: String {
+    // MARK: - Grok 4.1 Models - Active
+    case grok41FastReasoning = "grok-4-1-fast-reasoning"
+    case grok41FastNonReasoning = "grok-4-1-fast-non-reasoning"
+
+    // MARK: - Grok 4 Models - Active
+    case grok4FastReasoning = "grok-4-fast-reasoning"
+    case grok4FastNonReasoning = "grok-4-fast-non-reasoning"
+    case grok4_0709 = "grok-4-0709"
+
+    // MARK: - Grok 3 Models - Active
+    case grok3 = "grok-3"
+    case grok3_mini = "grok-3-mini"
+
+    // MARK: - Grok Code Models - Active
+    case grokCodeFast = "grok-code-fast-1"
+
+    // MARK: - Grok 2 Models - Active
+    case grok2Vision = "grok-2-vision-1212"
+    case grok2Image = "grok-2-image-1212"
+
+    // MARK: - Image Generation Models - Active
+    case grokImagineImage = "grok-imagine-image"
+    case grokImagineImagePro = "grok-imagine-image-pro"
+    case grokImagineVideo = "grok-imagine-video"
+
+    // MARK: - Legacy Models
+    @available(*, deprecated, message: "Legacy model. Use grok3 or grok4FastReasoning.")
     case grok = "grok-2-1212"
-    case grokVision = "grok-2-vision-1212"
+    @available(*, deprecated, message: "Use grok3 or newer models instead.")
     case grokBeta = "grok-beta"
 
+    /// Deprecated alias for `grok2Vision`.
+    @available(*, deprecated, renamed: "grok2Vision")
+    public static var grokVision: XAIModel { .grok2Vision }
+
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
+}
+
+// MARK: - Model Lifecycle
+extension XAIModel {
+    /// Returns `true` if this model is deprecated.
+    /// Uses rawValue comparison to avoid triggering deprecation warnings internally.
+    public var isDeprecated: Bool {
+        let deprecatedRawValues: Set<String> = [
+            "grok-beta",
+            "grok-2-1212",
+        ]
+        return deprecatedRawValues.contains(rawValue)
+    }
+}
+
+// MARK: - CaseIterable
+// Manual implementation required: @available(*, deprecated) on enum cases
+// breaks synthesized CaseIterable conformance in Swift.
+extension XAIModel: CaseIterable {
+    public static var allCases: [XAIModel] {
+        let active: [XAIModel] = [
+            .grok41FastReasoning, .grok41FastNonReasoning,
+            .grok4FastReasoning, .grok4FastNonReasoning, .grok4_0709,
+            .grok3, .grok3_mini,
+            .grokCodeFast,
+            .grok2Vision, .grok2Image,
+            .grokImagineImage, .grokImagineImagePro, .grokImagineVideo,
+        ]
+        // Use rawValue init to include deprecated cases without re-triggering warnings.
+        let legacy = ["grok-2-1212", "grok-beta"].compactMap(XAIModel.init(rawValue:))
+        return active + legacy
+    }
 }
 
 extension OpenAIModel {
