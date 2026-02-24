@@ -52,26 +52,88 @@ public struct GeminiErrorResponse: Error, Codable {
     }
 }
 
-public enum GeminiModel: String, CaseIterable {
-    // Base models
-    case gemini2Flash = "gemini-2.0-flash-exp"
-    case gemini2FlashThinking = "gemini-2.0-flash-thinking-exp"
+// CaseIterable is declared in the extension below rather than here to allow
+// @available(*, deprecated) on individual cases without breaking synthesis.
+public enum GeminiModel: String {
+    // MARK: - Gemini 3.x Models - Active
+    case gemini3Pro = "gemini-3-pro"
+    case gemini3ProPreview = "gemini-3-pro-preview"
+    case gemini3Flash = "gemini-3-flash"
+    case gemini3FlashPreview = "gemini-3-flash-preview"
+    case gemini31Pro = "gemini-3.1-pro"
+
+    // MARK: - Gemini 2.5 Models (Retiring June 17, 2026)
+    @available(*, deprecated, message: "Retiring June 17, 2026. Use gemini3Flash instead.")
+    case gemini25Flash = "gemini-2.5-flash"
+    @available(*, deprecated, message: "Retiring June 17, 2026. Use gemini3Flash instead.")
+    case gemini25FlashLite = "gemini-2.5-flash-lite"
+    @available(*, deprecated, message: "Retiring June 17, 2026. Use gemini3Pro instead.")
+    case gemini25Pro = "gemini-2.5-pro"
+
+    // MARK: - Gemini 2.0 Models (Retiring June 1, 2026)
+    @available(*, deprecated, message: "Retiring June 1, 2026. Use gemini3Flash instead.")
+    case gemini2Flash = "gemini-2.0-flash"
+
+    @available(*, deprecated, message: "Retiring June 1, 2026. Use gemini3FlashLite instead.")
+    case gemini2FlashLite = "gemini-2.0-flash-lite"
+
+    // MARK: - Retired Models (return 404 errors)
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Flash instead.")
     case gemini15Flash = "gemini-1.5-flash"
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Flash instead.")
     case gemini15Flash8B = "gemini-1.5-flash-8b"
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Pro instead.")
     case gemini15Pro = "gemini-1.5-pro"
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Pro instead.")
     case gemini10Pro = "gemini-1.0-pro"
 
-    // Versioned models
-    case gemini15FlashLatest = "gemini-1.5-flash-latest"
-    case gemini15Flash001 = "gemini-1.5-flash-001"
-    case gemini15Flash002 = "gemini-1.5-flash-002"
-    case gemini15Flash8BLatest = "gemini-1.5-flash-8b-latest"
-    case gemini15Flash8B001 = "gemini-1.5-flash-8b-001"
-    case gemini15ProLatest = "gemini-1.5-pro-latest"
-    case gemini15Pro001 = "gemini-1.5-pro-001"
-    case gemini15Pro002 = "gemini-1.5-pro-002"
-
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
+}
+
+// MARK: - Model Lifecycle
+extension GeminiModel {
+    /// Returns `true` if this model is deprecated (still functional but retiring soon).
+    /// Uses rawValue comparison to avoid triggering deprecation warnings internally.
+    public var isDeprecated: Bool {
+        let deprecatedRawValues: Set<String> = [
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+        ]
+        return deprecatedRawValues.contains(rawValue)
+    }
+
+    /// Returns `true` if this model has been retired (returns 404 errors).
+    /// Uses rawValue comparison to avoid triggering deprecation warnings internally.
+    public var isRetired: Bool {
+        let retiredRawValues: Set<String> = [
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-8b",
+            "gemini-1.5-pro",
+            "gemini-1.0-pro",
+        ]
+        return retiredRawValues.contains(rawValue)
+    }
+}
+
+// MARK: - CaseIterable
+// Manual implementation required: @available(*, deprecated) on enum cases
+// breaks synthesized CaseIterable conformance in Swift.
+extension GeminiModel: CaseIterable {
+    public static var allCases: [GeminiModel] {
+        let active: [GeminiModel] = [
+            .gemini3Pro, .gemini3ProPreview, .gemini3Flash, .gemini3FlashPreview, .gemini31Pro,
+        ]
+        // Use rawValue init to include deprecated/retired cases without re-triggering warnings.
+        let legacy = [
+            "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro",
+            "gemini-2.0-flash", "gemini-2.0-flash-lite",
+            "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-1.0-pro",
+        ].compactMap(GeminiModel.init(rawValue:))
+        return active + legacy
+    }
 }
 
 extension OpenAIModel {

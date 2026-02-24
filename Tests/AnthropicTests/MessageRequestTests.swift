@@ -42,7 +42,7 @@ final class MessageRequestTests: XCTestCase {
 
     func testMessageRequestEncodable() throws {
         let request = Anthropic.MessageRequest(
-            model: .claude35Sonnet_20240620,
+            model: .claude46Sonnet,
             messages: [
                 .init(role: .user, content: "Hello, world")
             ])
@@ -53,7 +53,7 @@ final class MessageRequestTests: XCTestCase {
 
     func testMessageRequestWithImageEncodable() throws {
         let request = Anthropic.MessageRequest(
-            model: .claude35Sonnet_20240620,
+            model: .claude46Sonnet,
             messages: [
                 .init(role: .user, content: .array([
                     .image(.init(source: .init(data: "/9j/4AAQSkZJRg...", media_type: .jpeg))),
@@ -67,7 +67,7 @@ final class MessageRequestTests: XCTestCase {
 
     func testMessageRequestWithFunctionsEncodable() throws {
         let request = Anthropic.MessageRequest(
-            model: .claude35Sonnet_20240620,
+            model: .claude46Sonnet,
             messages: [
                 .init(role: .user, content: "What's the S&P 500 at today?")
             ],

@@ -109,6 +109,12 @@ extension Anthropic {
             public init(_ contentType: any LangToolsContentType) throws {
                 if let text = contentType.textContentType {
                     self = .text(try .init(text))
+                } else if let toolResult = contentType.toolResultContentType {
+                    self = .toolResult(ToolResult(
+                        tool_selection_id: toolResult.tool_selection_id,
+                        result: toolResult.result,
+                        is_error: toolResult.is_error
+                    ))
                 } else {
                     // Handle non-text content types
                     print("⚠️ Anthropic.Content.init() - Non-text content type: \(Swift.type(of: contentType))")
@@ -243,7 +249,7 @@ extension Anthropic {
                 }
             }
 
-            public struct ToolResult: Codable, LangToolsContentType, LangToolsToolSelectionResult {
+            public struct ToolResult: Codable, LangToolsToolResultContentType {
                 public let type: String = "tool_result"
                 public let tool_use_id: String
                 public let is_error: Bool
@@ -258,7 +264,13 @@ extension Anthropic {
                 }
 
                 public init(_ contentType: any LangToolsContentType) throws {
-                    fatalError("init not implemented for tool result content type")
+                    if let toolResult = contentType.toolResultContentType {
+                        tool_use_id = toolResult.tool_selection_id
+                        content = .string(toolResult.result)
+                        is_error = toolResult.is_error
+                    } else {
+                        throw LangToolsError.invalidContentType
+                    }
                 }
 
                 enum CodingKeys: String, CodingKey {

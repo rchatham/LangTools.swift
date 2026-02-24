@@ -10,7 +10,7 @@ import LangTools
 
 
 public extension Anthropic {
-    func performMessageRequest(messages: [Message], model: Model = .claude35Sonnet_20240620, stream: Bool = false, completion: @escaping (Result<Anthropic.MessageResponse, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
+    func performMessageRequest(messages: [Message], model: Model = .claude46Sonnet, stream: Bool = false, completion: @escaping (Result<Anthropic.MessageResponse, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
         perform(request: Anthropic.MessageRequest(model: model, messages: Self.toAnthropicMessages(messages), stream: stream, system: Self.toAnthropicSystemMessage(messages)), completion: completion, didCompleteStreaming: didCompleteStreaming)
     }
 
