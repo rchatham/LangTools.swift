@@ -112,14 +112,14 @@ final class CrossProviderConversionTests: XCTestCase {
         }
     }
 
-    // MARK: - Full Message Conversion (no-crash verification)
+    // MARK: - Full Message Conversion (content fidelity)
     //
-    // When converting full messages, tool result ContentType enum cases don't directly
-    // conform to LangToolsToolResultContentType. The Anthropic path falls back to a text
-    // representation; the OpenAI path skips the element via compactMap+try?.
-    // These tests verify the conversion completes without a crash.
+    // ContentType enums override textContentType and toolResultContentType so the default
+    // protocol implementation ("self as? LangToolsToolResultContentType") is bypassed.
+    // Full message conversion now correctly maps tool result enum cases rather than falling
+    // back to text representations (Anthropic) or skipping elements (OpenAI).
 
-    func testOpenAIToolMessageConversionDoesNotCrash() {
+    func testOpenAIToolMessageConversionPreservesToolResult() {
         let toolResult = OpenAI.Message.Content.ToolResultContent(
             tool_selection_id: "call_123",
             result: "{\"temperature\": 72}",
@@ -131,13 +131,22 @@ final class CrossProviderConversionTests: XCTestCase {
             content: .array([.toolResult(toolResult)])
         )
 
-        // This previously triggered a fatalError — verify it now completes without crashing.
         let anthropicMessage = Anthropic.Message(openAIMessage)
         XCTAssertNotNil(anthropicMessage)
-        XCTAssertNotNil(anthropicMessage.content)
+
+        // Verify content fidelity: tool result should be preserved, not converted to text
+        if case .array(let items) = anthropicMessage.content,
+           let first = items.first,
+           case .toolResult(let result) = first {
+            XCTAssertEqual(result.tool_use_id, "call_123")
+            XCTAssertEqual(result.result, "{\"temperature\": 72}")
+            XCTAssertFalse(result.is_error)
+        } else {
+            XCTFail("Expected Anthropic message to contain .toolResult, got: \(anthropicMessage.content)")
+        }
     }
 
-    func testAnthropicToolResultMessageConversionDoesNotCrash() {
+    func testAnthropicToolResultMessageConversionPreservesToolResult() {
         let toolResult = Anthropic.Message.Content.ContentType.ToolResult(
             tool_selection_id: "call_456",
             result: "42",
@@ -149,9 +158,19 @@ final class CrossProviderConversionTests: XCTestCase {
             content: .array([.toolResult(toolResult)])
         )
 
-        // Verify conversion completes without crash.
         let openAIMessage = OpenAI.Message(anthropicMessage)
         XCTAssertNotNil(openAIMessage)
+
+        // Verify content fidelity: tool result should be preserved, not skipped
+        if case .array(let items) = openAIMessage.content,
+           let first = items.first,
+           case .toolResult(let result) = first {
+            XCTAssertEqual(result.tool_selection_id, "call_456")
+            XCTAssertEqual(result.result, "42")
+            XCTAssertFalse(result.is_error)
+        } else {
+            XCTFail("Expected OpenAI message to contain .toolResult, got: \(openAIMessage.content)")
+        }
     }
 
     // MARK: - Error Cases
