@@ -93,6 +93,18 @@ public enum XAIModel: String {
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
 }
 
+// MARK: - Model Lifecycle
+extension XAIModel {
+    /// Returns `true` if this model is deprecated.
+    /// Uses rawValue comparison to avoid triggering deprecation warnings internally.
+    public var isDeprecated: Bool {
+        let deprecatedRawValues: Set<String> = [
+            "grok-beta",
+            "grok-2-1212",
+        ]
+        return deprecatedRawValues.contains(rawValue)
+    }
+}
 
 // MARK: - CaseIterable
 // Manual implementation required: @available(*, deprecated) on enum cases

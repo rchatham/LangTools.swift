@@ -90,6 +90,34 @@ public enum GeminiModel: String {
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
 }
 
+// MARK: - Model Lifecycle
+extension GeminiModel {
+    /// Returns `true` if this model is deprecated (still functional but retiring soon).
+    /// Uses rawValue comparison to avoid triggering deprecation warnings internally.
+    public var isDeprecated: Bool {
+        let deprecatedRawValues: Set<String> = [
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+        ]
+        return deprecatedRawValues.contains(rawValue)
+    }
+
+    /// Returns `true` if this model has been retired (returns 404 errors).
+    /// Uses rawValue comparison to avoid triggering deprecation warnings internally.
+    public var isRetired: Bool {
+        let retiredRawValues: Set<String> = [
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-8b",
+            "gemini-1.5-pro",
+            "gemini-1.0-pro",
+        ]
+        return retiredRawValues.contains(rawValue)
+    }
+}
+
 // MARK: - CaseIterable
 // Manual implementation required: @available(*, deprecated) on enum cases
 // breaks synthesized CaseIterable conformance in Swift.

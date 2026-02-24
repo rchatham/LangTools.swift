@@ -173,6 +173,32 @@ extension Anthropic.Model: CaseIterable {
     }
 }
 
+// MARK: - Model Lifecycle
+extension Anthropic.Model {
+    /// Returns `true` if this model is deprecated (still functional but retiring soon).
+    /// Uses rawValue comparison to avoid triggering deprecation warnings internally.
+    public var isDeprecated: Bool {
+        let deprecatedRawValues: Set<String> = [
+            "claude-3-haiku-20240307",
+        ]
+        return deprecatedRawValues.contains(rawValue)
+    }
+
+    /// Returns `true` if this model has been retired (will return API errors).
+    /// Uses rawValue comparison to avoid triggering deprecation warnings internally.
+    public var isRetired: Bool {
+        let retiredRawValues: Set<String> = [
+            "claude-3-7-sonnet-20250219",
+            "claude-3-5-haiku-20241022",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-sonnet-20240620",
+            "claude-3-opus-20240229",
+            "claude-3-sonnet-20240229",
+        ]
+        return retiredRawValues.contains(rawValue)
+    }
+}
+
 // MARK: - Testing
 extension Anthropic {
     internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
