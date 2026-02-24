@@ -106,7 +106,9 @@ public enum AnthropicAPIErrorType: String, Codable {
 }
 
 public extension Anthropic {
-    enum Model: String, Codable, CaseIterable {
+    // CaseIterable is declared in the extension below rather than here to allow
+    // @available(*, deprecated) on individual cases without breaking synthesis.
+    enum Model: String, Codable {
         // MARK: - Claude 4.6 Models (February 2026) - Active
         case claude46Opus = "claude-opus-4-6"
         case claude46Opus_20260205 = "claude-opus-4-6-20260205"
@@ -142,31 +144,32 @@ public extension Anthropic {
         case claude3Opus_20240229 = "claude-3-opus-20240229"
         @available(*, deprecated, message: "Retired July 21, 2025. Will return API errors. Use claude46Opus instead.")
         case claude3Sonnet_20240229 = "claude-3-sonnet-20240229"
+    }
+}
 
-        /// Returns true if this model is deprecated (still works but retiring soon).
-        public var isDeprecated: Bool {
-            switch rawValue {
-            case "claude-3-haiku-20240307":
-                return true
-            default:
-                return false
-            }
-        }
-
-        /// Returns true if this model is retired and will return errors.
-        public var isRetired: Bool {
-            switch rawValue {
-            case "claude-3-7-sonnet-20250219",
-                 "claude-3-5-haiku-20241022",
-                 "claude-3-5-sonnet-20241022",
-                 "claude-3-5-sonnet-20240620",
-                 "claude-3-opus-20240229",
-                 "claude-3-sonnet-20240229":
-                return true
-            default:
-                return false
-            }
-        }
+// MARK: - CaseIterable
+// Manual implementation required: @available(*, deprecated) on enum cases
+// breaks synthesized CaseIterable conformance in Swift.
+extension Anthropic.Model: CaseIterable {
+    public static var allCases: [Anthropic.Model] {
+        let active: [Anthropic.Model] = [
+            .claude46Opus, .claude46Opus_20260205,
+            .claude46Sonnet, .claude46Sonnet_20260217,
+            .claude45Opus_20251101, .claude45Sonnet_20250929, .claude45Haiku_20251001,
+            .claude41Opus_20250805,
+            .claude4Opus_20250514, .claude4Sonnet_20250514,
+        ]
+        // Use rawValue init to include deprecated/retired cases without re-triggering warnings.
+        let legacy = [
+            "claude-3-haiku-20240307",
+            "claude-3-7-sonnet-20250219",
+            "claude-3-5-haiku-20241022",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-sonnet-20240620",
+            "claude-3-opus-20240229",
+            "claude-3-sonnet-20240229",
+        ].compactMap(Anthropic.Model.init(rawValue:))
+        return active + legacy
     }
 }
 

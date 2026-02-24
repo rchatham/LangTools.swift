@@ -52,7 +52,9 @@ public struct XAIErrorResponse: Error, Codable {
     }
 }
 
-public enum XAIModel: String, CaseIterable {
+// CaseIterable is declared in the extension below rather than here to allow
+// @available(*, deprecated) on individual cases without breaking synthesis.
+public enum XAIModel: String {
     // MARK: - Grok 4.1 Models - Active
     case grok41FastReasoning = "grok-4-1-fast-reasoning"
     case grok41FastNonReasoning = "grok-4-1-fast-non-reasoning"
@@ -79,7 +81,7 @@ public enum XAIModel: String, CaseIterable {
     case grokImagineVideo = "grok-imagine-video"
 
     // MARK: - Legacy Models
-    @available(*, deprecated, message: "Legacy model. Use grok3 or grok4FastReasoning for better performance.")
+    @available(*, deprecated, message: "Legacy model. Use grok3 or grok4FastReasoning.")
     case grok = "grok-2-1212"
     @available(*, deprecated, message: "Use grok3 or newer models instead.")
     case grokBeta = "grok-beta"
@@ -89,15 +91,25 @@ public enum XAIModel: String, CaseIterable {
     public static var grokVision: XAIModel { .grok2Vision }
 
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
+}
 
-    /// Returns true if this model is deprecated.
-    public var isDeprecated: Bool {
-        switch rawValue {
-        case "grok-beta", "grok-2-1212":
-            return true
-        default:
-            return false
-        }
+
+// MARK: - CaseIterable
+// Manual implementation required: @available(*, deprecated) on enum cases
+// breaks synthesized CaseIterable conformance in Swift.
+extension XAIModel: CaseIterable {
+    public static var allCases: [XAIModel] {
+        let active: [XAIModel] = [
+            .grok41FastReasoning, .grok41FastNonReasoning,
+            .grok4FastReasoning, .grok4FastNonReasoning, .grok4_0709,
+            .grok3, .grok3_mini,
+            .grokCodeFast,
+            .grok2Vision, .grok2Image,
+            .grokImagineImage, .grokImagineImagePro, .grokImagineVideo,
+        ]
+        // Use rawValue init to include deprecated cases without re-triggering warnings.
+        let legacy = ["grok-2-1212", "grok-beta"].compactMap(XAIModel.init(rawValue:))
+        return active + legacy
     }
 }
 
