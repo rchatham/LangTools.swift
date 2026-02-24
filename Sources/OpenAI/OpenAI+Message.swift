@@ -195,6 +195,16 @@ public extension OpenAI {
                 public init(_ contentType: any LangToolsContentType) throws {
                     if let text = contentType.textContentType {
                         self = .text(try .init(text))
+                    } else if let image = contentType.imageContentType {
+                        guard let openAIImage = image as? ImageContent else {
+                            throw LangToolsError.invalidContentType
+                        }
+                        self = .image(openAIImage)
+                    } else if let audio = contentType.audioContentType {
+                        guard let openAIAudio = audio as? AudioContent else {
+                            throw LangToolsError.invalidContentType
+                        }
+                        self = .audio(openAIAudio)
                     } else if let toolResult = contentType.toolResultContentType {
                         self = .toolResult(ToolResultContent(
                             tool_selection_id: toolResult.tool_selection_id,
@@ -202,7 +212,6 @@ public extension OpenAI {
                             is_error: toolResult.is_error
                         ))
                     } else {
-                        // TODO: - implement audio and image
                         throw LangToolsError.invalidContentType
                     }
                 }
