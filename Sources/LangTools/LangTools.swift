@@ -24,7 +24,13 @@ public protocol LangTools {
     func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
 
     var session: URLSession { get }
+    var logger: LangToolsLogger? { get }
     func prepare(request: some LangToolsRequest) throws -> URLRequest
+}
+
+extension LangTools {
+    /// Default implementation returns nil (no logging)
+    public var logger: LangToolsLogger? { nil }
 }
 
 extension LangTools {
@@ -62,50 +68,51 @@ extension LangTools {
     public func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {
         guard request.stream ?? true else { return AsyncThrowingSingleItemStream(value: { try await perform(request: request) }) }
 
-        print("📡 LangTools.stream() - Preparing HTTP request")
+        logger?.debug("LangTools.stream() - Preparing HTTP request")
         let httpRequest: URLRequest
         do {
             httpRequest = try prepare(request: request.updating(stream: true))
-            print("   ✅ HTTP request prepared")
-            print("   URL: \(httpRequest.url?.absoluteString ?? "nil")")
+            logger?.debug("HTTP request prepared")
+            logger?.debug("URL: \(httpRequest.url?.absoluteString ?? "nil")")
         } catch {
-            print("   ❌ Failed to prepare request: \(error)")
+            logger?.error("Failed to prepare request: \(error)")
             return AsyncSingleErrorStream(error: error)
         }
 
+        let log = logger
         return AsyncThrowingStream { continuation in
             Task {
                 do {
-                    print("   🌐 Calling session.bytes(for:)...")
+                    log?.debug("Calling session.bytes(for:)...")
                     let (bytes, response) = try await session.bytes(for: httpRequest)
-                    print("   ✅ Got response from server")
+                    log?.debug("Got response from server")
 
                     guard let httpResponse = response as? HTTPURLResponse else {
-                        print("   ❌ Response is not HTTPURLResponse")
+                        log?.error("Response is not HTTPURLResponse")
                         return continuation.finish(throwing: LangToolsError.requestFailed)
                     }
 
-                    print("   Status code: \(httpResponse.statusCode)")
+                    log?.debug("Status code: \(httpResponse.statusCode)")
 
                     guard httpResponse.statusCode == 200 else {
-                        print("   ❌ Non-200 status code: \(httpResponse.statusCode)")
+                        log?.error("Non-200 status code: \(httpResponse.statusCode)")
                         var error: Error?;
                         do {
                             let errorBody = try await bytes.lines.reduce("", +)
-                            print("   📄 Error response body: \(errorBody)")
+                            log?.debug("Error response body: \(errorBody)")
                             error = errorBody.data(using: .utf8).flatMap { Self.decodeError(data: $0) }
                             if let decodedError = error {
-                                print("   🔍 Decoded error: \(decodedError)")
+                                log?.debug("Decoded error: \(decodedError)")
                             }
                         }
                         catch let _error {
-                            print("   ⚠️ Error reading response: \(_error)")
+                            log?.warning("Error reading response: \(_error)")
                             error = _error
                         }
                         return continuation.finish(throwing: LangToolsError.responseUnsuccessful(statusCode: httpResponse.statusCode, error))
                     }
 
-                    print("   ✅ Status 200 - Processing stream...")
+                    log?.info("Status 200 - Processing stream...")
 
                     var combinedResponse = Request.Response.empty
                     // buffer used for responses that need multiple lines to decode
@@ -115,7 +122,7 @@ extension LangTools {
                     for try await line in bytes.lines {
                         lineCount += 1
                         if lineCount == 1 {
-                            print("   📥 Receiving streamed data...")
+                            log?.debug("Receiving streamed data...")
                         }
                         // ensure line is a complete json object if not concat to previous line and continue
                         buffer += line
@@ -141,20 +148,20 @@ extension LangTools {
                         throw LangToolsError.failedToDecodeStream(buffer: buffer, error: errorBuffer)
                     }
 
-                    print("   📊 Processed \(lineCount) lines from stream")
+                    log?.debug("Processed \(lineCount) lines from stream")
 
                     if let completionRequest = try await completionRequest(request: request, response: combinedResponse) {
-                        print("   🔄 Tool calling - making completion request...")
+                        log?.debug("Tool calling - making completion request...")
                         for try await response in stream(request: completionRequest) {
                             continuation.yield(try request.update(response: response))
                         }
                     }
 
-                    print("   ✅ Stream completed successfully")
+                    log?.info("Stream completed successfully")
                     continuation.finish()
                 } catch {
-                    print("   ❌ Stream error: \(error)")
-                    print("   Error type: \(type(of: error))")
+                    log?.error("Stream error: \(error)")
+                    log?.debug("Error type: \(type(of: error))")
                     continuation.finish(throwing: error)
                 }
             }

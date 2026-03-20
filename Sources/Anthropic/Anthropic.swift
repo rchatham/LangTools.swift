@@ -18,16 +18,19 @@ public final class Anthropic: LangTools {
     private var configuration: AnthropicConfiguration
     private var apiKey: String { configuration.apiKey }
     public var session: URLSession { configuration.session }
+    public var logger: LangToolsLogger? { configuration.logger }
 
     public struct AnthropicConfiguration {
         public var baseURL: URL
         public let apiKey: String
         public var session: URLSession
+        public var logger: LangToolsLogger?
 
-        public init(baseURL: URL = URL(string: "https://api.anthropic.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
+        public init(baseURL: URL = URL(string: "https://api.anthropic.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil) {
             self.baseURL = baseURL
             self.apiKey = apiKey
             self.session = session
+            self.logger = logger
         }
     }
 
@@ -37,8 +40,8 @@ public final class Anthropic: LangTools {
         ]
     }
 
-    public init(baseURL: URL = URL(string: "https://api.anthropic.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
-        configuration = AnthropicConfiguration(baseURL: baseURL, apiKey: apiKey)
+    public init(baseURL: URL = URL(string: "https://api.anthropic.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil) {
+        configuration = AnthropicConfiguration(baseURL: baseURL, apiKey: apiKey, session: session, logger: logger)
     }
 
     public init(configuration: AnthropicConfiguration) {
@@ -46,13 +49,13 @@ public final class Anthropic: LangTools {
     }
 
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
-        print("🔧 Anthropic.prepare() called")
-        print("   Base URL: \(configuration.baseURL)")
-        print("   Endpoint: \(request.endpoint)")
-        print("   API Key: \(apiKey.isEmpty ? "EMPTY" : "Set (length: \(apiKey.count))")")
+        logger?.debug("Anthropic.prepare() called")
+        logger?.debug("Base URL: \(configuration.baseURL)")
+        logger?.debug("Endpoint: \(request.endpoint)")
+        logger?.debug("API Key: \(apiKey.isEmpty ? "EMPTY" : "Set (length: \(apiKey.count))")")
 
         let fullURL = configuration.baseURL.appending(path: request.endpoint)
-        print("   Full URL: \(fullURL)")
+        logger?.debug("Full URL: \(fullURL)")
 
         var urlRequest = URLRequest(url: fullURL)
         urlRequest.httpMethod = "POST"
@@ -65,15 +68,15 @@ public final class Anthropic: LangTools {
             encoder.outputFormatting = .prettyPrinted
             urlRequest.httpBody = try encoder.encode(request)
             if let bodyString = String(data: urlRequest.httpBody!, encoding: .utf8) {
-                print("   📝 Request body:\n\(bodyString)")
+                logger?.debug("Request body:\n\(bodyString)")
             }
-            print("   ✅ Request body encoded successfully")
+            logger?.debug("Request body encoded successfully")
         } catch {
-            print("   ❌ Failed to encode request: \(error)")
+            logger?.error("Failed to encode request: \(error)")
             throw LangToolsError.invalidData
         }
 
-        print("   ✅ URLRequest prepared successfully")
+        logger?.debug("URLRequest prepared successfully")
         return urlRequest
     }
 

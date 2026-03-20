@@ -19,16 +19,19 @@ final public class OpenAI: LangTools {
     private var configuration: OpenAIConfiguration
     private var apiKey: String { configuration.apiKey }
     public var session: URLSession { configuration.session }
+    public var logger: LangToolsLogger? { configuration.logger }
 
     public struct OpenAIConfiguration {
         public var baseURL: URL
         public let apiKey: String
         public var session: URLSession
+        public var logger: LangToolsLogger?
 
-        public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
+        public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil) {
             self.baseURL = baseURL
             self.apiKey = apiKey
             self.session = session
+            self.logger = logger
         }
     }
 
@@ -43,8 +46,8 @@ final public class OpenAI: LangTools {
         ]
     }
 
-    public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
-        configuration = OpenAIConfiguration(baseURL: baseURL, apiKey: apiKey)
+    public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil) {
+        configuration = OpenAIConfiguration(baseURL: baseURL, apiKey: apiKey, session: session, logger: logger)
     }
 
     public init(configuration: OpenAIConfiguration) {

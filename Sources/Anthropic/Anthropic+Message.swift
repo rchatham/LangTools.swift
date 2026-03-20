@@ -116,11 +116,7 @@ extension Anthropic {
                         is_error: toolResult.is_error
                     ))
                 } else {
-                    // Handle non-text content types
-                    print("⚠️ Anthropic.Content.init() - Non-text content type: \(Swift.type(of: contentType))")
-                    print("   Content: \(contentType)")
-
-                    // For now, convert to text representation
+                    // Handle non-text content types by converting to text representation
                     // TODO: Implement proper audio and image support
                     let textRepresentation = String(describing: contentType)
                     self = .text(try .init(text: textRepresentation))

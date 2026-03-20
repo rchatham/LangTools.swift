@@ -23,11 +23,12 @@ public final class XAI: LangTools {
     }
 
     public var session: URLSession { openAI.session }
+    public var logger: LangToolsLogger? { openAI.logger }
 
     let openAI: OpenAI
 
-    public init(baseURL: URL = URL(string: "https://api.x.ai/v1/")!, apiKey: String) {
-        openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey))
+    public init(baseURL: URL = URL(string: "https://api.x.ai/v1/")!, apiKey: String, logger: LangToolsLogger? = nil) {
+        openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey, logger: logger))
     }
 
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {

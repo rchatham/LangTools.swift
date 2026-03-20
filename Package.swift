@@ -19,11 +19,8 @@ let package = Package(
         .library(name: "Gemini", targets: ["Gemini"]),
         .library(name: "Ollama", targets: ["Ollama"]),
         .library(name: "AppleSpeech", targets: ["AppleSpeech"]),
-        .executable(name: "ChatCLI", targets: ["ChatCLI"]),
     ],
-    dependencies: [
-        .package(url: "https://github.com/rensbreur/SwiftTUI", branch: "main")
-    ],
+    dependencies: [],
     targets: [
         // Targets
         .target(name: "LangTools", resources: [.process("README.md")]),
@@ -44,21 +41,5 @@ let package = Package(
         .testTarget(name: "GeminiTests", dependencies: ["Gemini", "OpenAI", "TestUtils"]),
         .testTarget(name: "OllamaTests", dependencies: ["Ollama", "OpenAI", "TestUtils"]),
         .testTarget(name: "AppleSpeechTests", dependencies: ["AppleSpeech"]),
-        .testTarget(name: "ChatCLITests", dependencies: ["ChatCLI", "LangTools", "OpenAI", "TestUtils"]),
-
-        // Executable target
-        .executableTarget(
-            name: "ChatCLI",
-            dependencies: [
-                "LangTools",
-                "OpenAI",
-                "Anthropic",
-                "XAI",
-                "Gemini",
-                "Ollama",
-                "Agents",
-                .product(name: "SwiftTUI", package: "SwiftTUI")
-            ]
-        ),
     ]
 )
