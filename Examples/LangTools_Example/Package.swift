@@ -40,6 +40,7 @@ let package = Package(
                 .product(name: "Gemini", package: "langtools.swift"),
                 .product(name: "Ollama", package: "langtools.swift"),
                 .product(name: "AppleSpeech", package: "langtools.swift"),
+                .product(name: "ToolKit", package: "langtools.swift"),
                 "KeychainAccess",
             ],
             path: "Modules/Chat"),
@@ -57,6 +58,8 @@ let package = Package(
             name: "ExampleAgents",
             dependencies: [
                 .product(name: "Agents", package: "langtools.swift"),
+                .product(name: "ToolKit", package: "langtools.swift"),
+                "Chat",
                 "KeychainAccess",
                 "SwiftSoup",
             ],
