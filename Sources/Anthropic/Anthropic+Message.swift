@@ -220,7 +220,7 @@ extension Anthropic {
                 public var arguments: String { input }
 
                 public init(_ contentType: any LangToolsContentType) throws {
-                    fatalError("init not implemented for tool use content type")
+                    throw LangToolsError.invalidContentType
                 }
 
                 public init(id: String?, name: String?, input: String) {
