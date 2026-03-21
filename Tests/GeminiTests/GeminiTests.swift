@@ -104,7 +104,7 @@ class GeminiTests: XCTestCase {
         // Verify all Gemini model variants are available
         let models: [GeminiModel] = [
             .gemini2Flash,
-            .gemini2FlashThinking,
+            .gemini2FlashLite,
             .gemini15Flash,
             .gemini15Flash8B,
             .gemini15Pro,
