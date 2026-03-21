@@ -12,16 +12,16 @@ public struct ChatSettingsView: View {
     @State private var selectedTab: SettingsTab = .general
     @State private var selectedCustomTab: String? = nil
 
-    enum SettingsTab: String, CaseIterable, Identifiable {
+    public enum SettingsTab: String, CaseIterable, Identifiable {
         case general = "General"
         case systemPrompt = "System Prompt"
         case advanced = "Advanced"
         case localModels = "Local Models"
         case tools = "Tools"
 
-        var id: String { self.rawValue }
+        public var id: String { self.rawValue }
 
-        var icon: String {
+        public var icon: String {
             switch self {
             case .general: return "gear"
             case .systemPrompt: return "text.bubble"
@@ -947,7 +947,7 @@ extension ChatSettingsView {
         @Published var systemMessage = UserDefaults.systemMessage
         @Published var apiKeyInputText: String = ""
         @Published var toolSettings = ToolSettings.shared
-        @Published var toolManager = ToolManager.shared
+        @Published public var toolManager = ToolManager.shared
 
         let clearMessages: () -> Void
 

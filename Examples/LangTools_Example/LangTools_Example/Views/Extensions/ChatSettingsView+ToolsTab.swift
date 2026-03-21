@@ -1,28 +1,7 @@
 import SwiftUI
 import OpenAI
 import LangTools
-
-// Extension to add Tools tab to ChatSettingsView
-extension ChatSettingsView.SettingsTab {
-    static var tools: Self { .init(rawValue: "Tools")! }
-    
-    // Update the allCases to include our new tab
-    static var allCases: [ChatSettingsView.SettingsTab] {
-        [.general, .systemPrompt, .advanced, .localModels, .tools]
-    }
-    
-    // Add icon for tools tab
-    var icon: String {
-        switch self {
-        case .general: return "gear"
-        case .systemPrompt: return "text.bubble"
-        case .advanced: return "slider.horizontal.3"
-        case .localModels: return "cpu"
-        case .tools: return "hammer.fill"
-        default: return "gear" // Fallback
-        }
-    }
-}
+import Chat
 
 // Extension to add the tools settings view to ChatSettingsView
 extension ChatSettingsView {
@@ -137,11 +116,6 @@ extension ChatSettingsView {
 
 // Extension to add tool functionality to the ViewModel
 extension ChatSettingsView.ViewModel {
-    // Access to the tool manager
-    var toolManager: ToolManager {
-        return ToolManager.shared
-    }
-    
     // Update loadSettings to also load tool settings
     func loadToolSettings() {
         // No-op as ToolManager loads itself on init,

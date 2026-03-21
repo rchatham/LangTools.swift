@@ -1,4 +1,5 @@
 import SwiftUI
+import Chat
 
 extension ChatSettingsView {
     // Dynamic mobile tools section
