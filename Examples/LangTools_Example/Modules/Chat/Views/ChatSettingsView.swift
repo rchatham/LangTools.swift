@@ -203,17 +203,13 @@ public struct ChatSettingsView: View {
             Button("Clear messages", role: .destructive) { viewModel.clearMessages() }
 
             Section(header: Text("AI Tools")) {
-                Toggle("Enable AI Tools", isOn: $viewModel.toolSettings.toolsEnabled)
+                Toggle("Enable AI Tools", isOn: $viewModel.toolManager.toolsEnabled)
                     .toggleStyle(SwitchToggleStyle())
 
-                if viewModel.toolSettings.toolsEnabled {
-                    Toggle("Calendar", isOn: $viewModel.toolSettings.calendarToolEnabled)
-                    Toggle("Reminders", isOn: $viewModel.toolSettings.remindersToolEnabled)
-                    Toggle("Research", isOn: $viewModel.toolSettings.researchToolEnabled)
-                    Toggle("Maps", isOn: $viewModel.toolSettings.mapsToolEnabled)
-                    Toggle("Contacts", isOn: $viewModel.toolSettings.contactsToolEnabled)
-                    Toggle("Weather", isOn: $viewModel.toolSettings.weatherToolEnabled)
-                    Toggle("Files", isOn: $viewModel.toolSettings.filesToolEnabled)
+                if viewModel.toolManager.toolsEnabled {
+                    ForEach(viewModel.toolManager.allToolConfigurations(), id: \.id) { config in
+                        Toggle(config.displayName, isOn: viewModel.toolManager.binding(for: config.id))
+                    }
                 } else {
                     Text("Enable AI Tools to configure individual tools")
                         .font(.caption)
@@ -221,7 +217,7 @@ public struct ChatSettingsView: View {
                 }
 
                 Button("Reset Tool Settings") {
-                    viewModel.toolSettings.resetToDefaults()
+                    viewModel.toolManager.resetToDefaults()
                 }
             }
 
@@ -951,6 +947,7 @@ extension ChatSettingsView {
         @Published var systemMessage = UserDefaults.systemMessage
         @Published var apiKeyInputText: String = ""
         @Published var toolSettings = ToolSettings.shared
+        @Published var toolManager = ToolManager.shared
 
         let clearMessages: () -> Void
 
@@ -1025,7 +1022,7 @@ extension ChatSettingsView {
                 // Master switch for all tools
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Toggle("Enable AI Tools", isOn: $viewModel.toolSettings.toolsEnabled)
+                        Toggle("Enable AI Tools", isOn: $viewModel.toolManager.toolsEnabled)
                             .toggleStyle(SwitchToggleStyle())
                             .padding(.vertical, 4)
 
@@ -1036,79 +1033,23 @@ extension ChatSettingsView {
                     .padding(8)
                 }
 
-                // Individual tool toggles
-                if viewModel.toolSettings.toolsEnabled {
+                // Individual tool toggles driven by ToolManager
+                if viewModel.toolManager.toolsEnabled {
                     GroupBox {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 16) {
-                                toolToggleRow(
-                                    title: "Calendar",
-                                    description: "Create, read, update, or delete calendar events",
-                                    icon: "calendar",
-                                    isOn: $viewModel.toolSettings.calendarToolEnabled
-                                )
-
-                                Divider()
-
-                                toolToggleRow(
-                                    title: "Reminders",
-                                    description: "Create, read, update, or complete reminders",
-                                    icon: "list.bullet.clipboard",
-                                    isOn: $viewModel.toolSettings.remindersToolEnabled
-                                )
-
-                                Divider()
-
-                                toolToggleRow(
-                                    title: "Research",
-                                    description: "Perform web research on topics using internet sources",
-                                    icon: "magnifyingglass",
-                                    isOn: $viewModel.toolSettings.researchToolEnabled
-                                )
-
-                                Divider()
-
-                                toolToggleRow(
-                                    title: "Maps",
-                                    description: "Location search, directions, and travel time estimates",
-                                    icon: "map",
-                                    isOn: $viewModel.toolSettings.mapsToolEnabled
-                                )
-
-                                Divider()
-
-                                toolToggleRow(
-                                    title: "Contacts",
-                                    description: "Create, search, update, or delete contacts",
-                                    icon: "person.crop.circle",
-                                    isOn: $viewModel.toolSettings.contactsToolEnabled
-                                )
-
-                                Divider()
-
-                                toolToggleRow(
-                                    title: "Weather",
-                                    description: "Get current weather information for locations",
-                                    icon: "cloud.sun.fill",
-                                    isOn: $viewModel.toolSettings.weatherToolEnabled
-                                )
-
-                                #if DEBUG
-                                Divider()
-
-                                toolToggleRow(
-                                    title: "Files",
-                                    description: "Manage files and directories on your device",
-                                    icon: "folder",
-                                    isOn: $viewModel.toolSettings.filesToolEnabled
-                                )
-                                #endif
+                                ForEach(Array(viewModel.toolManager.allToolConfigurations().enumerated()), id: \.element.id) { index, config in
+                                    if index > 0 { Divider() }
+                                    toolToggleRow(
+                                        config: config,
+                                        isOn: viewModel.toolManager.binding(for: config.id)
+                                    )
+                                }
                             }
                             .padding(8)
                         }
                         .frame(maxHeight: 300)
                     }
-
                 } else {
                     Text("Enable AI Tools to configure individual tools")
                         .foregroundColor(.secondary)
@@ -1132,7 +1073,7 @@ extension ChatSettingsView {
 
                 // Reset button
                 Button(action: {
-                    viewModel.toolSettings.resetToDefaults()
+                    viewModel.toolManager.resetToDefaults()
                 }) {
                     Text("Reset to Default Settings")
                 }
@@ -1153,7 +1094,7 @@ extension ChatSettingsView {
         }
     }
 
-    // Helper function to create a tool toggle row
+    // Helper function to create a tool toggle row from explicit fields
     private func toolToggleRow(
         title: String,
         description: String,
@@ -1179,6 +1120,19 @@ extension ChatSettingsView {
             Toggle("", isOn: isOn)
                 .labelsHidden()
         }
+    }
+
+    // Helper function to create a tool toggle row from a ToolConfiguration
+    private func toolToggleRow(
+        config: ToolConfiguration,
+        isOn: Binding<Bool>
+    ) -> some View {
+        toolToggleRow(
+            title: config.displayName,
+            description: config.description,
+            icon: config.iconName,
+            isOn: isOn
+        )
     }
 }
 

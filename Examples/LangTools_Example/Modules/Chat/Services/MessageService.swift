@@ -7,6 +7,7 @@
 import Agents
 import Foundation
 import LangTools
+import ToolKit
 
 var useMultiAgent: Bool = false
 
@@ -25,13 +26,10 @@ public class MessageService: Sendable {
     /// Callback fired when a message is added or modified (for persistence)
     public var messageUpdatedCallback: ((Message) -> Void)?
 
-    /// Returns a filtered list of tools based on tool settings
+    /// Returns a filtered list of tools based on ToolManager enabled states.
     var filteredTools: [Tool]? {
-        // Return nil if master tool switch is disabled
-        guard ToolSettings.shared.toolsEnabled else { return nil }
-
-        // If tools exist, filter them based on individual tool settings
-        return tools?.filter { ToolSettings.shared.isToolEnabled(name: $0.name) }
+        guard ToolManager.shared.toolsEnabled else { return nil }
+        return tools?.filter { ToolManager.shared.isToolEnabled(id: $0.name) }
     }
 
     public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [Agent]? = nil, tools: [Tool]? = nil) {
