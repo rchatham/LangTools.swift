@@ -9,7 +9,7 @@ import Foundation
 
 
 protocol MultipartFormDataEncodableRequest {
-    var httpBody: Data { get }
+    func multipartFormData() -> (body: Data, contentType: String)
 }
 
 // MultipartRequest

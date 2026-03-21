@@ -5,12 +5,17 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import LangTools
 import OpenAI
 import Anthropic
 import XAI
 import Gemini
+#if canImport(AVFAudio)
 import AVFAudio
+#endif
 
 
 typealias Role = OpenAI.Message.Role
@@ -35,7 +40,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         } else if case .gemini(let model) = model {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream/*, tools: tools, tool_choice: toolChoice*/)
         } else {
-            return Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
+            return Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
         }
     }
 
@@ -57,6 +62,16 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
         }
+    }
+
+    // MARK: - URLSessionWebSocketDelegate
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        // No-op implementation to satisfy URLSessionWebSocketDelegate protocol requirements
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        // No-op implementation to satisfy URLSessionWebSocketDelegate protocol requirements
     }
 }
 

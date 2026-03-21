@@ -6,6 +6,9 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public protocol LangTools {
     associatedtype Model: RawRepresentable
@@ -17,15 +20,20 @@ public protocol LangTools {
 
     static var requestValidators: [(any LangToolsRequest) -> Bool] { get }
 
-    static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
+    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
+    func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
 
     var session: URLSession { get }
     func prepare(request: some LangToolsRequest) throws -> URLRequest
 }
 
 extension LangTools {
+    public func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> any LangToolsChatRequest {
+        try Self.chatRequest(model: model, messages: messages, tools: tools, toolEventHandler: toolEventHandler)
+    }
+
     public func canHandleRequest<Request: LangToolsRequest>(_ request: Request) -> Bool {
-        return Self.requestValidators.reduce(false) { $0 || $1(request) }
+        Self.requestValidators.reduce(false) { $0 || $1(request) }
     }
 
     public func perform<Request: LangToolsRequest>(request: Request, completion: @escaping (Result<Request.Response, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
@@ -46,30 +54,69 @@ extension LangTools {
 
     private func perform<Response: Decodable>(request: URLRequest) async throws -> Response {
         let (data, response) = try await session.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else { throw LangToolError.requestFailed }
-        guard httpResponse.statusCode == 200 else { throw LangToolError.responseUnsuccessful(statusCode: httpResponse.statusCode, Self.decodeError(data: data)) }
+        guard let httpResponse = response as? HTTPURLResponse else { throw LangToolsError.requestFailed }
+        guard httpResponse.statusCode == 200 else { throw LangToolsError.responseUnsuccessful(statusCode: httpResponse.statusCode, Self.decodeError(data: data)) }
         return Response.self == Data.self ? data as! Response : try Self.decodeResponse(data: data)
     }
 
     public func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {
         guard request.stream ?? true else { return AsyncThrowingSingleItemStream(value: { try await perform(request: request) }) }
-        let httpRequest: URLRequest; do { httpRequest = try prepare(request: request.updating(stream: true)) } catch { return AsyncSingleErrorStream(error: error) }
+
+        print("📡 LangTools.stream() - Preparing HTTP request")
+        let httpRequest: URLRequest
+        do {
+            httpRequest = try prepare(request: request.updating(stream: true))
+            print("   ✅ HTTP request prepared")
+            print("   URL: \(httpRequest.url?.absoluteString ?? "nil")")
+        } catch {
+            print("   ❌ Failed to prepare request: \(error)")
+            return AsyncSingleErrorStream(error: error)
+        }
 
         return AsyncThrowingStream { continuation in
             Task {
                 do {
+                    print("   🌐 Calling session.bytes(for:)...")
                     let (bytes, response) = try await session.bytes(for: httpRequest)
-                    guard let httpResponse = response as? HTTPURLResponse else { return continuation.finish(throwing: LangToolError.requestFailed) }
-                    guard httpResponse.statusCode == 200 else {
-                        var error: Error?; do { error = try await bytes.lines.reduce("", +).data(using: .utf8).flatMap { Self.decodeError(data: $0) }} catch let _error { error = _error }
-                        return continuation.finish(throwing: LangToolError.responseUnsuccessful(statusCode: httpResponse.statusCode, error))
+                    print("   ✅ Got response from server")
+
+                    guard let httpResponse = response as? HTTPURLResponse else {
+                        print("   ❌ Response is not HTTPURLResponse")
+                        return continuation.finish(throwing: LangToolsError.requestFailed)
                     }
+
+                    print("   Status code: \(httpResponse.statusCode)")
+
+                    guard httpResponse.statusCode == 200 else {
+                        print("   ❌ Non-200 status code: \(httpResponse.statusCode)")
+                        var error: Error?;
+                        do {
+                            let errorBody = try await bytes.lines.reduce("", +)
+                            print("   📄 Error response body: \(errorBody)")
+                            error = errorBody.data(using: .utf8).flatMap { Self.decodeError(data: $0) }
+                            if let decodedError = error {
+                                print("   🔍 Decoded error: \(decodedError)")
+                            }
+                        }
+                        catch let _error {
+                            print("   ⚠️ Error reading response: \(_error)")
+                            error = _error
+                        }
+                        return continuation.finish(throwing: LangToolsError.responseUnsuccessful(statusCode: httpResponse.statusCode, error))
+                    }
+
+                    print("   ✅ Status 200 - Processing stream...")
 
                     var combinedResponse = Request.Response.empty
                     // buffer used for responses that need multiple lines to decode
                     var errorBuffer: Error?
                     var buffer = ""
+                    var lineCount = 0
                     for try await line in bytes.lines {
+                        lineCount += 1
+                        if lineCount == 1 {
+                            print("   📥 Receiving streamed data...")
+                        }
                         // ensure line is a complete json object if not concat to previous line and continue
                         buffer += line
                         var response: Request.Response?
@@ -84,22 +131,30 @@ extension LangTools {
                         }
                         if let response {
                             // If we were able to create a response object we update the decoded response with information from the request and return it before adding it to the combined response used to handle tool completions.
-                            continuation.yield(try request.update(response: response))
-                            combinedResponse = combinedResponse.combining(with: response)
+                            let updatedResponse = try request.update(response: response)
+                            continuation.yield(updatedResponse)
+                            combinedResponse = combinedResponse.combining(with: updatedResponse)
                         }
                     }
 
                     if let errorBuffer, !buffer.isEmpty {
-                        throw LangToolError.failiedToDecodeStream(buffer: buffer, error: errorBuffer)
+                        throw LangToolsError.failedToDecodeStream(buffer: buffer, error: errorBuffer)
                     }
 
-                    if let completionRequest = try await completionRequest(request: request, response: try request.update(response: combinedResponse)) {
+                    print("   📊 Processed \(lineCount) lines from stream")
+
+                    if let completionRequest = try await completionRequest(request: request, response: combinedResponse) {
+                        print("   🔄 Tool calling - making completion request...")
                         for try await response in stream(request: completionRequest) {
                             continuation.yield(try request.update(response: response))
                         }
                     }
+
+                    print("   ✅ Stream completed successfully")
                     continuation.finish()
                 } catch {
+                    print("   ❌ Stream error: \(error)")
+                    print("   Error type: \(type(of: error))")
                     continuation.finish(throwing: error)
                 }
             }
@@ -117,7 +172,7 @@ extension LangTools {
 
     private func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) async throws -> Request? {
         guard let response = response as? any LangToolsToolCallingResponse else { return nil }
-        return try await (request as? any LangToolsToolCallingRequest)?.completion(response: response) as? Request
+        return try await (request as? any LangToolsToolCallingRequest)?.completion(self, response: response) as? Request
     }
 
     public static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
@@ -126,12 +181,13 @@ extension LangTools {
 }
 
 
-public enum LangToolError: Error {
+public enum LangToolsError: Error {
     case invalidData, streamParsingFailure, invalidURL, requestFailed, invalidContentType
+    case invalidArgument(String)
     case jsonParsingFailure(Error)
     case responseUnsuccessful(statusCode: Int, Error?)
     case apiError(Codable & Error)
-    case failiedToDecodeStream(buffer: String, error: Error)
+    case failedToDecodeStream(buffer: String, error: Error)
 }
 
 // MARK: - Helpers
@@ -139,18 +195,18 @@ public enum LangToolError: Error {
 public extension LangTools {
     static func decode<Response: Decodable>(completion: @escaping (Result<Response, Error>) -> Void) -> (Data) -> Void { return { completion(decode(data: $0)) }}
     static func decode<Response: Decodable>(data: Data) -> Result<Response, Error> { let d = JSONDecoder(); do { return .success(try decodeResponse(data: data, decoder: d)) } catch { return .failure(error) }}
-    static func decodeResponse<Response: Decodable>(data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> Response { do { return try decoder.decode(Response.self, from: data) } catch { throw decodeError(data: data, decoder: decoder) ?? LangToolError.jsonParsingFailure(error) }}
+    static func decodeResponse<Response: Decodable>(data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> Response { do { return try decoder.decode(Response.self, from: data) } catch { throw decodeError(data: data, decoder: decoder) ?? LangToolsError.jsonParsingFailure(error) }}
     static func decodeError(data: Data, decoder: JSONDecoder = JSONDecoder()) -> ErrorResponse? { return (try? decoder.decode(ErrorResponse.self, from: data)) }
+}
 
-    func AsyncThrowingSingleItemStream<T>(value: @escaping () async throws -> T) -> AsyncThrowingStream<T, Error> {
-        return AsyncThrowingStream { cont in Task { do { cont.yield(try await value()) } catch { cont.finish(throwing: error) }; cont.finish() }}
-    }
-    func AsyncSingleErrorStream<T>(error: Error) -> AsyncThrowingStream<T, Error> {
-        return AsyncThrowingStream { $0.finish(throwing: error) }
-    }
-    func AsyncSingleErrorStream<T>(error: @escaping () async throws -> Error) -> AsyncThrowingStream<T, Error> {
-        return AsyncThrowingStream { cont in Task { cont.finish(throwing: try await error()) } }
-    }
+func AsyncThrowingSingleItemStream<T>(value: @escaping () async throws -> T) -> AsyncThrowingStream<T, Error> {
+    return AsyncThrowingStream { cont in Task { do { cont.yield(try await value()) } catch { cont.finish(throwing: error) }; cont.finish() }}
+}
+func AsyncSingleErrorStream<T>(error: Error) -> AsyncThrowingStream<T, Error> {
+    return AsyncThrowingStream { $0.finish(throwing: error) }
+}
+func AsyncSingleErrorStream<T>(error: @escaping () async throws -> Error) -> AsyncThrowingStream<T, Error> {
+    return AsyncThrowingStream { cont in Task { cont.finish(throwing: try await error()) } }
 }
 
 // MARK: - Utilities

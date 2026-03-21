@@ -1,0 +1,18 @@
+{
+    "id": "msg_tool_call_empty_input_completion",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+        {
+            "type": "text",
+            "text": "The answer to the ultimate question of life, the universe, and everything is 42, as confirmed by Deep Thought after 7.5 million years of calculation."
+        }
+    ],
+    "model": "claude-3-5-sonnet-latest",
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "usage": {
+        "input_tokens": 45,
+        "output_tokens": 35
+    }
+}

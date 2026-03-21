@@ -10,11 +10,12 @@ import LangTools
 
 
 public extension Anthropic {
-    func performMessageRequest(messages: [Message], model: Model = .claude35Sonnet_20240620, stream: Bool = false, completion: @escaping (Result<Anthropic.MessageResponse, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
+    func performMessageRequest(messages: [Message], model: Model = .claude46Sonnet, stream: Bool = false, completion: @escaping (Result<Anthropic.MessageResponse, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
         perform(request: Anthropic.MessageRequest(model: model, messages: Self.toAnthropicMessages(messages), stream: stream, system: Self.toAnthropicSystemMessage(messages)), completion: completion, didCompleteStreaming: didCompleteStreaming)
     }
 
-    static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
         return MessageRequest(model: model, messages: toAnthropicMessages(messages), system: toAnthropicSystemMessage(messages), tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
     }
 
@@ -33,7 +34,7 @@ extension Anthropic {
         public typealias Response = MessageResponse
         public static var endpoint: String { "messages" }
 
-        let model: Model
+        public let model: Model
         public var messages: [Message]
         let max_tokens: Int
         let metadata: Metadata?

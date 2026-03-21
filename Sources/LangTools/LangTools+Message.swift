@@ -117,6 +117,7 @@ public protocol LangToolsContentType: Codable  {
     var textContentType: LangToolsTextContentType? { get }
     var imageContentType: LangToolsImageContentType? { get }
     var audioContentType: LangToolsAudioContentType? { get }
+    var toolResultContentType: LangToolsToolResultContentType? { get }
 
     init(_ contentType: any LangToolsContentType) throws
 }
@@ -125,6 +126,7 @@ public extension LangToolsContentType {
     var textContentType: LangToolsTextContentType? { self as? LangToolsTextContentType }
     var imageContentType: LangToolsImageContentType? { self as? LangToolsImageContentType }
     var audioContentType: LangToolsAudioContentType? { self as? LangToolsAudioContentType }
+    var toolResultContentType: LangToolsToolResultContentType? { self as? LangToolsToolResultContentType }
 }
 
 public protocol LangToolsTextContentType: LangToolsContentType {
@@ -139,7 +141,7 @@ public extension LangToolsTextContentType {
         if let text = contentType.textContentType {
             self.init(text: text.text)
         } else {
-            throw LangToolError.invalidContentType
+            throw LangToolsError.invalidContentType
         }
     }
 
@@ -182,11 +184,10 @@ public extension LangToolsImageContentType {
 //    var type: String { "image" } // TODO: verify this
 
     init(_ contentType: any LangToolsContentType) throws {
-        if let image = contentType.imageContentType {
-            fatalError("implement image! \(image)")
-        } else {
-            throw LangToolError.invalidContentType
+        guard let image = contentType.imageContentType as? Self else {
+            throw LangToolsError.invalidContentType
         }
+        self = image
     }
 }
 
@@ -196,12 +197,34 @@ public extension LangToolsAudioContentType {
 //    var type: String { "audio" } // TODO: verify this
 
     init(_ contentType: any LangToolsContentType) throws {
-        if let audio = contentType.audioContentType {
-            fatalError("implement audio! \(audio)")
-        } else {
-            throw LangToolError.invalidContentType
+        guard let audio = contentType.audioContentType as? Self else {
+            throw LangToolsError.invalidContentType
         }
+        self = audio
     }
+}
+
+/// A content type that represents a tool result within a message's content array.
+///
+/// Conform to this protocol to enable cross-provider tool result conversion. Both
+/// ``OpenAI/Message/Content/ToolResultContent`` and ``Anthropic/Message/Content/ContentType/ToolResult``
+/// conform to this protocol, which allows converting tool results between providers using
+/// the generic ``LangToolsContentType/init(_:)`` initializer.
+///
+/// **Relationship to `LangToolsToolSelectionResult`:**
+/// `LangToolsToolSelectionResult` represents the result of a completed tool call (with fields
+/// like `tool_selection_id`, `result`, and `is_error`). This protocol extends that with
+/// `LangToolsContentType` so that tool results can be embedded in a message's content array —
+/// as required by providers like Anthropic and OpenAI when returning tool results to the model.
+///
+/// **Field mapping across providers:**
+/// - Generic `tool_selection_id` → OpenAI's `tool_call_id` / Anthropic's `tool_use_id`
+/// - Generic `result` → the string content of the tool output
+/// - Generic `is_error` → Anthropic's `is_error` flag (OpenAI excludes this from encoding)
+public protocol LangToolsToolResultContentType: LangToolsContentType, LangToolsToolSelectionResult {}
+
+public extension LangToolsToolResultContentType {
+    var type: String { "tool_result" }
 }
 
 //public struct LangToolsImageContent: Codable {

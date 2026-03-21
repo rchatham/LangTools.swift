@@ -16,11 +16,12 @@ struct ChatCLI {
         // Check and request API keys if needed
         try await checkAndRequestAPIKeys(messageService: messageService)
 
-        print("Chat CLI Started - Type 'exit' to quit or 'model' to change the active model")
+        print("Chat CLI Started")
+        print("Commands: 'exit', 'model', 'test'")
         print("Current model: \(UserDefaults.model.rawValue)")
 
         while true {
-            print("You: ".green, terminator: "")
+            print("\nYou: ".green, terminator: "")
             guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) else { continue }
 
             if input.lowercased() == "exit" {
@@ -33,8 +34,13 @@ struct ChatCLI {
                 continue
             }
 
+            if input.lowercased() == "test" {
+                await AgentTestRunner.runInteractiveTests(messageService: messageService)
+                continue
+            }
+
             do {
-                try await performMessageCompletionRequest(message: input, stream: true)
+                try await messageService.performMessageCompletionRequest(message: input, stream: true)
             } catch {
                 print("Error: \(error.localizedDescription)")
             }
@@ -57,21 +63,21 @@ struct ChatCLI {
     static func changeModel() async throws {
         print("")
         print("\nAvailable models:")
-        print("1. OpenAI GPT-3.5")
-        print("2. OpenAI GPT-4")
-        print("3. Anthropic Claude")
-        print("4. Gemini")
-        print("5. XAI")
+        print("1. OpenAI GPT-4o mini")
+        print("2. OpenAI GPT-5.2")
+        print("3. Anthropic Claude 4.6 Sonnet")
+        print("4. Gemini 3 Flash")
+        print("5. XAI Grok 4 Fast")
 
         print("\nSelect model (1-5): ", terminator: "")
         guard let choice = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
 
         let newModel: Model? = switch choice {
-            case "1": .openAI(.gpt35Turbo)
-            case "2": .openAI(.gpt4)
-            case "3": .anthropic(.claude35Sonnet_20240620)
-            case "4": .gemini(.gemini15FlashLatest)
-            case "5": .xAI(.grok)
+            case "1": .openAI(.gpt4o_mini)
+            case "2": .openAI(.gpt5_2)
+            case "3": .anthropic(.claude46Sonnet)
+            case "4": .gemini(.gemini3Flash)
+            case "5": .xAI(.grok4FastReasoning)
             default: nil
         }
         if let newModel {
@@ -80,61 +86,6 @@ struct ChatCLI {
         } else {
             print("Invalid choice. Keeping current model.")
         }
-    }
-
-    static func performMessageCompletionRequest(message: String, stream: Bool = false) async throws {
-        do {
-            try await getChatCompletion(for: message, stream: stream)
-        } catch let error as LangToolError {
-            messageService.handleLangToolError(error)
-        } catch let error as LangToolsRequestError {
-            messageService.handleLangToolsRequestError(error)
-        } catch {
-            print("Unexpected error: \(error.localizedDescription)")
-            throw error
-        }
-    }
-
-    static func getChatCompletion(for message: String, stream: Bool) async throws {
-        await MainActor.run {
-            messageService.messages.append(Message(text: message, role: .user))
-        }
-
-        let toolChoice = (messageService.tools?.isEmpty ?? true) ? nil : OpenAI.ChatCompletionRequest.ToolChoice.auto
-        print("\rAssistant: ".yellow, terminator: "")
-        let uuid = UUID(); var content: String = ""
-        let stream = try streamChatCompletionRequest(
-            messages: messageService.messages,
-            stream: stream,
-            tools: messageService.tools,
-            toolChoice: toolChoice
-        )
-        for try await chunk in stream {
-            // hack to print new lines as long as they aren't the last one
-            if content.hasSuffix("\n") {
-                print("")
-            }
-
-            await MainActor.run {
-                print("\(chunk.trimingTrailingNewlines())", terminator: "")
-            }
-            fflush(stdout)
-
-            content += chunk
-            let message = Message(uuid: uuid, text: content.trimingTrailingNewlines(), role: .assistant)
-
-            if let last = messageService.messages.last, last.uuid == uuid {
-                messageService.messages[messageService.messages.endIndex - 1] = message
-            } else {
-                messageService.messages.append(message)
-            }
-        }
-
-        print("") // Add a newline after the complete response
-    }
-
-    static func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<String, Error> {
-        return try langToolchain.stream(request: networkClient.request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { $0.content?.text }
     }
 }
 

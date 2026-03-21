@@ -195,10 +195,24 @@ public extension OpenAI {
                 public init(_ contentType: any LangToolsContentType) throws {
                     if let text = contentType.textContentType {
                         self = .text(try .init(text))
+                    } else if let image = contentType.imageContentType {
+                        guard let openAIImage = image as? ImageContent else {
+                            throw LangToolsError.invalidContentType
+                        }
+                        self = .image(openAIImage)
+                    } else if let audio = contentType.audioContentType {
+                        guard let openAIAudio = audio as? AudioContent else {
+                            throw LangToolsError.invalidContentType
+                        }
+                        self = .audio(openAIAudio)
+                    } else if let toolResult = contentType.toolResultContentType {
+                        self = .toolResult(ToolResultContent(
+                            tool_selection_id: toolResult.tool_selection_id,
+                            result: toolResult.result,
+                            is_error: toolResult.is_error
+                        ))
                     } else {
-                        // TODO: - implement audio and image
-                        fatalError("Implement audio and image first ya dingus!")
-                        //throw LangToolError.invalidContentType
+                        throw LangToolsError.invalidContentType
                     }
                 }
 
@@ -313,7 +327,7 @@ public extension OpenAI {
                 }
             }
 
-            public struct ToolResultContent: LangToolsToolSelectionResult {
+            public struct ToolResultContent: LangToolsToolResultContentType {
                 public var tool_selection_id: String
                 public var result: String
                 public var is_error: Bool = false
@@ -321,6 +335,15 @@ public extension OpenAI {
                     self.tool_selection_id = tool_selection_id
                     self.result = result
                     self.is_error = is_error
+                }
+                public init(_ contentType: any LangToolsContentType) throws {
+                    if let toolResult = contentType.toolResultContentType {
+                        tool_selection_id = toolResult.tool_selection_id
+                        result = toolResult.result
+                        is_error = toolResult.is_error
+                    } else {
+                        throw LangToolsError.invalidContentType
+                    }
                 }
                 enum CodingKeys: CodingKey { case tool_selection_id, result }
             }

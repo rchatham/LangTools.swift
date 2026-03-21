@@ -1,0 +1,47 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Build artifacts
+.build
+build/
+DerivedData/
+.swiftpm/
+
+# Xcode
+xcuserdata/
+*.xcodeproj
+*.xcworkspace
+Packages/
+
+# macOS
+.DS_Store
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+
+# Documentation
+*.md
+!Package.swift
+!README.md
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Claude Code
+.claude/
+
+# Examples (optional - uncomment if you don't want to include examples)
+# Examples/
+
+# Credentials
+.netrc
+*.key
+*.pem

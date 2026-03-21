@@ -13,8 +13,18 @@ Swift interface for Anthropic's Claude models, part of the LangTools framework.
 ## Available Models
 
 ```swift
-// Claude 3
-.claude3Opus_latest          // "claude-3-opus-latest"
+// Claude 4.x - Latest Generation (2025)
+.claude41Opus_latest        // "claude-4-1-opus-latest"
+.claude41Opus_20250805      // "claude-4-1-opus-20250805"
+.claude45Sonnet_latest      // "claude-4-5-sonnet-latest"
+.claude45Sonnet_20250929    // "claude-4-5-sonnet-20250929"
+.claude45Haiku_latest       // "claude-4-5-haiku-latest"
+.claude45Haiku_20251001     // "claude-4-5-haiku-20251001"
+
+// Claude 3.x - Previous Generation
+.claude37Sonnet_latest      // "claude-3-7-sonnet-latest"
+.claude37Sonnet_20250219    // "claude-3-7-sonnet-20250219"
+.claude3Opus_latest         // "claude-3-opus-latest"
 .claude3Opus_20240229       // "claude-3-opus-20240229"
 .claude35Sonnet_latest      // "claude-3-5-sonnet-latest"
 .claude35Sonnet_20241022    // "claude-3-5-sonnet-20241022"
@@ -24,6 +34,22 @@ Swift interface for Anthropic's Claude models, part of the LangTools framework.
 .claude35Haiku_20241022     // "claude-3-5-haiku-20241022"
 .claude3Haiku_20240307      // "claude-3-haiku-20240307"
 ```
+
+### Model Characteristics
+
+**Claude 4.1 Opus** (Released August 5, 2025)
+- Best for: Incremental coding improvements and long agentic tasks
+- Use when: Working on complex, multi-step development projects that require deep understanding and sustained context
+
+**Claude 4.5 Sonnet** (Released September 29, 2025)
+- Best for: Advanced workflows, finance, and STEM-related tasks
+- Use when: Handling sophisticated analytical work with extended context requirements
+- Features: Enhanced context size support for longer conversations and documents
+
+**Claude 4.5 Haiku** (Released October 2025)
+- Best for: Efficiency, cost-effectiveness, and real-time processing
+- Use when: Building business applications, chatbots, or services requiring fast responses
+- Features: Optimized for speed and cost without sacrificing quality
 
 ## Basic Usage
 
@@ -35,26 +61,54 @@ let anthropic = Anthropic(apiKey: "your-api-key")
 
 ### Chat Completions
 
-Basic chat completion:
+Basic chat completion with Claude 4.5 Sonnet:
 ```swift
 let request = Anthropic.MessageRequest(
-    model: .claude35Sonnet_latest,
+    model: .claude45Sonnet_latest,
     messages: [
-        Message(role: .user, content: "Tell me about AI safety.")
+        Message(role: .user, content: "Analyze the financial implications of quantum computing on the banking sector.")
     ],
-    system: "You are a knowledgeable AI researcher."
+    system: "You are a financial technology analyst specializing in emerging technologies."
 )
 
 let response = try await anthropic.perform(request: request)
 print(response.message?.content.text ?? "")
 ```
 
-Streaming chat completion:
+Using Claude 4.1 Opus for complex coding tasks:
 ```swift
 let request = Anthropic.MessageRequest(
-    model: .claude35Sonnet_latest,
+    model: .claude41Opus_latest,
     messages: [
-        Message(role: .user, content: "Write a story about space exploration.")
+        Message(role: .user, content: "Refactor this codebase to implement a microservices architecture with proper error handling and monitoring.")
+    ],
+    system: "You are an expert software architect. Provide detailed implementation plans with code examples."
+)
+
+let response = try await anthropic.perform(request: request)
+print(response.message?.content.text ?? "")
+```
+
+Using Claude 4.5 Haiku for real-time chatbot responses:
+```swift
+let request = Anthropic.MessageRequest(
+    model: .claude45Haiku_latest,
+    messages: [
+        Message(role: .user, content: "What's the status of my order?")
+    ],
+    system: "You are a helpful customer service assistant. Provide quick, accurate responses."
+)
+
+let response = try await anthropic.perform(request: request)
+print(response.message?.content.text ?? "")
+```
+
+Streaming chat completion with Claude 4.1 Opus:
+```swift
+let request = Anthropic.MessageRequest(
+    model: .claude41Opus_latest,
+    messages: [
+        Message(role: .user, content: "Write a comprehensive technical specification for a distributed system.")
     ],
     stream: true
 )
@@ -95,7 +149,7 @@ let searchTool = Anthropic.Tool(
 )
 
 let request = Anthropic.MessageRequest(
-    model: .claude35Sonnet_latest,
+    model: .claude45Sonnet_latest,
     messages: [
         Message(role: .user, content: "Find papers about quantum computing.")
     ],
@@ -122,7 +176,7 @@ let message = Message(
 )
 
 let request = Anthropic.MessageRequest(
-    model: .claude35Sonnet_latest,
+    model: .claude45Sonnet_latest,
     messages: [message]
 )
 ```
@@ -135,7 +189,7 @@ Set context and behavior with system messages:
 
 ```swift
 let request = Anthropic.MessageRequest(
-    model: .claude35Sonnet_latest,
+    model: .claude45Sonnet_latest,
     messages: [
         Message(role: .user, content: "Explain quantum entanglement.")
     ],
@@ -153,7 +207,7 @@ Available options for message requests:
 
 ```swift
 let request = Anthropic.MessageRequest(
-    model: .claude35Sonnet_latest,
+    model: .claude45Sonnet_latest,
     messages: messages,
     max_tokens: 1000,          // Maximum response length
     stop_sequences: ["END"],   // Custom stop sequences
@@ -192,9 +246,12 @@ do {
 ## Best Practices
 
 1. **Model Selection**: 
-   - Use Claude 3 Opus for complex tasks requiring deep understanding
-   - Use Claude 3.5 Sonnet for general purpose tasks
-   - Use Claude 3.5 Haiku for quick, simple responses
+   - Use Claude 4.1 Opus for complex coding projects and long-running agentic workflows
+   - Use Claude 4.5 Sonnet for advanced analytical work in finance, science, and STEM fields
+   - Use Claude 4.5 Haiku for real-time applications, chatbots, and cost-sensitive deployments
+   - Use Claude 3 Opus for complex tasks requiring deep understanding (legacy)
+   - Use Claude 3.5 Sonnet for general purpose tasks (legacy)
+   - Use Claude 3.5 Haiku for quick, simple responses (legacy)
 
 2. **System Messages**:
    - Keep system messages focused and specific

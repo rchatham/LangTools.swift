@@ -6,7 +6,12 @@
 //
 
 import SwiftUI
+import Chat
+import Audio
+import ExampleAgents
+
 import LangTools
+import Agents
 import OpenAI
 import Anthropic
 import Gemini
@@ -16,7 +21,9 @@ import ChatUI
 
 @main
 struct LangTools_ExampleApp: App {
-    var messageService = MessageService()
+    // Use @StateObject so SwiftUI observes voiceInputHandler.objectWillChange
+    // This enables instant UI updates when settings change
+    @StateObject private var voiceInputHandler = VoiceInputHandlerAdapter()
 
     init() {
         // Initialize Ollama on app startup
@@ -25,13 +32,9 @@ struct LangTools_ExampleApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ChatView(title: "LangTools.swift", messageService: messageService, settingsView: chatSettingsView)
+            // Each window gets its own ChatContainerView with independent MessageService
+            ChatContainerView(voiceInputHandler: voiceInputHandler)
         }
-    }
-
-    @ViewBuilder
-    func chatSettingsView() -> some View {
-        ChatSettingsView(viewModel: ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages))
     }
 
     func initializeOllama() {
@@ -45,17 +48,65 @@ struct LangTools_ExampleApp: App {
     }
 }
 
-extension MessageService: ChatMessageService {
-    var chatMessages: [Message] {
+/// Per-window container that holds the MessageService @StateObject
+/// Each window creates a new instance, giving each window independent chat state
+struct ChatContainerView: View {
+    @StateObject private var messageService: MessageService
+    @ObservedObject var voiceInputHandler: VoiceInputHandlerAdapter
+
+    init(voiceInputHandler: VoiceInputHandlerAdapter) {
+        let agents: [Agent] = [
+            CalendarAgent(),
+            ReminderAgent(),
+            ResearchAgent()
+        ]
+        _messageService = StateObject(wrappedValue: MessageService(agents: agents))
+        self.voiceInputHandler = voiceInputHandler
+    }
+
+    var body: some View {
+        NavigationStack {
+            ChatView<MessageService>(
+                title: "LangTools.swift",
+                messageService: messageService,
+                settingsView: { chatSettingsView },
+                voiceInputHandler: voiceInputHandler
+            )
+        }
+    }
+
+    private var chatSettingsView: AnyView {
+        let viewModel = ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages)
+
+        // Wire up WhisperKit state from voice input handler
+        viewModel.onPreloadWhisperKit = { [weak voiceInputHandler] in
+            voiceInputHandler?.preloadWhisperKit()
+        }
+        viewModel.getWhisperKitState = { [weak voiceInputHandler] in
+            guard let handler = voiceInputHandler else {
+                return (isLoading: false, description: "Not available")
+            }
+            return (
+                isLoading: handler.whisperKitLoadingState.isLoading,
+                description: handler.whisperKitLoadingState.description
+            )
+        }
+
+        return AnyView(ChatSettingsView(viewModel: viewModel))
+    }
+}
+
+extension MessageService: @retroactive ChatMessageService {
+    public var chatMessages: [Message] {
         get { messages }
         set { messages = newValue }
     }
 
-    typealias ChatMessage = Message
+    public typealias ChatMessage = Message
 
-    func handleError(error: any Error) -> ChatAlertInfo? {
+    public func handleError(error: any Error) -> ChatAlertInfo? {
         switch error {
-        case let error as LangToolError:
+        case let error as LangToolsError:
             switch error {
             case .jsonParsingFailure(let error):
                 return ChatAlertInfo(
@@ -100,7 +151,7 @@ extension MessageService: ChatMessageService {
                     message: "Failed to parse the response stream."
                 )
 
-            case .failiedToDecodeStream(buffer: let buffer, error: let error):
+            case .failedToDecodeStream(buffer: let buffer, error: let error):
                 return ChatAlertInfo(
                     title: "Stream Decoding Error",
                     message: "Failed to decode stream data: \(buffer).\n\(error.localizedDescription)"
@@ -111,6 +162,8 @@ extension MessageService: ChatMessageService {
                     title: "Invalid Content",
                     message: "The response contained an invalid content type."
                 )
+
+            default: return nil
             }
 
         case let error as LangToolsRequestError:
@@ -146,8 +199,8 @@ extension MessageService: ChatMessageService {
             }()
 
             let textBinding = Binding(
-                get: { self.apiKeyInput },
-                set: { self.apiKeyInput = $0 }
+                get: { apiKeyInput },
+                set: { apiKeyInput = $0 }
             )
 
             return ChatAlertInfo(
@@ -237,7 +290,10 @@ extension MessageService: ChatMessageService {
     }
 }
 
-extension Message: ChatMessageInfo {
-    var parentMessage: Message? { parent }
-    var childChatMessages: [Message] { childMessages }
+extension Message: @retroactive ChatMessageInfo {
+    public weak var parentMessage: Message? { parent }
+    public var childChatMessages: [Message] { childMessages }
 }
+
+// local variable used to store apiKey while passing from ui to app
+private var apiKeyInput: String = ""
