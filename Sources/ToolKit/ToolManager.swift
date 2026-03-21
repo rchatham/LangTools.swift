@@ -21,7 +21,19 @@ public struct Published<Value> {
 }
 #endif
 
+// MARK: - UserDefaults keys (namespaced to avoid collisions)
+private enum Keys {
+    static let toolsEnabled        = "ToolKit.toolsEnabled"
+    static let toolEnabledStates   = "ToolKit.toolEnabledStates"
+    static let toolSettingsInit    = "ToolKit.toolSettingsInitialized"
+}
+
 /// Manages tool configurations and their enabled/disabled states.
+///
+/// All mutations must happen on the main thread (@MainActor). The singleton is
+/// safe to read from any thread, but mutations (register, subscript set, etc.)
+/// should be performed on the main actor.
+@MainActor
 public class ToolManager: ObservableObject {
 
     // MARK: - Singleton
@@ -33,33 +45,27 @@ public class ToolManager: ObservableObject {
 
     #if canImport(Combine)
     @Published private var toolConfigurations: [String: ToolConfiguration] = [:]
+
+    /// Master switch. Setting this does NOT erase individual tool states —
+    /// `isToolEnabled(id:)` and `filteredTools()` already gate on this flag.
     @Published public var toolsEnabled: Bool {
-        didSet {
-            if !toolsEnabled {
-                for toolID in toolEnabledStates.keys {
-                    toolEnabledStates[toolID] = false
-                }
-            }
-            saveSettings()
-        }
+        didSet { _persistAllSettings() }
     }
+
+    /// Per-tool enabled states. Use `_setStates(_:)` for bulk mutations so that
+    /// only one `saveSettings()` call is made.
     @Published private var toolEnabledStates: [String: Bool] = [:] {
-        didSet { saveSettings() }
+        didSet { _persistAllSettings() }
     }
     #else
     private var toolConfigurations: [String: ToolConfiguration] = [:]
+
     public var toolsEnabled: Bool {
-        didSet {
-            if !toolsEnabled {
-                for toolID in toolEnabledStates.keys {
-                    toolEnabledStates[toolID] = false
-                }
-            }
-            saveSettings()
-        }
+        didSet { _persistAllSettings() }
     }
+
     private var toolEnabledStates: [String: Bool] = [:] {
-        didSet { saveSettings() }
+        didSet { _persistAllSettings() }
     }
     #endif
 
@@ -77,18 +83,18 @@ public class ToolManager: ObservableObject {
     /// Designated initializer — injectable for testing.
     public init(defaults: UserDefaults) {
         self.defaults = defaults
-        self.toolsEnabled = defaults.bool(forKey: "toolsEnabled")
 
-        if let data = defaults.data(forKey: "toolEnabledStates"),
+        // Use object(forKey:) so that absence → true (not the Bool default of false).
+        self.toolsEnabled = defaults.object(forKey: Keys.toolsEnabled) as? Bool ?? true
+
+        if let data = defaults.data(forKey: Keys.toolEnabledStates),
            let states = try? JSONDecoder().decode([String: Bool].self, from: data) {
             self.toolEnabledStates = states
         }
 
-        if !defaults.bool(forKey: "toolSettingsInitialized") {
-            // Can't call resetToDefaults() yet — toolsEnabled setter triggers saveSettings
-            // which requires self to be fully initialized. Set directly instead.
-            defaults.set(true, forKey: "toolsEnabled")
-            defaults.set(true, forKey: "toolSettingsInitialized")
+        if !defaults.bool(forKey: Keys.toolSettingsInit) {
+            defaults.set(true, forKey: Keys.toolsEnabled)
+            defaults.set(true, forKey: Keys.toolSettingsInit)
             self.toolsEnabled = true
         }
     }
@@ -159,26 +165,26 @@ public class ToolManager: ObservableObject {
 
     // MARK: - Persistence
 
-    /// Persist current settings to UserDefaults.
+    /// Persist current settings to UserDefaults. Called automatically by didSet observers.
     public func saveSettings() {
-        defaults.set(toolsEnabled, forKey: "toolsEnabled")
-        if let data = try? JSONEncoder().encode(toolEnabledStates) {
-            defaults.set(data, forKey: "toolEnabledStates")
-        }
+        _persistAllSettings()
     }
 
     /// Re-enable all registered tools and turn the master switch on.
+    /// Performs a single batch write to UserDefaults.
     public func resetToDefaults() {
         toolsEnabled = true
-        for id in toolConfigurations.keys {
-            toolEnabledStates[id] = true
-        }
-        saveSettings()
+        // Batch-mutate without triggering individual didSet saves.
+        var updated = toolEnabledStates
+        for id in toolConfigurations.keys { updated[id] = true }
+        _setStates(updated)
     }
 
     // MARK: - Debug
 
     /// Print a summary of all registered tools and their enabled states.
+    /// Gated to debug builds to avoid polluting production console output.
+    #if DEBUG
     public func logTools() {
         print("All registered tools:")
         for config in allToolConfigurations() {
@@ -192,6 +198,24 @@ public class ToolManager: ObservableObject {
             for tool in filtered { print("- \(tool.name)") }
         } else {
             print("No filtered tools (master switch is off)")
+        }
+    }
+    #endif
+
+    // MARK: - Private helpers
+
+    /// Directly replace toolEnabledStates without triggering intermediate didSet saves.
+    private func _setStates(_ states: [String: Bool]) {
+        toolEnabledStates = states
+        // _persistAllSettings() is triggered by toolEnabledStates.didSet above,
+        // so no extra call needed.
+    }
+
+    /// Single point-of-truth for all UserDefaults writes.
+    private func _persistAllSettings() {
+        defaults.set(toolsEnabled, forKey: Keys.toolsEnabled)
+        if let data = try? JSONEncoder().encode(toolEnabledStates) {
+            defaults.set(data, forKey: Keys.toolEnabledStates)
         }
     }
 }

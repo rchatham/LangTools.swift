@@ -2,6 +2,7 @@ import XCTest
 import OpenAI
 @testable import ToolKit
 
+@MainActor
 final class ToolManagerTests: XCTestCase {
 
     // Each test gets its own isolated UserDefaults suite so tests don't interfere.
@@ -19,7 +20,8 @@ final class ToolManagerTests: XCTestCase {
 
     override func tearDown() {
         manager = nil
-        defaults.removePersistentDomain(forName: defaults.description)
+        let suiteName = "ToolManagerTests.\(name)"
+        defaults.removePersistentDomain(forName: suiteName)
         defaults = nil
         super.tearDown()
     }
@@ -168,11 +170,26 @@ final class ToolManagerTests: XCTestCase {
 
     // MARK: - toolsEnabled master switch side-effects
 
-    func testDisablingMasterSwitchDisablesAllIndividualTools() {
+    func testDisablingMasterSwitchDoesNotEraseIndividualStates() {
+        // The master switch should NOT mutate stored per-tool states —
+        // isToolEnabled() and filteredTools() gate on the master switch instead.
         manager.register([makeConfig(id: "a"), makeConfig(id: "b")])
+        manager["b"] = false  // explicitly disable b
+
         manager.toolsEnabled = false
-        XCTAssertFalse(manager["a"])
-        XCTAssertFalse(manager["b"])
+
+        // Underlying stored states are preserved so toggling back on restores them.
+        XCTAssertTrue(manager["a"],  "Stored state for 'a' must be preserved when master switch is off")
+        XCTAssertFalse(manager["b"], "Stored state for 'b' must be preserved when master switch is off")
+
+        // isToolEnabled() still returns false while master switch is off.
+        XCTAssertFalse(manager.isToolEnabled(id: "a"))
+        XCTAssertFalse(manager.isToolEnabled(id: "b"))
+
+        // Re-enable master switch — stored states are restored.
+        manager.toolsEnabled = true
+        XCTAssertTrue(manager.isToolEnabled(id: "a"))
+        XCTAssertFalse(manager.isToolEnabled(id: "b"))
     }
 
     // MARK: - resetToDefaults()

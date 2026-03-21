@@ -26,7 +26,9 @@ public class MessageService: Sendable {
     /// Callback fired when a message is added or modified (for persistence)
     public var messageUpdatedCallback: ((Message) -> Void)?
 
-    /// Returns a filtered list of tools based on ToolManager enabled states.
+    /// Snapshot of filtered tools captured on the main actor.
+    /// ToolManager is @MainActor, so this must be called from the main actor.
+    @MainActor
     var filteredTools: [Tool]? {
         guard ToolManager.shared.toolsEnabled else { return nil }
         return tools?.filter { ToolManager.shared.isToolEnabled(id: $0.name) }
@@ -47,8 +49,11 @@ public class MessageService: Sendable {
             var currentMessages = messages
             currentMessages.insert(Message(text: systemMessage(), role: .system), at: 0)
 
+            // Snapshot filtered tools on the main actor before entering the async stream.
+            let activeTools = await filteredTools
+
             var content: String = ""
-            for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: filteredTools) {
+            for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: activeTools) {
                 content += chunk
                 if !(messages.last?.isAssistant ?? false) {
                     if chunk.isEmpty { continue }

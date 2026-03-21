@@ -38,24 +38,25 @@ struct LangTools_ExampleApp: App {
         }
     }
 
+    @MainActor
     func registerToolConfigurations() {
         ToolManager.shared.register([
             ToolConfiguration(
-                id: CalendarAgent().name,
+                id: "calendarAgent",
                 displayName: "Calendar",
                 description: "Read and manage calendar events",
                 iconName: "calendar",
                 isAgent: true
             ),
             ToolConfiguration(
-                id: ReminderAgent().name,
+                id: "reminderAgent",
                 displayName: "Reminders",
                 description: "Read and manage reminders",
                 iconName: "checklist",
                 isAgent: true
             ),
             ToolConfiguration(
-                id: ResearchAgent().name,
+                id: "researchAgent",
                 displayName: "Research",
                 description: "Search the web and scrape pages",
                 iconName: "magnifyingglass",

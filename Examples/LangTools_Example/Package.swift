@@ -59,7 +59,6 @@ let package = Package(
             dependencies: [
                 .product(name: "Agents", package: "langtools.swift"),
                 .product(name: "ToolKit", package: "langtools.swift"),
-                "Chat",
                 "KeychainAccess",
                 "SwiftSoup",
             ],
