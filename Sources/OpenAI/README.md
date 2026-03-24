@@ -184,7 +184,11 @@ let session = try await openai.perform(request:
     OpenAI.RealtimeSessionCreateRequest(model: .gpt4o_realtimePreview)
 )
 
-let socket = openai.realtimeWebSocketTask(clientSecret: session.client_secret!.value)
+guard let clientSecret = session.client_secret?.value else {
+    // Handle error: client_secret is nil
+    return
+}
+let socket = try openai.realtimeWebSocketTask(clientSecret: clientSecret)
 socket.resume()
 ```
 

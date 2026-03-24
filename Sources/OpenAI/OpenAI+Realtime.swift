@@ -30,7 +30,7 @@ public extension OpenAI {
         }
     }
 
-    struct RealtimeSessionCreateResponse: Codable {
+    public struct RealtimeSessionCreateResponse: Codable {
         public struct ClientSecret: Codable {
             public let value: String
             public let expires_at: Int
@@ -79,7 +79,7 @@ public extension OpenAI {
         }
     }
 
-    struct RealtimeTranscriptionSessionCreateResponse: Codable {
+    public struct RealtimeTranscriptionSessionCreateResponse: Codable {
         public struct ClientSecret: Codable {
             public let value: String
             public let expires_at: Int
@@ -93,11 +93,15 @@ public extension OpenAI {
     }
 
     /// Returns a configured WebSocket task for communicating with the realtime API.
-    func realtimeWebSocketTask(clientSecret: String) -> URLSessionWebSocketTask {
-        var components = URLComponents(url: configuration.baseURL, resolvingAgainstBaseURL: false)!
+    public func realtimeWebSocketTask(clientSecret: String) throws -> URLSessionWebSocketTask {
+        guard var components = URLComponents(url: configuration.baseURL, resolvingAgainstBaseURL: false) else {
+            throw LangToolError.invalidURL
+        }
         components.scheme = components.scheme == "http" ? "ws" : "wss"
         components.path = "/v1/realtime"
-        let url = components.url!
+        guard let url = components.url else {
+            throw LangToolError.invalidURL
+        }
         var request = URLRequest(url: url)
         request.addValue("Bearer \(clientSecret)", forHTTPHeaderField: "Authorization")
         return session.webSocketTask(with: request)

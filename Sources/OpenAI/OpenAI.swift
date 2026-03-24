@@ -13,7 +13,7 @@ final public class OpenAI: LangTools {
     public typealias Model = OpenAIModel
     public typealias ErrorResponse = OpenAIErrorResponse
 
-    fileprivate var configuration: OpenAIConfiguration
+    var configuration: OpenAIConfiguration
     fileprivate var apiKey: String { configuration.apiKey }
     public var session: URLSession { configuration.session }
 
