@@ -4,6 +4,7 @@
 
 import Combine
 import SwiftUI
+import ToolKit
 
 public struct ChatSettingsView: View {
     @ObservedObject public var viewModel: ViewModel
