@@ -2,6 +2,7 @@
 //  ChatSettingsView.swift
 //
 
+import Combine
 import SwiftUI
 
 public struct ChatSettingsView: View {
@@ -204,7 +205,7 @@ public struct ChatSettingsView: View {
 
             Section(header: Text("AI Tools")) {
                 Toggle("Enable AI Tools", isOn: $viewModel.toolManager.toolsEnabled)
-                    .toggleStyle(.toggle)
+                    .toggleStyle(.switch)
 
                 if viewModel.toolManager.toolsEnabled {
                     ForEach(viewModel.toolManager.allToolConfigurations()) { config in
@@ -237,7 +238,7 @@ public struct ChatSettingsView: View {
 
             Section(header: Text("Voice Input")) {
                 Toggle("Enable Voice Input", isOn: $viewModel.toolSettings.voiceInputEnabled)
-                    .toggleStyle(.toggle)
+                    .toggleStyle(.switch)
 
                 if viewModel.toolSettings.voiceInputEnabled {
                     Picker("Speech Provider", selection: $viewModel.toolSettings.sttProvider) {
@@ -415,7 +416,7 @@ public struct ChatSettingsView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Toggle("Voice Input", isOn: $viewModel.toolSettings.voiceInputEnabled)
-                            .toggleStyle(.toggle)
+                            .toggleStyle(.switch)
                             .padding(.vertical, 4)
 
                         Text("Enable the microphone button to dictate messages using speech-to-text.")
@@ -485,7 +486,7 @@ public struct ChatSettingsView: View {
                             Divider()
 
                             Toggle("Replace send button", isOn: $viewModel.toolSettings.voiceButtonReplaceSend)
-                                .toggleStyle(.toggle)
+                                .toggleStyle(.switch)
 
                             Text("Show microphone button in place of send button when text field is empty")
                                 .font(.caption)
@@ -519,7 +520,7 @@ public struct ChatSettingsView: View {
                                 .font(.headline)
 
                             Toggle("Enable auto-stop", isOn: $viewModel.toolSettings.autoStopOnSilence)
-                                .toggleStyle(.toggle)
+                                .toggleStyle(.switch)
 
                             if viewModel.toolSettings.autoStopOnSilence {
                                 HStack {
@@ -544,7 +545,7 @@ public struct ChatSettingsView: View {
                                 .font(.headline)
 
                             Toggle("Show partial results", isOn: $viewModel.toolSettings.streamingTranscriptionEnabled)
-                                .toggleStyle(.toggle)
+                                .toggleStyle(.switch)
 
                             Text("Display transcribed text as you speak, before recording is complete.")
                                 .font(.caption)
@@ -554,7 +555,7 @@ public struct ChatSettingsView: View {
                                viewModel.toolSettings.sttProvider == .openAIWhisper {
 
                                 Toggle("Simulated streaming", isOn: $viewModel.toolSettings.enableOpenAISimulatedStreaming)
-                                    .toggleStyle(.toggle)
+                                    .toggleStyle(.switch)
 
                                 if viewModel.toolSettings.enableOpenAISimulatedStreaming {
                                     HStack {
@@ -961,8 +962,17 @@ extension ChatSettingsView {
         /// Custom tabs injected by the app (e.g., Backend settings)
         public var customTabs: [CustomSettingsTab] = []
 
+        /// Retains subscriptions that relay nested ObservableObject changes.
+        private var cancellables: Set<AnyCancellable> = []
+
         public init(clearMessages: @escaping () -> Void) {
             self.clearMessages = clearMessages
+            // ToolManager is a nested ObservableObject. SwiftUI won't re-render this view
+            // when ToolManager's @Published properties change unless we relay its
+            // objectWillChange through our own.
+            ToolManager.shared.objectWillChange
+                .sink { [weak self] _ in self?.objectWillChange.send() }
+                .store(in: &cancellables)
         }
 
         func loadSettings() {
@@ -1023,7 +1033,7 @@ extension ChatSettingsView {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Toggle("Enable AI Tools", isOn: $viewModel.toolManager.toolsEnabled)
-                            .toggleStyle(.toggle)
+                            .toggleStyle(.switch)
                             .padding(.vertical, 4)
 
                         Text("When disabled, the AI will not use any tools to perform actions.")
@@ -1063,7 +1073,7 @@ extension ChatSettingsView {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Toggle("Rich Content Cards", isOn: $viewModel.toolSettings.richContentEnabled)
-                            .toggleStyle(.toggle)
+                            .toggleStyle(.switch)
                             .padding(.vertical, 4)
 
                         Text("Display weather, contacts, and events as visual cards below messages instead of plain text.")

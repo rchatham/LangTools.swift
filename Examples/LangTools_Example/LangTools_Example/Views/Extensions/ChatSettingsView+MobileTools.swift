@@ -6,7 +6,7 @@ extension ChatSettingsView {
     var mobileToolsSection: some View {
         Section(header: Text("AI Tools")) {
             Toggle("Enable AI Tools", isOn: $viewModel.toolManager.toolsEnabled)
-                .toggleStyle(.toggle)
+                .toggleStyle(.switch)
             
             if viewModel.toolManager.toolsEnabled {
                 ForEach(viewModel.toolManager.allToolConfigurations()) { config in

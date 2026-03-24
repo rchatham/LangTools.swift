@@ -9,7 +9,6 @@ import Foundation
 import LangTools
 import ToolKit
 
-var useMultiAgent: Bool = false
 
 @Observable
 public class MessageService: Sendable {
