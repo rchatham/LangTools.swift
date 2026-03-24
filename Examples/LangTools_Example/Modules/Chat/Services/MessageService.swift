@@ -25,12 +25,16 @@ public class MessageService: Sendable {
     /// Callback fired when a message is added or modified (for persistence)
     public var messageUpdatedCallback: ((Message) -> Void)?
 
-    /// Snapshot of filtered tools captured on the main actor.
-    /// ToolManager is @MainActor, so this must be called from the main actor.
+    /// Snapshot of tools filtered by the current ToolManager state.
+    /// Delegates to `ToolManager.filteredTools()` for the enabled-id set, then
+    /// intersects with `self.tools` so future changes to ToolManager filtering
+    /// logic are automatically picked up here.
+    /// Hops to the main actor because ToolManager is @MainActor-isolated.
     @MainActor
     var filteredTools: [Tool]? {
-        guard ToolManager.shared.toolsEnabled else { return nil }
-        return tools?.filter { ToolManager.shared.isToolEnabled(id: $0.name) }
+        guard let enabledTools = ToolManager.shared.filteredTools() else { return nil }
+        let enabledNames = Set(enabledTools.map { $0.name })
+        return tools?.filter { enabledNames.contains($0.name) }
     }
 
     public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [Agent]? = nil, tools: [Tool]? = nil) {

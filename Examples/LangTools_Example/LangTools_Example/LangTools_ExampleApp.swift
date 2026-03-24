@@ -38,6 +38,9 @@ struct LangTools_ExampleApp: App {
         }
     }
 
+    // @MainActor is required because ToolManager is @MainActor-isolated.
+    // This is safe to call from App.init() since SwiftUI runs @main struct
+    // initializers on the main actor.
     @MainActor
     func registerToolConfigurations() {
         ToolManager.shared.register([

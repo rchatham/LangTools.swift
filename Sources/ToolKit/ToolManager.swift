@@ -11,15 +11,18 @@ import SwiftUI
 #endif
 
 #if !canImport(Combine)
-// Minimal compat shim for non-Apple platforms (e.g. Linux / ChatCLI)
-public protocol ObservableObject: AnyObject {}
+// Minimal compat shim for non-Apple platforms (e.g. Linux / ChatCLI).
+// Kept internal to avoid conflicting with any consumer that conditionally
+// imports Combine — the types are only needed to satisfy the ToolManager
+// class definition and are not part of the public API on non-Combine platforms.
+internal protocol ObservableObject: AnyObject {}
 
 @propertyWrapper
-public struct Published<Value> {
-    public var wrappedValue: Value
+internal struct Published<Value> {
+    internal var wrappedValue: Value
     /// projectedValue stub — no change notifications on non-Combine platforms.
-    public var projectedValue: Value { wrappedValue }
-    public init(wrappedValue: Value) { self.wrappedValue = wrappedValue }
+    internal var projectedValue: Value { wrappedValue }
+    internal init(wrappedValue: Value) { self.wrappedValue = wrappedValue }
 }
 #endif
 
@@ -103,12 +106,9 @@ public class ToolManager: ObservableObject {
 
     // MARK: - Registration
 
-    /// Register a single tool configuration.
+    /// Register a single tool configuration (one UserDefaults write).
     public func register(_ configuration: ToolConfiguration) {
-        toolConfigurations[configuration.id] = configuration
-        if toolEnabledStates[configuration.id] == nil {
-            toolEnabledStates[configuration.id] = true
-        }
+        register([configuration])
     }
 
     /// Register multiple tool configurations in a single batch (one UserDefaults write).
@@ -150,6 +150,12 @@ public class ToolManager: ObservableObject {
     }
 
     /// Whether a specific tool is enabled (respects the master switch).
+    ///
+    /// Returns `false` for unregistered tool ids. This is a deliberate change from
+    /// the previous `ToolSettings.isToolEnabled(name:)` which defaulted unknown
+    /// tools to `true`. Defaulting to `false` is safer — it prevents silently
+    /// enabling tools that were never registered — but callers should ensure all
+    /// tools are registered before querying their state.
     public func isToolEnabled(id: String) -> Bool {
         guard toolsEnabled else { return false }
         return toolEnabledStates[id] ?? false
