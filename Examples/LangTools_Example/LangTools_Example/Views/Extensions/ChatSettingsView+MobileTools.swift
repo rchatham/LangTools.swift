@@ -6,10 +6,10 @@ extension ChatSettingsView {
     var mobileToolsSection: some View {
         Section(header: Text("AI Tools")) {
             Toggle("Enable AI Tools", isOn: $viewModel.toolManager.toolsEnabled)
-                .toggleStyle(SwitchToggleStyle())
+                .toggleStyle(.toggle)
             
             if viewModel.toolManager.toolsEnabled {
-                ForEach(viewModel.toolManager.allToolConfigurations(), id: \.id) { config in
+                ForEach(viewModel.toolManager.allToolConfigurations()) { config in
                     HStack {
                         Image(systemName: config.iconName)
                             .foregroundColor(.blue)

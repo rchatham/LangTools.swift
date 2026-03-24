@@ -3,7 +3,7 @@ import LangTools
 import OpenAI
 
 /// Configuration for a tool including both functional and UI aspects.
-public struct ToolConfiguration {
+public struct ToolConfiguration: Identifiable {
     /// Tool identifier - must be unique
     public let id: String
 

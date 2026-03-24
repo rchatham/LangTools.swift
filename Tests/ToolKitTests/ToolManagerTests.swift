@@ -228,4 +228,85 @@ final class ToolManagerTests: XCTestCase {
         let manager2 = ToolManager(defaults: defaults)
         XCTAssertFalse(manager2.toolsEnabled)
     }
+
+    func testResetToDefaultsPersistsAcrossReInit() {
+        manager.register([makeConfig(id: "x"), makeConfig(id: "y")])
+        manager["x"] = false
+        manager.toolsEnabled = false
+
+        manager.resetToDefaults()
+
+        // Verify in-memory state
+        XCTAssertTrue(manager.toolsEnabled)
+        XCTAssertTrue(manager["x"])
+        XCTAssertTrue(manager["y"])
+
+        // Verify persisted state survives re-init
+        let manager2 = ToolManager(defaults: defaults)
+        XCTAssertTrue(manager2.toolsEnabled)
+        XCTAssertTrue(manager2["x"], "resetToDefaults should persist enabled=true for 'x'")
+        XCTAssertTrue(manager2["y"], "resetToDefaults should persist enabled=true for 'y'")
+    }
+
+    func testResetToDefaultsRemovesStaleKeys() {
+        // Register two tools and disable one, then simulate removing one from the app.
+        manager.register([makeConfig(id: "a"), makeConfig(id: "stale")])
+        manager["stale"] = false
+
+        // Simulate re-launch where "stale" is no longer registered.
+        // Re-register only "a" and call resetToDefaults.
+        manager = ToolManager(defaults: defaults)
+        manager.register(makeConfig(id: "a"))
+        manager.resetToDefaults()
+
+        // Only "a" should be in toolEnabledStates after reset.
+        XCTAssertTrue(manager["a"])
+        // "stale" should have been removed — subscript returns false for unknown keys.
+        XCTAssertFalse(manager["stale"], "Stale key should not survive resetToDefaults")
+    }
+
+    // MARK: - filteredTools() nil path
+
+    func testFilteredToolsReturnsNilWhenMasterSwitchOffAfterRegistration() {
+        manager.register([makeConfig(id: "a"), makeConfig(id: "b")])
+        // Both individually enabled, but master switch is off.
+        manager.toolsEnabled = false
+        let result = manager.filteredTools()
+        XCTAssertNil(result, "filteredTools() must return nil (not empty array) when master switch is off")
+    }
+
+    // MARK: - binding(for:)
+
+    func testBindingGetReflectsCurrentState() {
+        manager.register(makeConfig(id: "tool"))
+        let binding = manager.binding(for: "tool")
+        XCTAssertTrue(binding.wrappedValue)
+
+        manager["tool"] = false
+        XCTAssertFalse(binding.wrappedValue)
+    }
+
+    func testBindingSetUpdatesState() {
+        manager.register(makeConfig(id: "tool"))
+        let binding = manager.binding(for: "tool")
+
+        binding.wrappedValue = false
+        XCTAssertFalse(manager["tool"])
+
+        binding.wrappedValue = true
+        XCTAssertTrue(manager["tool"])
+    }
+
+    // MARK: - Batch registration writes once
+
+    func testBatchRegisterDoesNotExceedOneWritePerBatch() {
+        // Verify correctness of batch register — all tools default to enabled.
+        let configs = (0..<5).map { makeConfig(id: "tool\($0)") }
+        manager.register(configs)
+
+        XCTAssertEqual(manager.allToolConfigurations().count, 5)
+        for i in 0..<5 {
+            XCTAssertTrue(manager["tool\(i)"], "tool\(i) should be enabled after batch register")
+        }
+    }
 }

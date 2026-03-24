@@ -17,6 +17,8 @@ public protocol ObservableObject: AnyObject {}
 @propertyWrapper
 public struct Published<Value> {
     public var wrappedValue: Value
+    /// projectedValue stub — no change notifications on non-Combine platforms.
+    public var projectedValue: Value { wrappedValue }
     public init(wrappedValue: Value) { self.wrappedValue = wrappedValue }
 }
 #endif
@@ -52,8 +54,8 @@ public class ToolManager: ObservableObject {
         didSet { _persistAllSettings() }
     }
 
-    /// Per-tool enabled states. Use `_setStates(_:)` for bulk mutations so that
-    /// only one `saveSettings()` call is made.
+    /// Per-tool enabled states.
+    /// Use `_setStates(_:)` for bulk mutations — it performs a single persist.
     @Published private var toolEnabledStates: [String: Bool] = [:] {
         didSet { _persistAllSettings() }
     }
@@ -109,9 +111,17 @@ public class ToolManager: ObservableObject {
         }
     }
 
-    /// Register multiple tool configurations.
+    /// Register multiple tool configurations in a single batch (one UserDefaults write).
     public func register(_ configurations: [ToolConfiguration]) {
-        for config in configurations { register(config) }
+        var updatedStates = toolEnabledStates
+        for config in configurations {
+            toolConfigurations[config.id] = config
+            if updatedStates[config.id] == nil {
+                updatedStates[config.id] = true
+            }
+        }
+        // Assign once so toolEnabledStates.didSet fires only one _persistAllSettings().
+        _setStates(updatedStates)
     }
 
     // MARK: - Querying
@@ -171,13 +181,17 @@ public class ToolManager: ObservableObject {
     }
 
     /// Re-enable all registered tools and turn the master switch on.
-    /// Performs a single batch write to UserDefaults.
+    ///
+    /// Replaces `toolEnabledStates` with a fresh dict keyed only to currently-registered
+    /// tools, discarding any stale persisted keys from tools that are no longer registered.
+    /// Performs exactly two UserDefaults writes: one from `toolsEnabled.didSet` and one
+    /// from `_setStates` (via `toolEnabledStates.didSet`).
     public func resetToDefaults() {
         toolsEnabled = true
-        // Batch-mutate without triggering individual didSet saves.
-        var updated = toolEnabledStates
-        for id in toolConfigurations.keys { updated[id] = true }
-        _setStates(updated)
+        // Build a clean state dict from the current registration set only —
+        // this also removes stale keys for tools that are no longer registered.
+        let fresh = Dictionary(uniqueKeysWithValues: toolConfigurations.keys.map { ($0, true) })
+        _setStates(fresh)
     }
 
     // MARK: - Debug
@@ -204,11 +218,10 @@ public class ToolManager: ObservableObject {
 
     // MARK: - Private helpers
 
-    /// Directly replace toolEnabledStates without triggering intermediate didSet saves.
+    /// Replace `toolEnabledStates` in one assignment so `didSet` fires exactly once,
+    /// triggering a single `_persistAllSettings()` call.
     private func _setStates(_ states: [String: Bool]) {
         toolEnabledStates = states
-        // _persistAllSettings() is triggered by toolEnabledStates.didSet above,
-        // so no extra call needed.
     }
 
     /// Single point-of-truth for all UserDefaults writes.

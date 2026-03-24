@@ -204,10 +204,10 @@ public struct ChatSettingsView: View {
 
             Section(header: Text("AI Tools")) {
                 Toggle("Enable AI Tools", isOn: $viewModel.toolManager.toolsEnabled)
-                    .toggleStyle(SwitchToggleStyle())
+                    .toggleStyle(.toggle)
 
                 if viewModel.toolManager.toolsEnabled {
-                    ForEach(viewModel.toolManager.allToolConfigurations(), id: \.id) { config in
+                    ForEach(viewModel.toolManager.allToolConfigurations()) { config in
                         Toggle(config.displayName, isOn: viewModel.toolManager.binding(for: config.id))
                     }
                 } else {
@@ -237,7 +237,7 @@ public struct ChatSettingsView: View {
 
             Section(header: Text("Voice Input")) {
                 Toggle("Enable Voice Input", isOn: $viewModel.toolSettings.voiceInputEnabled)
-                    .toggleStyle(SwitchToggleStyle())
+                    .toggleStyle(.toggle)
 
                 if viewModel.toolSettings.voiceInputEnabled {
                     Picker("Speech Provider", selection: $viewModel.toolSettings.sttProvider) {
@@ -415,7 +415,7 @@ public struct ChatSettingsView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Toggle("Voice Input", isOn: $viewModel.toolSettings.voiceInputEnabled)
-                            .toggleStyle(SwitchToggleStyle())
+                            .toggleStyle(.toggle)
                             .padding(.vertical, 4)
 
                         Text("Enable the microphone button to dictate messages using speech-to-text.")
@@ -485,7 +485,7 @@ public struct ChatSettingsView: View {
                             Divider()
 
                             Toggle("Replace send button", isOn: $viewModel.toolSettings.voiceButtonReplaceSend)
-                                .toggleStyle(SwitchToggleStyle())
+                                .toggleStyle(.toggle)
 
                             Text("Show microphone button in place of send button when text field is empty")
                                 .font(.caption)
@@ -519,7 +519,7 @@ public struct ChatSettingsView: View {
                                 .font(.headline)
 
                             Toggle("Enable auto-stop", isOn: $viewModel.toolSettings.autoStopOnSilence)
-                                .toggleStyle(SwitchToggleStyle())
+                                .toggleStyle(.toggle)
 
                             if viewModel.toolSettings.autoStopOnSilence {
                                 HStack {
@@ -544,7 +544,7 @@ public struct ChatSettingsView: View {
                                 .font(.headline)
 
                             Toggle("Show partial results", isOn: $viewModel.toolSettings.streamingTranscriptionEnabled)
-                                .toggleStyle(SwitchToggleStyle())
+                                .toggleStyle(.toggle)
 
                             Text("Display transcribed text as you speak, before recording is complete.")
                                 .font(.caption)
@@ -554,7 +554,7 @@ public struct ChatSettingsView: View {
                                viewModel.toolSettings.sttProvider == .openAIWhisper {
 
                                 Toggle("Simulated streaming", isOn: $viewModel.toolSettings.enableOpenAISimulatedStreaming)
-                                    .toggleStyle(SwitchToggleStyle())
+                                    .toggleStyle(.toggle)
 
                                 if viewModel.toolSettings.enableOpenAISimulatedStreaming {
                                     HStack {
@@ -1023,7 +1023,7 @@ extension ChatSettingsView {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Toggle("Enable AI Tools", isOn: $viewModel.toolManager.toolsEnabled)
-                            .toggleStyle(SwitchToggleStyle())
+                            .toggleStyle(.toggle)
                             .padding(.vertical, 4)
 
                         Text("When disabled, the AI will not use any tools to perform actions.")
@@ -1039,7 +1039,9 @@ extension ChatSettingsView {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 16) {
                                 ForEach(Array(viewModel.toolManager.allToolConfigurations().enumerated()), id: \.element.id) { index, config in
-                                    if index > 0 { Divider() }
+                                    if index > 0 {
+                                        Divider()
+                                    }
                                     toolToggleRow(
                                         config: config,
                                         isOn: viewModel.toolManager.binding(for: config.id)
@@ -1061,7 +1063,7 @@ extension ChatSettingsView {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Toggle("Rich Content Cards", isOn: $viewModel.toolSettings.richContentEnabled)
-                            .toggleStyle(SwitchToggleStyle())
+                            .toggleStyle(.toggle)
                             .padding(.vertical, 4)
 
                         Text("Display weather, contacts, and events as visual cards below messages instead of plain text.")
