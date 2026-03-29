@@ -2,7 +2,9 @@
 //  ChatSettingsView.swift
 //
 
+import Combine
 import SwiftUI
+import ToolKit
 
 public struct ChatSettingsView: View {
     @ObservedObject public var viewModel: ViewModel
@@ -12,16 +14,16 @@ public struct ChatSettingsView: View {
     @State private var selectedTab: SettingsTab = .general
     @State private var selectedCustomTab: String? = nil
 
-    enum SettingsTab: String, CaseIterable, Identifiable {
+    public enum SettingsTab: String, CaseIterable, Identifiable {
         case general = "General"
         case systemPrompt = "System Prompt"
         case advanced = "Advanced"
         case localModels = "Local Models"
         case tools = "Tools"
 
-        var id: String { self.rawValue }
+        public var id: String { self.rawValue }
 
-        var icon: String {
+        public var icon: String {
             switch self {
             case .general: return "gear"
             case .systemPrompt: return "text.bubble"
@@ -203,17 +205,13 @@ public struct ChatSettingsView: View {
             Button("Clear messages", role: .destructive) { viewModel.clearMessages() }
 
             Section(header: Text("AI Tools")) {
-                Toggle("Enable AI Tools", isOn: $viewModel.toolSettings.toolsEnabled)
-                    .toggleStyle(SwitchToggleStyle())
+                Toggle("Enable AI Tools", isOn: $viewModel.toolManager.toolsEnabled)
+                    .toggleStyle(.switch)
 
-                if viewModel.toolSettings.toolsEnabled {
-                    Toggle("Calendar", isOn: $viewModel.toolSettings.calendarToolEnabled)
-                    Toggle("Reminders", isOn: $viewModel.toolSettings.remindersToolEnabled)
-                    Toggle("Research", isOn: $viewModel.toolSettings.researchToolEnabled)
-                    Toggle("Maps", isOn: $viewModel.toolSettings.mapsToolEnabled)
-                    Toggle("Contacts", isOn: $viewModel.toolSettings.contactsToolEnabled)
-                    Toggle("Weather", isOn: $viewModel.toolSettings.weatherToolEnabled)
-                    Toggle("Files", isOn: $viewModel.toolSettings.filesToolEnabled)
+                if viewModel.toolManager.toolsEnabled {
+                    ForEach(viewModel.toolManager.allToolConfigurations()) { config in
+                        Toggle(config.displayName, isOn: viewModel.toolManager.binding(for: config.id))
+                    }
                 } else {
                     Text("Enable AI Tools to configure individual tools")
                         .font(.caption)
@@ -221,7 +219,7 @@ public struct ChatSettingsView: View {
                 }
 
                 Button("Reset Tool Settings") {
-                    viewModel.toolSettings.resetToDefaults()
+                    viewModel.toolManager.resetToDefaults()
                 }
             }
 
@@ -241,7 +239,7 @@ public struct ChatSettingsView: View {
 
             Section(header: Text("Voice Input")) {
                 Toggle("Enable Voice Input", isOn: $viewModel.toolSettings.voiceInputEnabled)
-                    .toggleStyle(SwitchToggleStyle())
+                    .toggleStyle(.switch)
 
                 if viewModel.toolSettings.voiceInputEnabled {
                     Picker("Speech Provider", selection: $viewModel.toolSettings.sttProvider) {
@@ -419,7 +417,7 @@ public struct ChatSettingsView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Toggle("Voice Input", isOn: $viewModel.toolSettings.voiceInputEnabled)
-                            .toggleStyle(SwitchToggleStyle())
+                            .toggleStyle(.switch)
                             .padding(.vertical, 4)
 
                         Text("Enable the microphone button to dictate messages using speech-to-text.")
@@ -489,7 +487,7 @@ public struct ChatSettingsView: View {
                             Divider()
 
                             Toggle("Replace send button", isOn: $viewModel.toolSettings.voiceButtonReplaceSend)
-                                .toggleStyle(SwitchToggleStyle())
+                                .toggleStyle(.switch)
 
                             Text("Show microphone button in place of send button when text field is empty")
                                 .font(.caption)
@@ -523,7 +521,7 @@ public struct ChatSettingsView: View {
                                 .font(.headline)
 
                             Toggle("Enable auto-stop", isOn: $viewModel.toolSettings.autoStopOnSilence)
-                                .toggleStyle(SwitchToggleStyle())
+                                .toggleStyle(.switch)
 
                             if viewModel.toolSettings.autoStopOnSilence {
                                 HStack {
@@ -548,7 +546,7 @@ public struct ChatSettingsView: View {
                                 .font(.headline)
 
                             Toggle("Show partial results", isOn: $viewModel.toolSettings.streamingTranscriptionEnabled)
-                                .toggleStyle(SwitchToggleStyle())
+                                .toggleStyle(.switch)
 
                             Text("Display transcribed text as you speak, before recording is complete.")
                                 .font(.caption)
@@ -558,7 +556,7 @@ public struct ChatSettingsView: View {
                                viewModel.toolSettings.sttProvider == .openAIWhisper {
 
                                 Toggle("Simulated streaming", isOn: $viewModel.toolSettings.enableOpenAISimulatedStreaming)
-                                    .toggleStyle(SwitchToggleStyle())
+                                    .toggleStyle(.switch)
 
                                 if viewModel.toolSettings.enableOpenAISimulatedStreaming {
                                     HStack {
@@ -951,6 +949,7 @@ extension ChatSettingsView {
         @Published var systemMessage = UserDefaults.systemMessage
         @Published var apiKeyInputText: String = ""
         @Published var toolSettings = ToolSettings.shared
+        @Published public var toolManager = ToolManager.shared
 
         let clearMessages: () -> Void
 
@@ -964,8 +963,17 @@ extension ChatSettingsView {
         /// Custom tabs injected by the app (e.g., Backend settings)
         public var customTabs: [CustomSettingsTab] = []
 
+        /// Retains subscriptions that relay nested ObservableObject changes.
+        private var cancellables: Set<AnyCancellable> = []
+
         public init(clearMessages: @escaping () -> Void) {
             self.clearMessages = clearMessages
+            // ToolManager is a nested ObservableObject. SwiftUI won't re-render this view
+            // when ToolManager's @Published properties change unless we relay its
+            // objectWillChange through our own.
+            ToolManager.shared.objectWillChange
+                .sink { [weak self] _ in self?.objectWillChange.send() }
+                .store(in: &cancellables)
         }
 
         func loadSettings() {
@@ -1025,8 +1033,8 @@ extension ChatSettingsView {
                 // Master switch for all tools
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Toggle("Enable AI Tools", isOn: $viewModel.toolSettings.toolsEnabled)
-                            .toggleStyle(SwitchToggleStyle())
+                        Toggle("Enable AI Tools", isOn: $viewModel.toolManager.toolsEnabled)
+                            .toggleStyle(.switch)
                             .padding(.vertical, 4)
 
                         Text("When disabled, the AI will not use any tools to perform actions.")
@@ -1036,79 +1044,25 @@ extension ChatSettingsView {
                     .padding(8)
                 }
 
-                // Individual tool toggles
-                if viewModel.toolSettings.toolsEnabled {
+                // Individual tool toggles driven by ToolManager
+                if viewModel.toolManager.toolsEnabled {
                     GroupBox {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 16) {
-                                toolToggleRow(
-                                    title: "Calendar",
-                                    description: "Create, read, update, or delete calendar events",
-                                    icon: "calendar",
-                                    isOn: $viewModel.toolSettings.calendarToolEnabled
-                                )
-
-                                Divider()
-
-                                toolToggleRow(
-                                    title: "Reminders",
-                                    description: "Create, read, update, or complete reminders",
-                                    icon: "list.bullet.clipboard",
-                                    isOn: $viewModel.toolSettings.remindersToolEnabled
-                                )
-
-                                Divider()
-
-                                toolToggleRow(
-                                    title: "Research",
-                                    description: "Perform web research on topics using internet sources",
-                                    icon: "magnifyingglass",
-                                    isOn: $viewModel.toolSettings.researchToolEnabled
-                                )
-
-                                Divider()
-
-                                toolToggleRow(
-                                    title: "Maps",
-                                    description: "Location search, directions, and travel time estimates",
-                                    icon: "map",
-                                    isOn: $viewModel.toolSettings.mapsToolEnabled
-                                )
-
-                                Divider()
-
-                                toolToggleRow(
-                                    title: "Contacts",
-                                    description: "Create, search, update, or delete contacts",
-                                    icon: "person.crop.circle",
-                                    isOn: $viewModel.toolSettings.contactsToolEnabled
-                                )
-
-                                Divider()
-
-                                toolToggleRow(
-                                    title: "Weather",
-                                    description: "Get current weather information for locations",
-                                    icon: "cloud.sun.fill",
-                                    isOn: $viewModel.toolSettings.weatherToolEnabled
-                                )
-
-                                #if DEBUG
-                                Divider()
-
-                                toolToggleRow(
-                                    title: "Files",
-                                    description: "Manage files and directories on your device",
-                                    icon: "folder",
-                                    isOn: $viewModel.toolSettings.filesToolEnabled
-                                )
-                                #endif
+                                ForEach(Array(viewModel.toolManager.allToolConfigurations().enumerated()), id: \.element.id) { index, config in
+                                    if index > 0 {
+                                        Divider()
+                                    }
+                                    toolToggleRow(
+                                        config: config,
+                                        isOn: viewModel.toolManager.binding(for: config.id)
+                                    )
+                                }
                             }
                             .padding(8)
                         }
                         .frame(maxHeight: 300)
                     }
-
                 } else {
                     Text("Enable AI Tools to configure individual tools")
                         .foregroundColor(.secondary)
@@ -1120,7 +1074,7 @@ extension ChatSettingsView {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Toggle("Rich Content Cards", isOn: $viewModel.toolSettings.richContentEnabled)
-                            .toggleStyle(SwitchToggleStyle())
+                            .toggleStyle(.switch)
                             .padding(.vertical, 4)
 
                         Text("Display weather, contacts, and events as visual cards below messages instead of plain text.")
@@ -1132,7 +1086,7 @@ extension ChatSettingsView {
 
                 // Reset button
                 Button(action: {
-                    viewModel.toolSettings.resetToDefaults()
+                    viewModel.toolManager.resetToDefaults()
                 }) {
                     Text("Reset to Default Settings")
                 }
@@ -1153,7 +1107,7 @@ extension ChatSettingsView {
         }
     }
 
-    // Helper function to create a tool toggle row
+    // Helper function to create a tool toggle row from explicit fields
     private func toolToggleRow(
         title: String,
         description: String,
@@ -1179,6 +1133,19 @@ extension ChatSettingsView {
             Toggle("", isOn: isOn)
                 .labelsHidden()
         }
+    }
+
+    // Helper function to create a tool toggle row from a ToolConfiguration
+    private func toolToggleRow(
+        config: ToolConfiguration,
+        isOn: Binding<Bool>
+    ) -> some View {
+        toolToggleRow(
+            title: config.displayName,
+            description: config.description,
+            icon: config.iconName,
+            isOn: isOn
+        )
     }
 }
 

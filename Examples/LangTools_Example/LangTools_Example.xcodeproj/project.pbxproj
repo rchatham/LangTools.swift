@@ -53,6 +53,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		B14D84622F6E489600E2BD0A /* AudioLevelMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioLevelMonitor.swift; sourceTree = "<group>"; };
+		B14D84632F6E48B500E2BD0A /* ToolManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolManager.swift; sourceTree = "<group>"; };
+		B14D84642F6E48CF00E2BD0A /* ToolConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolConfiguration.swift; sourceTree = "<group>"; };
 		B17671D22DF7852A009503E4 /* WebScrapingAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebScrapingAgent.swift; sourceTree = "<group>"; };
 		B17671FF2DF78C8A009503E4 /* WebScraperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebScraperService.swift; sourceTree = "<group>"; };
 		B181AE892F0F1ACC001DAA40 /* AudioConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioConverter.swift; sourceTree = "<group>"; };
@@ -150,6 +153,7 @@
 		B181AE8C2F0F1ACC001DAA40 /* Audio */ = {
 			isa = PBXGroup;
 			children = (
+				B14D84622F6E489600E2BD0A /* AudioLevelMonitor.swift */,
 				B181AE992F10657E001DAA40 /* Providers */,
 				B181AE9A2F10657E001DAA40 /* STTProvider.swift */,
 				B181AE892F0F1ACC001DAA40 /* AudioConverter.swift */,
@@ -206,6 +210,7 @@
 		B19FD1802DD67F0400E7BEB5 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				B14D84632F6E48B500E2BD0A /* ToolManager.swift */,
 				B19FD1B12DD683A200E7BEB5 /* KeychainService.swift */,
 				B19FD14B2DD54DEB00E7BEB5 /* SerperService.swift */,
 				B19FD1452DD54DEB00E7BEB5 /* CalendarService.swift */,
@@ -276,6 +281,7 @@
 		B19FD1CC2DD683DA00E7BEB5 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				B14D84642F6E48CF00E2BD0A /* ToolConfiguration.swift */,
 				B19FD1CA2DD683DA00E7BEB5 /* Message.swift */,
 				B19FD1CB2DD683DA00E7BEB5 /* Model.swift */,
 			);
@@ -431,7 +437,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				B19B31A72F2C997800645F8A /* XCLocalSwiftPackageReference "../../../ChatUI" */,
-				B19B31B02F2C9A0600645F8A /* XCLocalSwiftPackageReference "../../../LangTools.swift" */,
+				B19B31B02F2C9A0600645F8A /* XCLocalSwiftPackageReference "../../" */,
 				B1E4E5112F314EF400AE11AA /* XCLocalSwiftPackageReference "../LangTools_Example" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -831,9 +837,9 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../../ChatUI;
 		};
-		B19B31B02F2C9A0600645F8A /* XCLocalSwiftPackageReference "../../../LangTools.swift" */ = {
+		B19B31B02F2C9A0600645F8A /* XCLocalSwiftPackageReference "../../" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../../LangTools.swift;
+			relativePath = ../../;
 		};
 		B1E4E5112F314EF400AE11AA /* XCLocalSwiftPackageReference "../LangTools_Example" */ = {
 			isa = XCLocalSwiftPackageReference;

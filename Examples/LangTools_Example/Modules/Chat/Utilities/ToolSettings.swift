@@ -30,7 +30,7 @@ public enum STTLanguage: String, CaseIterable, Codable {
     case arabic = "ar"
     case russian = "ru"
     case hindi = "hi"
-    
+
     var displayName: String {
         switch self {
         case .auto: return "Auto-detect"
@@ -57,7 +57,7 @@ public enum WhisperKitModelSize: String, CaseIterable, Codable {
     case small = "small"
     case medium = "medium"
     case largeV3 = "large-v3"
-    
+
     /// Display name with approximate size
     public var displayName: String {
         switch self {
@@ -77,7 +77,7 @@ public enum SilenceTimeout: Double, CaseIterable, Codable {
     case twoSeconds = 2.0
     case threeSeconds = 3.0
     case fiveSeconds = 5.0
-    
+
     var displayName: String {
         switch self {
         case .oneSecond: return "1 second"
@@ -94,7 +94,7 @@ public enum StreamingChunkInterval: Double, CaseIterable, Codable {
     case twoSeconds = 2.0
     case threeSeconds = 3.0
     case fiveSeconds = 5.0
-    
+
     var displayName: String {
         switch self {
         case .twoSeconds: return "2 seconds"
@@ -104,56 +104,10 @@ public enum StreamingChunkInterval: Double, CaseIterable, Codable {
     }
 }
 
-/// Represents settings for all available tools in the app
+/// Non-tool app settings: rich content, voice input (STT), and streaming.
+/// Tool enable/disable state is managed by ToolManager.
 public class ToolSettings: ObservableObject {
-    // Singleton instance
     public static let shared = ToolSettings()
-
-    /// Master switch to enable/disable all tools
-    @Published var toolsEnabled: Bool {
-        didSet {
-            // If tools are disabled, ensure all individual tools are also disabled
-            if !toolsEnabled {
-                calendarToolEnabled = false
-                remindersToolEnabled = false
-                researchToolEnabled = false
-                mapsToolEnabled = false
-                contactsToolEnabled = false
-                weatherToolEnabled = false
-                filesToolEnabled = false
-            }
-            saveSettings()
-        }
-    }
-
-    // Individual tool settings
-    @Published var calendarToolEnabled: Bool {
-        didSet { saveSettings() }
-    }
-
-    @Published var remindersToolEnabled: Bool {
-        didSet { saveSettings() }
-    }
-
-    @Published var researchToolEnabled: Bool {
-        didSet { saveSettings() }
-    }
-
-    @Published var mapsToolEnabled: Bool {
-        didSet { saveSettings() }
-    }
-
-    @Published var contactsToolEnabled: Bool {
-        didSet { saveSettings() }
-    }
-
-    @Published var weatherToolEnabled: Bool {
-        didSet { saveSettings() }
-    }
-
-    @Published var filesToolEnabled: Bool {
-        didSet { saveSettings() }
-    }
 
     /// Enable/disable rich content cards (weather, contacts, events displayed as visual cards)
     @Published public var richContentEnabled: Bool {
@@ -215,81 +169,53 @@ public class ToolSettings: ObservableObject {
     }
 
     private init() {
-        // Load settings from UserDefaults, defaulting to true if not set
-        self.toolsEnabled = UserDefaults.standard.bool(forKey: "toolsEnabled")
-        self.calendarToolEnabled = UserDefaults.standard.bool(forKey: "calendarToolEnabled")
-        self.remindersToolEnabled = UserDefaults.standard.bool(forKey: "remindersToolEnabled")
-        self.researchToolEnabled = UserDefaults.standard.bool(forKey: "researchToolEnabled")
-        self.mapsToolEnabled = UserDefaults.standard.bool(forKey: "mapsToolEnabled")
-        self.contactsToolEnabled = UserDefaults.standard.bool(forKey: "contactsToolEnabled")
-        self.weatherToolEnabled = UserDefaults.standard.bool(forKey: "weatherToolEnabled")
-        self.filesToolEnabled = UserDefaults.standard.bool(forKey: "filesToolEnabled")
         self.richContentEnabled = UserDefaults.standard.object(forKey: "richContentEnabled") as? Bool ?? true
         self.voiceInputEnabled = UserDefaults.standard.object(forKey: "voiceInputEnabled") as? Bool ?? true
-        
-        // Load STT provider, converting from raw string if necessary
+
         if let rawValue = UserDefaults.standard.string(forKey: "sttProviderRawValue"),
            let provider = STTProvider(rawValue: rawValue) {
             self.sttProvider = provider
         } else {
             self.sttProvider = .appleSpeech
         }
-        
+
         self.voiceButtonReplaceSend = UserDefaults.standard.object(forKey: "voiceButtonReplaceSend") as? Bool ?? false
-        
-        // Load STT language
+
         if let rawValue = UserDefaults.standard.string(forKey: "sttLanguage"),
            let language = STTLanguage(rawValue: rawValue) {
             self.sttLanguage = language
         } else {
             self.sttLanguage = .auto
         }
-        
-        // Load WhisperKit model size
+
         if let rawValue = UserDefaults.standard.string(forKey: "whisperKitModelSize"),
            let modelSize = WhisperKitModelSize(rawValue: rawValue) {
             self.whisperKitModelSize = modelSize
         } else {
             self.whisperKitModelSize = .base
         }
-        
+
         self.autoStopOnSilence = UserDefaults.standard.object(forKey: "autoStopOnSilence") as? Bool ?? true
-        
-        // Load silence timeout (maintain old key for backward compatibility)
+
         if let rawValue = UserDefaults.standard.object(forKey: "silenceTimeoutSeconds") as? Double,
            let timeout = SilenceTimeout(rawValue: rawValue) {
             self.silenceTimeout = timeout
         } else {
             self.silenceTimeout = .twoSeconds
         }
-        
+
         self.streamingTranscriptionEnabled = UserDefaults.standard.object(forKey: "streamingTranscriptionEnabled") as? Bool ?? true
         self.enableOpenAISimulatedStreaming = UserDefaults.standard.object(forKey: "enableOpenAISimulatedStreaming") as? Bool ?? true
-        
-        // Load streaming chunk interval (maintain old key for backward compatibility)
+
         if let rawValue = UserDefaults.standard.object(forKey: "streamingChunkIntervalSeconds") as? Double,
            let interval = StreamingChunkInterval(rawValue: rawValue) {
             self.streamingChunkInterval = interval
         } else {
             self.streamingChunkInterval = .threeSeconds
         }
-
-        // If this is first launch, set defaults
-        if !UserDefaults.standard.bool(forKey: "toolSettingsInitialized") {
-            resetToDefaults()
-            UserDefaults.standard.set(true, forKey: "toolSettingsInitialized")
-        }
     }
 
     func saveSettings() {
-        UserDefaults.standard.set(toolsEnabled, forKey: "toolsEnabled")
-        UserDefaults.standard.set(calendarToolEnabled, forKey: "calendarToolEnabled")
-        UserDefaults.standard.set(remindersToolEnabled, forKey: "remindersToolEnabled")
-        UserDefaults.standard.set(researchToolEnabled, forKey: "researchToolEnabled")
-        UserDefaults.standard.set(mapsToolEnabled, forKey: "mapsToolEnabled")
-        UserDefaults.standard.set(contactsToolEnabled, forKey: "contactsToolEnabled")
-        UserDefaults.standard.set(weatherToolEnabled, forKey: "weatherToolEnabled")
-        UserDefaults.standard.set(filesToolEnabled, forKey: "filesToolEnabled")
         UserDefaults.standard.set(richContentEnabled, forKey: "richContentEnabled")
         UserDefaults.standard.set(voiceInputEnabled, forKey: "voiceInputEnabled")
         UserDefaults.standard.set(sttProvider.rawValue, forKey: "sttProviderRawValue")
@@ -304,14 +230,6 @@ public class ToolSettings: ObservableObject {
     }
 
     func resetToDefaults() {
-        toolsEnabled = true
-        calendarToolEnabled = true
-        remindersToolEnabled = true
-        researchToolEnabled = true
-        mapsToolEnabled = true
-        contactsToolEnabled = true
-        weatherToolEnabled = true
-        filesToolEnabled = true
         richContentEnabled = true
         voiceInputEnabled = true
         sttProvider = .appleSpeech
@@ -325,31 +243,6 @@ public class ToolSettings: ObservableObject {
         streamingChunkInterval = .threeSeconds
         saveSettings()
     }
-
-    /// Determine if a specific tool is enabled by name
-    func isToolEnabled(name: String) -> Bool {
-        guard toolsEnabled else { return false }
-
-        switch name.lowercased() {
-        case "manage_calendar":
-            return calendarToolEnabled
-        case "manage_reminders":
-            return remindersToolEnabled
-        case "perform_research":
-            return researchToolEnabled
-        case "manage_maps":
-            return mapsToolEnabled
-        case "manage_contacts":
-            return contactsToolEnabled
-        case "get_weather_information":
-            return weatherToolEnabled
-        case "manage_files":
-            return filesToolEnabled
-        default:
-            // Unknown tools default to enabled if master switch is on
-            return true
-        }
-    }
 }
 
 // Extension to UserDefaults for convenient access
@@ -358,4 +251,3 @@ extension UserDefaults {
         get { ToolSettings.shared }
     }
 }
-

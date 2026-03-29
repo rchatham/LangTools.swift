@@ -7,8 +7,8 @@
 import Agents
 import Foundation
 import LangTools
+import ToolKit
 
-var useMultiAgent: Bool = false
 
 @Observable
 public class MessageService: Sendable {
@@ -25,16 +25,19 @@ public class MessageService: Sendable {
     /// Callback fired when a message is added or modified (for persistence)
     public var messageUpdatedCallback: ((Message) -> Void)?
 
-    /// Returns a filtered list of tools based on tool settings
+    /// Snapshot of tools filtered by the current ToolManager state.
+    /// Delegates to `ToolManager.filteredTools()` for the enabled-id set, then
+    /// intersects with `self.tools` so future changes to ToolManager filtering
+    /// logic are automatically picked up here.
+    /// Hops to the main actor because ToolManager is @MainActor-isolated.
+    @MainActor
     var filteredTools: [Tool]? {
-        // Return nil if master tool switch is disabled
-        guard ToolSettings.shared.toolsEnabled else { return nil }
-
-        // If tools exist, filter them based on individual tool settings
-        return tools?.filter { ToolSettings.shared.isToolEnabled(name: $0.name) }
+        guard let enabledTools = ToolManager.shared.filteredTools() else { return nil }
+        let enabledNames = Set(enabledTools.map { $0.name })
+        return tools?.filter { enabledNames.contains($0.name) }
     }
 
-    public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [Agent]? = nil, tools: [Tool]? = nil) {
+    public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [any Agent]? = nil, tools: [Tool]? = nil) {
         self.networkClient = networkClient
         self.tools = agents?.map { .init(agent: $0, eventHandler: handleAgentEvent) } + tools
     }
@@ -49,8 +52,11 @@ public class MessageService: Sendable {
             var currentMessages = messages
             currentMessages.insert(Message(text: systemMessage(), role: .system), at: 0)
 
+            // Snapshot filtered tools on the main actor before entering the async stream.
+            let activeTools = await filteredTools
+
             var content: String = ""
-            for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: filteredTools) {
+            for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: activeTools) {
                 content += chunk
                 if !(messages.last?.isAssistant ?? false) {
                     if chunk.isEmpty { continue }
@@ -116,13 +122,26 @@ extension MessageService {
 
             case .toolCompleted(let agent, let result):
                 guard let result else { break }
-                let message = Message.createAgentToolReturnedEvent(
-                    agentName: agent,
-                    result: result
-                )
-                messages.append(message, for: agent)
+                // Check if result contains structured content cards
+                if let cardMessage = parseContentCards(from: result) {
+                    messages.append(cardMessage, for: agent)
+                } else {
+                    let message = Message.createAgentToolReturnedEvent(
+                        agentName: agent,
+                        result: result
+                    )
+                    messages.append(message, for: agent)
+                }
 
-            case .completed(let agent, let result, let is_error):
+            case .completed(let agent, let result, let structuredResult, let is_error):
+                // Check for structured content cards in the result
+                if let data = structuredResult, !is_error {
+                    // Try to parse as EventCards (can add more card types here)
+                    if let cardMessage = parseStructuredResult(data, for: agent) {
+                        messages.append(cardMessage, for: agent)
+                    }
+                }
+
                 let message = Message.createAgentCompletionEvent(
                     agentName: agent,
                     result: result,
@@ -140,6 +159,105 @@ extension MessageService {
             default: fatalError("we are not testing this right now")
             }
         }
+    }
+
+    // MARK: - Agent to Card Type Mapping
+
+    /// Maps agent names to their corresponding card types
+    /// The consumer (e.g., EnhancedMessageView) uses this type to decode the appropriate model
+    /// NOTE: Keys must match the agent's `name` property exactly (camelCase)
+    private static let agentCardTypes: [String: String] = [
+        "calendarAgent": "event",
+        "weatherAgent": "weather",
+        "contactsAgent": "contact",
+        "mapsAgent": "location",   // MapsAgent, not LocationAgent
+        "financeAgent": "finance"
+    ]
+
+    /// Parse tool result for structured content cards (legacy string-based parsing)
+    /// Returns a Message with contentCards if found, nil otherwise
+    private func parseContentCards(from result: String) -> Message? {
+        // Check for card JSON markers (legacy approach)
+        let markers: [(prefix: String, type: String)] = [
+            ("EVENT_CARDS_JSON:", "event"),
+            ("WEATHER_CARDS_JSON:", "weather"),
+            ("CONTACT_CARDS_JSON:", "contact"),
+            ("LOCATION_CARDS_JSON:", "location"),
+            ("FINANCE_CARDS_JSON:", "finance")
+        ]
+
+        for marker in markers {
+            if result.hasPrefix(marker.prefix) {
+                let jsonString = String(result.dropFirst(marker.prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                // Count items by parsing as generic array
+                if let data = jsonString.data(using: .utf8),
+                   let items = try? JSONDecoder().decode([AnyCodable].self, from: data) {
+                    let count = items.count
+                    let content = ContentCardsContent(
+                        cardType: marker.type,
+                        message: count > 0 ? "Found \(count) \(marker.type)\(count == 1 ? "" : "s")" : nil,
+                        cardsJSON: jsonString,
+                        cardCount: count
+                    )
+                    return Message.contentCards(content)
+                }
+            }
+        }
+
+        return nil
+    }
+
+    /// Parse structured result data from agent completion (new structured output approach)
+    /// Returns a Message with contentCards if data matches a known card type
+    private func parseStructuredResult(_ data: Data, for agent: String) -> Message? {
+        // Determine card type from agent name
+        guard let cardType = Self.agentCardTypes[agent] else {
+            return nil
+        }
+
+        // Convert data to JSON string for storage
+        guard let jsonString = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+
+        // Try to determine if it's a single item or array, and get count
+        var cardCount = 1
+        var cardsJSON = jsonString
+
+        // Check if it's already an array
+        if let items = try? JSONDecoder().decode([AnyCodable].self, from: data) {
+            cardCount = items.count
+        } else if (try? JSONDecoder().decode(AnyCodable.self, from: data)) != nil {
+            // Single item - wrap in array for consistent handling
+            cardsJSON = "[\(jsonString)]"
+            cardCount = 1
+        } else {
+            return nil
+        }
+
+        let message: String? = cardCount > 0 ? "Found \(cardCount) \(cardType)\(cardCount == 1 ? "" : "s")" : nil
+
+        let content = ContentCardsContent(
+            cardType: cardType,
+            message: message,
+            cardsJSON: cardsJSON,
+            cardCount: cardCount
+        )
+        return Message.contentCards(content)
+    }
+}
+
+// MARK: - Generic JSON Wrapper for Type-Agnostic Parsing
+
+/// A type-erased Codable wrapper for counting JSON items without knowing their concrete type
+private struct AnyCodable: Codable {
+    init(from decoder: Decoder) throws {
+        // We don't need to store the value, just successfully decode it
+        _ = try decoder.singleValueContainer()
+    }
+
+    func encode(to encoder: Encoder) throws {
+        // Not needed for our use case
     }
 }
 
