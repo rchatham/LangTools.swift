@@ -13,6 +13,7 @@ import OpenAI
 import Anthropic
 import XAI
 import Gemini
+import Ollama
 #if canImport(AVFAudio)
 import AVFAudio
 #endif
@@ -27,7 +28,12 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 
     override init() {
         super.init()
-        APIService.allCases.forEach { llm in UserDefaults.getApiKey(for: llm).flatMap { register($0, for: llm) } }
+        // Register cloud providers that have stored API keys
+        APIService.allCases.filter { $0 != .ollama }.forEach { llm in
+            UserDefaults.getApiKey(for: llm).flatMap { register($0, for: llm) }
+        }
+        // Ollama runs locally — always register it (no API key required)
+        registerOllama()
     }
 
     func request(messages: [Message], model: Model, stream: Bool = false, tools: [OpenAI.Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) -> any LangToolsChatRequest & LangToolsStreamableRequest {
@@ -39,6 +45,8 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice)
         } else if case .gemini(let model) = model {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream/*, tools: tools, tool_choice: toolChoice*/)
+        } else if case .ollama(let model) = model {
+            return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice)
         } else {
             return Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
         }
@@ -54,6 +62,23 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         langToolchain.register(langTool(for: llm, with: apiKey))
     }
 
+    /// Register Ollama without an API key (local server, no auth needed).
+    func registerOllama(baseURL: URL = URL(string: "http://localhost:11434")!) {
+        langToolchain.register(Ollama(baseURL: baseURL))
+    }
+
+    /// Fetch the locally-available Ollama models and populate `OllamaModel.allCases`.
+    /// Silently does nothing if Ollama is not running.
+    func fetchOllamaModels() async {
+        guard let ollama = langToolchain.langTool(Ollama.self) else { return }
+        do {
+            let response = try await ollama.listModels()
+            OllamaModel.allCases = response.models.compactMap { OllamaModel(rawValue: $0.name) }
+        } catch {
+            // Ollama may not be running — that's fine, just leave allCases empty
+        }
+    }
+
     func langTool(for llm: APIService, with apiKey: String) -> any LangTools {
         let baseURL: URL? = nil //URL(string: "http://localhost:8080/v1/")
         switch llm {
@@ -61,6 +86,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         case .openAI: return if let baseURL { OpenAI(baseURL: baseURL, apiKey: apiKey) } else { OpenAI(apiKey: apiKey) }
         case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
+        case .ollama: return Ollama()
         }
     }
 
@@ -76,7 +102,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 }
 
 enum APIService: String, CaseIterable {
-    case openAI, anthropic, xAI, gemini
+    case openAI, anthropic, xAI, gemini, ollama
 }
 
 extension NetworkClient {

@@ -4,6 +4,7 @@ import OpenAI
 import Anthropic
 import XAI
 import Gemini
+import Ollama
 import SwiftTUI
 
 let cliVersion = "0.1.0"
@@ -56,6 +57,7 @@ struct CLI {
           OPENAI_API_KEY      OpenAI API key
           XAI_API_KEY         xAI (Grok) API key
           GEMINI_API_KEY      Google Gemini API key
+          OLLAMA_HOST         Ollama base URL (default: http://localhost:11434)
 
         COMMANDS (in chat)
           /help [command]     Show help
@@ -71,6 +73,10 @@ struct CLI {
           /tools              List available tools
           /apikey <svc> [key] Set an API key
           /settings           Open settings menu
+          /ollama list        List local Ollama models
+          /ollama pull <name> Download an Ollama model
+          /ollama search <q>  Search the Ollama library
+          /ollama delete <n>  Delete a local Ollama model
           /exit               Quit
         """)
     }
@@ -80,6 +86,8 @@ struct CLI {
     static func runTraditionalCLI() async throws {
         // Load API keys from environment variables first, then prompt for missing ones
         loadAPIKeysFromEnvironment()
+        // Populate locally-available Ollama models (non-fatal if Ollama isn't running)
+        await networkClient.fetchOllamaModels()
         try await checkAndRequestAPIKeys()
 
         print("LangTools \(cliVersion)")
@@ -132,6 +140,11 @@ struct CLI {
                     try? networkClient.updateApiKey(key, for: service)
                 }
             }
+        }
+        // Allow overriding the Ollama base URL via OLLAMA_HOST (e.g. http://192.168.1.10:11434)
+        if let host = ProcessInfo.processInfo.environment["OLLAMA_HOST"], !host.isEmpty,
+           let url = URL(string: host) {
+            networkClient.registerOllama(baseURL: url)
         }
     }
 
@@ -207,6 +220,9 @@ struct CLI {
 
         case .cancel:
             await handleCancelCommand(command)
+
+        case .ollama:
+            await handleOllamaCommand(command)
         }
         return false
     }
@@ -361,6 +377,12 @@ struct CLI {
             return
         }
 
+        if service == .ollama {
+            print("Ollama runs locally — no API key required.".yellow)
+            print("Set OLLAMA_HOST to override the default base URL (http://localhost:11434)")
+            return
+        }
+
         if command.arguments.count > 1 {
             let key = command.arguments.dropFirst().joined(separator: " ")
             do {
@@ -399,9 +421,15 @@ struct CLI {
         print("")
         print("API Keys:")
         for service in APIService.allCases {
-            let hasKey = UserDefaults.getApiKey(for: service) != nil
-            let status = hasKey ? "✓ set".green : "✗ not set".red
-            print("  \(service.rawValue): \(status)")
+            if service == .ollama {
+                let ollamaModels = Ollama.Model.allCases
+                let modelList = ollamaModels.isEmpty ? "none pulled yet" : ollamaModels.map { $0.rawValue }.joined(separator: ", ")
+                print("  ollama: \("✓ local (no key needed)".green) [\(modelList)]")
+            } else {
+                let hasKey = UserDefaults.getApiKey(for: service) != nil
+                let status = hasKey ? "✓ set".green : "✗ not set".red
+                print("  \(service.rawValue): \(status)")
+            }
         }
         print("")
         print("Tools: \(ToolRegistry.shared.toolNames.count) registered")
@@ -417,7 +445,7 @@ struct CLI {
         case .openAI:    defaultService = .openAI
         case .xAI:       defaultService = .xAI
         case .gemini:    defaultService = .gemini
-        default:         defaultService = .anthropic
+        case .ollama:    return // Ollama is local — no API key needed
         }
 
         if UserDefaults.getApiKey(for: defaultService) == nil {
@@ -439,13 +467,32 @@ struct CLI {
     // MARK: - Model selection
 
     static func changeModel() async throws {
-        let models: [(String, Model)] = [
-            ("OpenAI GPT-4o mini",        .openAI(.gpt4o_mini)),
-            ("OpenAI GPT-5.2",            .openAI(.gpt5_2)),
+        // Refresh Ollama model list before showing the menu
+        await networkClient.fetchOllamaModels()
+
+        // Cloud models
+        var models: [(String, Model)] = [
+            ("OpenAI GPT-4o mini",          .openAI(.gpt4o_mini)),
+            ("OpenAI GPT-5.2",              .openAI(.gpt5_2)),
             ("Anthropic Claude 4.6 Sonnet", .anthropic(.claude46Sonnet)),
-            ("Gemini 3 Flash",            .gemini(.gemini3Flash)),
-            ("XAI Grok 4 Fast",           .xAI(.grok4FastReasoning)),
+            ("Gemini 3 Flash",              .gemini(.gemini3Flash)),
+            ("XAI Grok 4 Fast",             .xAI(.grok4FastReasoning)),
         ]
+
+        // Append locally-available Ollama models (populated at runtime)
+        let ollamaModels = Ollama.Model.allCases
+        for m in ollamaModels {
+            models.append(("Ollama \(m.rawValue)", .ollama(m)))
+        }
+
+        // If no Ollama models are loaded yet, offer a manual entry option
+        let ollamaManualIndex: Int?
+        if ollamaModels.isEmpty {
+            ollamaManualIndex = models.count  // 0-based index of the manual entry row
+            models.append(("Ollama (enter model name manually)", .ollama(Ollama.Model(rawValue: "llama3")!)))
+        } else {
+            ollamaManualIndex = nil
+        }
 
         print("\n\("Available models".blue)")
         print("─────────────────")
@@ -458,7 +505,21 @@ struct CLI {
             print("Invalid choice. Keeping current model.".yellow)
             return
         }
-        let newModel = models[idx - 1].1
+
+        var newModel = models[idx - 1].1
+
+        // If the user picked the manual Ollama entry, ask for the model name
+        if let manualIdx = ollamaManualIndex, idx - 1 == manualIdx {
+            print("Enter Ollama model name (e.g. llama3, mistral, phi3): ", terminator: "")
+            if let name = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty,
+               let m = Ollama.Model(rawValue: name) {
+                newModel = .ollama(m)
+            } else {
+                print("Invalid model name. Keeping current model.".yellow)
+                return
+            }
+        }
+
         UserDefaults.model = newModel
         print("Model changed to: \(newModel.rawValue)".green)
     }
@@ -503,9 +564,13 @@ struct CLI {
             print("\n\("API Keys".blue)")
             print("─────────────────")
             for (index, service) in APIService.allCases.enumerated() {
-                let hasKey = UserDefaults.getApiKey(for: service) != nil
-                let status = hasKey ? "✓ Set".green : "✗ Not set".red
-                print("\(index + 1). \(service.rawValue): \(status)")
+                if service == .ollama {
+                    print("\(index + 1). \(service.rawValue): \("✓ local (no key needed)".green)")
+                } else {
+                    let hasKey = UserDefaults.getApiKey(for: service) != nil
+                    let status = hasKey ? "✓ Set".green : "✗ Not set".red
+                    print("\(index + 1). \(service.rawValue): \(status)")
+                }
             }
             print("\(APIService.allCases.count + 1). Back")
 
@@ -520,6 +585,11 @@ struct CLI {
             }
 
             let service = APIService.allCases[index - 1]
+            if service == .ollama {
+                print("Ollama runs locally — no API key required.".yellow)
+                print("Use OLLAMA_HOST env var to point to a non-default host (default: http://localhost:11434)")
+                continue
+            }
             print("Enter \(service.rawValue) API key (or press Enter to cancel): ", terminator: "")
             if let key = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
                 do {
@@ -606,6 +676,203 @@ struct CLI {
         } catch {
             print("Failed to save setting: \(error.localizedDescription)".red)
         }
+    }
+
+    // MARK: - /ollama
+
+    static func handleOllamaCommand(_ command: SlashCommand) async {
+        let sub = command.arguments.first?.lowercased() ?? ""
+        switch sub {
+        case "list", "ls", "":
+            await ollamaList()
+        case "pull":
+            guard let name = command.arguments.dropFirst().first, !name.isEmpty else {
+                print("Usage: /ollama pull <model-name>".red)
+                return
+            }
+            await ollamaPull(name)
+        case "search":
+            let query = command.arguments.dropFirst().joined(separator: " ")
+            guard !query.isEmpty else {
+                print("Usage: /ollama search <query>".red)
+                return
+            }
+            await ollamaSearch(query)
+        case "delete", "rm", "remove":
+            guard let name = command.arguments.dropFirst().first, !name.isEmpty else {
+                print("Usage: /ollama delete <model-name>".red)
+                return
+            }
+            await ollamaDelete(name)
+        default:
+            print("Unknown subcommand '\(sub)'. Usage: /ollama <list|pull|search|delete> [name]".red)
+        }
+    }
+
+    /// List locally-pulled Ollama models.
+    static func ollamaList() async {
+        await networkClient.fetchOllamaModels()
+        let models = OllamaModel.allCases
+        if models.isEmpty {
+            print("No Ollama models found. Use \("/ollama pull <model>".cyan) to download one.".yellow)
+            print("Browse models at https://ollama.com/library".yellow)
+            return
+        }
+        print("\n\("Local Ollama models".blue)")
+        print("─────────────────")
+        for m in models {
+            let isCurrent: String = (UserDefaults.model == .ollama(m)) ? " (active)".green : ""
+            print("  \(m.rawValue)\(isCurrent)")
+        }
+        print("\nUse \("/model".cyan) to switch, \("/ollama pull <name>".cyan) to add more.")
+    }
+
+    /// Pull (download) an Ollama model, streaming progress to stdout.
+    static func ollamaPull(_ name: String) async {
+        guard let ollama = langToolchain.langTool(Ollama.self) else {
+            print("Ollama is not registered. Is the Ollama server running?".red)
+            return
+        }
+        print("Pulling \(name.cyan)…")
+        var lastStatus = ""
+        do {
+            for try await chunk in ollama.streamPullModel(name) {
+                let status = chunk.status
+                if status != lastStatus {
+                    // Print new status lines (e.g. "pulling manifest", "pulling layer …")
+                    print(status)
+                    lastStatus = status
+                }
+                // Show download progress on the same line when total is known
+                if let total = chunk.total, total > 0, let completed = chunk.completed {
+                    let pct = Int(Double(completed) / Double(total) * 100)
+                    let bar = String(repeating: "█", count: pct / 5) + String(repeating: "░", count: 20 - pct / 5)
+                    print("\r  [\(bar)] \(pct)%   ", terminator: "")
+                    fflush(stdout)
+                }
+            }
+            print("\nPull complete.".green)
+            // Refresh the model list so the new model is available immediately
+            await networkClient.fetchOllamaModels()
+            print("Use \("/model \(name)".cyan) to switch to it.")
+        } catch {
+            print("\nFailed to pull '\(name)': \(error.localizedDescription)".red)
+        }
+    }
+
+    /// Search the Ollama model library via the public API.
+    static func ollamaSearch(_ query: String) async {
+        print("Searching Ollama library for '\(query.cyan)'…")
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let urlString = "https://ollama.com/search?q=\(encoded)&format=json"
+        guard let url = URL(string: urlString) else {
+            print("Invalid search query.".red)
+            return
+        }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            // The endpoint returns HTML; parse <h2> model names as a simple fallback
+            // Try JSON first, fall back to scraping model name anchors
+            if let results = try? JSONDecoder().decode(OllamaSearchResults.self, from: data) {
+                printSearchResults(results.models, query: query)
+            } else if let html = String(data: data, encoding: .utf8) {
+                let names = scrapeOllamaModelNames(from: html)
+                if names.isEmpty {
+                    print("No results found for '\(query)'.".yellow)
+                    print("Browse manually: https://ollama.com/search?q=\(encoded)")
+                } else {
+                    print("\n\("Results for '\(query)'".blue)")
+                    print("─────────────────")
+                    for name in names {
+                        print("  \(name)")
+                    }
+                    print("\nUse \("/ollama pull <name>".cyan) to download a model.")
+                }
+            }
+        } catch {
+            print("Search failed: \(error.localizedDescription)".red)
+            print("Browse manually: https://ollama.com/search?q=\(encoded)")
+        }
+    }
+
+    /// Delete a local Ollama model.
+    static func ollamaDelete(_ name: String) async {
+        guard let ollama = langToolchain.langTool(Ollama.self) else {
+            print("Ollama is not registered. Is the Ollama server running?".red)
+            return
+        }
+        print("Delete model '\(name.cyan)'? This cannot be undone. (y/N): ", terminator: "")
+        guard let confirm = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              confirm == "y" || confirm == "yes" else {
+            print("Cancelled.".yellow)
+            return
+        }
+        do {
+            _ = try await ollama.deleteModel(name)
+            print("Deleted '\(name)'.".green)
+            await networkClient.fetchOllamaModels()
+            // If the deleted model was active, reset to default
+            if case .ollama(let m) = UserDefaults.model, m.rawValue == name {
+                UserDefaults.model = .anthropic(.claude46Sonnet)
+                print("Active model reset to \(UserDefaults.model.rawValue).".yellow)
+            }
+        } catch {
+            print("Failed to delete '\(name)': \(error.localizedDescription)".red)
+        }
+    }
+
+    // MARK: - Ollama search helpers
+
+    private struct OllamaSearchResults: Decodable {
+        let models: [OllamaSearchModel]
+    }
+
+    private struct OllamaSearchModel: Decodable {
+        let name: String
+        let description: String?
+        let pulls: Int?
+        let tags: Int?
+    }
+
+    private static func printSearchResults(_ models: [OllamaSearchModel], query: String) {
+        if models.isEmpty {
+            print("No results for '\(query)'.".yellow)
+            return
+        }
+        print("\n\("Results for '\(query)'".blue)")
+        print("─────────────────")
+        for m in models {
+            let pulls = m.pulls.map { "  \($0) pulls" } ?? ""
+            let desc  = m.description.map { "  \($0)" } ?? ""
+            print("  \(m.name.cyan)\(pulls)")
+            if !desc.isEmpty { print("  \(desc)") }
+        }
+        print("\nUse \("/ollama pull <name>".cyan) to download a model.")
+    }
+
+    /// Simple HTML scraper: extract model names from Ollama search page anchors.
+    private static func scrapeOllamaModelNames(from html: String) -> [String] {
+        // Ollama search results include links like href="/library/llama3" or href="/modelname"
+        var names: [String] = []
+        // Match href="/library/<name>" or data-model="<name>"
+        let patterns = [
+            #"href="/library/([a-zA-Z0-9._:-]+)""#,
+            #"data-model="([a-zA-Z0-9._:-]+)""#,
+            #""name"\s*:\s*"([a-zA-Z0-9._/:-]+)""#,
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(html.startIndex..., in: html)
+            let matches = regex.matches(in: html, range: range)
+            for match in matches {
+                if let r = Range(match.range(at: 1), in: html) {
+                    let name = String(html[r])
+                    if !names.contains(name) { names.append(name) }
+                }
+            }
+            if !names.isEmpty { break }
+        }
+        return names
     }
 }
 

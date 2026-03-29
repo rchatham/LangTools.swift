@@ -39,6 +39,7 @@ enum CommandType: String, CaseIterable {
     case cancel = "cancel"
     case settings = "settings"
     case apikey = "apikey"
+    case ollama = "ollama"
 
     var description: String {
         switch self {
@@ -57,6 +58,7 @@ enum CommandType: String, CaseIterable {
         case .cancel: return "Cancel running operation"
         case .settings: return "Open settings menu"
         case .apikey: return "Set API key for a service"
+        case .ollama: return "Manage local Ollama models"
         }
     }
 
@@ -77,6 +79,7 @@ enum CommandType: String, CaseIterable {
         case .cancel: return "/cancel [task-id]"
         case .settings: return "/settings"
         case .apikey: return "/apikey <service> [key]"
+        case .ollama: return "/ollama <list|pull|search|delete> [name]"
         }
     }
 }
