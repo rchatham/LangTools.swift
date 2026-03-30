@@ -436,7 +436,6 @@
 			mainGroup = B1D1EBD62CA2518E00AD7FA6;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				B19B31A72F2C997800645F8A /* XCLocalSwiftPackageReference "../../../ChatUI" */,
 				B19B31B02F2C9A0600645F8A /* XCLocalSwiftPackageReference "../../" */,
 				B1E4E5112F314EF400AE11AA /* XCLocalSwiftPackageReference "../LangTools_Example" */,
 			);
@@ -833,10 +832,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		B19B31A72F2C997800645F8A /* XCLocalSwiftPackageReference "../../../ChatUI" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../../ChatUI;
-		};
 		B19B31B02F2C9A0600645F8A /* XCLocalSwiftPackageReference "../../" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../;
