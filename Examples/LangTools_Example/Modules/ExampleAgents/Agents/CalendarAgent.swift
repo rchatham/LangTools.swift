@@ -91,7 +91,7 @@ struct CalendarReadAgent: Agent {
                 }
 
                 do {
-                    let events = try CalendarService().fetchEvents(from: startDate, to: endDate)
+                    let events = try await CalendarService().fetchEvents(from: startDate, to: endDate)
                     return events.isEmpty ? "No events returned from calendar." : events.map { $0.formattedDetails }.joined(separator: "\n\n")
                 } catch {
                     throw AgentError("Failed to fetch events: \(error.localizedDescription)")
@@ -114,7 +114,7 @@ struct CalendarReadAgent: Agent {
                 let limit = (args["limit"]?.intValue) ?? 10
 
                 do {
-                    let events = try CalendarService().upcomingEvents(limit: limit)
+                    let events = try await CalendarService().upcomingEvents(limit: limit)
                     return events.isEmpty ? "No events returned from calendar." : events.map { $0.formattedDetails }.joined(separator: "\n\n")
                 } catch {
                     throw AgentError("Failed to fetch upcoming events: \(error.localizedDescription)")
@@ -139,7 +139,7 @@ struct CalendarReadAgent: Agent {
                 }
                 // TODO: - This does not work, this function needs to return a more structured search instead of natural language query.
                 do {
-                    let events = try CalendarService().searchEvents(matching: query)
+                    let events = try await CalendarService().searchEvents(matching: query)
                     return events.isEmpty ? "No events returned from calendar." : events.map { $0.formattedDetails }.joined(separator: "\n\n")
                 } catch {
                     throw AgentError("Failed to search events: \(error.localizedDescription)")
@@ -213,7 +213,7 @@ struct CalendarWriteAgent: Agent {
                 let isAllDay = args["is_all_day"]?.boolValue ?? false
 
                 do {
-                    let event = try CalendarService().createEvent(
+                    let event = try await CalendarService().createEvent(
                         title: title,
                         startDate: startDate,
                         endDate: endDate,
@@ -250,12 +250,12 @@ struct CalendarWriteAgent: Agent {
 
                 do {
                     let calendarStore = CalendarService()
-                    let events = try calendarStore.fetchEvents(from: now, to: oneYear)
+                    let events = try await calendarStore.fetchEvents(from: now, to: oneYear)
                     guard let event = events.first(where: { $0.eventIdentifier == eventIdentifier }) else {
                         throw AgentError("Event not found")
                     }
 
-                    try calendarStore.deleteEvent(event)
+                    try await calendarStore.deleteEvent(event)
                     return "Event deleted successfully"
                 } catch {
                     throw AgentError("Failed to delete event: \(error.localizedDescription)")
@@ -307,7 +307,7 @@ struct CalendarWriteAgent: Agent {
                     let calendarStore = CalendarService()
                     let now = Date()
                     let oneYear = Calendar.current.date(byAdding: .year, value: 1, to: now)!
-                    let events = try calendarStore.fetchEvents(from: now, to: oneYear)
+                    let events = try await calendarStore.fetchEvents(from: now, to: oneYear)
 
                     guard let event = events.first(where: { $0.eventIdentifier == eventIdentifier }) else {
                         throw AgentError("Event not found")
@@ -320,7 +320,7 @@ struct CalendarWriteAgent: Agent {
                     let notes = args["notes"]?.stringValue
                     let isAllDay = args["is_all_day"]?.boolValue
 
-                    let updatedEvent = try calendarStore.updateEvent(
+                    let updatedEvent = try await calendarStore.updateEvent(
                         event: event,
                         title: title,
                         startDate: startDate,

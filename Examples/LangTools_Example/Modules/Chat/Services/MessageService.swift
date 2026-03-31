@@ -7,8 +7,8 @@
 import Agents
 import Foundation
 import LangTools
+import ToolKit
 
-var useMultiAgent: Bool = false
 
 @Observable
 public class MessageService: Sendable {
@@ -25,13 +25,16 @@ public class MessageService: Sendable {
     /// Callback fired when a message is added or modified (for persistence)
     public var messageUpdatedCallback: ((Message) -> Void)?
 
-    /// Returns a filtered list of tools based on tool settings
+    /// Snapshot of tools filtered by the current ToolManager state.
+    /// Delegates to `ToolManager.filteredTools()` for the enabled-id set, then
+    /// intersects with `self.tools` so future changes to ToolManager filtering
+    /// logic are automatically picked up here.
+    /// Hops to the main actor because ToolManager is @MainActor-isolated.
+    @MainActor
     var filteredTools: [Tool]? {
-        // Return nil if master tool switch is disabled
-        guard ToolSettings.shared.toolsEnabled else { return nil }
-
-        // If tools exist, filter them based on individual tool settings
-        return tools?.filter { ToolSettings.shared.isToolEnabled(name: $0.name) }
+        guard let enabledTools = ToolManager.shared.filteredTools() else { return nil }
+        let enabledNames = Set(enabledTools.map { $0.name })
+        return tools?.filter { enabledNames.contains($0.name) }
     }
 
     public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [any Agent]? = nil, tools: [Tool]? = nil) {
@@ -49,8 +52,11 @@ public class MessageService: Sendable {
             var currentMessages = messages
             currentMessages.insert(Message(text: systemMessage(), role: .system), at: 0)
 
+            // Snapshot filtered tools on the main actor before entering the async stream.
+            let activeTools = await filteredTools
+
             var content: String = ""
-            for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: filteredTools) {
+            for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: activeTools) {
                 content += chunk
                 if !(messages.last?.isAssistant ?? false) {
                     if chunk.isEmpty { continue }

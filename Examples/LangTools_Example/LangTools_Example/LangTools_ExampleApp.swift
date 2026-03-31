@@ -18,6 +18,7 @@ import Gemini
 import XAI
 import Ollama
 import ChatUI
+import ToolKit
 
 @main
 struct LangTools_ExampleApp: App {
@@ -26,7 +27,7 @@ struct LangTools_ExampleApp: App {
     @StateObject private var voiceInputHandler = VoiceInputHandlerAdapter()
 
     init() {
-        // Initialize Ollama on app startup
+        registerToolConfigurations()
         initializeOllama()
     }
 
@@ -35,6 +36,36 @@ struct LangTools_ExampleApp: App {
             // Each window gets its own ChatContainerView with independent MessageService
             ChatContainerView(voiceInputHandler: voiceInputHandler)
         }
+    }
+
+    // @MainActor is required because ToolManager is @MainActor-isolated.
+    // This is safe to call from App.init() since SwiftUI runs @main struct
+    // initializers on the main actor.
+    @MainActor
+    func registerToolConfigurations() {
+        ToolManager.shared.register([
+            ToolConfiguration(
+                id: "calendarAgent",
+                displayName: "Calendar",
+                description: "Read and manage calendar events",
+                iconName: "calendar",
+                isAgent: true
+            ),
+            ToolConfiguration(
+                id: "reminderAgent",
+                displayName: "Reminders",
+                description: "Read and manage reminders",
+                iconName: "checklist",
+                isAgent: true
+            ),
+            ToolConfiguration(
+                id: "researchAgent",
+                displayName: "Research",
+                description: "Search the web and scrape pages",
+                iconName: "magnifyingglass",
+                isAgent: true
+            ),
+        ])
     }
 
     func initializeOllama() {

@@ -20,15 +20,25 @@ let package = Package(
         .library(
             name: "ExampleAgents",
             targets: ["ExampleAgents"]),
+        .library(
+            name: "ToolKit",
+            targets: ["ToolKit"]),
     ],
     dependencies: [
-        .package(path: "../../"),
-        .package(path: "../../../ChatUI/"),
+        .package(name: "langtools.swift", path: "../../"),
+        .package(name: "ChatUI", path: "./ChatUI"),
         .package(url: "https://github.com/kishikawakatsumi/KeychainAccess.git", from: "4.0.0"),
         .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.6.0"),
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.9.0"),
     ],
     targets: [
+        .target(
+            name: "ToolKit",
+            dependencies: [
+                .product(name: "LangTools", package: "langtools.swift"),
+                .product(name: "OpenAI", package: "langtools.swift"),
+            ],
+            path: "Sources/ToolKit"),
         .target(
             name: "Chat",
             dependencies: [
@@ -40,6 +50,7 @@ let package = Package(
                 .product(name: "Gemini", package: "langtools.swift"),
                 .product(name: "Ollama", package: "langtools.swift"),
                 .product(name: "AppleSpeech", package: "langtools.swift"),
+                "ToolKit",
                 "KeychainAccess",
             ],
             path: "Modules/Chat"),
@@ -57,9 +68,17 @@ let package = Package(
             name: "ExampleAgents",
             dependencies: [
                 .product(name: "Agents", package: "langtools.swift"),
+                "ToolKit",
                 "KeychainAccess",
                 "SwiftSoup",
             ],
             path: "Modules/ExampleAgents"),
+        .testTarget(
+            name: "ToolKitTests",
+            dependencies: [
+                "ToolKit",
+                .product(name: "OpenAI", package: "langtools.swift"),
+            ],
+            path: "Tests/ToolKitTests"),
     ]
 )
