@@ -10,6 +10,7 @@ Swift interface for OpenAI's APIs, part of the LangTools framework.
 - 🔄 Streaming support
 - 🛠️ Function calling and tools
 - 📝 Multi-choice responses
+- ⚡ Realtime WebSocket API
 
 ## Available Models
 
@@ -211,6 +212,23 @@ let request = OpenAI.EmbeddingsRequest(
 
 let response = try await openai.perform(request: request)
 let embedding = response.data[0].embedding
+```
+
+### Realtime Sessions
+
+Create a realtime session and connect via WebSocket:
+
+```swift
+let session = try await openai.perform(request:
+    OpenAI.RealtimeSessionCreateRequest(model: .gpt4o_realtimePreview)
+)
+
+guard let clientSecret = session.client_secret?.value else {
+    // Handle error: client_secret is nil
+    return
+}
+let socket = try openai.realtimeWebSocketTask(clientSecret: clientSecret)
+socket.resume()
 ```
 
 ## Advanced Features
