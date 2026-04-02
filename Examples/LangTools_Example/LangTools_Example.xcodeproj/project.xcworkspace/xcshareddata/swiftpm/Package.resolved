@@ -1,5 +1,5 @@
 {
-  "originHash" : "ffbd486bbfb79ccf11dcfe7eeba1a236bcb5a562834858a6afa63c1437bbb4bc",
+  "originHash" : "018ca414837f018149fa5f7b3c1bf452eaf7206c433540704851387d278d3191",
   "pins" : [
     {
       "identity" : "keychainaccess",
@@ -42,8 +42,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-crypto.git",
       "state" : {
-        "revision" : "fa308c07a6fa04a727212d793e761460e41049c3",
-        "version" : "4.3.0"
+        "revision" : "bb4ba815dab96d4edc1e0b86d7b9acf9ff973a84",
+        "version" : "4.3.1"
       }
     },
     {
@@ -78,8 +78,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/argmaxinc/WhisperKit.git",
       "state" : {
-        "revision" : "26577ce3017aae8c9edfd9a0dd17851bd248c731",
-        "version" : "0.17.0"
+        "revision" : "e2adabbe7d98dc4d0ab9a5b75424ecc42a9cdbef",
+        "version" : "0.18.0"
       }
     },
     {
