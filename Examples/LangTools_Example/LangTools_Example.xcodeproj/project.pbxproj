@@ -71,7 +71,9 @@
 		B1D63BD82F7C86B3009253F2 /* Exceptions for "Sources" folder in "LangTools_Example" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				AgentParsers/CalendarAgentParser.swift,
 				Assets.xcassets,
+				ContentCards/CalendarEventCard.swift,
 				LangTools_ExampleApp.swift,
 			);
 			target = B1D1EBDE2CA2518E00AD7FA6 /* LangTools_Example */;

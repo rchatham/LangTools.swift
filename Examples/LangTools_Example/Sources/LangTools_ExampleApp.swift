@@ -91,7 +91,9 @@ struct ChatContainerView: View {
             ReminderAgent(),
             ResearchAgent()
         ]
-        _messageService = StateObject(wrappedValue: MessageService(agents: agents))
+        let service = MessageService(agents: agents)
+        service.agentResultParser = makeAgentResultParser()
+        _messageService = StateObject(wrappedValue: service)
         self.voiceInputHandler = voiceInputHandler
     }
 
@@ -102,8 +104,50 @@ struct ChatContainerView: View {
                 messageService: messageService,
                 settingsView: { chatSettingsView },
                 voiceInputHandler: voiceInputHandler
-            )
+            ) { message in
+                messageContentView(for: message)
+            }
         }
+    }
+
+    /// Custom view builder for message content — handles structured card types.
+    @ViewBuilder
+    private func messageContentView(for message: Message) -> some View {
+        if case .contentCards(let content) = message.contentType {
+            contentCardsView(content: content)
+                .padding(.horizontal, 4)
+        } else {
+            // Default rendering — delegate to ChatUI's standard text bubble.
+            defaultMessageBubble(for: message)
+        }
+    }
+
+    /// Dispatch to the right card view based on `cardType`.
+    @ViewBuilder
+    private func contentCardsView(content: ContentCardsContent) -> some View {
+        switch content.cardType {
+        case "calendarEvent":
+            CalendarEventCardListView(content: content)
+        default:
+            // Fallback: show the raw JSON summary
+            Text(content.message ?? content.cardType)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .padding(10)
+                .background(Color.gray.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    /// Reproduces ChatUI's default bubble appearance for non-card messages.
+    @ViewBuilder
+    private func defaultMessageBubble(for message: Message) -> some View {
+        Text(message.text ?? "")
+            .font(.system(size: 16))
+            .foregroundColor(message.isUser ? .primary : .white)
+            .padding(10)
+            .background(message.isUser ? Color.gray.opacity(0.2) : Color.blue)
+            .cornerRadius(10)
     }
 
     private var chatSettingsView: AnyView {
