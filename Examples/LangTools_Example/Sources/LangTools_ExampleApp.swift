@@ -84,6 +84,7 @@ struct LangTools_ExampleApp: App {
 struct ChatContainerView: View {
     @StateObject private var messageService: MessageService
     @ObservedObject var voiceInputHandler: VoiceInputHandlerAdapter
+    @Environment(\.colorScheme) private var colorScheme
 
     init(voiceInputHandler: VoiceInputHandlerAdapter) {
         let agents: [Agent] = [
@@ -139,14 +140,27 @@ struct ChatContainerView: View {
         }
     }
 
-    /// Reproduces ChatUI's default bubble appearance for non-card messages.
+    /// Reproduces ChatUI's CollapsibleMessageView default bubble exactly,
+    /// so non-card messages look identical to messages rendered without a messageContent closure.
     @ViewBuilder
     private func defaultMessageBubble(for message: Message) -> some View {
+        let messageColor: Color = {
+            if message.isAgentEvent { return .secondary }
+            return message.isUser ? (colorScheme == .dark ? .white : .black) : .white
+        }()
+        let backgroundColor: Color = {
+            if message.isAgentEvent {
+                return colorScheme == .dark ? Color.gray.opacity(0.3) : Color.gray.opacity(0.1)
+            }
+            return message.isUser
+                ? (colorScheme == .dark ? Color.gray.opacity(0.5) : Color.gray.opacity(0.2))
+                : .blue
+        }()
         Text(message.text ?? "")
             .font(.system(size: 16))
-            .foregroundColor(message.isUser ? .primary : .white)
+            .foregroundColor(messageColor)
             .padding(10)
-            .background(message.isUser ? Color.gray.opacity(0.2) : Color.blue)
+            .background(backgroundColor)
             .cornerRadius(10)
     }
 
