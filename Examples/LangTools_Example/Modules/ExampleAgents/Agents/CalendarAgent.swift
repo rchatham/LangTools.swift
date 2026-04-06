@@ -39,8 +39,8 @@ public struct CalendarAgentResponse: StructuredOutput {
 }
 
 /// Data-only event type used inside CalendarAgentResponse.
-/// Mirrors CalendarEventCard but lives in ExampleAgents (no SwiftUI).
-public struct CalendarEventData: StructuredOutput {
+/// The app target adds `ContentCard` conformance for SwiftUI rendering.
+public struct CalendarEventData: StructuredOutput, Identifiable, Equatable {
     public let id: String
     public let title: String
     public let startDate: String

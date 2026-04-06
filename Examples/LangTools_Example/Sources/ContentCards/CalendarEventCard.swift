@@ -8,83 +8,12 @@ import Chat
 import ExampleAgents
 import LangTools
 
-// MARK: - CalendarEventCard
+// MARK: - CalendarEventData + ContentCard
 
-/// A structured calendar event returned by CalendarAgent and rendered as a SwiftUI card.
-/// Conforms to `ContentCard` which bridges `StructuredOutput` (AI response schema) with a SwiftUI view.
-///
-/// `CalendarEventData` (the schema/data type) lives in `ExampleAgents`.
-/// This type lives in the app target and adds `ContentCard` conformance + the SwiftUI view.
-struct CalendarEventCard: ContentCard {
-    let id: String
-    let title: String
-    let startDate: String      // ISO 8601 — kept as String for Codable simplicity
-    let endDate: String
-    let location: String?
-    let notes: String?
-    let isAllDay: Bool
-    let calendarName: String?
-    let eventIdentifier: String?
-
-    init(from data: CalendarEventData) {
-        self.id             = data.id
-        self.title          = data.title
-        self.startDate      = data.startDate
-        self.endDate        = data.endDate
-        self.location       = data.location
-        self.notes          = data.notes
-        self.isAllDay       = data.isAllDay
-        self.calendarName   = data.calendarName
-        self.eventIdentifier = data.eventIdentifier
-    }
-
-    // Memberwise init for direct Codable decode from cardsJSON
-    init(
-        id: String = UUID().uuidString,
-        title: String,
-        startDate: String,
-        endDate: String,
-        location: String? = nil,
-        notes: String? = nil,
-        isAllDay: Bool = false,
-        calendarName: String? = nil,
-        eventIdentifier: String? = nil
-    ) {
-        self.id              = id
-        self.title           = title
-        self.startDate       = startDate
-        self.endDate         = endDate
-        self.location        = location
-        self.notes           = notes
-        self.isAllDay        = isAllDay
-        self.calendarName    = calendarName
-        self.eventIdentifier = eventIdentifier
-    }
-
-    // MARK: - StructuredOutput / JSONSchema
-
-    static var jsonSchema: JSONSchema {
-        .object(
-            properties: [
-                "id":              .string(description: "Unique identifier for the event card"),
-                "title":           .string(description: "Event title"),
-                "startDate":       .string(description: "Event start date and time in ISO 8601 format"),
-                "endDate":         .string(description: "Event end date and time in ISO 8601 format"),
-                "location":        .string(description: "Event location (optional)"),
-                "notes":           .string(description: "Event notes or description (optional)"),
-                "isAllDay":        .boolean(description: "Whether this is an all-day event"),
-                "calendarName":    .string(description: "Name of the calendar containing this event (optional)"),
-                "eventIdentifier": .string(description: "System event identifier for updates/deletes (optional)")
-            ],
-            required: ["id", "title", "startDate", "endDate", "isAllDay"],
-            additionalProperties: false,
-            title: "CalendarEventCard"
-        )
-    }
-
-    // MARK: - ContentCard / SwiftUI View
-
-    func cardView() -> some View {
+/// Adds `ContentCard` conformance to `CalendarEventData` in the app target,
+/// keeping `ExampleAgents` free of SwiftUI imports.
+extension CalendarEventData: ContentCard {
+    public func cardView() -> some View {
         CalendarEventCardView(card: self)
     }
 }
@@ -92,7 +21,7 @@ struct CalendarEventCard: ContentCard {
 // MARK: - CalendarEventCardView
 
 private struct CalendarEventCardView: View {
-    let card: CalendarEventCard
+    let card: CalendarEventData
 
     private var parsedStart: Date? { card.startDate.iso8601CardDate }
     private var parsedEnd: Date?   { card.endDate.iso8601CardDate }
@@ -207,12 +136,12 @@ private struct CalendarEventCardView: View {
 
 // MARK: - CalendarEventCardListView
 
-/// Renders a list of CalendarEventCards decoded from ContentCardsContent.
+/// Renders a list of CalendarEventData items decoded from ContentCardsContent.
 struct CalendarEventCardListView: View {
     let content: ContentCardsContent
 
-    private var cards: [CalendarEventCard] {
-        (try? content.decodeCards(as: CalendarEventCard.self)) ?? []
+    private var cards: [CalendarEventData] {
+        (try? content.decodeCards(as: CalendarEventData.self)) ?? []
     }
 
     var body: some View {

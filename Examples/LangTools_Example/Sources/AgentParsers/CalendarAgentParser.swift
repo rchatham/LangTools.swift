@@ -13,9 +13,9 @@ import ExampleAgents
 /// the `calendarAgent` structured output.
 ///
 /// When `calendarAgent` completes, its result is a JSON string conforming to
-/// `CalendarAgentResponse`. This parser decodes it and returns a
-/// `Message.contentCards` with `cardType == "calendarEvent"` so the view layer
-/// can render `CalendarEventCardListView`.
+/// `CalendarAgentResponse`. This parser decodes it using `StructuredOutput.init(jsonString:)`
+/// and returns a `Message.contentCards` with `cardType == "calendarEvent"` so the
+/// view layer can render `CalendarEventCardListView` using `CalendarEventData` directly.
 ///
 /// Any other agent name returns `nil`, passing control back to the default
 /// completion-event rendering in `MessageService`.
@@ -33,9 +33,7 @@ func makeAgentResultParser() -> (_ result: String, _ agentName: String) -> Messa
 // MARK: - Private helpers
 
 private func parseCalendarAgentResult(_ result: String) -> Message? {
-    guard let data = result.data(using: .utf8),
-          let response = try? JSONDecoder().decode(CalendarAgentResponse.self, from: data)
-    else { return nil }
+    guard let response = try? CalendarAgentResponse(jsonString: result) else { return nil }
 
     guard let eventsData = try? JSONEncoder().encode(response.events),
           let eventsJSON = String(data: eventsData, encoding: .utf8)
