@@ -16,9 +16,21 @@ public protocol Agent {
 
     var tools: [any LangToolsTool]? { get }
     var delegateAgents: [any Agent] { get }
+
+    /// Optional JSON Schema that constrains the LLM's final response to structured output.
+    /// When non-nil, `execute(context:)` will apply this schema to the underlying request
+    /// (if the provider supports it) and return the raw JSON string.
+    /// The caller is responsible for decoding the JSON into the appropriate type.
+    /// Default is `nil` (plain-text response).
+    var responseSchema: JSONSchema? { get }
 }
 
-public struct AgentContext{
+extension Agent {
+    /// Default: no structured output.
+    public var responseSchema: JSONSchema? { nil }
+}
+
+public struct AgentContext {
     public var langTool: any LangTools
     public var model: any RawRepresentable
 
@@ -27,13 +39,19 @@ public struct AgentContext{
     public var parent: (any Agent)?
     public var tools: [any LangToolsTool]?
 
+    /// Optional JSON Schema for structured output. When set, the agent will request that the
+    /// LLM return a response conforming to this schema. Only takes effect when the underlying
+    /// provider request conforms to `LangToolsStructuredOutputRequest`.
+    public var responseSchema: JSONSchema?
+
     public init<LangTool: LangTools>(
         langTool: LangTool, model: LangTool.Model,
         messages: [any LangToolsMessage],
         eventHandler: @escaping (AgentEvent) -> Void, parent: (any Agent)? = nil,
-        tools: [any LangToolsTool]? = nil
+        tools: [any LangToolsTool]? = nil,
+        responseSchema: JSONSchema? = nil
     ) {
-        self.init(langTool: langTool, model: model, messages: messages, eventHandler: eventHandler, parent: parent, tools: tools)
+        self.init(langTool: langTool, model: model, messages: messages, eventHandler: eventHandler, parent: parent, tools: tools, responseSchema: responseSchema)
     }
 
     public init(
@@ -41,7 +59,8 @@ public struct AgentContext{
         model: any RawRepresentable,
         messages: [any LangToolsMessage],
         eventHandler: @escaping (AgentEvent) -> Void, parent: Agent?,
-        tools: [any LangToolsTool]?
+        tools: [any LangToolsTool]?,
+        responseSchema: JSONSchema? = nil
     ) {
         self.langTool = langTool
         self.model = model
@@ -49,6 +68,7 @@ public struct AgentContext{
         self.eventHandler = eventHandler
         self.parent = parent
         self.tools = tools
+        self.responseSchema = responseSchema
     }
 }
 
@@ -133,7 +153,12 @@ extension Agent {
         do {
 //            print("AGENT \(name) SENDING: \([systemMessage] + context.messages)")
             let systemMessage = context.langTool.systemMessage(createSystemPrompt())
-            let request = try context.langTool.chatRequest(model: context.model, messages: [systemMessage] + context.messages, tools: tools, toolEventHandler: toolEventHandler)
+            var request = try context.langTool.chatRequest(model: context.model, messages: [systemMessage] + context.messages, tools: tools, toolEventHandler: toolEventHandler)
+            // Agent's own schema takes precedence; fall back to the context-level schema.
+            let effectiveSchema = responseSchema ?? context.responseSchema
+            if let schema = effectiveSchema {
+                request.applyResponseSchema(schema)
+            }
             let response = try await context.langTool.perform(request: request) as any LangToolsChatResponse
             guard let result = response.message?.content.string, !result.isEmpty else {
                 context.eventHandler(.error(agent: name, message: "Empty result received"))

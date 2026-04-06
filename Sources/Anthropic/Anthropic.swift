@@ -51,6 +51,17 @@ public final class Anthropic: LangTools {
         print("   Endpoint: \(request.endpoint)")
         print("   API Key: \(apiKey.isEmpty ? "EMPTY" : "Set (length: \(apiKey.count))")")
 
+        // Validate structured output model support before sending to the API.
+        if let msgRequest = request as? MessageRequest, msgRequest.usesStructuredOutput {
+            guard msgRequest.model.supportsStructuredOutput else {
+                let supported = Anthropic.Model.structuredOutputModels.map { $0.rawValue }.sorted()
+                throw StructuredOutputError.modelDoesNotSupportStructuredOutput(
+                    model: msgRequest.model.rawValue,
+                    supportedModels: supported
+                )
+            }
+        }
+
         let fullURL = configuration.baseURL.appending(path: request.endpoint)
         print("   Full URL: \(fullURL)")
 
@@ -117,10 +128,13 @@ public extension Anthropic {
 
         // MARK: - Claude 4.5 Models - Active
         case claude45Opus_20251101 = "claude-opus-4-5-20251101"
+        case claude45Sonnet_latest = "claude-sonnet-4-5-latest"
         case claude45Sonnet_20250929 = "claude-sonnet-4-5-20250929"
+        case claude45Haiku_latest = "claude-haiku-4-5-latest"
         case claude45Haiku_20251001 = "claude-haiku-4-5-20251001"
 
         // MARK: - Claude 4.1 Models - Active
+        case claude41Opus_latest = "claude-opus-4-1-latest"
         case claude41Opus_20250805 = "claude-opus-4-1-20250805"
 
         // MARK: - Claude 4 Models - Active
@@ -128,18 +142,22 @@ public extension Anthropic {
         case claude4Sonnet_20250514 = "claude-sonnet-4-20250514"
 
         // MARK: - Claude 3 Haiku (Deprecated - Retiring April 20, 2026)
-        @available(*, deprecated, message: "Retiring April 20, 2026. Use claude45Haiku_20251001 instead.")
+        @available(*, deprecated, message: "Retiring April 20, 2026. Use claude45Haiku_latest instead.")
         case claude3Haiku_20240307 = "claude-3-haiku-20240307"
 
         // MARK: - Retired Models (kept for backward compatibility, will return errors)
         @available(*, deprecated, message: "Retired February 19, 2026. Will return API errors. Use claude46Sonnet instead.")
         case claude37Sonnet_20250219 = "claude-3-7-sonnet-20250219"
-        @available(*, deprecated, message: "Retired February 19, 2026. Will return API errors. Use claude45Haiku_20251001 instead.")
+        @available(*, deprecated, message: "Retired February 19, 2026. Will return API errors. Use claude45Haiku_latest instead.")
         case claude35Haiku_20241022 = "claude-3-5-haiku-20241022"
+        @available(*, deprecated, message: "Retired October 28, 2025. Will return API errors. Use claude46Sonnet instead.")
+        case claude35Sonnet_latest = "claude-3-5-sonnet-latest"
         @available(*, deprecated, message: "Retired October 28, 2025. Will return API errors. Use claude46Sonnet instead.")
         case claude35Sonnet_20241022 = "claude-3-5-sonnet-20241022"
         @available(*, deprecated, message: "Retired October 28, 2025. Will return API errors. Use claude46Sonnet instead.")
         case claude35Sonnet_20240620 = "claude-3-5-sonnet-20240620"
+        @available(*, deprecated, message: "Retired January 5, 2026. Will return API errors. Use claude46Opus instead.")
+        case claude3Opus_latest = "claude-3-opus-latest"
         @available(*, deprecated, message: "Retired January 5, 2026. Will return API errors. Use claude46Opus instead.")
         case claude3Opus_20240229 = "claude-3-opus-20240229"
         @available(*, deprecated, message: "Retired July 21, 2025. Will return API errors. Use claude46Opus instead.")
@@ -155,8 +173,10 @@ extension Anthropic.Model: CaseIterable {
         let active: [Anthropic.Model] = [
             .claude46Opus, .claude46Opus_20260205,
             .claude46Sonnet, .claude46Sonnet_20260217,
-            .claude45Opus_20251101, .claude45Sonnet_20250929, .claude45Haiku_20251001,
-            .claude41Opus_20250805,
+            .claude45Opus_20251101,
+            .claude45Sonnet_latest, .claude45Sonnet_20250929,
+            .claude45Haiku_latest, .claude45Haiku_20251001,
+            .claude41Opus_latest, .claude41Opus_20250805,
             .claude4Opus_20250514, .claude4Sonnet_20250514,
         ]
         // Use rawValue init to include deprecated/retired cases without re-triggering warnings.
@@ -164,12 +184,44 @@ extension Anthropic.Model: CaseIterable {
             "claude-3-haiku-20240307",
             "claude-3-7-sonnet-20250219",
             "claude-3-5-haiku-20241022",
+            "claude-3-5-sonnet-latest",
             "claude-3-5-sonnet-20241022",
             "claude-3-5-sonnet-20240620",
+            "claude-3-opus-latest",
             "claude-3-opus-20240229",
             "claude-3-sonnet-20240229",
         ].compactMap(Anthropic.Model.init(rawValue:))
         return active + legacy
+    }
+}
+
+// MARK: - Model Aliases (latest pointers)
+extension Anthropic.Model {
+    /// Alias for the latest Claude 4.6 Sonnet model.
+    public static var claude46Sonnet_latest: Anthropic.Model { .claude46Sonnet }
+    /// Alias for the latest Claude 4.6 Opus model.
+    public static var claude46Opus_latest: Anthropic.Model { .claude46Opus }
+}
+
+// MARK: - Structured Output Support
+extension Anthropic.Model {
+    /// The set of models that support the `output_format` / structured output feature.
+    /// Claude 4.x and newer models support structured output.
+    public static var structuredOutputModels: Set<Anthropic.Model> {
+        [
+            .claude46Opus, .claude46Opus_20260205,
+            .claude46Sonnet, .claude46Sonnet_20260217,
+            .claude45Opus_20251101,
+            .claude45Sonnet_latest, .claude45Sonnet_20250929,
+            .claude45Haiku_latest, .claude45Haiku_20251001,
+            .claude41Opus_latest, .claude41Opus_20250805,
+            .claude4Opus_20250514, .claude4Sonnet_20250514,
+        ]
+    }
+
+    /// Returns `true` when this model supports the structured output (`output_format`) feature.
+    public var supportsStructuredOutput: Bool {
+        Anthropic.Model.structuredOutputModels.contains(self)
     }
 }
 
@@ -190,8 +242,10 @@ extension Anthropic.Model {
         let retiredRawValues: Set<String> = [
             "claude-3-7-sonnet-20250219",
             "claude-3-5-haiku-20241022",
+            "claude-3-5-sonnet-latest",
             "claude-3-5-sonnet-20241022",
             "claude-3-5-sonnet-20240620",
+            "claude-3-opus-latest",
             "claude-3-opus-20240229",
             "claude-3-sonnet-20240229",
         ]
