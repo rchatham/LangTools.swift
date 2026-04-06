@@ -16,6 +16,45 @@ public protocol StructuredOutput: Codable, Sendable {
     static var jsonSchema: JSONSchema { get }
 }
 
+// MARK: - StructuredOutput Initializers
+
+extension StructuredOutput {
+    /// Decode a StructuredOutput value from raw JSON data.
+    public init(jsonData: Data) throws {
+        do {
+            self = try JSONDecoder().decode(Self.self, from: jsonData)
+        } catch {
+            throw StructuredOutputError.decodingFailed(error)
+        }
+    }
+
+    /// Decode a StructuredOutput value from a JSON string.
+    public init(jsonString: String) throws {
+        guard let data = jsonString.data(using: .utf8) else {
+            throw StructuredOutputError.invalidResponse("Unable to convert string to UTF-8 data")
+        }
+        try self.init(jsonData: data)
+    }
+
+    /// Decode a StructuredOutput value from a `JSON` value.
+    public init(json: JSON) throws {
+        let data = try JSONEncoder().encode(json)
+        try self.init(jsonData: data)
+    }
+
+    /// Validate a `JSON` value against this type's schema, then decode it.
+    public static func validated(from json: JSON) throws -> Self {
+        try Self.jsonSchema.validate(json)
+        return try Self.init(json: json)
+    }
+
+    /// Validate raw JSON data against this type's schema, then decode it.
+    public static func validated(from data: Data) throws -> Self {
+        let json = try JSON(data: data)
+        return try validated(from: json)
+    }
+}
+
 // MARK: - JSONSchema
 
 /// Type-safe JSON Schema representation for structured output.
@@ -181,7 +220,7 @@ public struct JSONSchemaDefinition: Codable, Sendable, Equatable {
 /// Protocol for requests that can return structured output.
 /// Providers implement this to add structured output support to their requests.
 /// Structured output is controlled at runtime via the responseSchema property.
-public protocol LangToolsStructuredOutputRequest: LangToolsRequest {
+public protocol LangToolsStructuredOutputRequest: LangToolsRequest where Response: LangToolsStructuredOutputResponse {
     /// JSON Schema for the expected response structure.
     /// When set, the provider will return structured output matching this schema.
     /// When nil, the provider returns normal text responses.
@@ -208,16 +247,10 @@ extension LangToolsStructuredOutputResponse {
     /// - Parameter type: The StructuredOutput type to decode as
     /// - Returns: Decoded structured response
     public func structuredOutput<T: StructuredOutput>(as type: T.Type) throws -> T {
-        guard let jsonString = jsonContent,
-              let jsonData = jsonString.data(using: .utf8) else {
+        guard let jsonString = jsonContent else {
             throw StructuredOutputError.invalidResponse("Response does not contain valid JSON content")
         }
-
-        do {
-            return try JSONDecoder().decode(T.self, from: jsonData)
-        } catch {
-            throw StructuredOutputError.decodingFailed(error)
-        }
+        return try T(jsonString: jsonString)
     }
 
     /// Convenience: Decode the response content, inferring type
@@ -245,6 +278,7 @@ public enum StructuredOutputError: Error, LocalizedError {
     case decodingFailed(Error)
     case modelDoesNotSupportStructuredOutput(model: String, supportedModels: [String])
     case schemaRequired
+    case validationFailed(path: String, reason: String)
 
     public var errorDescription: String? {
         switch self {
@@ -256,6 +290,77 @@ public enum StructuredOutputError: Error, LocalizedError {
             return "Model '\(model)' does not support structured output. Supported models: \(supportedModels.joined(separator: ", "))"
         case .schemaRequired:
             return "Response schema is required for structured output requests"
+        case .validationFailed(let path, let reason):
+            return "Schema validation failed at '\(path)': \(reason)"
+        }
+    }
+}
+
+// MARK: - JSONSchema Validation
+
+extension JSONSchema {
+    /// Validate a `JSON` value against this schema.
+    /// Throws `StructuredOutputError.validationFailed` with a JSON-pointer-style path on the first failure.
+    public func validate(_ json: JSON, path: String = "$") throws {
+        switch type {
+        case .object:
+            guard case .object(let obj) = json else {
+                throw StructuredOutputError.validationFailed(path: path, reason: "Expected object, got \(json.typeName)")
+            }
+            // Check required keys
+            if let requiredKeys = required {
+                for key in requiredKeys where obj[key] == nil {
+                    throw StructuredOutputError.validationFailed(path: "\(path).\(key)", reason: "Missing required key")
+                }
+            }
+            // Check additionalProperties
+            if additionalProperties == false, let props = properties {
+                let allowedKeys = Set(props.keys)
+                for key in obj.keys where !allowedKeys.contains(key) {
+                    throw StructuredOutputError.validationFailed(path: "\(path).\(key)", reason: "Additional property not allowed")
+                }
+            }
+            // Recurse into known properties
+            if let props = properties {
+                for (key, schema) in props {
+                    if let value = obj[key] {
+                        try schema.validate(value, path: "\(path).\(key)")
+                    }
+                }
+            }
+
+        case .array:
+            guard case .array(let arr) = json else {
+                throw StructuredOutputError.validationFailed(path: path, reason: "Expected array, got \(json.typeName)")
+            }
+            if let itemSchema = items {
+                for (i, element) in arr.enumerated() {
+                    try itemSchema.validate(element, path: "\(path)[\(i)]")
+                }
+            }
+
+        case .string:
+            guard case .string(let str) = json else {
+                throw StructuredOutputError.validationFailed(path: path, reason: "Expected string, got \(json.typeName)")
+            }
+            if let allowed = enumValues, !allowed.contains(str) {
+                throw StructuredOutputError.validationFailed(path: path, reason: "Value '\(str)' not in enum: \(allowed)")
+            }
+
+        case .number, .integer:
+            guard case .number = json else {
+                throw StructuredOutputError.validationFailed(path: path, reason: "Expected number, got \(json.typeName)")
+            }
+
+        case .boolean:
+            guard case .bool = json else {
+                throw StructuredOutputError.validationFailed(path: path, reason: "Expected boolean, got \(json.typeName)")
+            }
+
+        case .null:
+            guard case .null = json else {
+                throw StructuredOutputError.validationFailed(path: path, reason: "Expected null, got \(json.typeName)")
+            }
         }
     }
 }
