@@ -307,4 +307,188 @@ final class StructuredOutputTests: XCTestCase {
         XCTAssertEqual(listSchema.properties?["items"]?.items?.type, .object)
         XCTAssertEqual(listSchema.properties?["items"]?.items?.properties?["id"]?.type, .integer)
     }
+
+    // MARK: - StructuredOutput Initializer Tests
+
+    private struct SampleOutput: StructuredOutput {
+        let name: String
+        let score: Double
+
+        static var jsonSchema: JSONSchema {
+            .object(
+                properties: ["name": .string(), "score": .number()],
+                required: ["name", "score"],
+                additionalProperties: false
+            )
+        }
+    }
+
+    func testInitFromJsonData() throws {
+        let json = #"{"name":"Alice","score":9.5}"#
+        let data = json.data(using: .utf8)!
+        let output = try SampleOutput(jsonData: data)
+        XCTAssertEqual(output.name, "Alice")
+        XCTAssertEqual(output.score, 9.5)
+    }
+
+    func testInitFromJsonString() throws {
+        let output = try SampleOutput(jsonString: #"{"name":"Bob","score":7.0}"#)
+        XCTAssertEqual(output.name, "Bob")
+        XCTAssertEqual(output.score, 7.0)
+    }
+
+    func testInitFromJsonStringBadUTF8ThrowsInvalidResponse() {
+        // We can't easily create a non-UTF-8 string in Swift, but we can test
+        // that an invalid JSON string throws decodingFailed.
+        XCTAssertThrowsError(try SampleOutput(jsonString: "not-json")) { error in
+            guard case StructuredOutputError.decodingFailed = error else {
+                return XCTFail("Expected decodingFailed, got \(error)")
+            }
+        }
+    }
+
+    func testInitFromJson() throws {
+        let json = JSON.object(["name": .string("Carol"), "score": .number(8.2)])
+        let output = try SampleOutput(json: json)
+        XCTAssertEqual(output.name, "Carol")
+        XCTAssertEqual(output.score, 8.2)
+    }
+
+    // MARK: - JSONSchema.validate Tests
+
+    func testValidateObjectSuccess() throws {
+        let schema = SampleOutput.jsonSchema
+        let json = JSON.object(["name": .string("Alice"), "score": .number(9.5)])
+        XCTAssertNoThrow(try schema.validate(json))
+    }
+
+    func testValidateMissingRequiredKey() {
+        let schema = SampleOutput.jsonSchema
+        let json = JSON.object(["name": .string("Alice")])  // missing "score"
+        XCTAssertThrowsError(try schema.validate(json)) { error in
+            guard case StructuredOutputError.validationFailed(let path, let reason) = error else {
+                return XCTFail("Expected validationFailed, got \(error)")
+            }
+            XCTAssertTrue(path.contains("score"), "Path should reference 'score', got '\(path)'")
+            XCTAssertTrue(reason.contains("Missing"), "Reason should mention missing, got '\(reason)'")
+        }
+    }
+
+    func testValidateAdditionalPropertyNotAllowed() {
+        let schema = SampleOutput.jsonSchema  // additionalProperties: false
+        let json = JSON.object(["name": .string("Alice"), "score": .number(9.5), "extra": .string("nope")])
+        XCTAssertThrowsError(try schema.validate(json)) { error in
+            guard case StructuredOutputError.validationFailed(let path, _) = error else {
+                return XCTFail("Expected validationFailed, got \(error)")
+            }
+            XCTAssertTrue(path.contains("extra"), "Path should reference 'extra', got '\(path)'")
+        }
+    }
+
+    func testValidateTypeMismatch() {
+        let schema = SampleOutput.jsonSchema
+        let json = JSON.object(["name": .number(42), "score": .number(9.5)])  // name should be string
+        XCTAssertThrowsError(try schema.validate(json)) { error in
+            guard case StructuredOutputError.validationFailed(let path, let reason) = error else {
+                return XCTFail("Expected validationFailed, got \(error)")
+            }
+            XCTAssertTrue(path.contains("name"), "Path should reference 'name', got '\(path)'")
+            XCTAssertTrue(reason.contains("string"), "Reason should mention expected type, got '\(reason)'")
+        }
+    }
+
+    func testValidateTopLevelTypeMismatch() {
+        let schema = SampleOutput.jsonSchema  // expects object
+        let json = JSON.string("not-an-object")
+        XCTAssertThrowsError(try schema.validate(json)) { error in
+            guard case StructuredOutputError.validationFailed(let path, _) = error else {
+                return XCTFail("Expected validationFailed, got \(error)")
+            }
+            XCTAssertEqual(path, "$")
+        }
+    }
+
+    func testValidateEnumValueSuccess() throws {
+        let schema = JSONSchema.string(enumValues: ["red", "green", "blue"])
+        XCTAssertNoThrow(try schema.validate(.string("red")))
+    }
+
+    func testValidateEnumValueFailure() {
+        let schema = JSONSchema.string(enumValues: ["red", "green", "blue"])
+        XCTAssertThrowsError(try schema.validate(.string("purple"))) { error in
+            guard case StructuredOutputError.validationFailed(_, let reason) = error else {
+                return XCTFail("Expected validationFailed, got \(error)")
+            }
+            XCTAssertTrue(reason.contains("purple"), "Reason should mention the bad value, got '\(reason)'")
+        }
+    }
+
+    func testValidateArraySuccess() throws {
+        let schema = JSONSchema.array(items: .string())
+        XCTAssertNoThrow(try schema.validate(.array([.string("a"), .string("b")])))
+    }
+
+    func testValidateArrayItemTypeMismatch() {
+        let schema = JSONSchema.array(items: .string())
+        XCTAssertThrowsError(try schema.validate(.array([.string("a"), .number(1)]))) { error in
+            guard case StructuredOutputError.validationFailed(let path, _) = error else {
+                return XCTFail("Expected validationFailed, got \(error)")
+            }
+            XCTAssertTrue(path.contains("[1]"), "Path should reference index 1, got '\(path)'")
+        }
+    }
+
+    func testValidateNestedObjectRecurses() {
+        let schema = JSONSchema.object(
+            properties: [
+                "address": .object(
+                    properties: ["city": .string()],
+                    required: ["city"],
+                    additionalProperties: false
+                )
+            ],
+            required: ["address"],
+            additionalProperties: false
+        )
+        // address.city is a number instead of a string
+        let json = JSON.object(["address": .object(["city": .number(42)])])
+        XCTAssertThrowsError(try schema.validate(json)) { error in
+            guard case StructuredOutputError.validationFailed(let path, _) = error else {
+                return XCTFail("Expected validationFailed, got \(error)")
+            }
+            XCTAssertTrue(path.contains("city"), "Path should reference 'city', got '\(path)'")
+        }
+    }
+
+    // MARK: - validated(from:) Tests
+
+    func testValidatedFromJsonSuccess() throws {
+        let json = JSON.object(["name": .string("Dave"), "score": .number(6.0)])
+        let output = try SampleOutput.validated(from: json)
+        XCTAssertEqual(output.name, "Dave")
+        XCTAssertEqual(output.score, 6.0)
+    }
+
+    func testValidatedFromJsonValidationFailure() {
+        let json = JSON.object(["name": .number(99), "score": .number(6.0)])  // name wrong type
+        XCTAssertThrowsError(try SampleOutput.validated(from: json)) { error in
+            guard case StructuredOutputError.validationFailed = error else {
+                return XCTFail("Expected validationFailed, got \(error)")
+            }
+        }
+    }
+
+    func testValidatedFromDataSuccess() throws {
+        let data = #"{"name":"Eve","score":5.5}"#.data(using: .utf8)!
+        let output = try SampleOutput.validated(from: data)
+        XCTAssertEqual(output.name, "Eve")
+        XCTAssertEqual(output.score, 5.5)
+    }
+
+    // MARK: - StructuredOutputError.validationFailed Tests
+
+    func testValidationFailedErrorDescription() {
+        let error = StructuredOutputError.validationFailed(path: "$.name", reason: "Expected string, got number")
+        XCTAssertEqual(error.errorDescription, "Schema validation failed at '$.name': Expected string, got number")
+    }
 }
