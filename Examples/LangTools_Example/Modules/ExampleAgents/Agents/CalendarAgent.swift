@@ -9,6 +9,90 @@ import EventKit
 import LangTools
 import Agents
 
+// MARK: - CalendarAgentResponse (StructuredOutput)
+
+/// The structured JSON response that CalendarAgent asks the LLM to produce.
+/// Contains an array of event cards plus an optional human-readable summary.
+public struct CalendarAgentResponse: StructuredOutput {
+    public let events: [CalendarEventData]
+    public let message: String?
+
+    public init(events: [CalendarEventData], message: String? = nil) {
+        self.events = events
+        self.message = message
+    }
+
+    public static var jsonSchema: JSONSchema {
+        .object(
+            properties: [
+                "events": .array(
+                    items: CalendarEventData.jsonSchema,
+                    description: "List of calendar events"
+                ),
+                "message": .string(description: "Optional summary message to display to the user")
+            ],
+            required: ["events"],
+            additionalProperties: false,
+            title: "CalendarAgentResponse"
+        )
+    }
+}
+
+/// Data-only event type used inside CalendarAgentResponse.
+/// Mirrors CalendarEventCard but lives in ExampleAgents (no SwiftUI).
+public struct CalendarEventData: StructuredOutput {
+    public let id: String
+    public let title: String
+    public let startDate: String
+    public let endDate: String
+    public let location: String?
+    public let notes: String?
+    public let isAllDay: Bool
+    public let calendarName: String?
+    public let eventIdentifier: String?
+
+    public init(
+        id: String = UUID().uuidString,
+        title: String,
+        startDate: String,
+        endDate: String,
+        location: String? = nil,
+        notes: String? = nil,
+        isAllDay: Bool = false,
+        calendarName: String? = nil,
+        eventIdentifier: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.startDate = startDate
+        self.endDate = endDate
+        self.location = location
+        self.notes = notes
+        self.isAllDay = isAllDay
+        self.calendarName = calendarName
+        self.eventIdentifier = eventIdentifier
+    }
+
+    public static var jsonSchema: JSONSchema {
+        .object(
+            properties: [
+                "id": .string(description: "Unique identifier for this event entry"),
+                "title": .string(description: "Event title"),
+                "startDate": .string(description: "Event start in ISO 8601 format"),
+                "endDate": .string(description: "Event end in ISO 8601 format"),
+                "location": .string(description: "Event location (optional)"),
+                "notes": .string(description: "Event notes (optional)"),
+                "isAllDay": .boolean(description: "True when the event spans the full day"),
+                "calendarName": .string(description: "Calendar name (optional)"),
+                "eventIdentifier": .string(description: "System identifier for edits/deletes (optional)")
+            ],
+            required: ["id", "title", "startDate", "endDate", "isAllDay"],
+            additionalProperties: false,
+            title: "CalendarEventData"
+        )
+    }
+}
+
 // MARK: - Calendar Permission Agent
 struct CalendarPermissionAgent: Agent {
     init() {}
@@ -364,12 +448,21 @@ public struct CalendarAgent: Agent {
         Always verify calendar permissions before performing operations.
         When creating or modifying events, ensure all required information is provided.
         Use delegate agents for specialized tasks and provide clear, concise responses.
+
+        IMPORTANT: Your final response MUST be a JSON object matching the CalendarAgentResponse schema.
+        - Populate the "events" array with every calendar event relevant to the user's request.
+        - Set "message" to a short human-readable summary (e.g. "Found 3 upcoming events").
+        - If no events match, return an empty "events" array and explain in "message".
+        - Do NOT include any text outside the JSON object.
         """
 
     public var delegateAgents: [any Agent]
 
     // Main agent uses delegate agents' tools
     public var tools: [any LangToolsTool]? = nil
+
+    /// Structured output schema — tells the LLM to return CalendarAgentResponse JSON.
+    public var responseSchema: JSONSchema? { CalendarAgentResponse.jsonSchema }
 }
 
 // MARK: - Helpers
