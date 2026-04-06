@@ -134,7 +134,10 @@ extension Agent {
                 // This next messages must be a user message for use with Anthropic, an assistant message will constrain the result to be a completion of the current message and may provide unexpected results. https://docs.anthropic.com/en/api/messages#:~:text=If%20the%20final%20message%20uses%20the%20assistant%20role%2C%20the%20response%20content%20will%20continue%20immediately%20from%20the%20content%20in%20that%20message.%20This%20can%20be%20used%20to%20constrain%20part%20of%20the%20model's%20response.
                 context.messages.append(context.langTool.systemMessage(reason)) // TODO: - decide if this should be wrapped into the previous system message
                 do { return try await agent.execute(context: context) }
-                catch { throw AgentError("error: " + error.localizedDescription) }
+                catch {
+                    print("❌ Agent transfer error (\(agentName)): \(type(of: error)) — \(error)")
+                    throw AgentError("error: " + error.localizedDescription)
+                }
             }
         )]
         if let extraTools = context.tools, !extraTools.isEmpty {
@@ -164,6 +167,7 @@ extension Agent {
             context.eventHandler(.completed(agent: name, result: result))
             return result
         } catch {
+            print("❌ Agent '\(name)' failed: \(type(of: error)) — \(error)")
             context.eventHandler(.completed(agent: name, result: error.localizedDescription, is_error: true))
             throw AgentError("agent: \(name) - error: " + error.localizedDescription)
         }

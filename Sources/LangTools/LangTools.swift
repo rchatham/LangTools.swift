@@ -199,13 +199,30 @@ extension LangTools {
     }
 }
 
-public enum LangToolsError: Error {
+public enum LangToolsError: Error, LocalizedError {
     case invalidData, streamParsingFailure, invalidURL, requestFailed, invalidContentType
     case invalidArgument(String)
     case jsonParsingFailure(Error)
     case responseUnsuccessful(statusCode: Int, Error?)
     case apiError(Codable & Error)
     case failedToDecodeStream(buffer: String, error: Error)
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidData:                          return "Invalid data"
+        case .streamParsingFailure:                 return "Stream parsing failure"
+        case .invalidURL:                           return "Invalid URL"
+        case .requestFailed:                        return "Request failed"
+        case .invalidContentType:                   return "Invalid content type"
+        case .invalidArgument(let msg):             return "Invalid argument: \(msg)"
+        case .jsonParsingFailure(let err):          return "JSON parsing failure: \(err.localizedDescription)"
+        case .responseUnsuccessful(let code, let err):
+            return "Response unsuccessful (status \(code)): \(err?.localizedDescription ?? "no details")"
+        case .apiError(let err):                    return "API error: \(err.localizedDescription)"
+        case .failedToDecodeStream(let buf, let err):
+            return "Failed to decode stream (\(buf.prefix(120))): \(err.localizedDescription)"
+        }
+    }
 }
 
 // MARK: - Helpers
