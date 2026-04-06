@@ -153,12 +153,9 @@ extension Agent {
         do {
 //            print("AGENT \(name) SENDING: \([systemMessage] + context.messages)")
             let systemMessage = context.langTool.systemMessage(createSystemPrompt())
-            var request = try context.langTool.chatRequest(model: context.model, messages: [systemMessage] + context.messages, tools: tools, toolEventHandler: toolEventHandler)
             // Agent's own schema takes precedence; fall back to the context-level schema.
             let effectiveSchema = responseSchema ?? context.responseSchema
-            if let schema = effectiveSchema {
-                request.applyResponseSchema(schema)
-            }
+            let request = try context.langTool.chatRequest(model: context.model, messages: [systemMessage] + context.messages, tools: tools, responseSchema: effectiveSchema, toolEventHandler: toolEventHandler)
             let response = try await context.langTool.perform(request: request) as any LangToolsChatResponse
             guard let result = response.message?.content.string, !result.isEmpty else {
                 context.eventHandler(.error(agent: name, message: "Empty result received"))

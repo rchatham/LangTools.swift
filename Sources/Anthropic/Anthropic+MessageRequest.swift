@@ -19,6 +19,13 @@ public extension Anthropic {
         return MessageRequest(model: model, messages: toAnthropicMessages(messages), system: toAnthropicSystemMessage(messages), tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
     }
 
+    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
+        var request = MessageRequest(model: model, messages: toAnthropicMessages(messages), system: toAnthropicSystemMessage(messages), tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
+        request.responseSchema = responseSchema
+        return request
+    }
+
     static func toAnthropicMessages(_ messages: [any LangToolsMessage]) -> [Anthropic.Message] {
         return messages.filter { !$0.role.isSystem && !$0.role.isTool }.map { Anthropic.Message($0) }
     }

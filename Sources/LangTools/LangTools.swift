@@ -23,6 +23,9 @@ public protocol LangTools {
     static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
     func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
 
+    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
+    func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
+
     var session: URLSession { get }
     func prepare(request: some LangToolsRequest) throws -> URLRequest
 }
@@ -30,6 +33,16 @@ public protocol LangTools {
 extension LangTools {
     public func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> any LangToolsChatRequest {
         try Self.chatRequest(model: model, messages: messages, tools: tools, toolEventHandler: toolEventHandler)
+    }
+
+    /// Default implementation ignores responseSchema. Providers that support structured output
+    /// override this to apply the schema to the concrete request before boxing it as an existential.
+    public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]? = nil, responseSchema: JSONSchema? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> any LangToolsChatRequest {
+        try chatRequest(model: model, messages: messages, tools: tools, toolEventHandler: toolEventHandler)
+    }
+
+    public func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]? = nil, responseSchema: JSONSchema? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> any LangToolsChatRequest {
+        try Self.chatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
     }
 
     public func canHandleRequest<Request: LangToolsRequest>(_ request: Request) -> Bool {

@@ -195,23 +195,6 @@ extension LangToolsStructuredOutputRequest {
     }
 }
 
-// MARK: - Protocol-erased schema application
-
-/// Allows applying a response schema to any request without knowing its concrete type.
-/// Requests that don't support structured output silently ignore the call.
-public extension LangToolsRequest {
-    /// Applies a JSON Schema as the structured output schema, if this request supports it.
-    /// Has no effect on requests that do not conform to `LangToolsStructuredOutputRequest`.
-    mutating func applyResponseSchema(_ schema: JSONSchema) {
-        if var structuredRequest = self as? any LangToolsStructuredOutputRequest {
-            structuredRequest.responseSchema = schema
-            if let updated = structuredRequest as? Self {
-                self = updated
-            }
-        }
-    }
-}
-
 // MARK: - LangToolsStructuredOutputResponse Protocol
 
 /// Protocol for responses that can return structured output.

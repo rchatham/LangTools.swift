@@ -16,7 +16,14 @@ public extension OpenAI {
 
     static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
         guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
-        return  ChatCompletionRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
+        return ChatCompletionRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
+    }
+
+    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
+        var request = ChatCompletionRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
+        request.responseSchema = responseSchema
+        return request
     }
 }
 
