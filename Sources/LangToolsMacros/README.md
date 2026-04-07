@@ -1,24 +1,50 @@
 # LangToolsMacros
 
-Schema generation helpers for LangTools structured output.
+Macro support for LangTools structured output (pending full implementation).
 
-## SchemaBuilder
+## Current status
 
-A fluent API for building JSON schemas:
+The `@StructuredOutput` macro is **planned but not yet implemented** — it requires
+SwiftSyntax and a `CompilerPlugin` target. See `StructuredOutputMacro.swift` for
+the full implementation roadmap.
+
+## Available today (in the `LangTools` module)
+
+### `JSONSchema.infer(from:)`
+
+Automatically infers a `JSONSchema` from any `Decodable` type using decoder-driven
+reflection — no annotations needed:
 
 ```swift
-var builder = SchemaBuilder()
-_ = builder
+struct WeatherCard: StructuredOutput {
+    let location: String
+    let temperature: Double
+    let unit: String
+
+    static var jsonSchema: JSONSchema {
+        JSONSchema.infer(from: Self.self)
+    }
+}
+```
+
+Supports: all primitive types, `Optional<T>`, `[T]`, nested structs, `Date`, `UUID`, `URL`, `Data`.
+
+### `SchemaBuilder`
+
+A fully chainable, immutable fluent API for manual schema construction:
+
+```swift
+let schema = SchemaBuilder()
     .title("WeatherCard")
     .string("location", description: "The location")
     .number("temperature")
     .string("unit", enumValues: ["celsius", "fahrenheit"])
-let schema = builder.build()
+    .build()
 ```
 
-## Manual Conformance
+### Manual `StructuredOutput` conformance
 
-For full control, implement `StructuredOutput` manually:
+For full control over the schema:
 
 ```swift
 struct WeatherCard: StructuredOutput {
@@ -28,16 +54,26 @@ struct WeatherCard: StructuredOutput {
     static var jsonSchema: JSONSchema {
         .object(
             properties: [
-                "location": .string(),
-                "temperature": .number()
+                "location":    .string(description: "The location"),
+                "temperature": .number(description: "The temperature value"),
             ],
             required: ["location", "temperature"],
-            additionalProperties: false
+            additionalProperties: false,
+            title: "WeatherCard"
         )
     }
 }
 ```
 
-## Future: @StructuredOutput Macro
+## Future: `@StructuredOutput` macro
 
-A macro implementation is planned that will automatically generate the `jsonSchema` property from struct definitions.
+When implemented, the macro will auto-generate the `jsonSchema` property:
+
+```swift
+@StructuredOutput
+struct WeatherCard {
+    let location: String
+    let temperature: Double
+}
+// Expands to: StructuredOutput conformance with jsonSchema auto-generated
+```
