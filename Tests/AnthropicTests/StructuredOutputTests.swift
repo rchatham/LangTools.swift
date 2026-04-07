@@ -34,16 +34,19 @@ final class AnthropicStructuredOutputTests: XCTestCase {
     }
 
     func testUnsupportedModelsForStructuredOutput() {
-        // Test that older models do not support structured output
+        // Test that older models do not support structured output.
+        // Use rawValue init to avoid deprecated-use warnings at the call site.
         let supportedModels = Anthropic.Model.structuredOutputModels
+        let retiredSonnet = Anthropic.Model(rawValue: "claude-3-5-sonnet-latest")!
+        let retiredOpus   = Anthropic.Model(rawValue: "claude-3-opus-latest")!
 
-        XCTAssertFalse(supportedModels.contains(.claude35Sonnet_latest), "claude35Sonnet_latest should not support structured output")
-        XCTAssertFalse(supportedModels.contains(.claude3Opus_latest), "claude3Opus_latest should not support structured output")
+        XCTAssertFalse(supportedModels.contains(retiredSonnet), "claude-3-5-sonnet-latest should not support structured output")
+        XCTAssertFalse(supportedModels.contains(retiredOpus),   "claude-3-opus-latest should not support structured output")
         XCTAssertFalse(supportedModels.contains(.claude3Haiku_20240307), "claude3Haiku_20240307 should not support structured output")
 
         // Verify supportsStructuredOutput computed property
-        XCTAssertFalse(Anthropic.Model.claude35Sonnet_latest.supportsStructuredOutput)
-        XCTAssertFalse(Anthropic.Model.claude3Opus_latest.supportsStructuredOutput)
+        XCTAssertFalse(retiredSonnet.supportsStructuredOutput)
+        XCTAssertFalse(retiredOpus.supportsStructuredOutput)
         XCTAssertFalse(Anthropic.Model.claude3Haiku_20240307.supportsStructuredOutput)
     }
 
@@ -238,8 +241,10 @@ final class AnthropicStructuredOutputTests: XCTestCase {
         // Test that using structured output with unsupported model throws
         let anthropic = Anthropic(apiKey: "test-key")
 
+        // Use rawValue init to avoid deprecated-use warning at the call site.
+        let retiredModel = Anthropic.Model(rawValue: "claude-3-5-sonnet-latest")!
         var request = Anthropic.MessageRequest(
-            model: .claude35Sonnet_latest, // Unsupported model
+            model: retiredModel, // Unsupported model
             messages: [Anthropic.Message(role: .user, content: "Test")],
             max_tokens: 1024
         )
