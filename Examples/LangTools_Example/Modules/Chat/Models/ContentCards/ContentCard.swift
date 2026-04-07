@@ -11,8 +11,14 @@ import LangTools
 
 // MARK: - ContentCard Protocol
 
-/// Protocol for structured content cards that can be rendered as views.
-/// Bridges StructuredOutput (AI-generated) with SwiftUI views.
+// NOTE: ContentCard lives here in the example's Chat module (not in the core LangTools
+// framework) because it imports SwiftUI, which is only available on Apple platforms.
+// LangTools itself must stay platform-agnostic (it compiles on Linux). If a SwiftUI-coupled
+// content-card abstraction is ever needed in the core library, it would require a separate
+// platform-conditional target (e.g. `LangToolsUI`) with `.when(platforms: [.iOS, .macOS, …])`.
+
+/// Protocol for structured content cards that can be rendered as SwiftUI views.
+/// Bridges `StructuredOutput` (AI-generated structured data) with SwiftUI view rendering.
 public protocol ContentCard: StructuredOutput, Identifiable, Equatable {
     associatedtype CardView: View
 
