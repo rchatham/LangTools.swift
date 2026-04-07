@@ -66,9 +66,9 @@ final class AnthropicStructuredOutputTests: XCTestCase {
         )
         request.responseSchema = schema
 
-        XCTAssertNotNil(request.output_format)
-        XCTAssertEqual(request.output_format?.type, "json_schema")
-        XCTAssertEqual(request.output_format?.schema.type, .object)
+        XCTAssertNotNil(request.output_config)
+        XCTAssertEqual(request.output_config?.format.type, "json_schema")
+        XCTAssertEqual(request.output_config?.format.schema.type, .object)
         XCTAssertTrue(request.usesStructuredOutput)
     }
 
@@ -79,7 +79,7 @@ final class AnthropicStructuredOutputTests: XCTestCase {
             max_tokens: 1024
         )
 
-        XCTAssertNil(request.output_format)
+        XCTAssertNil(request.output_config)
         XCTAssertNil(request.responseSchema)
         XCTAssertFalse(request.usesStructuredOutput)
     }
@@ -109,7 +109,7 @@ final class AnthropicStructuredOutputTests: XCTestCase {
         XCTAssertNotNil(request.responseSchema?.properties?["value"])
     }
 
-    // MARK: - OutputFormat Encoding Tests
+    // MARK: - OutputConfig Encoding Tests
 
     func testOutputFormatEncoding() throws {
         let outputFormat = Anthropic.MessageRequest.OutputFormat(
@@ -128,6 +128,26 @@ final class AnthropicStructuredOutputTests: XCTestCase {
         XCTAssertNotNil(json?["schema"])
     }
 
+    func testOutputConfigEncoding() throws {
+        let outputConfig = Anthropic.MessageRequest.OutputConfig(
+            schema: .object(
+                properties: ["test": .string()],
+                required: ["test"],
+                additionalProperties: false
+            )
+        )
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(outputConfig)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        // output_config encodes as { "format": { "type": "json_schema", "schema": {...} } }
+        XCTAssertNotNil(json?["format"])
+        let format = json?["format"] as? [String: Any]
+        XCTAssertEqual(format?["type"] as? String, "json_schema")
+        XCTAssertNotNil(format?["schema"])
+    }
+
     func testMessageRequestEncodingWithOutputFormat() throws {
         var request = Anthropic.MessageRequest(
             model: .claude45Sonnet_latest,
@@ -144,9 +164,12 @@ final class AnthropicStructuredOutputTests: XCTestCase {
         let data = try encoder.encode(request)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-        XCTAssertNotNil(json?["output_format"])
-        let outputFormat = json?["output_format"] as? [String: Any]
-        XCTAssertEqual(outputFormat?["type"] as? String, "json_schema")
+        // Now encodes as output_config.format (not output_format)
+        XCTAssertNotNil(json?["output_config"])
+        let outputConfig = json?["output_config"] as? [String: Any]
+        XCTAssertNotNil(outputConfig?["format"])
+        let format = outputConfig?["format"] as? [String: Any]
+        XCTAssertEqual(format?["type"] as? String, "json_schema")
     }
 
     // MARK: - Response Tests

@@ -205,7 +205,7 @@ extension Anthropic.Model {
 
 // MARK: - Structured Output Support
 extension Anthropic.Model {
-    /// The set of models that support the `output_format` / structured output feature.
+    /// The set of models that support the `output_config.format` / structured output feature.
     /// Claude 4.x and newer models support structured output.
     public static var structuredOutputModels: Set<Anthropic.Model> {
         [
@@ -219,7 +219,7 @@ extension Anthropic.Model {
         ]
     }
 
-    /// Returns `true` when this model supports the structured output (`output_format`) feature.
+    /// Returns `true` when this model supports the structured output (`output_config.format`) feature.
     public var supportsStructuredOutput: Bool {
         Anthropic.Model.structuredOutputModels.contains(self)
     }

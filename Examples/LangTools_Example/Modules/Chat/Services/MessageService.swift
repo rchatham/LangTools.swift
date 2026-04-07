@@ -91,7 +91,7 @@ public class MessageService: Sendable {
     }
 
     func systemMessage() -> String {
-        UserDefaults.systemMessage + "\n\nWhen using agent tools, you should relay all the critical details from the agent's response, the user will not have access to the agent's response. Your answer should be specific and comprehensive, but provide only the relevant information to the user or parent agent."
+        UserDefaults.systemMessage + "\n\nWhen agent tools return results, those results are displayed visually to the user as content cards. Do not repeat or summarize information already shown in the cards. You may add a brief natural-language acknowledgment but should not list out details the user can already see. Answer follow-up questions about the content if asked. If an agent tool returns an error, explain the error to the user."
     }
 
     public func deleteMessage(id: UUID) { Task { @MainActor in messages.removeAll(where: { $0.uuid == id }) } }
@@ -137,8 +137,9 @@ extension MessageService {
 
             case .completed(let agent, let result, let is_error):
                 // Give the app-level parser first crack at structured results.
+                // Append at the top level so content cards appear in the main conversation.
                 if !is_error, let cardMessage = agentResultParser?(result, agent) {
-                    messages.append(cardMessage, for: agent)
+                    messages.append(cardMessage)
                 } else {
                     let message = Message.createAgentCompletionEvent(
                         agentName: agent,
