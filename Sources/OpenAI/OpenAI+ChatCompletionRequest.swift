@@ -291,17 +291,32 @@ extension OpenAI {
 
             /// Metadata struct for the `json_schema` response format.
             public struct JSONSchemaFormat: Codable {
-                /// Name that labels the schema (sent as-is to the API).
+                /// Sanitised name label sent to the OpenAI API.
+                /// The API requires the pattern `^[a-zA-Z0-9_-]{1,64}$`.
                 public let name: String
                 /// The JSON Schema that the model must conform to.
                 public let schema: JSONSchema
                 /// When `true` the model will strictly follow the schema.
                 public let strict: Bool
 
+                /// - Parameter name: Raw name string. Any characters outside `[a-zA-Z0-9_-]`
+                ///   are replaced with `_`, the result is truncated to 64 characters, and an
+                ///   empty string falls back to `"structured_response"`.
                 public init(name: String, schema: JSONSchema, strict: Bool = true) {
-                    self.name = name
+                    self.name = JSONSchemaFormat.sanitize(name: name)
                     self.schema = schema
                     self.strict = strict
+                }
+
+                /// Sanitises a candidate `name` to match OpenAI's `^[a-zA-Z0-9_-]{1,64}$`.
+                public static func sanitize(name: String) -> String {
+                    let cleaned = name
+                        .unicodeScalars
+                        .map { CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-")).contains($0) ? Character($0) : "_" }
+                        .map(String.init)
+                        .joined()
+                    let truncated = String(cleaned.prefix(64))
+                    return truncated.isEmpty ? "structured_response" : truncated
                 }
             }
 

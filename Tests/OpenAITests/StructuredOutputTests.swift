@@ -265,6 +265,46 @@ final class OpenAIStructuredOutputTests: XCTestCase {
         XCTAssertEqual(output.count, 5)
     }
 
+    // MARK: - JSONSchemaFormat name sanitization
+
+    func testSanitizeNamePassthrough() {
+        // Valid names are unchanged
+        XCTAssertEqual(OpenAI.ChatCompletionRequest.ResponseFormat.JSONSchemaFormat.sanitize(name: "WeatherCard"), "WeatherCard")
+        XCTAssertEqual(OpenAI.ChatCompletionRequest.ResponseFormat.JSONSchemaFormat.sanitize(name: "my_schema-v2"), "my_schema-v2")
+    }
+
+    func testSanitizeNameReplacesInvalidChars() {
+        // Spaces and special characters replaced with '_'
+        XCTAssertEqual(OpenAI.ChatCompletionRequest.ResponseFormat.JSONSchemaFormat.sanitize(name: "My Schema"), "My_Schema")
+        XCTAssertEqual(OpenAI.ChatCompletionRequest.ResponseFormat.JSONSchemaFormat.sanitize(name: "hello.world!@#"), "hello_world___")
+    }
+
+    func testSanitizeNameTruncatesTo64Chars() {
+        let long = String(repeating: "a", count: 100)
+        let result = OpenAI.ChatCompletionRequest.ResponseFormat.JSONSchemaFormat.sanitize(name: long)
+        XCTAssertEqual(result.count, 64)
+    }
+
+    func testSanitizeNameFallsBackOnEmpty() {
+        XCTAssertEqual(OpenAI.ChatCompletionRequest.ResponseFormat.JSONSchemaFormat.sanitize(name: ""), "structured_response")
+        // String of only invalid chars becomes all underscores — still valid, NOT the fallback
+        let allInvalid = OpenAI.ChatCompletionRequest.ResponseFormat.JSONSchemaFormat.sanitize(name: "!@#")
+        XCTAssertEqual(allInvalid, "___")
+    }
+
+    func testResponseSchemaSetterSanitizesTitle() {
+        // A schema whose title has spaces must be sanitized when responseSchema is set
+        var request = OpenAI.ChatCompletionRequest(model: .gpt4o, messages: [OpenAI.Message]())
+        request.responseSchema = JSONSchema.object(
+            properties: ["x": .string()],
+            title: "My Structured Response"
+        )
+        guard case .json_schema(let fmt) = request.response_format else {
+            return XCTFail("Expected json_schema response format")
+        }
+        XCTAssertEqual(fmt.name, "My_Structured_Response")
+    }
+
     // MARK: - JSON Schema Format Tests
 
     func testJSONSchemaFormatEncoding() throws {
