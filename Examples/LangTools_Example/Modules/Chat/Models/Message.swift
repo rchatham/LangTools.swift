@@ -176,6 +176,9 @@ public enum ContentType: Codable, Equatable, Hashable {
         case "agentEvent":
             let content = try container.decode(AgentEventContent.self, forKey: .content)
             self = .agentEvent(content)
+        case "contentCards":
+            let content = try container.decode(ContentCardsContent.self, forKey: .content)
+            self = .contentCards(content)
         default: self = .null
         }
     }
