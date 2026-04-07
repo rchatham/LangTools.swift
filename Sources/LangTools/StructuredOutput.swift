@@ -170,6 +170,11 @@ public indirect enum JSONSchema: Codable, Sendable, Equatable {
         )
     }
 
+    /// Creates a null schema
+    public static func null(description: String? = nil) -> JSONSchema {
+        JSONSchema(type: .null, description: description)
+    }
+
     /// Creates a schema from a StructuredOutput type
     public static func from<T: StructuredOutput>(_ type: T.Type) -> JSONSchema {
         T.jsonSchema
