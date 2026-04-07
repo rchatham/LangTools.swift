@@ -93,7 +93,7 @@ struct ChatContainerView: View {
             ResearchAgent()
         ]
         let service = MessageService(agents: agents)
-        service.agentResultParser = makeAgentResultParser()
+        service.agentResultParser = parseAgentResult
         _messageService = StateObject(wrappedValue: service)
         self.voiceInputHandler = voiceInputHandler
     }

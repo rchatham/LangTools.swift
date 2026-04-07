@@ -138,6 +138,7 @@ extension MessageService {
             case .completed(let agent, let result, let is_error):
                 // Give the app-level parser first crack at structured results.
                 // Append at the top level so content cards appear in the main conversation.
+                // TODO: - determine if agentResultParser is the proper way to handle creating a view. Is there another way to receive the structured ouput?
                 if !is_error, let cardMessage = agentResultParser?(result, agent) {
                     messages.append(cardMessage)
                 } else {

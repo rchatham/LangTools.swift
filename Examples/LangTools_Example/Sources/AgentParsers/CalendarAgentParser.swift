@@ -19,14 +19,12 @@ import ExampleAgents
 ///
 /// Any other agent name returns `nil`, passing control back to the default
 /// completion-event rendering in `MessageService`.
-func makeAgentResultParser() -> (_ result: String, _ agentName: String) -> Message? {
-    return { result, agentName in
-        switch agentName {
-        case "calendarAgent":
-            return parseCalendarAgentResult(result)
-        default:
-            return nil
-        }
+func parseAgentResult(_ result: String, _ agentName: String) -> Message? {
+    switch agentName {
+    case "calendarAgent":
+        return parseCalendarAgentResult(result)
+    default:
+        return nil
     }
 }
 
