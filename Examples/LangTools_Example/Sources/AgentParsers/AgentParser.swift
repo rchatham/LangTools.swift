@@ -1,5 +1,5 @@
 //
-//  CalendarAgentParser.swift
+//  AgentParser.swift
 //  LangTools_Example
 //
 //  Provides the agentResultParser closure assigned to MessageService.
