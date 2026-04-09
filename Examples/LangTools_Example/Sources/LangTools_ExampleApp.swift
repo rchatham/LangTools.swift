@@ -121,7 +121,7 @@ struct ChatContainerView: View {
             ResearchAgent()
         ]
         let service = MessageService(agents: agents)
-        service.agentResultParser = parseAgentResult
+        service.agentResultParser = ContentCardRegistry.shared.agentResultParser
         _messageService = StateObject(wrappedValue: service)
         self.voiceInputHandler = voiceInputHandler
     }

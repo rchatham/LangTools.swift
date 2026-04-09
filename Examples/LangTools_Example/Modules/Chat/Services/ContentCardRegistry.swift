@@ -157,6 +157,26 @@ public final class ContentCardRegistry: @unchecked Sendable {
         byAgentKey[AnyHashable(agentKey)]?.parseResult(json)
     }
 
+    /// Ready-made closure for `MessageService.agentResultParser`.
+    ///
+    /// Looks up the agent by its raw name string (the value `MessageService` passes in) and
+    /// converts the result JSON into a `Message.contentCards` if a registration exists.
+    /// Returns `nil` for unregistered agents, letting `MessageService` fall back to the
+    /// default agent-completion event rendering.
+    ///
+    /// Usage (in any app target):
+    ///
+    ///     service.agentResultParser = ContentCardRegistry.shared.agentResultParser
+    ///
+    public var agentResultParser: (String, String) -> Message? {
+        { [weak self] result, agentName in
+            guard let self,
+                  let content = self.parseResult(result, for: agentName)
+            else { return nil }
+            return Message.contentCards(content)
+        }
+    }
+
     // MARK: - View path
 
     /// Build a SwiftUI view for the given content. Falls back to plain secondary text
