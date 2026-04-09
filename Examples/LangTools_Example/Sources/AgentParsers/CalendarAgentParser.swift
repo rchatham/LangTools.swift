@@ -2,51 +2,25 @@
 //  CalendarAgentParser.swift
 //  LangTools_Example
 //
+//  Provides the agentResultParser closure assigned to MessageService.
+//
+//  Each agent that uses responseSchema produces a JSON result string on
+//  completion. This function looks up the registered handler in
+//  ContentCardRegistry and, if found, converts the JSON into a
+//  Message.contentCards so the view layer can render the appropriate card.
+//  Returns nil for agents without a registered card type, letting
+//  MessageService fall back to its default agent-completion event.
+//
+//  To add a new structured-output agent:
+//    1. Call registry.register(...) in LangTools_ExampleApp.registerCardTypes().
+//  No changes to this file are required.
+//
 
 import Foundation
 import Chat
-import ExampleAgents
 
-// MARK: - Calendar agent result parser
-
-/// Returns a closure suitable for `MessageService.agentResultParser` that handles
-/// the `calendarAgent` structured output.
-///
-/// When `calendarAgent` completes, its result is a JSON string conforming to
-/// `CalendarAgentResponse`. This parser decodes it using `StructuredOutput.init(jsonString:)`
-/// and returns a `Message.contentCards` with `cardType == "calendarEvent"` so the
-/// view layer can render `CalendarEventCardListView` using `CalendarEventData` directly.
-///
-/// Any other agent name returns `nil`, passing control back to the default
-/// completion-event rendering in `MessageService`.
 func parseAgentResult(_ result: String, _ agentName: String) -> Message? {
-    switch agentName {
-    case "calendarAgent":
-        return parseCalendarAgentResult(result)
-    default:
-        return nil
-    }
-}
-
-// MARK: - Private helpers
-
-private func parseCalendarAgentResult(_ result: String) -> Message? {
-    guard let response = try? CalendarAgentResponse(jsonString: result) else { return nil }
-
-    guard let eventsData = try? JSONEncoder().encode(response.events),
-          let eventsJSON = String(data: eventsData, encoding: .utf8)
+    guard let content = ContentCardRegistry.shared.parseResult(result, for: agentName)
     else { return nil }
-
-    let count = response.events.count
-    let summary = response.message ?? (count == 0
-        ? "No events found"
-        : "Found \(count) event\(count == 1 ? "" : "s")")
-
-    let content = ContentCardsContent(
-        cardType: "calendarEvent",
-        message: summary,
-        cardsJSON: eventsJSON,
-        cardCount: count
-    )
     return Message.contentCards(content)
 }

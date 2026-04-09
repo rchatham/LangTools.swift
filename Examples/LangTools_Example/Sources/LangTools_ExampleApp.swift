@@ -28,6 +28,7 @@ struct LangTools_ExampleApp: App {
 
     init() {
         registerToolConfigurations()
+        registerCardTypes()
         initializeOllama()
     }
 
@@ -66,6 +67,33 @@ struct LangTools_ExampleApp: App {
                 isAgent: true
             ),
         ])
+    }
+
+    // MARK: - Content Card Registry
+
+    /// Binds each agent's structured output type to its decode logic and SwiftUI view.
+    /// Called once at startup before any messages are sent or rendered.
+    @MainActor
+    func registerCardTypes() {
+        let registry = ContentCardRegistry.shared
+
+        // Calendar — wrapper response: { "events": [...], "message": "..." }
+        registry.register(
+            agent: "calendarAgent",
+            cardType: "calendarEvent",
+            as: CalendarEventData.self,
+            decode: { json in
+                guard let response = try? CalendarAgentResponse(jsonString: json) else { return nil }
+                let count = response.events.count
+                let message = response.message ?? (count == 0
+                    ? "No events found"
+                    : "Found \(count) event\(count == 1 ? "" : "s")")
+                return (message, response.events)
+            },
+            render: { events in
+                ForEach(events, id: \.id) { $0.cardView() }
+            }
+        )
     }
 
     func initializeOllama() {
@@ -123,21 +151,10 @@ struct ChatContainerView: View {
         }
     }
 
-    /// Dispatch to the right card view based on `cardType`.
+    /// Dispatch to the right card view via ContentCardRegistry.
     @ViewBuilder
     private func contentCardsView(content: ContentCardsContent) -> some View {
-        switch content.cardType {
-        case "calendarEvent":
-            CalendarEventCardListView(content: content)
-        default:
-            // Fallback: show the raw JSON summary
-            Text(content.message ?? content.cardType)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .padding(10)
-                .background(Color.gray.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-        }
+        ContentCardRegistry.shared.view(for: content)
     }
 
     /// Reproduces ChatUI's CollapsibleMessageView default bubble exactly,
