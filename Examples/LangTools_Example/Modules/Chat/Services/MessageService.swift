@@ -25,6 +25,13 @@ public class MessageService: Sendable {
     /// Callback fired when a message is added or modified (for persistence)
     public var messageUpdatedCallback: ((Message) -> Void)?
 
+    /// Optional hook called when an agent completes with a non-error result.
+    /// Receives the raw result string and the agent name; return a `Message` to
+    /// display it as structured content, or `nil` to fall through to the default
+    /// agent-completion event rendering.
+    /// Register this from the app target to keep `Chat` agnostic of specific agents.
+    public var agentResultParser: ((_ result: String, _ agentName: String) -> Message?)?
+
     /// Snapshot of tools filtered by the current ToolManager state.
     /// Delegates to `ToolManager.filteredTools()` for the enabled-id set, then
     /// intersects with `self.tools` so future changes to ToolManager filtering
@@ -37,7 +44,7 @@ public class MessageService: Sendable {
         return tools?.filter { enabledNames.contains($0.name) }
     }
 
-    public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [Agent]? = nil, tools: [Tool]? = nil) {
+    public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [any Agent]? = nil, tools: [Tool]? = nil) {
         self.networkClient = networkClient
         self.tools = agents?.map { .init(agent: $0, eventHandler: handleAgentEvent) } + tools
     }
@@ -84,7 +91,7 @@ public class MessageService: Sendable {
     }
 
     func systemMessage() -> String {
-        UserDefaults.systemMessage + "\n\nWhen using agent tools, you should relay all the critical details from the agent's response, the user will not have access to the agent's response. Your answer should be specific and comprehensive, but provide only the relevant information to the user or parent agent."
+        UserDefaults.systemMessage + "\n\nWhen agent tools return results, those results are displayed visually to the user as content cards. Do not repeat or summarize information already shown in the cards. You may add a brief natural-language acknowledgment but should not list out details the user can already see. Answer follow-up questions about the content if asked. If an agent tool returns an error, explain the error to the user."
     }
 
     public func deleteMessage(id: UUID) { Task { @MainActor in messages.removeAll(where: { $0.uuid == id }) } }
@@ -129,12 +136,19 @@ extension MessageService {
                 messages.append(message, for: agent)
 
             case .completed(let agent, let result, let is_error):
-                let message = Message.createAgentCompletionEvent(
-                    agentName: agent,
-                    result: result,
-                    is_error: is_error
-                )
-                messages.append(message, for: agent)
+                // Give the app-level parser first crack at structured results.
+                // Append at the top level so content cards appear in the main conversation.
+                // TODO: - determine if agentResultParser is the proper way to handle creating a view. Is there another way to receive the structured ouput?
+                if !is_error, let cardMessage = agentResultParser?(result, agent) {
+                    messages.append(cardMessage)
+                } else {
+                    let message = Message.createAgentCompletionEvent(
+                        agentName: agent,
+                        result: result,
+                        is_error: is_error
+                    )
+                    messages.append(message, for: agent)
+                }
 
             case .error(let agent, let error):
                 let message = Message.createAgentErrorEvent(
@@ -147,6 +161,7 @@ extension MessageService {
             }
         }
     }
+
 }
 
 extension Array<Message> {

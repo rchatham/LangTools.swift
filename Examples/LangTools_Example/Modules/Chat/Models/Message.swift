@@ -24,6 +24,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         case .string(let str): return str
         case .array(let arr): return arr.joined(separator: "\n")
         case .agentEvent(let content): return content.formattedText
+        case .contentCards(let cards): return cards.message
         }
     }
 
@@ -133,6 +134,8 @@ public enum ContentType: Codable, Equatable, Hashable {
     case array([String])
     // TODO: - rename this as thread?
     case agentEvent(AgentEventContent)
+    // Content cards for structured agent responses
+    case contentCards(ContentCardsContent)
 
     // Custom coding keys for encoding/decoding
     private enum CodingKeys: String, CodingKey { case type, content, children }
@@ -151,6 +154,9 @@ public enum ContentType: Codable, Equatable, Hashable {
         case .agentEvent(let content):
             try container.encode("agentEvent", forKey: .type)
             try container.encode(content, forKey: .content)
+        case .contentCards(let cards):
+            try container.encode("contentCards", forKey: .type)
+            try container.encode(cards, forKey: .content)
         }
     }
 
@@ -170,6 +176,9 @@ public enum ContentType: Codable, Equatable, Hashable {
         case "agentEvent":
             let content = try container.decode(AgentEventContent.self, forKey: .content)
             self = .agentEvent(content)
+        case "contentCards":
+            let content = try container.decode(ContentCardsContent.self, forKey: .content)
+            self = .contentCards(content)
         default: self = .null
         }
     }
@@ -180,6 +189,7 @@ public enum ContentType: Codable, Equatable, Hashable {
         case (.string(let lstr), .string(let rstr)): return lstr == rstr
         case (.array(let larr), .array(let rarr)): return larr == rarr
         case (.agentEvent(let lcontent), .agentEvent(let rcontent)): return lcontent == rcontent
+        case (.contentCards(let lcards), .contentCards(let rcards)): return lcards == rcards
         default: return false
         }
     }
@@ -197,6 +207,9 @@ public enum ContentType: Codable, Equatable, Hashable {
         case .agentEvent(let content):
             hasher.combine(3)
             hasher.combine(content)
+        case .contentCards(let cards):
+            hasher.combine(4)
+            hasher.combine(cards)
         }
     }
 }
@@ -335,5 +348,9 @@ extension Message {
             agentName: agentName,
             details: "error: \(error)"
         )
+    }
+
+    public static func contentCards(_ content: ContentCardsContent) -> Message {
+        Message(role: .system, contentType: .contentCards(content))
     }
 }

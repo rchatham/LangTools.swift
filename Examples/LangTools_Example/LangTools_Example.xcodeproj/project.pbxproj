@@ -53,61 +53,52 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		B14D84622F6E489600E2BD0A /* AudioLevelMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioLevelMonitor.swift; sourceTree = "<group>"; };
-		B14D84632F6E48B500E2BD0A /* ToolManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolManager.swift; sourceTree = "<group>"; };
-		B14D84642F6E48CF00E2BD0A /* ToolConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolConfiguration.swift; sourceTree = "<group>"; };
-		B17671D22DF7852A009503E4 /* WebScrapingAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebScrapingAgent.swift; sourceTree = "<group>"; };
-		B17671FF2DF78C8A009503E4 /* WebScraperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebScraperService.swift; sourceTree = "<group>"; };
-		B181AE892F0F1ACC001DAA40 /* AudioConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioConverter.swift; sourceTree = "<group>"; };
-		B181AE8A2F0F1ACC001DAA40 /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
-		B181AE8B2F0F1ACC001DAA40 /* AVAudioEngineRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVAudioEngineRecorder.swift; sourceTree = "<group>"; };
-		B181AE902F0F1C92001DAA40 /* STTService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = STTService.swift; sourceTree = "<group>"; };
-		B181AE912F0F1C92001DAA40 /* VoiceInputHandlerAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputHandlerAdapter.swift; sourceTree = "<group>"; };
-		B181AE962F10657E001DAA40 /* AppleSpeechSTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSpeechSTTProvider.swift; sourceTree = "<group>"; };
-		B181AE972F10657E001DAA40 /* OpenAISTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAISTTProvider.swift; sourceTree = "<group>"; };
-		B181AE982F10657E001DAA40 /* WhisperKitSTTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperKitSTTProvider.swift; sourceTree = "<group>"; };
-		B181AE9A2F10657E001DAA40 /* STTProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = STTProvider.swift; sourceTree = "<group>"; };
-		B19FD1452DD54DEB00E7BEB5 /* CalendarService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarService.swift; sourceTree = "<group>"; };
-		B19FD14B2DD54DEB00E7BEB5 /* SerperService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerperService.swift; sourceTree = "<group>"; };
-		B19FD14F2DD54DEB00E7BEB5 /* ToolSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolSettings.swift; sourceTree = "<group>"; };
-		B19FD1A62DD6828B00E7BEB5 /* UserDefaults+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "UserDefaults+Extensions.swift"; sourceTree = "<group>"; };
-		B19FD1B12DD683A200E7BEB5 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
-		B19FD1B22DD683C900E7BEB5 /* CalendarAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarAgent.swift; sourceTree = "<group>"; };
-		B19FD1B32DD683C900E7BEB5 /* ReminderAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderAgent.swift; sourceTree = "<group>"; };
-		B19FD1B42DD683C900E7BEB5 /* ResearchAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResearchAgent.swift; sourceTree = "<group>"; };
-		B19FD1B92DD683CC00E7BEB5 /* SerperTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerperTool.swift; sourceTree = "<group>"; };
-		B19FD1BC2DD683D300E7BEB5 /* ChatSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSettingsView.swift; sourceTree = "<group>"; };
-		B19FD1BD2DD683D300E7BEB5 /* OllamaSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaSettingsView.swift; sourceTree = "<group>"; };
-		B19FD1BE2DD683D300E7BEB5 /* View+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "View+Extensions.swift"; sourceTree = "<group>"; };
-		B19FD1C02DD683D600E7BEB5 /* UserDefaults+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "UserDefaults+Extensions.swift"; sourceTree = "<group>"; };
-		B19FD1C12DD683D600E7BEB5 /* Utilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utilities.swift; sourceTree = "<group>"; };
-		B19FD1C32DD683D800E7BEB5 /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
-		B19FD1C42DD683D800E7BEB5 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
-		B19FD1C62DD683D800E7BEB5 /* MessageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageService.swift; sourceTree = "<group>"; };
-		B19FD1C72DD683D800E7BEB5 /* NetworkClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkClient.swift; sourceTree = "<group>"; };
-		B19FD1C82DD683D800E7BEB5 /* OllamaService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaService.swift; sourceTree = "<group>"; };
-		B19FD1CA2DD683DA00E7BEB5 /* Message.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Message.swift; sourceTree = "<group>"; };
-		B19FD1CB2DD683DA00E7BEB5 /* Model.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Model.swift; sourceTree = "<group>"; };
 		B1AE5A3C2F24484D0092EB9D /* Package.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Package.swift; sourceTree = "<group>"; };
 		B1D1EBDF2CA2518F00AD7FA6 /* LangTools_Example.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LangTools_Example.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1D1EBEF2CA2519100AD7FA6 /* LangTools_ExampleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LangTools_ExampleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1D1EBF92CA2519100AD7FA6 /* LangTools_ExampleUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LangTools_ExampleUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B1D63BC22F7C866E009253F2 /* Exceptions for "Tests" folder in "LangTools_ExampleUITests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				LangTools_ExampleUITests/LangTools_ExampleUITests.swift,
+				LangTools_ExampleUITests/LangTools_ExampleUITestsLaunchTests.swift,
+			);
+			target = B1D1EBF82CA2519100AD7FA6 /* LangTools_ExampleUITests */;
+		};
+		B1D63BD82F7C86B3009253F2 /* Exceptions for "Sources" folder in "LangTools_Example" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Assets.xcassets,
+				ContentCards/CalendarEventCard.swift,
+				LangTools_ExampleApp.swift,
+			);
+			target = B1D1EBDE2CA2518E00AD7FA6 /* LangTools_Example */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		B1D1EBE12CA2518F00AD7FA6 /* LangTools_Example */ = {
+		B1D63BB22F7C864A009253F2 /* Sources */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = LangTools_Example;
+			exceptions = (
+				B1D63BD82F7C86B3009253F2 /* Exceptions for "Sources" folder in "LangTools_Example" target */,
+			);
+			path = Sources;
 			sourceTree = "<group>";
 		};
-		B1D1EBF22CA2519100AD7FA6 /* LangTools_ExampleTests */ = {
+		B1D63BBC2F7C864E009253F2 /* Tests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = LangTools_ExampleTests;
+			exceptions = (
+				B1D63BC22F7C866E009253F2 /* Exceptions for "Tests" folder in "LangTools_ExampleUITests" target */,
+			);
+			path = Tests;
 			sourceTree = "<group>";
 		};
-		B1D1EBFC2CA2519100AD7FA6 /* LangTools_ExampleUITests */ = {
+		B1D63BD92F7C878D009253F2 /* Modules */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = LangTools_ExampleUITests;
+			path = Modules;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -150,152 +141,13 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		B181AE8C2F0F1ACC001DAA40 /* Audio */ = {
-			isa = PBXGroup;
-			children = (
-				B14D84622F6E489600E2BD0A /* AudioLevelMonitor.swift */,
-				B181AE992F10657E001DAA40 /* Providers */,
-				B181AE9A2F10657E001DAA40 /* STTProvider.swift */,
-				B181AE892F0F1ACC001DAA40 /* AudioConverter.swift */,
-				B181AE8A2F0F1ACC001DAA40 /* AudioPlayer.swift */,
-				B181AE8B2F0F1ACC001DAA40 /* AVAudioEngineRecorder.swift */,
-				B181AE902F0F1C92001DAA40 /* STTService.swift */,
-				B181AE912F0F1C92001DAA40 /* VoiceInputHandlerAdapter.swift */,
-			);
-			path = Audio;
-			sourceTree = "<group>";
-		};
-		B181AE992F10657E001DAA40 /* Providers */ = {
-			isa = PBXGroup;
-			children = (
-				B181AE962F10657E001DAA40 /* AppleSpeechSTTProvider.swift */,
-				B181AE972F10657E001DAA40 /* OpenAISTTProvider.swift */,
-				B181AE982F10657E001DAA40 /* WhisperKitSTTProvider.swift */,
-			);
-			path = Providers;
-			sourceTree = "<group>";
-		};
-		B19FD17D2DD67EC000E7BEB5 /* Modules */ = {
-			isa = PBXGroup;
-			children = (
-				B181AE8C2F0F1ACC001DAA40 /* Audio */,
-				B19FD17F2DD67EE600E7BEB5 /* ExampleAgents */,
-				B19FD17E2DD67ED500E7BEB5 /* Chat */,
-			);
-			path = Modules;
-			sourceTree = "<group>";
-		};
-		B19FD17E2DD67ED500E7BEB5 /* Chat */ = {
-			isa = PBXGroup;
-			children = (
-				B19FD1CC2DD683DA00E7BEB5 /* Models */,
-				B19FD1C92DD683D800E7BEB5 /* Services */,
-				B19FD1C22DD683D600E7BEB5 /* Utilities */,
-				B19FD1BF2DD683D300E7BEB5 /* Views */,
-			);
-			path = Chat;
-			sourceTree = "<group>";
-		};
-		B19FD17F2DD67EE600E7BEB5 /* ExampleAgents */ = {
-			isa = PBXGroup;
-			children = (
-				B19FD1842DD67F2300E7BEB5 /* Utilities */,
-				B19FD1802DD67F0400E7BEB5 /* Services */,
-				B19FD1B52DD683C900E7BEB5 /* Agents */,
-				B19FD1BA2DD683CC00E7BEB5 /* Tools */,
-			);
-			path = ExampleAgents;
-			sourceTree = "<group>";
-		};
-		B19FD1802DD67F0400E7BEB5 /* Services */ = {
-			isa = PBXGroup;
-			children = (
-				B14D84632F6E48B500E2BD0A /* ToolManager.swift */,
-				B19FD1B12DD683A200E7BEB5 /* KeychainService.swift */,
-				B19FD14B2DD54DEB00E7BEB5 /* SerperService.swift */,
-				B19FD1452DD54DEB00E7BEB5 /* CalendarService.swift */,
-				B17671FF2DF78C8A009503E4 /* WebScraperService.swift */,
-			);
-			path = Services;
-			sourceTree = "<group>";
-		};
-		B19FD1842DD67F2300E7BEB5 /* Utilities */ = {
-			isa = PBXGroup;
-			children = (
-				B19FD1A62DD6828B00E7BEB5 /* UserDefaults+Extensions.swift */,
-			);
-			path = Utilities;
-			sourceTree = "<group>";
-		};
-		B19FD1B52DD683C900E7BEB5 /* Agents */ = {
-			isa = PBXGroup;
-			children = (
-				B19FD1B22DD683C900E7BEB5 /* CalendarAgent.swift */,
-				B19FD1B32DD683C900E7BEB5 /* ReminderAgent.swift */,
-				B19FD1B42DD683C900E7BEB5 /* ResearchAgent.swift */,
-				B17671D22DF7852A009503E4 /* WebScrapingAgent.swift */,
-			);
-			path = Agents;
-			sourceTree = "<group>";
-		};
-		B19FD1BA2DD683CC00E7BEB5 /* Tools */ = {
-			isa = PBXGroup;
-			children = (
-				B19FD1B92DD683CC00E7BEB5 /* SerperTool.swift */,
-			);
-			path = Tools;
-			sourceTree = "<group>";
-		};
-		B19FD1BF2DD683D300E7BEB5 /* Views */ = {
-			isa = PBXGroup;
-			children = (
-				B19FD1BC2DD683D300E7BEB5 /* ChatSettingsView.swift */,
-				B19FD1BD2DD683D300E7BEB5 /* OllamaSettingsView.swift */,
-				B19FD1BE2DD683D300E7BEB5 /* View+Extensions.swift */,
-			);
-			path = Views;
-			sourceTree = "<group>";
-		};
-		B19FD1C22DD683D600E7BEB5 /* Utilities */ = {
-			isa = PBXGroup;
-			children = (
-				B19FD1C02DD683D600E7BEB5 /* UserDefaults+Extensions.swift */,
-				B19FD1C12DD683D600E7BEB5 /* Utilities.swift */,
-				B19FD14F2DD54DEB00E7BEB5 /* ToolSettings.swift */,
-			);
-			path = Utilities;
-			sourceTree = "<group>";
-		};
-		B19FD1C92DD683D800E7BEB5 /* Services */ = {
-			isa = PBXGroup;
-			children = (
-				B19FD1C32DD683D800E7BEB5 /* AudioPlayer.swift */,
-				B19FD1C42DD683D800E7BEB5 /* KeychainService.swift */,
-				B19FD1C62DD683D800E7BEB5 /* MessageService.swift */,
-				B19FD1C72DD683D800E7BEB5 /* NetworkClient.swift */,
-				B19FD1C82DD683D800E7BEB5 /* OllamaService.swift */,
-			);
-			path = Services;
-			sourceTree = "<group>";
-		};
-		B19FD1CC2DD683DA00E7BEB5 /* Models */ = {
-			isa = PBXGroup;
-			children = (
-				B14D84642F6E48CF00E2BD0A /* ToolConfiguration.swift */,
-				B19FD1CA2DD683DA00E7BEB5 /* Message.swift */,
-				B19FD1CB2DD683DA00E7BEB5 /* Model.swift */,
-			);
-			path = Models;
-			sourceTree = "<group>";
-		};
 		B1D1EBD62CA2518E00AD7FA6 = {
 			isa = PBXGroup;
 			children = (
 				B1AE5A3C2F24484D0092EB9D /* Package.swift */,
-				B1D1EBE12CA2518F00AD7FA6 /* LangTools_Example */,
-				B1D1EBF22CA2519100AD7FA6 /* LangTools_ExampleTests */,
-				B1D1EBFC2CA2519100AD7FA6 /* LangTools_ExampleUITests */,
-				B19FD17D2DD67EC000E7BEB5 /* Modules */,
+				B1D63BB22F7C864A009253F2 /* Sources */,
+				B1D63BD92F7C878D009253F2 /* Modules */,
+				B1D63BBC2F7C864E009253F2 /* Tests */,
 				B1E289D32D192BE200A1C327 /* Frameworks */,
 				B1D1EBE02CA2518F00AD7FA6 /* Products */,
 			);
@@ -334,9 +186,6 @@
 			);
 			dependencies = (
 			);
-			fileSystemSynchronizedGroups = (
-				B1D1EBE12CA2518F00AD7FA6 /* LangTools_Example */,
-			);
 			name = LangTools_Example;
 			packageProductDependencies = (
 				B19B31A82F2C997800645F8A /* ChatUI */,
@@ -370,9 +219,6 @@
 			dependencies = (
 				B1D1EBF12CA2519100AD7FA6 /* PBXTargetDependency */,
 			);
-			fileSystemSynchronizedGroups = (
-				B1D1EBF22CA2519100AD7FA6 /* LangTools_ExampleTests */,
-			);
 			name = LangTools_ExampleTests;
 			packageProductDependencies = (
 			);
@@ -392,9 +238,6 @@
 			);
 			dependencies = (
 				B1D1EBFB2CA2519100AD7FA6 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				B1D1EBFC2CA2519100AD7FA6 /* LangTools_ExampleUITests */,
 			);
 			name = LangTools_ExampleUITests;
 			packageProductDependencies = (
@@ -636,7 +479,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = LangTools_Example/LangTools_Example.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Sources/LangTools_Example.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 82W93M4H92;
@@ -679,7 +522,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = LangTools_Example/LangTools_Example.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Sources/LangTools_Example.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 82W93M4H92;

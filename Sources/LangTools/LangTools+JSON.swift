@@ -199,6 +199,20 @@ public enum JSONError: Error {
     case indexOutOfBounds(Int)
 }
 
+// Type name helper for error messages
+extension JSON {
+    var typeName: String {
+        switch self {
+        case .string: return "string"
+        case .number: return "number"
+        case .bool:   return "boolean"
+        case .object: return "object"
+        case .array:  return "array"
+        case .null:   return "null"
+        }
+    }
+}
+
 // Convert to JSONSerialization-compatible type
 extension JSON {
     var jsonCompatible: Any {

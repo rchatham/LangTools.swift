@@ -38,7 +38,7 @@ let package = Package(
                 .product(name: "LangTools", package: "langtools.swift"),
                 .product(name: "OpenAI", package: "langtools.swift"),
             ],
-            path: "Sources/ToolKit"),
+            path: "Modules/ToolKit"),
         .target(
             name: "Chat",
             dependencies: [
@@ -73,6 +73,8 @@ let package = Package(
                 "SwiftSoup",
             ],
             path: "Modules/ExampleAgents"),
+
+        // Tests
         .testTarget(
             name: "ToolKitTests",
             dependencies: [
