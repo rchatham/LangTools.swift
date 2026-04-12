@@ -357,6 +357,8 @@ extension OpenAI {
             // MARK: Legacy support
 
             /// Creates a `ResponseFormat` from the legacy `ResponseType` enum.
+            /// - Note: Prefer constructing `.text` or `.json_object` directly.
+            @available(*, deprecated, message: "Construct .text or .json_object directly instead of using ResponseType")
             public init?(type: ResponseType) {
                 switch type {
                 case .text:        self = .text
@@ -365,7 +367,8 @@ extension OpenAI {
             }
         }
 
-        /// Legacy response type enumeration — use `ResponseFormat` directly for new code.
+        /// Legacy response type enumeration — use `ResponseFormat.text` or
+        /// `ResponseFormat.json_object` directly for new code.
         public enum ResponseType: String, Codable {
             case text, json_object
         }
