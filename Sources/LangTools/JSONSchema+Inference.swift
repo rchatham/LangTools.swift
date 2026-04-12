@@ -66,7 +66,7 @@ final class _SchemaRecorder: Decoder {
             return .object(
                 properties: properties,
                 required: requiredKeys.isEmpty ? nil : requiredKeys,
-                additionalProperties: false
+                additionalProperties: .bool(false)
             )
         case .unkeyed(let item):
             return .array(items: item ?? .string())

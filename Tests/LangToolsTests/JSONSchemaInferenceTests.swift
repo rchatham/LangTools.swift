@@ -149,7 +149,7 @@ final class JSONSchemaInferenceTests: XCTestCase {
     func testAdditionalPropertiesFalse() {
         struct Simple: Decodable { let x: Int }
         let schema = JSONSchema.infer(from: Simple.self)
-        XCTAssertEqual(schema.additionalProperties, false)
+        XCTAssertEqual(schema.additionalProperties, .bool(false))
     }
 
     // MARK: - Empty struct

@@ -42,7 +42,7 @@ final class OpenAIStructuredOutputTests: XCTestCase {
                 "age": .integer()
             ],
             required: ["name", "age"],
-            additionalProperties: false
+            additionalProperties: .bool(false)
         )
 
         let schemaFormat = OpenAI.ChatCompletionRequest.ResponseFormat.JSONSchemaFormat(
@@ -56,12 +56,15 @@ final class OpenAIStructuredOutputTests: XCTestCase {
         let data = try encoder.encode(format)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-        XCTAssertEqual(json?["type"] as? String, "json_schema")
+        let typeStr: String? = json?["type"] as? String
+        XCTAssertEqual(typeStr, "json_schema")
 
         let jsonSchema = json?["json_schema"] as? [String: Any]
         XCTAssertNotNil(jsonSchema)
-        XCTAssertEqual(jsonSchema?["name"] as? String, "test_schema")
-        XCTAssertEqual(jsonSchema?["strict"] as? Bool, true)
+        let schemaName: String? = jsonSchema?["name"] as? String
+        let schemaStrict: Bool? = jsonSchema?["strict"] as? Bool
+        XCTAssertEqual(schemaName, "test_schema")
+        XCTAssertEqual(schemaStrict, true)
         XCTAssertNotNil(jsonSchema?["schema"])
     }
 
@@ -107,7 +110,7 @@ final class OpenAIStructuredOutputTests: XCTestCase {
                 "confidence": .number()
             ],
             required: ["result"],
-            additionalProperties: false
+            additionalProperties: .bool(false)
         )
 
         var request = OpenAI.ChatCompletionRequest(
@@ -149,7 +152,7 @@ final class OpenAIStructuredOutputTests: XCTestCase {
                 .object(
                     properties: ["message": .string()],
                     required: ["message"],
-                    additionalProperties: false
+                    additionalProperties: .bool(false)
                 )
             }
         }
@@ -180,7 +183,7 @@ final class OpenAIStructuredOutputTests: XCTestCase {
                 "tags": .array(items: .string())
             ],
             required: ["name"],
-            additionalProperties: false
+            additionalProperties: .bool(false)
         )
         request.responseSchema = originalSchema
 
@@ -232,7 +235,7 @@ final class OpenAIStructuredOutputTests: XCTestCase {
                         "count": .integer()
                     ],
                     required: ["name", "count"],
-                    additionalProperties: false
+                    additionalProperties: .bool(false)
                 )
             }
         }
@@ -311,7 +314,7 @@ final class OpenAIStructuredOutputTests: XCTestCase {
         let schema = JSONSchema.object(
             properties: ["test": .string()],
             required: ["test"],
-            additionalProperties: false
+            additionalProperties: .bool(false)
         )
 
         let format = OpenAI.ChatCompletionRequest.ResponseFormat.JSONSchemaFormat(
@@ -324,8 +327,10 @@ final class OpenAIStructuredOutputTests: XCTestCase {
         let data = try encoder.encode(format)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-        XCTAssertEqual(json?["name"] as? String, "test_format")
-        XCTAssertEqual(json?["strict"] as? Bool, true)
+        let fmtName: String? = json?["name"] as? String
+        let fmtStrict: Bool? = json?["strict"] as? Bool
+        XCTAssertEqual(fmtName, "test_format")
+        XCTAssertEqual(fmtStrict, true)
         XCTAssertNotNil(json?["schema"])
     }
 
@@ -343,7 +348,7 @@ final class OpenAIStructuredOutputTests: XCTestCase {
                 "temperature": .number()
             ],
             required: ["location", "temperature"],
-            additionalProperties: false
+            additionalProperties: .bool(false)
         )
 
         let encoder = JSONEncoder()

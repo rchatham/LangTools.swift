@@ -59,7 +59,7 @@ final class AnthropicStructuredOutputTests: XCTestCase {
                 "age": .integer()
             ],
             required: ["name", "age"],
-            additionalProperties: false
+            additionalProperties: .bool(false)
         )
 
         var request = Anthropic.MessageRequest(
@@ -95,7 +95,7 @@ final class AnthropicStructuredOutputTests: XCTestCase {
                 .object(
                     properties: ["value": .string()],
                     required: ["value"],
-                    additionalProperties: false
+                    additionalProperties: .bool(false)
                 )
             }
         }
@@ -119,7 +119,7 @@ final class AnthropicStructuredOutputTests: XCTestCase {
             schema: .object(
                 properties: ["test": .string()],
                 required: ["test"],
-                additionalProperties: false
+                additionalProperties: .bool(false)
             )
         )
 
@@ -136,7 +136,7 @@ final class AnthropicStructuredOutputTests: XCTestCase {
             schema: .object(
                 properties: ["test": .string()],
                 required: ["test"],
-                additionalProperties: false
+                additionalProperties: .bool(false)
             )
         )
 
@@ -160,7 +160,7 @@ final class AnthropicStructuredOutputTests: XCTestCase {
         request.responseSchema = .object(
             properties: ["result": .string()],
             required: ["result"],
-            additionalProperties: false
+            additionalProperties: .bool(false)
         )
 
         let encoder = JSONEncoder()
@@ -208,7 +208,7 @@ final class AnthropicStructuredOutputTests: XCTestCase {
                         "value": .integer()
                     ],
                     required: ["name", "value"],
-                    additionalProperties: false
+                    additionalProperties: .bool(false)
                 )
             }
         }
