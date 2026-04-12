@@ -48,6 +48,8 @@ public extension JSONSchema {
 // MARK: - _SchemaRecorder
 
 /// Records which container type was used and accumulates property schemas.
+///
+/// - Note: Internal implementation detail of `JSONSchema.infer(from:)`. Not part of the public API.
 final class _SchemaRecorder: Decoder {
     var codingPath: [CodingKey]
     let userInfo: [CodingUserInfoKey: Any] = [:]
@@ -90,6 +92,7 @@ final class _SchemaRecorder: Decoder {
 
 // MARK: - _SchemaKeyedContainer
 
+/// Internal implementation detail of `JSONSchema.infer(from:)`. Not part of the public API.
 struct _SchemaKeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
     let recorder: _SchemaRecorder
     var codingPath: [CodingKey] { recorder.codingPath }
@@ -160,6 +163,8 @@ struct _SchemaKeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
 // MARK: - _SchemaUnkeyedContainer
 
 /// Decodes exactly one element so `[T].init(from:)` reveals the item type.
+///
+/// - Note: Internal implementation detail of `JSONSchema.infer(from:)`. Not part of the public API.
 final class _SchemaUnkeyedContainer: UnkeyedDecodingContainer {
     let recorder: _SchemaRecorder
     var codingPath: [CodingKey] { recorder.codingPath }
@@ -212,6 +217,7 @@ final class _SchemaUnkeyedContainer: UnkeyedDecodingContainer {
 
 // MARK: - _SchemaSingleValueContainer
 
+/// Internal implementation detail of `JSONSchema.infer(from:)`. Not part of the public API.
 struct _SchemaSingleValueContainer: SingleValueDecodingContainer {
     let recorder: _SchemaRecorder
     var codingPath: [CodingKey] { recorder.codingPath }
@@ -243,6 +249,8 @@ struct _SchemaSingleValueContainer: SingleValueDecodingContainer {
 
 /// Returns safe dummy values for every type, allowing the outer `Decodable.init(from:)` to
 /// succeed after schema inference so no properties are skipped due to a mid-sequence throw.
+///
+/// - Note: Internal implementation detail of `JSONSchema.infer(from:)`. Not part of the public API.
 final class _ZeroDecoder: Decoder {
     var codingPath: [CodingKey]
     let userInfo: [CodingUserInfoKey: Any] = [:]
@@ -352,6 +360,8 @@ struct _ZeroSingleValueContainer: SingleValueDecodingContainer {
 // MARK: - Helpers
 
 /// Maps well-known Foundation types and arbitrary `Decodable` types to their `JSONSchema`.
+///
+/// - Note: Internal implementation detail of `JSONSchema.infer(from:)`. Not part of the public API.
 func _inferSchema<T: Decodable>(for type: T.Type) -> JSONSchema {
     if type == Date.self { return .string(description: "ISO 8601 date string") }
     if type == UUID.self { return .string(description: "UUID") }
@@ -364,8 +374,22 @@ func _inferSchema<T: Decodable>(for type: T.Type) -> JSONSchema {
 
 /// Returns a safe dummy value of `T` by decoding through `_ZeroDecoder`,
 /// with special-cased values for types whose `init(from:)` rejects zero/empty inputs.
+///
+/// - Note: Internal implementation detail of the schema-inference machinery.
 func _zeroValue<T: Decodable>(for type: T.Type, codingPath: [CodingKey] = []) throws -> T {
-    if type == UUID.self { return UUID(uuidString: "00000000-0000-0000-0000-000000000000")! as! T }
-    if type == URL.self  { return URL(string: "https://example.com")! as! T }
+    if type == UUID.self {
+        guard let uuid = UUID(uuidString: "00000000-0000-0000-0000-000000000000"),
+              let result = uuid as? T else {
+            throw DecodingError.typeMismatch(T.self, .init(codingPath: codingPath, debugDescription: "_zeroValue: UUID cast failed"))
+        }
+        return result
+    }
+    if type == URL.self {
+        guard let url = URL(string: "https://example.com"),
+              let result = url as? T else {
+            throw DecodingError.typeMismatch(T.self, .init(codingPath: codingPath, debugDescription: "_zeroValue: URL cast failed"))
+        }
+        return result
+    }
     return try T(from: _ZeroDecoder(codingPath: codingPath))
 }
