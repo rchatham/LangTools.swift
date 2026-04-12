@@ -23,7 +23,7 @@ let package = Package(
         .executable(name: "ChatCLI", targets: ["ChatCLI"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/rchatham/JSON.swift.git", from: "1.0.0"),
+        .package(url: "https://github.com/rchatham/JSON.swift.git", from: "1.0.1"),
     ],
     targets: [
         // Targets

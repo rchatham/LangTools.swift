@@ -32,7 +32,7 @@ public struct CalendarAgentResponse: StructuredOutput {
                 "message": .string(description: "Optional summary message to display to the user")
             ],
             required: ["events"],
-            additionalProperties: false,
+            additionalProperties: .bool(false),
             title: "CalendarAgentResponse"
         )
     }
@@ -87,7 +87,7 @@ public struct CalendarEventData: StructuredOutput, Identifiable, Equatable {
                 "eventIdentifier": .string(description: "System identifier for edits/deletes (optional)")
             ],
             required: ["id", "title", "startDate", "endDate", "isAllDay"],
-            additionalProperties: false,
+            additionalProperties: .bool(false),
             title: "CalendarEventData"
         )
     }
