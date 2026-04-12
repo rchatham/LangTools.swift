@@ -7,55 +7,47 @@
 
 import Foundation
 
-// MARK: - @StructuredOutput Macro (Placeholder)
+// MARK: - Schema generation for StructuredOutput types
 //
-// The @StructuredOutput macro will automatically generate StructuredOutput conformance
-// for structs, including the `jsonSchema` static property, so you don't have to write
-// it by hand.
+// Use any of these approaches to define the `jsonSchema` required by `StructuredOutput`:
 //
-// Planned usage:
+//   1. `@JSONSchema` macro (from the JSON package) — generates full `JSONConvertible`
+//      conformance automatically from your struct's stored properties.
 //
-//   @StructuredOutput
-//   struct WeatherCard {
-//       let location: String
-//       let temperature: Double
-//       let condition: WeatherCondition
+//      @JSONSchema
+//      struct WeatherCard: Codable {
+//          let location: String
+//          let temperature: Double
+//          let condition: String   // e.g. "sunny" | "cloudy" | "rainy"
+//      }
+//      // Then add StructuredOutput conformance (inherits jsonSchema from @JSONSchema):
+//      extension WeatherCard: StructuredOutput {}
 //
-//       enum WeatherCondition: String, Codable {
-//           case sunny, cloudy, rainy
-//       }
-//   }
+//   2. `JSONSchema.infer(from: MyType.self)` — decoder-driven automatic inference.
+//      Works for any Decodable type with synthesised init(from:).
 //
-// The macro will expand to:
+//      struct MyResponse: StructuredOutput {
+//          let name: String
+//          let score: Double
+//          static var jsonSchema: JSONSchema { JSONSchema.infer(from: Self.self) }
+//      }
 //
-//   extension WeatherCard: StructuredOutput {
-//       static var jsonSchema: JSONSchema {
-//           .object(
-//               properties: [
-//                   "location":    .string(),
-//                   "temperature": .number(),
-//                   "condition":   .string(enumValues: ["sunny", "cloudy", "rainy"])
-//               ],
-//               required: ["location", "temperature", "condition"],
-//               additionalProperties: false
-//           )
-//       }
-//   }
+//   3. `JSONSchema.build { }` result-builder DSL — declarative SwiftUI-style syntax.
 //
-// Implementation status: PENDING
-//   Full implementation requires:
-//   1. Adding SwiftSyntax + SwiftCompilerPlugin dependencies to Package.swift
-//   2. Creating a macro CompilerPlugin target
-//   3. Implementing StructuredOutputMacro using SwiftSyntaxMacros
+//      static var jsonSchema: JSONSchema {
+//          JSONSchema.build(title: "WeatherCard") {
+//              JSONSchemaProperty.string("location", description: "City name")
+//              JSONSchemaProperty.number("temperature")
+//          }
+//      }
 //
-// In the meantime, use one of these alternatives:
+//   4. `FluentSchemaBuilder` — class-based fluent chaining.
 //
-//   • `JSONSchema.infer(from: MyType.self)` — automatic decoder-driven inference
-//     (works for structs with synthesised Codable; see JSONSchema+Inference.swift)
+//      static var jsonSchema: JSONSchema {
+//          FluentSchemaBuilder()
+//              .string("location", description: "City name")
+//              .number("temperature")
+//              .build(title: "WeatherCard")
+//      }
 //
-//   • `SchemaBuilder` — fluent DSL for manual schema construction
-//     (available in the LangTools module; see SchemaBuilder.swift)
-//
-//   • Manual `StructuredOutput` conformance — full control over the schema
-//
-// See: https://docs.swift.org/swift-book/documentation/the-swift-programming-language/macros/
+//   5. Manual `JSONSchema.object(properties:required:)` — explicit full control.
