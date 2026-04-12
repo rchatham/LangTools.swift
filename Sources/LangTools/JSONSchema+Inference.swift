@@ -50,7 +50,7 @@ public extension JSONSchema {
 /// Records which container type was used and accumulates property schemas.
 ///
 /// - Note: Internal implementation detail of `JSONSchema.infer(from:)`. Not part of the public API.
-final class _SchemaRecorder: Decoder {
+fileprivate final class _SchemaRecorder: Decoder {
     var codingPath: [CodingKey]
     let userInfo: [CodingUserInfoKey: Any] = [:]
 
@@ -93,7 +93,7 @@ final class _SchemaRecorder: Decoder {
 // MARK: - _SchemaKeyedContainer
 
 /// Internal implementation detail of `JSONSchema.infer(from:)`. Not part of the public API.
-struct _SchemaKeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
+fileprivate struct _SchemaKeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
     let recorder: _SchemaRecorder
     var codingPath: [CodingKey] { recorder.codingPath }
     var allKeys: [Key] { [] }
@@ -165,7 +165,7 @@ struct _SchemaKeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
 /// Decodes exactly one element so `[T].init(from:)` reveals the item type.
 ///
 /// - Note: Internal implementation detail of `JSONSchema.infer(from:)`. Not part of the public API.
-final class _SchemaUnkeyedContainer: UnkeyedDecodingContainer {
+fileprivate final class _SchemaUnkeyedContainer: UnkeyedDecodingContainer {
     let recorder: _SchemaRecorder
     var codingPath: [CodingKey] { recorder.codingPath }
     var count: Int? { 1 }
@@ -218,7 +218,7 @@ final class _SchemaUnkeyedContainer: UnkeyedDecodingContainer {
 // MARK: - _SchemaSingleValueContainer
 
 /// Internal implementation detail of `JSONSchema.infer(from:)`. Not part of the public API.
-struct _SchemaSingleValueContainer: SingleValueDecodingContainer {
+fileprivate struct _SchemaSingleValueContainer: SingleValueDecodingContainer {
     let recorder: _SchemaRecorder
     var codingPath: [CodingKey] { recorder.codingPath }
 
@@ -251,7 +251,7 @@ struct _SchemaSingleValueContainer: SingleValueDecodingContainer {
 /// succeed after schema inference so no properties are skipped due to a mid-sequence throw.
 ///
 /// - Note: Internal implementation detail of `JSONSchema.infer(from:)`. Not part of the public API.
-final class _ZeroDecoder: Decoder {
+fileprivate final class _ZeroDecoder: Decoder {
     var codingPath: [CodingKey]
     let userInfo: [CodingUserInfoKey: Any] = [:]
     init(codingPath: [CodingKey] = []) { self.codingPath = codingPath }
@@ -263,7 +263,7 @@ final class _ZeroDecoder: Decoder {
     func singleValueContainer() throws -> SingleValueDecodingContainer { _ZeroSingleValueContainer(codingPath: codingPath) }
 }
 
-struct _ZeroKeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
+fileprivate struct _ZeroKeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
     var codingPath: [CodingKey]
     var allKeys: [Key] { [] }
 
@@ -301,7 +301,7 @@ struct _ZeroKeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
 }
 
 /// Always reports `isAtEnd = true` so any array decoded via `_ZeroDecoder` is empty.
-final class _ZeroUnkeyedContainer: UnkeyedDecodingContainer {
+fileprivate final class _ZeroUnkeyedContainer: UnkeyedDecodingContainer {
     var codingPath: [CodingKey]
     var count: Int? { 0 }
     var currentIndex = 0
@@ -333,7 +333,7 @@ final class _ZeroUnkeyedContainer: UnkeyedDecodingContainer {
     func superDecoder() throws -> Decoder { _ZeroDecoder(codingPath: codingPath) }
 }
 
-struct _ZeroSingleValueContainer: SingleValueDecodingContainer {
+fileprivate struct _ZeroSingleValueContainer: SingleValueDecodingContainer {
     var codingPath: [CodingKey]
 
     func decodeNil() -> Bool { false }
@@ -362,7 +362,7 @@ struct _ZeroSingleValueContainer: SingleValueDecodingContainer {
 /// Maps well-known Foundation types and arbitrary `Decodable` types to their `JSONSchema`.
 ///
 /// - Note: Internal implementation detail of `JSONSchema.infer(from:)`. Not part of the public API.
-func _inferSchema<T: Decodable>(for type: T.Type) -> JSONSchema {
+fileprivate func _inferSchema<T: Decodable>(for type: T.Type) -> JSONSchema {
     if type == Date.self { return .string(description: "ISO 8601 date string") }
     if type == UUID.self { return .string(description: "UUID") }
     if type == URL.self  { return .string(description: "URL") }
@@ -376,7 +376,7 @@ func _inferSchema<T: Decodable>(for type: T.Type) -> JSONSchema {
 /// with special-cased values for types whose `init(from:)` rejects zero/empty inputs.
 ///
 /// - Note: Internal implementation detail of the schema-inference machinery.
-func _zeroValue<T: Decodable>(for type: T.Type, codingPath: [CodingKey] = []) throws -> T {
+fileprivate func _zeroValue<T: Decodable>(for type: T.Type, codingPath: [CodingKey] = []) throws -> T {
     if type == UUID.self {
         guard let uuid = UUID(uuidString: "00000000-0000-0000-0000-000000000000"),
               let result = uuid as? T else {
