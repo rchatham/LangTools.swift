@@ -50,6 +50,14 @@ import LangTools
 
 // MARK: - ContentCardRegistry
 
+/// Type-safe registry that maps agent identifiers to their structured output types
+/// and the SwiftUI views used to render them as content cards.
+///
+/// - Important: `ContentCardRegistry` is **not** `@MainActor`-isolated, but its
+///   `view(for:)` method returns SwiftUI views and must be called on the main thread.
+///   `register(...)` and `agentResultParser` may be called from any context, but
+///   registration is typically done once at app startup on the main thread.
+///   Access `shared` only after the app has finished launching.
 public final class ContentCardRegistry: @unchecked Sendable {
 
     public static let shared = ContentCardRegistry()
