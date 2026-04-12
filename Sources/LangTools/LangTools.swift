@@ -6,6 +6,7 @@
 //
 
 import Foundation
+@_exported import JSON
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -248,8 +249,8 @@ func AsyncSingleErrorStream<T>(error: @escaping () async throws -> Error) -> Asy
 
 extension String {
     public var stringDictionary: [String:String]? { return data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed]) as? [String:String] }}
-    public var dictionary: [String:JSON]? { return data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed]) as? [String:JSON] }}
-    public var json: JSON? { return try? JSON(self) }
+    public var dictionary: [String:JSON]? { return data(using: .utf8).flatMap { try? JSON(data: $0).objectValue } }
+    public var json: JSON? { return data(using: .utf8).flatMap { try? JSON(data: $0) } }
 }
 
 extension Dictionary where Key == String, Value == String {
