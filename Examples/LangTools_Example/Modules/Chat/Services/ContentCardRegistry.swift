@@ -129,12 +129,6 @@ public final class ContentCardRegistry: @unchecked Sendable {
                 }
                 return AnyView(
                     VStack(alignment: .leading, spacing: 12) {
-                        if let message = content.message, !message.isEmpty {
-                            Text(message)
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .foregroundStyle(.secondary)
-                        }
                         render(items)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
