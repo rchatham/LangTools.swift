@@ -22,8 +22,7 @@ let package = Package(
         .executable(name: "ChatCLI", targets: ["ChatCLI"]),
     ],
     dependencies: [
-        // TODO: Tag JSON.swift at 921c974 as 1.0.3, then switch to `from: "1.0.3"`
-        .package(url: "https://github.com/rchatham/JSON.swift.git", revision: "921c97415e5df0ef35e4a7133881498cac9f2650"),
+        .package(url: "https://github.com/rchatham/JSON.swift.git", from: "1.0.3"),
     ],
     targets: [
         // Targets
