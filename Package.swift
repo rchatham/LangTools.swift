@@ -12,7 +12,6 @@ let package = Package(
     ],
     products: [
         .library(name: "LangTools", targets: ["LangTools"]),
-        .library(name: "LangToolsMacros", targets: ["LangToolsMacros"]),
         .library(name: "Agents", targets: ["Agents"]),
         .library(name: "OpenAI", targets: ["OpenAI"]),
         .library(name: "Anthropic", targets: ["Anthropic"]),
@@ -23,12 +22,11 @@ let package = Package(
         .executable(name: "ChatCLI", targets: ["ChatCLI"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/rchatham/JSON.swift.git", from: "1.0.1"),
+        .package(name: "JSON.swift", path: "../../JSON.swift"),
     ],
     targets: [
         // Targets
         .target(name: "LangTools", dependencies: [.product(name: "JSON", package: "JSON.swift")], resources: [.process("README.md")]),
-        .target(name: "LangToolsMacros", dependencies: [.target(name: "LangTools")]),
         .target(name: "Agents", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
         .target(name: "OpenAI", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
         .target(name: "Anthropic", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
