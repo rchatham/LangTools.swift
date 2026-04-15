@@ -21,9 +21,12 @@ let package = Package(
         .library(name: "AppleSpeech", targets: ["AppleSpeech"]),
         .executable(name: "ChatCLI", targets: ["ChatCLI"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/rchatham/JSON.swift.git", branch: "main"),
+    ],
     targets: [
         // Targets
-        .target(name: "LangTools", resources: [.process("README.md")]),
+        .target(name: "LangTools", dependencies: [.product(name: "JSON", package: "JSON.swift")], resources: [.process("README.md")]),
         .target(name: "Agents", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
         .target(name: "OpenAI", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
         .target(name: "Anthropic", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),

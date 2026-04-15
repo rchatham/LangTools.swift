@@ -15,7 +15,7 @@ public class OllamaService: ObservableObject {
     @Published var availableModels: [Ollama.Model] = []
     @Published var runningModels: [Ollama.ListRunningModelsResponse.RunningModelInfo] = []
     @Published var isLoading = false
-    @Published var error: Error?
+    @Published public var error: Error?
 
     private var ollama = Ollama()
 

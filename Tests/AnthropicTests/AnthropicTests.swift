@@ -200,19 +200,28 @@ class AnthropicTests: XCTestCase {
         XCTAssertFalse(Anthropic.Model.claude46Sonnet.isDeprecated)
         XCTAssertFalse(Anthropic.Model.claude45Haiku_20251001.isDeprecated)
 
-        // Retired models are not "deprecated" (they are retired)
-        XCTAssertFalse(Anthropic.Model.claude37Sonnet_20250219.isDeprecated)
-        XCTAssertFalse(Anthropic.Model.claude3Opus_20240229.isDeprecated)
+        // Retired models are not "deprecated" (they are retired); `isDeprecated` must return false.
+        XCTAssertFalse(Anthropic.Model(rawValue: "claude-3-7-sonnet-20250219")!.isDeprecated)
+        XCTAssertFalse(Anthropic.Model(rawValue: "claude-3-opus-20240229")!.isDeprecated)
     }
 
     func testIsRetiredProperty() throws {
-        // Retired models should return true
-        XCTAssertTrue(Anthropic.Model.claude37Sonnet_20250219.isRetired)
-        XCTAssertTrue(Anthropic.Model.claude35Haiku_20241022.isRetired)
-        XCTAssertTrue(Anthropic.Model.claude35Sonnet_20241022.isRetired)
-        XCTAssertTrue(Anthropic.Model.claude35Sonnet_20240620.isRetired)
-        XCTAssertTrue(Anthropic.Model.claude3Opus_20240229.isRetired)
-        XCTAssertTrue(Anthropic.Model.claude3Sonnet_20240229.isRetired)
+        // Retired models should return true.
+        // Use rawValue init to avoid triggering deprecated-use warnings in tests.
+        let retiredRawValues = [
+            "claude-3-7-sonnet-20250219",
+            "claude-3-5-haiku-20241022",
+            "claude-3-5-sonnet-latest",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-sonnet-20240620",
+            "claude-3-opus-latest",
+            "claude-3-opus-20240229",
+            "claude-3-sonnet-20240229",
+        ]
+        for raw in retiredRawValues {
+            let model = Anthropic.Model(rawValue: raw)!
+            XCTAssertTrue(model.isRetired, "\(raw) should be retired")
+        }
 
         // Active models should return false
         XCTAssertFalse(Anthropic.Model.claude46Opus.isRetired)

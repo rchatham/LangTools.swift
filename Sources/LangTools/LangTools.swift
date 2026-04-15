@@ -6,6 +6,7 @@
 //
 
 import Foundation
+@_exported import JSON
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -13,29 +14,17 @@ import FoundationNetworking
 public protocol LangTools {
     associatedtype Model: RawRepresentable
     associatedtype ErrorResponse: Codable & Error
+    var session: URLSession { get }
+    func prepare(request: some LangToolsRequest) throws -> URLRequest
     func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response
     func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error>
     ///  When implementing decodeStream yourself, throw an error when the buffer is incomplete and additional lines of data from the response are needed to decode the buffer. If the buffer can be handled it should at least return nil to indicate that the buffer can be cleared. If a nil response is returned the buffer will be cleared and then it will continue reading the data stream, throwing an error will continue appending the data stream to the current buffer.
     static func decodeStream<T: Decodable>(_ buffer: String) throws -> T?
-
     static var requestValidators: [(any LangToolsRequest) -> Bool] { get }
-
-    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
-    func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
-
-    var session: URLSession { get }
-    func prepare(request: some LangToolsRequest) throws -> URLRequest
+    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest
 }
 
 extension LangTools {
-    public func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> any LangToolsChatRequest {
-        try Self.chatRequest(model: model, messages: messages, tools: tools, toolEventHandler: toolEventHandler)
-    }
-
-    public func canHandleRequest<Request: LangToolsRequest>(_ request: Request) -> Bool {
-        Self.requestValidators.reduce(false) { $0 || $1(request) }
-    }
-
     public func perform<Request: LangToolsRequest>(request: Request, completion: @escaping (Result<Request.Response, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
         Task {
             if request.stream, let request = request as? any LangToolsStreamableRequest {
@@ -180,14 +169,61 @@ extension LangTools {
     }
 }
 
+extension LangTools {
+    public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> any LangToolsChatRequest {
+        try chatRequest(model: model, messages: messages, tools: tools, responseSchema: nil, toolEventHandler: toolEventHandler)
+    }
 
-public enum LangToolsError: Error {
+    public func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]? = nil, responseSchema: JSONSchema? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> any LangToolsChatRequest {
+        try Self.chatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
+    }
+
+    public func canHandleRequest<Request: LangToolsRequest>(_ request: Request) -> Bool {
+        Self.requestValidators.reduce(false) { $0 || $1(request) }
+    }
+
+    /// Perform a structured output request and decode the response into the given type.
+    /// - Parameters:
+    ///   - request: A request conforming to `LangToolsStructuredOutputRequest`.
+    ///   - type: The `StructuredOutput` type to decode the response as.
+    /// - Returns: A tuple of the full provider response and the decoded output.
+    public func perform<Request: LangToolsStructuredOutputRequest, Output: StructuredOutput>(
+        request: Request,
+        as type: Output.Type
+    ) async throws -> (response: Request.Response, output: Output) {
+        let response = try await perform(request: request)
+        guard let jsonString = response.jsonContent else {
+            throw StructuredOutputError.invalidResponse("Response does not contain JSON content")
+        }
+        let output = try Output(jsonString: jsonString)
+        return (response, output)
+    }
+}
+
+public enum LangToolsError: Error, LocalizedError {
     case invalidData, streamParsingFailure, invalidURL, requestFailed, invalidContentType
     case invalidArgument(String)
     case jsonParsingFailure(Error)
     case responseUnsuccessful(statusCode: Int, Error?)
     case apiError(Codable & Error)
     case failedToDecodeStream(buffer: String, error: Error)
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidData:                          return "Invalid data"
+        case .streamParsingFailure:                 return "Stream parsing failure"
+        case .invalidURL:                           return "Invalid URL"
+        case .requestFailed:                        return "Request failed"
+        case .invalidContentType:                   return "Invalid content type"
+        case .invalidArgument(let msg):             return "Invalid argument: \(msg)"
+        case .jsonParsingFailure(let err):          return "JSON parsing failure: \(err.localizedDescription)"
+        case .responseUnsuccessful(let code, let err):
+            return "Response unsuccessful (status \(code)): \(err?.localizedDescription ?? "no details")"
+        case .apiError(let err):                    return "API error: \(err.localizedDescription)"
+        case .failedToDecodeStream(let buf, let err):
+            return "Failed to decode stream (\(buf.prefix(120))): \(err.localizedDescription)"
+        }
+    }
 }
 
 // MARK: - Helpers
@@ -213,8 +249,8 @@ func AsyncSingleErrorStream<T>(error: @escaping () async throws -> Error) -> Asy
 
 extension String {
     public var stringDictionary: [String:String]? { return data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed]) as? [String:String] }}
-    public var dictionary: [String:JSON]? { return data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed]) as? [String:JSON] }}
-    public var json: JSON? { return try? JSON(self) }
+    public var dictionary: [String:JSON]? { return data(using: .utf8).flatMap { try? JSON(data: $0).objectValue } }
+    public var json: JSON? { return data(using: .utf8).flatMap { try? JSON(data: $0) } }
 }
 
 extension Dictionary where Key == String, Value == String {

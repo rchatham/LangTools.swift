@@ -14,14 +14,16 @@ public extension OpenAI {
         perform(request: OpenAI.ChatCompletionRequest(model: model, messages: messages, stream: stream), completion: completion, didCompleteStreaming: didCompleteStreaming)
     }
 
-    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
         guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
-        return  ChatCompletionRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
+        var request = ChatCompletionRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
+        request.responseSchema = responseSchema
+        return request
     }
 }
 
 extension OpenAI {
-    public struct ChatCompletionRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest, LangToolsMultipleChoiceChatRequest {
+    public struct ChatCompletionRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest, LangToolsMultipleChoiceChatRequest, LangToolsStructuredOutputRequest {
         public typealias LangTool = OpenAI
         public typealias Response = ChatCompletionResponse
         public static var endpoint: String { "chat/completions" }
@@ -42,7 +44,7 @@ extension OpenAI {
         public let logprobs: Bool?
         public let top_logprobs: Int?
         public let user: String?
-        public let response_format: ResponseFormat?
+        public var response_format: ResponseFormat?
         public let seed: Int?
         public let tools: [Tool]?
         public let tool_choice: ToolChoice?
@@ -61,6 +63,35 @@ extension OpenAI {
 
         @CodableIgnored
         public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
+
+        // MARK: - LangToolsStructuredOutputRequest
+
+        /// The response schema for structured output. Setting this automatically updates `response_format`
+        /// to use the `json_schema` type with strict mode enabled.
+        public var responseSchema: JSONSchema? {
+            get {
+                guard case .json_schema(let format) = response_format else { return nil }
+                return format.schema
+            }
+            set {
+                if let schema = newValue {
+                    response_format = .json_schema(ResponseFormat.JSONSchemaFormat(
+                        name: schema.title ?? "structured_response",
+                        schema: schema,
+                        strict: true
+                    ))
+                } else {
+                    // Only clear if currently using json_schema; leave text/json_object untouched
+                    if case .json_schema = response_format { response_format = nil }
+                }
+            }
+        }
+
+        /// Returns `true` when the request is configured with a structured output schema.
+        public var usesStructuredOutput: Bool {
+            if case .json_schema = response_format { return true }
+            return false
+        }
 
         public init(model: OpenAIModel, messages: [any LangToolsMessage]) {
             self.init(model: model, messages: messages.map { Message($0) })
@@ -252,21 +283,99 @@ extension OpenAI {
             }
         }
 
-        public struct ResponseFormat: Codable {
-            let type: ResponseType
-            public init(type: ResponseType) {
-                self.type = type
+        /// Encapsulates the `response_format` field sent to the OpenAI API.
+        public enum ResponseFormat: Codable {
+            case text
+            case json_object
+            case json_schema(JSONSchemaFormat)
+
+            /// Metadata struct for the `json_schema` response format.
+            public struct JSONSchemaFormat: Codable {
+                /// Sanitised name label sent to the OpenAI API.
+                /// The API requires the pattern `^[a-zA-Z0-9_-]{1,64}$`.
+                public let name: String
+                /// The JSON Schema that the model must conform to.
+                public let schema: JSONSchema
+                /// When `true` the model will strictly follow the schema.
+                public let strict: Bool
+
+                /// - Parameter name: Raw name string. Any characters outside `[a-zA-Z0-9_-]`
+                ///   are replaced with `_`, the result is truncated to 64 characters, and an
+                ///   empty string falls back to `"structured_response"`.
+                public init(name: String, schema: JSONSchema, strict: Bool = true) {
+                    self.name = JSONSchemaFormat.sanitize(name: name)
+                    self.schema = schema
+                    self.strict = strict
+                }
+
+                /// Sanitises a candidate `name` to match OpenAI's `^[a-zA-Z0-9_-]{1,64}$`.
+                public static func sanitize(name: String) -> String {
+                    let cleaned = name
+                        .unicodeScalars
+                        .map { CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-")).contains($0) ? Character($0) : "_" }
+                        .map(String.init)
+                        .joined()
+                    let truncated = String(cleaned.prefix(64))
+                    return truncated.isEmpty ? "structured_response" : truncated
+                }
+            }
+
+            // MARK: Codable
+
+            private enum CodingKeys: String, CodingKey {
+                case type
+                case json_schema
+            }
+
+            public init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                let type = try container.decode(String.self, forKey: .type)
+                switch type {
+                case "text":        self = .text
+                case "json_object": self = .json_object
+                case "json_schema":
+                    let format = try container.decode(JSONSchemaFormat.self, forKey: .json_schema)
+                    self = .json_schema(format)
+                default:
+                    throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "Unknown response_format type: \(type)")
+                }
+            }
+
+            public func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                switch self {
+                case .text:
+                    try container.encode("text", forKey: .type)
+                case .json_object:
+                    try container.encode("json_object", forKey: .type)
+                case .json_schema(let format):
+                    try container.encode("json_schema", forKey: .type)
+                    try container.encode(format, forKey: .json_schema)
+                }
+            }
+
+            // MARK: Legacy support
+
+            /// Creates a `ResponseFormat` from the legacy `ResponseType` enum.
+            /// - Note: Prefer constructing `.text` or `.json_object` directly.
+            @available(*, deprecated, message: "Construct .text or .json_object directly instead of using ResponseType")
+            public init?(type: ResponseType) {
+                switch type {
+                case .text:        self = .text
+                case .json_object: self = .json_object
+                }
             }
         }
 
+        /// Legacy response type enumeration — use `ResponseFormat.text` or
+        /// `ResponseFormat.json_object` directly for new code.
         public enum ResponseType: String, Codable {
             case text, json_object
-            // TODO: - add json_schema
         }
     }
 
     // TODO: - Add service_tier, update usage
-    public struct ChatCompletionResponse: Codable, LangToolsStreamableChatResponse, LangToolsToolCallingResponse, LangToolsMultipleChoiceChatResponse {
+    public struct ChatCompletionResponse: Codable, LangToolsStreamableChatResponse, LangToolsToolCallingResponse, LangToolsMultipleChoiceChatResponse, LangToolsStructuredOutputResponse {
         public typealias Delta = OpenAI.Message.Delta
         public typealias Message = OpenAI.Message
         public typealias ToolSelection = Message.ToolCall
@@ -282,6 +391,12 @@ extension OpenAI {
 
         @CodableIgnored
         public var choose: (([Choice]) -> Int)?
+
+        /// The raw JSON string from the selected choice message content, used by `structuredOutput(as:)`.
+        public var jsonContent: String? {
+            let index = choose?(choices) ?? 0
+            return choices.indices.contains(index) ? choices[index].message?.content.string : nil
+        }
 
         public init(id: String?, object: String, created: Int, model: String?, system_fingerprint: String?, choices: [Choice], usage: Usage?, service_tier: ServiceTier?, choose: (([Choice]) -> Int)?) {
             self.id = id

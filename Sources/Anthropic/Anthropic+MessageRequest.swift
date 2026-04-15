@@ -14,9 +14,11 @@ public extension Anthropic {
         perform(request: Anthropic.MessageRequest(model: model, messages: Self.toAnthropicMessages(messages), stream: stream, system: Self.toAnthropicSystemMessage(messages)), completion: completion, didCompleteStreaming: didCompleteStreaming)
     }
 
-    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
         guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
-        return MessageRequest(model: model, messages: toAnthropicMessages(messages), system: toAnthropicSystemMessage(messages), tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
+        var request = MessageRequest(model: model, messages: toAnthropicMessages(messages), system: toAnthropicSystemMessage(messages), tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
+        request.responseSchema = responseSchema
+        return request
     }
 
     static func toAnthropicMessages(_ messages: [any LangToolsMessage]) -> [Anthropic.Message] {
@@ -29,7 +31,7 @@ public extension Anthropic {
 }
 
 extension Anthropic {
-    public struct MessageRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest {
+    public struct MessageRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest, LangToolsStructuredOutputRequest {
         public typealias LangTool = Anthropic
         public typealias Response = MessageResponse
         public static var endpoint: String { "messages" }
@@ -47,15 +49,56 @@ extension Anthropic {
         let top_k: Int?
         let top_p: Double?
 
+        /// Structured output config. When set, the model will return JSON matching the schema.
+        public var output_config: OutputConfig?
+
         @CodableIgnored
         public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
 
+        // MARK: - LangToolsStructuredOutputRequest
+
+        /// The response schema for structured output. Setting this automatically populates `output_config`.
+        public var responseSchema: JSONSchema? {
+            get { output_config?.format.schema }
+            set {
+                output_config = newValue.map { OutputConfig(schema: $0) }
+            }
+        }
+
+        /// Returns `true` when the request is configured with a structured output schema.
+        public var usesStructuredOutput: Bool { output_config != nil }
+
+        // MARK: - OutputConfig / OutputFormat
+
+        /// Represents the `output_config` field in an Anthropic messages request.
+        /// Encodes as `{ "format": { "type": "json_schema", "schema": { ... } } }`.
+        public struct OutputConfig: Codable {
+            /// The format specification nested under `output_config`.
+            public let format: OutputFormat
+
+            public init(schema: JSONSchema) {
+                self.format = OutputFormat(schema: schema)
+            }
+        }
+
+        /// The nested format object inside `output_config`.
+        public struct OutputFormat: Codable {
+            /// Always `"json_schema"` — the only currently supported type.
+            public let type: String
+            /// The JSON Schema the model must conform to.
+            public let schema: JSONSchema
+
+            public init(schema: JSONSchema) {
+                self.type = "json_schema"
+                self.schema = schema
+            }
+        }
 
         public init(model: Anthropic.Model, messages: [any LangToolsMessage]) {
             self.init(model: model, messages: toAnthropicMessages(messages), system: toAnthropicSystemMessage(messages))
         }
 
-        public init(model: Model, messages: [Message], max_tokens: Int = 4096, metadata: Metadata? = nil, stop_sequences: [String]? = nil, stream: Bool? = nil, system: String? = nil, temperature: Double? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, top_k: Int? = nil, top_p: Double? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = {_ in}) {
+        public init(model: Model, messages: [Message], max_tokens: Int = 4096, metadata: Metadata? = nil, stop_sequences: [String]? = nil, stream: Bool? = nil, system: String? = nil, temperature: Double? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, top_k: Int? = nil, top_p: Double? = nil, output_config: OutputConfig? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = {_ in}) {
             self.model = model
             self.messages = messages
             self.max_tokens = max_tokens
@@ -68,6 +111,7 @@ extension Anthropic {
             self.tool_choice = tool_choice
             self.top_k = top_k
             self.top_p = top_p
+            self.output_config = output_config
             self.toolEventHandler = toolEventHandler
         }
 
@@ -104,10 +148,19 @@ extension Anthropic {
         }
     }
 
-    public struct MessageResponse: Codable, LangToolsStreamableChatResponse, LangToolsToolCallingResponse {
+    public struct MessageResponse: Codable, LangToolsStreamableChatResponse, LangToolsToolCallingResponse, LangToolsStructuredOutputResponse {
 
         public var message: Anthropic.Message? {
             messageInfo.flatMap { Message(role: $0.role, content: $0.content) }
+        }
+
+        /// The raw text content of the first text block, used by `structuredOutput(as:)`.
+        public var jsonContent: String? {
+            guard let info = messageInfo, case .array(let blocks) = info.content else { return nil }
+            for block in blocks {
+                if case .text(let textContent) = block { return textContent.text }
+            }
+            return nil
         }
 
         public typealias Message = Anthropic.Message

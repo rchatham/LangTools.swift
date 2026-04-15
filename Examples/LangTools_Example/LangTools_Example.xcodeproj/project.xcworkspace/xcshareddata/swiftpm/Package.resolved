@@ -1,6 +1,15 @@
 {
-  "originHash" : "ffbd486bbfb79ccf11dcfe7eeba1a236bcb5a562834858a6afa63c1437bbb4bc",
+  "originHash" : "1bf0c0d87d6de3c729d7de110070dc444f37ad7b2dc48d806fa0619f38cc32c3",
   "pins" : [
+    {
+      "identity" : "json.swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rchatham/JSON.swift.git",
+      "state" : {
+        "revision" : "9b7384ac80febbbbbf959841246c8ddf61d9c486",
+        "version" : "1.0.1"
+      }
+    },
     {
       "identity" : "keychainaccess",
       "kind" : "remoteSourceControl",
@@ -42,8 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-crypto.git",
       "state" : {
-        "revision" : "fa308c07a6fa04a727212d793e761460e41049c3",
-        "version" : "4.3.0"
+        "revision" : "bb4ba815dab96d4edc1e0b86d7b9acf9ff973a84",
+        "version" : "4.3.1"
       }
     },
     {
@@ -53,6 +62,15 @@
       "state" : {
         "revision" : "0aeefadec459ce8e11a333769950fb86183aca43",
         "version" : "2.3.5"
+      }
+    },
+    {
+      "identity" : "swift-syntax",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-syntax.git",
+      "state" : {
+        "revision" : "2bc86522d115234d1f588efe2bcb4ce4be8f8b82",
+        "version" : "510.0.3"
       }
     },
     {
@@ -78,8 +96,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/argmaxinc/WhisperKit.git",
       "state" : {
-        "revision" : "26577ce3017aae8c9edfd9a0dd17851bd248c731",
-        "version" : "0.17.0"
+        "revision" : "e2adabbe7d98dc4d0ab9a5b75424ecc42a9cdbef",
+        "version" : "0.18.0"
       }
     },
     {
