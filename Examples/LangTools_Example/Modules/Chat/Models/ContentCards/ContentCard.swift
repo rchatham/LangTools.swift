@@ -36,14 +36,6 @@ public struct AnyContentCard: Identifiable {
     private let _jsonSchema: () -> JSONSchema
     private let _encode: (Encoder) throws -> Void
 
-    public init<C: ContentCard>(_ card: C) where C.ID == String {
-        self.id = card.id
-        self.cardType = String(describing: C.self)
-        self._cardView = { AnyView(card.cardView()) }
-        self._jsonSchema = { C.jsonSchema }
-        self._encode = { try card.encode(to: $0) }
-    }
-
     public init<C: ContentCard>(_ card: C) where C.ID: CustomStringConvertible {
         self.id = String(describing: card.id)
         self.cardType = String(describing: C.self)
@@ -85,7 +77,8 @@ public struct ContentCardCollection: Identifiable {
 }
 
 // MARK: - Default Identifiable Conformance
-
-public extension ContentCard where ID == String {
-    var id: String { UUID().uuidString }
-}
+//
+// NOTE: Conforming types with `ID == String` must provide their own stable `id`.
+// A protocol-extension default of `UUID().uuidString` was removed because it
+// generated a *new* UUID on every access, breaking SwiftUI's `Identifiable`
+// contract (and therefore `ForEach` diffing).
