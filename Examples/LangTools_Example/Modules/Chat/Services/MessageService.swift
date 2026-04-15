@@ -65,11 +65,15 @@ public class MessageService: Sendable {
             var content: String = ""
             for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: activeTools) {
                 content += chunk
-                if !(messages.last?.isAssistant ?? false) {
+                // Only treat the last message as a continuation target when it is
+                // a plain assistant text message.  Content-card and agent-event
+                // messages must not be overwritten by streamed text.
+                let lastIsStreamable = messages.last.map { $0.isAssistant && $0.isStringContent } ?? false
+                if !lastIsStreamable {
                     if chunk.isEmpty { continue }
                     content = chunk.trimingLeadingNewlines()
                 }
-                let messageUuid = if let last = messages.last, last.isAssistant { last.uuid } else { UUID() }
+                let messageUuid = if lastIsStreamable, let last = messages.last { last.uuid } else { UUID() }
                 let message = Message(uuid: messageUuid, role: .assistant, contentType: .string(content.trimingTrailingNewlines()))
 
                 await MainActor.run {

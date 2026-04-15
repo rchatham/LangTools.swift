@@ -84,6 +84,11 @@ extension Message {
     var isSystem: Bool { role == .system }
     var isToolCall: Bool { role == .tool }
 
+    public var isStringContent: Bool {
+        if case .string = contentType { return true }
+        return false
+    }
+
     public var isAgentEvent: Bool {
         if case .agentEvent = contentType { return true }
         return false

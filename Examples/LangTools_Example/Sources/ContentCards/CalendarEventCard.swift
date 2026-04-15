@@ -12,7 +12,10 @@ import LangTools
 
 /// Adds `ContentCard` conformance to `CalendarEventData` in the app target,
 /// keeping `ExampleAgents` free of SwiftUI imports.
-extension CalendarEventData: ContentCard {
+extension CalendarEventData: ContentCard, Identifiable {
+    /// Derived identity — no stored `id` needed in the schema.
+    public var id: String { "\(title)-\(startDate)-\(endDate)" }
+
     public func cardView() -> some View {
         CalendarEventCardView(card: self)
     }
