@@ -33,7 +33,9 @@ extension CalendarAgentResponse: StructuredOutput {}
 /// The app target adds `ContentCard` conformance for SwiftUI rendering.
 @JSONSchema
 public struct CalendarEventData: Codable, Identifiable, Equatable {
-    /// Unique identifier for this event entry
+    /// Local-only identifier — excluded from the JSON schema so the LLM
+    /// doesn't need to generate it.  Decoded from JSON when present,
+    /// otherwise auto-generated.
     public let id: String
     /// Event title
     public let title: String
@@ -51,6 +53,26 @@ public struct CalendarEventData: Codable, Identifiable, Equatable {
     public let calendarName: String?
     /// System identifier for edits/deletes (optional)
     public let eventIdentifier: String?
+
+    // Exclude `id` from the JSON schema and Codable synthesis so the
+    // LLM isn't asked to produce an identifier.
+    enum CodingKeys: String, CodingKey {
+        case title, startDate, endDate, location, notes
+        case isAllDay, calendarName, eventIdentifier
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = UUID().uuidString
+        self.title = try container.decode(String.self, forKey: .title)
+        self.startDate = try container.decode(String.self, forKey: .startDate)
+        self.endDate = try container.decode(String.self, forKey: .endDate)
+        self.location = try container.decodeIfPresent(String.self, forKey: .location)
+        self.notes = try container.decodeIfPresent(String.self, forKey: .notes)
+        self.isAllDay = try container.decodeIfPresent(Bool.self, forKey: .isAllDay) ?? false
+        self.calendarName = try container.decodeIfPresent(String.self, forKey: .calendarName)
+        self.eventIdentifier = try container.decodeIfPresent(String.self, forKey: .eventIdentifier)
+    }
 
     public init(
         id: String = UUID().uuidString,
