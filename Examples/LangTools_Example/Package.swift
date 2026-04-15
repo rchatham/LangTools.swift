@@ -27,7 +27,7 @@ let package = Package(
     dependencies: [
         .package(name: "langtools.swift", path: "../../"),
         .package(name: "ChatUI", path: "./ChatUI"),
-        .package(name: "JSON.swift", path: "../../../../JSON.swift"),
+        .package(url: "https://github.com/rchatham/JSON.swift.git", branch: "main"),
         .package(url: "https://github.com/kishikawakatsumi/KeychainAccess.git", from: "4.0.0"),
         .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.6.0"),
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.9.0"),

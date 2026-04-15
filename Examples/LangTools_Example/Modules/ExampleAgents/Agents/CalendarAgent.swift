@@ -32,11 +32,7 @@ extension CalendarAgentResponse: StructuredOutput {}
 /// Data-only event type used inside CalendarAgentResponse.
 /// The app target adds `ContentCard` conformance for SwiftUI rendering.
 @JSONSchema
-public struct CalendarEventData: Codable, Identifiable, Equatable {
-    /// Local-only identifier — excluded from the JSON schema so the LLM
-    /// doesn't need to generate it.  Decoded from JSON when present,
-    /// otherwise auto-generated.
-    public let id: String
+public struct CalendarEventData: Codable, Equatable {
     /// Event title
     public let title: String
     /// Event start in ISO 8601 format
@@ -54,28 +50,7 @@ public struct CalendarEventData: Codable, Identifiable, Equatable {
     /// System identifier for edits/deletes (optional)
     public let eventIdentifier: String?
 
-    // Exclude `id` from the JSON schema and Codable synthesis so the
-    // LLM isn't asked to produce an identifier.
-    enum CodingKeys: String, CodingKey {
-        case title, startDate, endDate, location, notes
-        case isAllDay, calendarName, eventIdentifier
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = UUID().uuidString
-        self.title = try container.decode(String.self, forKey: .title)
-        self.startDate = try container.decode(String.self, forKey: .startDate)
-        self.endDate = try container.decode(String.self, forKey: .endDate)
-        self.location = try container.decodeIfPresent(String.self, forKey: .location)
-        self.notes = try container.decodeIfPresent(String.self, forKey: .notes)
-        self.isAllDay = try container.decodeIfPresent(Bool.self, forKey: .isAllDay) ?? false
-        self.calendarName = try container.decodeIfPresent(String.self, forKey: .calendarName)
-        self.eventIdentifier = try container.decodeIfPresent(String.self, forKey: .eventIdentifier)
-    }
-
     public init(
-        id: String = UUID().uuidString,
         title: String,
         startDate: String,
         endDate: String,
@@ -85,7 +60,6 @@ public struct CalendarEventData: Codable, Identifiable, Equatable {
         calendarName: String? = nil,
         eventIdentifier: String? = nil
     ) {
-        self.id = id
         self.title = title
         self.startDate = startDate
         self.endDate = endDate
