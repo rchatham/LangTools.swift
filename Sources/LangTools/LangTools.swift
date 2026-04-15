@@ -6,6 +6,9 @@
 //
 
 import Foundation
+// Re-exported so consumers can use JSONSchema, JSON, JSONConvertible, etc.
+// without a separate `import JSON`. Pin the JSON.swift dependency to a tagged
+// version to avoid accidental API breakage from upstream changes.
 @_exported import JSON
 #if canImport(FoundationNetworking)
 import FoundationNetworking
