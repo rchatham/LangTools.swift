@@ -49,9 +49,14 @@ jobs:
 
             Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
 
-            Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
+            When leaving your review, check if a previous review comment from this bot already exists on the PR.
+            Use `gh pr view ${{ github.event.pull_request.number }} --comments --json comments` to find an existing comment
+            that starts with "<!-- claude-code-review -->".
+            - If found, use `gh api repos/${{ github.repository }}/issues/comments/{comment_id} -X PATCH -f body='...'` to update it.
+            - If not found, use `gh pr comment ${{ github.event.pull_request.number }} --body '...'` to create a new one.
+            Always prefix your review body with the HTML comment marker: <!-- claude-code-review -->
 
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
-          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh api:*)"'
 
