@@ -369,6 +369,47 @@ final class OpenAIStructuredOutputTests: XCTestCase {
         XCTAssertEqual(jsonSchema?["name"] as? String, "structured_response")
     }
 
+    // MARK: - Request Encoding Round-Trip
+
+    func testChatCompletionRequestWithResponseSchemaEncodingRoundTrip() throws {
+        let messages: [OpenAI.Message] = [OpenAI.Message(role: .user, content: "Test")]
+        var request = OpenAI.ChatCompletionRequest(
+            model: OpenAI.Model.gpt4o,
+            messages: messages
+        )
+        request.responseSchema = JSONSchema.object(
+            properties: [
+                "name": JSONSchema.string(description: "The name"),
+                "scores": JSONSchema.array(items: JSONSchema.integer()),
+                "active": JSONSchema.boolean()
+            ],
+            required: ["name", "active"],
+            additionalProperties: AdditionalProperties.bool(false)
+        )
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(request)
+        let decoded = try JSONDecoder().decode(OpenAI.ChatCompletionRequest.self, from: data)
+
+        // Verify the response_format round-trips correctly
+        guard case .json_schema(let fmt) = decoded.response_format else {
+            return XCTFail("Expected json_schema response format after round-trip")
+        }
+        XCTAssertEqual(fmt.name, "structured_response")
+        XCTAssertTrue(fmt.strict)
+        XCTAssertEqual(fmt.schema.type, JSONSchema.SchemaType.object)
+        XCTAssertEqual(fmt.schema.properties?["name"]?.type, JSONSchema.SchemaType.string)
+        XCTAssertEqual(fmt.schema.properties?["scores"]?.type, JSONSchema.SchemaType.array)
+        XCTAssertEqual(fmt.schema.properties?["scores"]?.items?.type, JSONSchema.SchemaType.integer)
+        XCTAssertEqual(fmt.schema.properties?["active"]?.type, JSONSchema.SchemaType.boolean)
+        XCTAssertEqual(Set(fmt.schema.required ?? []), ["name", "active"])
+        XCTAssertEqual(fmt.schema.additionalProperties, AdditionalProperties.bool(false))
+
+        // Verify responseSchema getter also works on decoded request
+        XCTAssertNotNil(decoded.responseSchema)
+        XCTAssertEqual(decoded.responseSchema?.type, JSONSchema.SchemaType.object)
+    }
+
     // MARK: - Legacy ResponseType Tests
 
     func testLegacyResponseTypeCompatibility() throws {
