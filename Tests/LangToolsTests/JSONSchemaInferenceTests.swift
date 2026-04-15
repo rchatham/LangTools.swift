@@ -162,6 +162,32 @@ final class JSONSchemaInferenceTests: XCTestCase {
         XCTAssertNil(schema.required)
     }
 
+    // MARK: - Nested schema properties are non-empty (regression)
+
+    /// Regression test: nested Decodable structs must produce non-empty properties.
+    /// Before the deferred-recording fix, nested objects were inferred as
+    /// `{"type":"object","properties":{}}` because the child recorder's schema
+    /// was captured before `init(from:)` populated it.
+    func testNestedSchemaPropertiesAreNonEmpty() {
+        struct Inner: Decodable {
+            let title: String
+            let count: Int
+            let active: Bool
+        }
+        struct Outer: Decodable {
+            let inner: Inner
+        }
+        let schema = JSONSchema.infer(from: Outer.self)
+        let innerSchema = schema.properties?["inner"]
+        XCTAssertEqual(innerSchema?.type, .object)
+        // The bug caused properties to be empty — this must not regress.
+        XCTAssertEqual(innerSchema?.properties?.count, 3, "Nested object properties must not be empty")
+        XCTAssertEqual(innerSchema?.properties?["title"]?.type, .string)
+        XCTAssertEqual(innerSchema?.properties?["count"]?.type, .integer)
+        XCTAssertEqual(innerSchema?.properties?["active"]?.type, .boolean)
+        XCTAssertEqual(Set(innerSchema?.required ?? []), ["title", "count", "active"])
+    }
+
     // MARK: - CodingKeys renaming
 
     func testCustomCodingKeys() {

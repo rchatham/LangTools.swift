@@ -137,10 +137,10 @@ public final class ContentCardRegistry: @unchecked Sendable {
             }
         )
 
-        lock.lock()
-        defer { lock.unlock() }
-        byAgentKey[AnyHashable(agent)] = entry
-        byCardType[cardType] = entry
+        lock.withLock {
+            byAgentKey[AnyHashable(agent)] = entry
+            byCardType[cardType] = entry
+        }
     }
 
     /// Convenience overload for agents whose result is a single top-level `StructuredOutput`
@@ -170,9 +170,7 @@ public final class ContentCardRegistry: @unchecked Sendable {
     /// embedding in a `Message`. Returns `nil` if no registration exists for the agent
     /// key or if the decode closure returns `nil`.
     public func parseResult<AgentKey: Hashable>(_ json: String, for agentKey: AgentKey) -> ContentCardsContent? {
-        lock.lock()
-        let entry = byAgentKey[AnyHashable(agentKey)]
-        lock.unlock()
+        let entry = lock.withLock { byAgentKey[AnyHashable(agentKey)] }
         return entry?.parseResult(json)
     }
 
@@ -204,11 +202,7 @@ public final class ContentCardRegistry: @unchecked Sendable {
     @MainActor
     @ViewBuilder
     public func view(for content: ContentCardsContent) -> some View {
-        let entry: Entry? = {
-            lock.lock()
-            defer { lock.unlock() }
-            return byCardType[content.cardType]
-        }()
+        let entry: Entry? = lock.withLock { byCardType[content.cardType] }
         if let entry {
             entry.buildView(content)
         } else {

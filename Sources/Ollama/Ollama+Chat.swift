@@ -8,7 +8,7 @@ extension Ollama {
         // Ollama does not support structured output; responseSchema is ignored.
         #if DEBUG
         if responseSchema != nil {
-            assertionFailure("Ollama does not support structured output. The responseSchema parameter will be ignored.")
+            print("[LangTools] ⚠️ Ollama does not support structured output. The responseSchema parameter will be ignored.")
         }
         #endif
         return Ollama.ChatRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { OpenAI.Tool($0) }, toolEventHandler: toolEventHandler)
