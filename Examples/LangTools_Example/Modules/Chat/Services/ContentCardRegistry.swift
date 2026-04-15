@@ -61,6 +61,7 @@ import LangTools
 public final class ContentCardRegistry: @unchecked Sendable {
 
     public static let shared = ContentCardRegistry()
+    private let lock = NSLock()
     private init() {}
 
     // MARK: - Internal storage
@@ -136,6 +137,8 @@ public final class ContentCardRegistry: @unchecked Sendable {
             }
         )
 
+        lock.lock()
+        defer { lock.unlock() }
         byAgentKey[AnyHashable(agent)] = entry
         byCardType[cardType] = entry
     }
@@ -167,7 +170,10 @@ public final class ContentCardRegistry: @unchecked Sendable {
     /// embedding in a `Message`. Returns `nil` if no registration exists for the agent
     /// key or if the decode closure returns `nil`.
     public func parseResult<AgentKey: Hashable>(_ json: String, for agentKey: AgentKey) -> ContentCardsContent? {
-        byAgentKey[AnyHashable(agentKey)]?.parseResult(json)
+        lock.lock()
+        let entry = byAgentKey[AnyHashable(agentKey)]
+        lock.unlock()
+        return entry?.parseResult(json)
     }
 
     /// Ready-made closure for `MessageService.agentResultParser`.
@@ -198,7 +204,12 @@ public final class ContentCardRegistry: @unchecked Sendable {
     @MainActor
     @ViewBuilder
     public func view(for content: ContentCardsContent) -> some View {
-        if let entry = byCardType[content.cardType] {
+        let entry: Entry? = {
+            lock.lock()
+            defer { lock.unlock() }
+            return byCardType[content.cardType]
+        }()
+        if let entry {
             entry.buildView(content)
         } else {
             Text(content.message ?? "Unknown card type: \(content.cardType)")
