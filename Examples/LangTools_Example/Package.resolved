@@ -1,15 +1,6 @@
 {
   "pins" : [
     {
-      "identity" : "json.swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/rchatham/JSON.swift.git",
-      "state" : {
-        "revision" : "9b7384ac80febbbbbf959841246c8ddf61d9c486",
-        "version" : "1.0.1"
-      }
-    },
-    {
       "identity" : "keychainaccess",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/kishikawakatsumi/KeychainAccess.git",

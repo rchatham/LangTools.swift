@@ -7,48 +7,49 @@
 
 import EventKit
 import LangTools
+import JSONWithMacros
 import Agents
 
 // MARK: - CalendarAgentResponse (StructuredOutput)
 
 /// The structured JSON response that CalendarAgent asks the LLM to produce.
 /// Contains an array of event cards plus an optional human-readable summary.
-public struct CalendarAgentResponse: StructuredOutput {
+@JSONSchema
+public struct CalendarAgentResponse: Codable {
+    /// List of calendar events
     public let events: [CalendarEventData]
+    /// Optional summary message to display to the user
     public let message: String?
 
     public init(events: [CalendarEventData], message: String? = nil) {
         self.events = events
         self.message = message
     }
-
-    public static var jsonSchema: JSONSchema {
-        .object(
-            properties: [
-                "events": .array(
-                    items: CalendarEventData.jsonSchema,
-                    description: "List of calendar events"
-                ),
-                "message": .string(description: "Optional summary message to display to the user")
-            ],
-            required: ["events"],
-            additionalProperties: .bool(false),
-            title: "CalendarAgentResponse"
-        )
-    }
 }
+
+extension CalendarAgentResponse: StructuredOutput {}
 
 /// Data-only event type used inside CalendarAgentResponse.
 /// The app target adds `ContentCard` conformance for SwiftUI rendering.
-public struct CalendarEventData: StructuredOutput, Identifiable, Equatable {
+@JSONSchema
+public struct CalendarEventData: Codable, Identifiable, Equatable {
+    /// Unique identifier for this event entry
     public let id: String
+    /// Event title
     public let title: String
+    /// Event start in ISO 8601 format
     public let startDate: String
+    /// Event end in ISO 8601 format
     public let endDate: String
+    /// Event location (optional)
     public let location: String?
+    /// Event notes (optional)
     public let notes: String?
+    /// True when the event spans the full day
     public let isAllDay: Bool
+    /// Calendar name (optional)
     public let calendarName: String?
+    /// System identifier for edits/deletes (optional)
     public let eventIdentifier: String?
 
     public init(
@@ -72,26 +73,9 @@ public struct CalendarEventData: StructuredOutput, Identifiable, Equatable {
         self.calendarName = calendarName
         self.eventIdentifier = eventIdentifier
     }
-
-    public static var jsonSchema: JSONSchema {
-        .object(
-            properties: [
-                "id": .string(description: "Unique identifier for this event entry"),
-                "title": .string(description: "Event title"),
-                "startDate": .string(description: "Event start in ISO 8601 format"),
-                "endDate": .string(description: "Event end in ISO 8601 format"),
-                "location": .string(description: "Event location (optional)"),
-                "notes": .string(description: "Event notes (optional)"),
-                "isAllDay": .boolean(description: "True when the event spans the full day"),
-                "calendarName": .string(description: "Calendar name (optional)"),
-                "eventIdentifier": .string(description: "System identifier for edits/deletes (optional)")
-            ],
-            required: ["id", "title", "startDate", "endDate", "isAllDay"],
-            additionalProperties: .bool(false),
-            title: "CalendarEventData"
-        )
-    }
 }
+
+extension CalendarEventData: StructuredOutput {}
 
 // MARK: - Calendar Permission Agent
 struct CalendarPermissionAgent: Agent {
