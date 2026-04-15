@@ -56,6 +56,7 @@ fileprivate final class _SchemaRecorder: Decoder {
 
     var properties: [String: JSONSchema] = [:]
     var requiredKeys: [String] = []
+    private var deferredRecordings: [() -> Void] = []
 
     enum _Kind { case none, keyed, unkeyed(JSONSchema?), singleValue(JSONSchema?) }
     var kind: _Kind = .none
@@ -63,6 +64,11 @@ fileprivate final class _SchemaRecorder: Decoder {
     init(codingPath: [CodingKey] = []) { self.codingPath = codingPath }
 
     var schema: JSONSchema {
+        // Flush deferred recordings so nested container schemas are captured
+        // after the caller has finished decoding into them.
+        for deferred in deferredRecordings { deferred() }
+        deferredRecordings.removeAll()
+
         switch kind {
         case .none, .keyed:
             return .object(
@@ -80,6 +86,12 @@ fileprivate final class _SchemaRecorder: Decoder {
     func record(key: String, schema: JSONSchema, required: Bool) {
         properties[key] = schema
         if required { requiredKeys.append(key) }
+    }
+
+    /// Schedule a recording to run when `schema` is accessed, allowing nested
+    /// containers to be fully populated before their schema is captured.
+    func recordDeferred(_ closure: @escaping () -> Void) {
+        deferredRecordings.append(closure)
     }
 
     func container<Key: CodingKey>(keyedBy type: Key.Type) throws -> KeyedDecodingContainer<Key> {
@@ -145,15 +157,20 @@ fileprivate struct _SchemaKeyedContainer<Key: CodingKey>: KeyedDecodingContainer
         return nil
     }
 
-    // Nested containers
+    // Nested containers — use deferred recording so the child schema is captured
+    // *after* the caller has finished decoding into the nested container.
     func nestedContainer<NK: CodingKey>(keyedBy type: NK.Type, forKey key: Key) throws -> KeyedDecodingContainer<NK> {
         let child = _SchemaRecorder(codingPath: codingPath + [key])
-        recorder.record(key: key.stringValue, schema: child.schema, required: true)
+        recorder.recordDeferred { [recorder] in
+            recorder.record(key: key.stringValue, schema: child.schema, required: true)
+        }
         return KeyedDecodingContainer(_SchemaKeyedContainer<NK>(recorder: child))
     }
     func nestedUnkeyedContainer(forKey key: Key) throws -> UnkeyedDecodingContainer {
         let child = _SchemaRecorder(codingPath: codingPath + [key])
-        recorder.record(key: key.stringValue, schema: child.schema, required: true)
+        recorder.recordDeferred { [recorder] in
+            recorder.record(key: key.stringValue, schema: child.schema, required: true)
+        }
         return _SchemaUnkeyedContainer(recorder: child)
     }
     func superDecoder() throws -> Decoder { recorder }
@@ -200,12 +217,18 @@ fileprivate final class _SchemaUnkeyedContainer: UnkeyedDecodingContainer {
 
     func nestedContainer<NK: CodingKey>(keyedBy type: NK.Type) throws -> KeyedDecodingContainer<NK> {
         let child = _SchemaRecorder(codingPath: codingPath)
-        setItemKind(child.schema); currentIndex += 1
+        currentIndex += 1
+        recorder.recordDeferred { [recorder = self.recorder] in
+            recorder.kind = .unkeyed(child.schema)
+        }
         return KeyedDecodingContainer(_SchemaKeyedContainer<NK>(recorder: child))
     }
     func nestedUnkeyedContainer() throws -> UnkeyedDecodingContainer {
         let child = _SchemaRecorder(codingPath: codingPath)
-        setItemKind(child.schema); currentIndex += 1
+        currentIndex += 1
+        recorder.recordDeferred { [recorder = self.recorder] in
+            recorder.kind = .unkeyed(child.schema)
+        }
         return _SchemaUnkeyedContainer(recorder: child)
     }
     func superDecoder() throws -> Decoder { recorder }

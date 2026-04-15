@@ -10,3 +10,4 @@ DerivedData/
 # Claude Code local settings
 .claude/
 CLAUDE.md
+.plans/

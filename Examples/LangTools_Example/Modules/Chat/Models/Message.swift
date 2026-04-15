@@ -351,6 +351,6 @@ extension Message {
     }
 
     public static func contentCards(_ content: ContentCardsContent) -> Message {
-        Message(role: .system, contentType: .contentCards(content))
+        Message(role: .assistant, contentType: .contentCards(content))
     }
 }

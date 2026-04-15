@@ -45,6 +45,7 @@
 //
 
 import Foundation
+import os
 import SwiftUI
 import LangTools
 
@@ -72,12 +73,12 @@ public final class ContentCardRegistry: @unchecked Sendable {
         let buildView: (ContentCardsContent) -> AnyView
     }
 
-    /// Keyed by agent key (AnyHashable) — used by the parse path.
-    private var byAgentKey: [AnyHashable: Entry] = [:]
+    private struct Storage {
+        var byAgentKey: [AnyHashable: Entry] = [:]
+        var byCardType: [String: Entry] = [:]
+    }
 
-    /// Keyed by cardType string — used by the view path.
-    /// This key is persisted inside ContentCardsContent, so it must be stable across launches.
-    private var byCardType: [String: Entry] = [:]
+    private let storage = OSAllocatedUnfairLock(initialState: Storage())
 
     // MARK: - Registration
 
@@ -136,8 +137,10 @@ public final class ContentCardRegistry: @unchecked Sendable {
             }
         )
 
-        byAgentKey[AnyHashable(agent)] = entry
-        byCardType[cardType] = entry
+        storage.withLock {
+            $0.byAgentKey[AnyHashable(agent)] = entry
+            $0.byCardType[cardType] = entry
+        }
     }
 
     /// Convenience overload for agents whose result is a single top-level `StructuredOutput`
@@ -167,7 +170,8 @@ public final class ContentCardRegistry: @unchecked Sendable {
     /// embedding in a `Message`. Returns `nil` if no registration exists for the agent
     /// key or if the decode closure returns `nil`.
     public func parseResult<AgentKey: Hashable>(_ json: String, for agentKey: AgentKey) -> ContentCardsContent? {
-        byAgentKey[AnyHashable(agentKey)]?.parseResult(json)
+        let entry = storage.withLock { $0.byAgentKey[AnyHashable(agentKey)] }
+        return entry?.parseResult(json)
     }
 
     /// Ready-made closure for `MessageService.agentResultParser`.
@@ -198,7 +202,8 @@ public final class ContentCardRegistry: @unchecked Sendable {
     @MainActor
     @ViewBuilder
     public func view(for content: ContentCardsContent) -> some View {
-        if let entry = byCardType[content.cardType] {
+        let entry: Entry? = storage.withLock { $0.byCardType[content.cardType] }
+        if let entry {
             entry.buildView(content)
         } else {
             Text(content.message ?? "Unknown card type: \(content.cardType)")

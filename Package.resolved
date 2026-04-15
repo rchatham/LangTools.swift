@@ -1,6 +1,15 @@
 {
   "pins" : [
     {
+      "identity" : "json.swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rchatham/JSON.swift.git",
+      "state" : {
+        "revision" : "921c97415e5df0ef35e4a7133881498cac9f2650",
+        "version" : "1.0.3"
+      }
+    },
+    {
       "identity" : "swift-syntax",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swiftlang/swift-syntax.git",
