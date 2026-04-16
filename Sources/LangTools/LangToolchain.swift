@@ -58,10 +58,10 @@ public struct LangToolchain {
         print("   Registered providers: \(langTools.keys.joined(separator: ", "))")
         print("   Checking which provider can handle request...")
 
-        for (key, tool) in langTools {
-            let canHandle = tool.canHandleRequest(request)
-            print("   - \(key): \(canHandle ? "✅ CAN handle" : "❌ cannot handle")")
-        }
+//        for (key, tool) in langTools {
+//            let canHandle = tool.canHandleRequest(request)
+//            print("   - \(key): \(canHandle ? "✅ CAN handle" : "❌ cannot handle")")
+//        }
 
         guard let langTool = langTools.values.first(where: { $0.canHandleRequest(request) }) else {
             print("   ⚠️ NO PROVIDER CAN HANDLE THIS REQUEST!")
