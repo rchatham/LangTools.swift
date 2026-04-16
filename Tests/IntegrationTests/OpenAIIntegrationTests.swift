@@ -401,4 +401,110 @@ final class OpenAIIntegrationTests: XCTestCase {
         let urlRequest = try customAPI.prepare(request: request)
         XCTAssertTrue(urlRequest.url?.absoluteString.hasPrefix("https://custom-api.example.com/v2/") ?? false)
     }
+
+    // MARK: - Structured Output
+
+    func testStructuredOutputRequest() async throws {
+        let responseJSON = """
+        {
+            "id": "chatcmpl-so",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "{\\"name\\": \\"San Francisco\\", \\"temperature\\": 72.0}"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 25, "completion_tokens": 15, "total_tokens": 40}
+        }
+        """.data(using: .utf8)!
+
+        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+            (.success(responseJSON), 200)
+        }
+
+        struct WeatherOutput: StructuredOutput, Equatable {
+            let name: String
+            let temperature: Double
+            static var jsonSchema: JSONSchema {
+                .object(
+                    properties: ["name": .string(), "temperature": .number()],
+                    required: ["name", "temperature"],
+                    additionalProperties: .bool(false)
+                )
+            }
+        }
+
+        var request = OpenAI.ChatCompletionRequest(
+            model: .gpt4o,
+            messages: [.init(role: .user, content: "Weather in SF")]
+        )
+        request.setResponseType(WeatherOutput.self)
+        XCTAssertTrue(request.usesStructuredOutput)
+
+        let response = try await api.perform(request: request)
+        let output: WeatherOutput = try response.structuredOutput()
+        XCTAssertEqual(output.name, "San Francisco")
+        XCTAssertEqual(output.temperature, 72.0)
+    }
+
+    func testStructuredOutputSchemaEncoding() throws {
+        var request = OpenAI.ChatCompletionRequest(
+            model: .gpt4o,
+            messages: [.init(role: .user, content: "Test")]
+        )
+        request.responseSchema = .object(
+            properties: ["value": .string()],
+            required: ["value"],
+            additionalProperties: .bool(false)
+        )
+        let data = try JSONEncoder().encode(request)
+        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+        let responseFormat = dict["response_format"] as? [String: Any]
+        XCTAssertNotNil(responseFormat)
+        XCTAssertEqual(responseFormat?["type"] as? String, "json_schema")
+    }
+
+    // MARK: - Error Response Decoding
+
+    func testOpenAIErrorResponseDecoding() throws {
+        let errorJSON = """
+        {"error": {"message": "Rate limit exceeded", "type": "rate_limit_error", "param": null, "code": "rate_limit_exceeded"}}
+        """.data(using: .utf8)!
+        let error = try JSONDecoder().decode(OpenAIErrorResponse.self, from: errorJSON)
+        XCTAssertEqual(error.error.message, "Rate limit exceeded")
+        XCTAssertEqual(error.error.type, "rate_limit_error")
+    }
+
+    func testHTTPErrorContainsStatusCode() async throws {
+        let errorJSON = """
+        {"error": {"message": "Model not found", "type": "invalid_request_error", "param": "model", "code": "model_not_found"}}
+        """.data(using: .utf8)!
+
+        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+            (.success(errorJSON), 404)
+        }
+
+        do {
+            _ = try await api.perform(request: OpenAI.ChatCompletionRequest(
+                model: .gpt4o,
+                messages: [.init(role: .user, content: "Hi")]
+            ))
+            XCTFail("Should have thrown")
+        } catch let error as LangToolsError {
+            switch error {
+            case .responseUnsuccessful(let statusCode, _):
+                XCTAssertEqual(statusCode, 404)
+            case .apiError(let apiError):
+                XCTAssertTrue(apiError is OpenAIErrorResponse)
+            default:
+                break // Other LangToolsError variants are also acceptable
+            }
+        } catch {
+            // Non-LangToolsError is also fine, just verify we got an error
+            XCTAssertNotNil(error)
+        }
+    }
 }

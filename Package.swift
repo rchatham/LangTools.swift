@@ -37,7 +37,7 @@ let package = Package(
         .target(name: "Gemini", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
         .target(name: "Ollama", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
         .target(name: "AppleSpeech", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
-        .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], path: "Tests/TestUtils", resources: [.process("Resources/")]),
+        .target(name: "TestUtils", dependencies: [.target(name: "LangTools"), .target(name: "OpenAI"), .target(name: "Anthropic")], path: "Tests/TestUtils", resources: [.process("Resources/")]),
 
         // Test targets
         .testTarget(name: "LangToolsTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils"]),

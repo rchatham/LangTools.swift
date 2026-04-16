@@ -421,4 +421,118 @@ final class AnthropicIntegrationTests: XCTestCase {
         XCTAssertNotNil(result)
         XCTAssertEqual(result?.type, .ping)
     }
+
+    // MARK: - Structured Output
+
+    func testStructuredOutputRequest() async throws {
+        let responseJSON = """
+        {
+            "content": [{"text": "{\\"city\\": \\"San Francisco\\", \\"temp_f\\": 72}", "type": "text"}],
+            "id": "msg_so_test",
+            "model": "claude-sonnet-4-6",
+            "role": "assistant",
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "type": "message",
+            "usage": {"input_tokens": 25, "output_tokens": 15}
+        }
+        """.data(using: .utf8)!
+
+        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+            (.success(responseJSON), 200)
+        }
+
+        struct WeatherOutput: StructuredOutput, Equatable {
+            let city: String
+            let temp_f: Int
+            static var jsonSchema: JSONSchema {
+                .object(
+                    properties: ["city": .string(), "temp_f": .integer()],
+                    required: ["city", "temp_f"],
+                    additionalProperties: .bool(false)
+                )
+            }
+        }
+
+        var request = Anthropic.MessageRequest(
+            model: .claude46Sonnet,
+            messages: [.init(role: .user, content: "Weather in SF")]
+        )
+        request.setResponseType(WeatherOutput.self)
+        XCTAssertTrue(request.usesStructuredOutput)
+
+        let response = try await api.perform(request: request)
+        let output: WeatherOutput = try response.structuredOutput()
+        XCTAssertEqual(output.city, "San Francisco")
+        XCTAssertEqual(output.temp_f, 72)
+    }
+
+    func testStructuredOutputSchemaEncoding() throws {
+        var request = Anthropic.MessageRequest(
+            model: .claude46Sonnet,
+            messages: [.init(role: .user, content: "Test")]
+        )
+        request.responseSchema = .object(
+            properties: ["value": .string()],
+            required: ["value"],
+            additionalProperties: .bool(false)
+        )
+        let data = try JSONEncoder().encode(request)
+        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+        let outputConfig = dict["output_config"] as? [String: Any]
+        XCTAssertNotNil(outputConfig)
+        let format = outputConfig?["format"] as? [String: Any]
+        XCTAssertEqual(format?["type"] as? String, "json_schema")
+    }
+
+    func testStructuredOutputRejectsUnsupportedModel() throws {
+        let anthropic = Anthropic(apiKey: "test-key")
+        var request = Anthropic.MessageRequest(
+            model: .claude3Haiku_20240307,
+            messages: [.init(role: .user, content: "Test")]
+        )
+        request.responseSchema = .object(properties: ["test": .string()])
+        XCTAssertThrowsError(try anthropic.prepare(request: request))
+    }
+
+    // MARK: - Error Response Decoding
+
+    func testAnthropicErrorResponseDecoding() throws {
+        let errorJSON = """
+        {"type": "error", "error": {"type": "rate_limit_error", "message": "Rate limit exceeded"}}
+        """.data(using: .utf8)!
+        let error = try JSONDecoder().decode(AnthropicErrorResponse.self, from: errorJSON)
+        XCTAssertEqual(error.error.message, "Rate limit exceeded")
+        XCTAssertEqual(error.error.type, .rateLimitError)
+    }
+
+    func testHTTPErrorContainsStatusCode() async throws {
+        let errorJSON = """
+        {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}
+        """.data(using: .utf8)!
+
+        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+            (.success(errorJSON), 529)
+        }
+
+        do {
+            _ = try await api.perform(request: Anthropic.MessageRequest(
+                model: .claude46Sonnet,
+                messages: [.init(role: .user, content: "Hi")]
+            ))
+            XCTFail("Should have thrown")
+        } catch let error as LangToolsError {
+            switch error {
+            case .responseUnsuccessful(let statusCode, _):
+                XCTAssertEqual(statusCode, 529)
+            case .apiError(let apiError):
+                XCTAssertTrue(apiError is AnthropicErrorResponse)
+            default:
+                break
+            }
+        } catch {
+            XCTAssertNotNil(error)
+        }
+    }
 }

@@ -211,7 +211,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
 
     func testSwiftAnthropic_EncodeRequest_Simple() {
         let parameters = MessageParameter(
-            model: .claude46Sonnet,
+            model: .other("claude-sonnet-4-6"),
             messages: [.init(role: .user, content: .text("What's the weather in SF?"))],
             maxTokens: 4096
         )
@@ -229,7 +229,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
                   content: .text("Message \(i) with realistic content for benchmarking encoding performance across conversation turns."))
         }
         let parameters = MessageParameter(
-            model: .claude46Sonnet,
+            model: .other("claude-sonnet-4-6"),
             messages: messages,
             maxTokens: 4096
         )
@@ -271,9 +271,9 @@ final class AnthropicBenchmarkTests: XCTestCase {
 
     func testSwiftAnthropic_MessageConstruction() {
         measure {
-            for _ in 0..<1000 {
-                _ = MessageParameter.Message(role: .user, content: .text("Hello, what's the weather?"))
-                _ = MessageParameter.Message(role: .assistant, content: .text("The weather is sunny and 72°F."))
+            for i in 0..<1000 {
+                _ = MessageParameter.Message(role: .user, content: .text("Hello, what's the weather? \(i)"))
+                _ = MessageParameter.Message(role: .assistant, content: .text("The weather is sunny and 72°F. \(i)"))
             }
         }
     }
