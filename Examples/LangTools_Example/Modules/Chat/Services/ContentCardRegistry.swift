@@ -211,4 +211,13 @@ public final class ContentCardRegistry: @unchecked Sendable {
                 .foregroundStyle(.secondary)
         }
     }
+
+    // MARK: - Batch registration
+
+    /// Register an array of card registrations (typically from `AgentRegistry.cardRegistrations`).
+    public func register(_ registrations: [CardRegistration]) {
+        for registration in registrations {
+            registration._register(self)
+        }
+    }
 }
