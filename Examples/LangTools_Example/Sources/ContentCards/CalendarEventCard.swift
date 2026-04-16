@@ -148,7 +148,7 @@ struct CalendarEventCardListView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 4) {
             if let message = content.message, !message.isEmpty {
                 Text(message)
                     .font(.subheadline)
@@ -161,6 +161,7 @@ struct CalendarEventCardListView: View {
                 card.cardView()
             }
         }
+        .padding([.top, .bottom], 4)
     }
 }
 
