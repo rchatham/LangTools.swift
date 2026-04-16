@@ -23,6 +23,9 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/rchatham/JSON.swift.git", branch: "main"),
+        // Benchmark comparison dependencies
+        .package(url: "https://github.com/jamesrochabrun/SwiftOpenAI.git", from: "4.0.0"),
+        .package(url: "https://github.com/jamesrochabrun/SwiftAnthropic.git", from: "2.0.0"),
     ],
     targets: [
         // Targets
@@ -44,6 +47,15 @@ let package = Package(
         .testTarget(name: "GeminiTests", dependencies: ["Gemini", "OpenAI", "TestUtils"]),
         .testTarget(name: "OllamaTests", dependencies: ["Ollama", "OpenAI", "TestUtils"]),
         .testTarget(name: "AppleSpeechTests", dependencies: ["AppleSpeech"]),
+
+        // Performance & integration test targets
+        .testTarget(name: "PerformanceTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils"]),
+        .testTarget(name: "IntegrationTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils"]),
+        .testTarget(name: "BenchmarkTests", dependencies: [
+            "LangTools", "OpenAI", "Anthropic", "TestUtils",
+            .product(name: "SwiftOpenAI", package: "SwiftOpenAI"),
+            .product(name: "SwiftAnthropic", package: "SwiftAnthropic"),
+        ]),
 
         // Executable target
         .executableTarget(name: "ChatCLI", dependencies: ["LangTools", "OpenAI", "Anthropic", "XAI", "Gemini", "Ollama"]),
