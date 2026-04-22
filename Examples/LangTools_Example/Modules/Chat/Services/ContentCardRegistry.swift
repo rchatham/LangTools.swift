@@ -70,7 +70,7 @@ public final class ContentCardRegistry: @unchecked Sendable {
         /// Converts raw agent result JSON → ContentCardsContent (for messaging / persistence).
         let parseResult: (String) -> ContentCardsContent?
         /// Converts a ContentCardsContent → type-erased SwiftUI view (for rendering).
-        let buildView: (ContentCardsContent) -> AnyView
+        let buildView: @MainActor @Sendable (ContentCardsContent) -> AnyView
     }
 
     private struct Storage {
@@ -98,7 +98,7 @@ public final class ContentCardRegistry: @unchecked Sendable {
         cardType: String,
         as type: Item.Type,
         decode: @escaping (String) -> (message: String?, items: [Item])?,
-        @ViewBuilder render: @escaping ([Item]) -> V
+        @ViewBuilder render: @escaping @Sendable ([Item]) -> V
     ) {
         let entry = Entry(
             parseResult: { json in
@@ -150,7 +150,7 @@ public final class ContentCardRegistry: @unchecked Sendable {
         agent: AgentKey,
         cardType: String,
         as type: Item.Type,
-        @ViewBuilder render: @escaping ([Item]) -> V
+        @ViewBuilder render: @escaping @Sendable ([Item]) -> V
     ) {
         register(
             agent: agent,
