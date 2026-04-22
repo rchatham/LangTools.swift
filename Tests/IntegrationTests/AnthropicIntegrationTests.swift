@@ -152,11 +152,18 @@ final class AnthropicIntegrationTests: XCTestCase {
 
         XCTAssertNotNil(response.messageInfo)
         XCTAssertEqual(response.messageInfo?.stop_reason, .tool_use)
-        // Content should have text and tool_use blocks
         guard case .array(let blocks) = response.messageInfo?.content else {
             return XCTFail("Expected array content")
         }
         XCTAssertGreaterThanOrEqual(blocks.count, 2)
+        // Verify tool_use block has correct name and id
+        let toolBlock = blocks.first(where: { if case .toolUse = $0 { return true }; return false })
+        if case .toolUse(let toolUse) = toolBlock {
+            XCTAssertEqual(toolUse.name, "get_weather")
+            XCTAssertNotNil(toolUse.id)
+        } else {
+            XCTFail("Expected tool_use content block")
+        }
     }
 
     func testToolCallWithCallbackCompletesFullFlow() async throws {
@@ -225,6 +232,12 @@ final class AnthropicIntegrationTests: XCTestCase {
             return false
         }
         XCTAssertEqual(toolUseBlocks.count, 3)
+        for block in toolUseBlocks {
+            if case .toolUse(let toolUse) = block {
+                XCTAssertEqual(toolUse.name, "get_weather")
+                XCTAssertNotNil(toolUse.id)
+            }
+        }
     }
 
     // MARK: - Error Handling
@@ -245,8 +258,15 @@ final class AnthropicIntegrationTests: XCTestCase {
         do {
             _ = try await api.perform(request: request)
             XCTFail("Should have thrown an error")
-        } catch {
-            XCTAssertNotNil(error)
+        } catch let error as LangToolsError {
+            switch error {
+            case .responseUnsuccessful(let statusCode, _):
+                XCTAssertEqual(statusCode, 401)
+            case .apiError(let apiError):
+                XCTAssertTrue(apiError is AnthropicErrorResponse)
+            default:
+                XCTFail("Expected responseUnsuccessful or apiError, got \(error)")
+            }
         }
     }
 
@@ -263,8 +283,11 @@ final class AnthropicIntegrationTests: XCTestCase {
         do {
             _ = try await api.perform(request: request)
             XCTFail("Should have thrown an error")
+        } catch is URLError {
+            // Expected: network error propagates as URLError
         } catch {
-            XCTAssertNotNil(error)
+            XCTAssertTrue(error.localizedDescription.contains("timed out") || error.localizedDescription.contains("timeout"),
+                          "Expected timeout-related error, got: \(error)")
         }
     }
 
@@ -534,5 +557,103 @@ final class AnthropicIntegrationTests: XCTestCase {
         } catch {
             XCTAssertNotNil(error)
         }
+    }
+
+    // MARK: - Malformed Structured Output
+
+    func testStructuredOutputWithInvalidJSONThrows() async throws {
+        let responseJSON = """
+        {
+            "content": [{"text": "this is not valid json at all", "type": "text"}],
+            "id": "msg_bad",
+            "model": "claude-sonnet-4-6",
+            "role": "assistant",
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "type": "message",
+            "usage": {"input_tokens": 10, "output_tokens": 5}
+        }
+        """.data(using: .utf8)!
+
+        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+            (.success(responseJSON), 200)
+        }
+
+        struct TestOutput: StructuredOutput {
+            let value: String
+            static var jsonSchema: JSONSchema { .object(properties: ["value": .string()]) }
+        }
+
+        let response = try await api.perform(request: Anthropic.MessageRequest(
+            model: .claude46Sonnet,
+            messages: [.init(role: .user, content: "Test")]
+        ))
+        XCTAssertThrowsError(try response.structuredOutput() as TestOutput)
+    }
+
+    // MARK: - Stream Error Paths
+
+    func testStreamNon200StatusCode() async throws {
+        let errorJSON = """
+        {"type": "error", "error": {"type": "overloaded_error", "message": "Server overloaded"}}
+        """.data(using: .utf8)!
+
+        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+            (.success(errorJSON), 529)
+        }
+
+        let request = Anthropic.MessageRequest(
+            model: .claude46Sonnet,
+            messages: [.init(role: .user, content: "Hi")],
+            stream: true
+        )
+
+        do {
+            for try await _ in api.stream(request: request) {
+                XCTFail("Should not yield any responses")
+            }
+            XCTFail("Stream should have thrown")
+        } catch let error as LangToolsError {
+            if case .responseUnsuccessful(let statusCode, _) = error {
+                XCTAssertEqual(statusCode, 529)
+            }
+        } catch {
+            XCTAssertNotNil(error)
+        }
+    }
+
+    // MARK: - Message Conversion Helpers
+
+    func testToAnthropicMessagesFiltersSystemMessages() {
+        let messages: [any LangToolsMessage] = [
+            OpenAI.Message(role: .system, content: "You are helpful."),
+            OpenAI.Message(role: .user, content: "Hello"),
+            OpenAI.Message(role: .assistant, content: "Hi there"),
+        ]
+        let converted = Anthropic.toAnthropicMessages(messages)
+        XCTAssertEqual(converted.count, 2)
+        XCTAssertTrue(converted[0].role.isUser)
+        XCTAssertTrue(converted[1].role.isAssistant)
+    }
+
+    func testToAnthropicSystemMessageConcatenatesMultiple() {
+        let messages: [any LangToolsMessage] = [
+            OpenAI.Message(role: .system, content: "First instruction."),
+            OpenAI.Message(role: .user, content: "Hello"),
+            OpenAI.Message(role: .system, content: "Second instruction."),
+        ]
+        let systemPrompt = Anthropic.toAnthropicSystemMessage(messages)
+        XCTAssertNotNil(systemPrompt)
+        XCTAssertTrue(systemPrompt!.contains("First instruction."))
+        XCTAssertTrue(systemPrompt!.contains("Second instruction."))
+        XCTAssertTrue(systemPrompt!.contains("---"))
+    }
+
+    func testToAnthropicSystemMessageReturnsEmptyForNoSystem() {
+        let messages: [any LangToolsMessage] = [
+            OpenAI.Message(role: .user, content: "Hello"),
+        ]
+        let systemPrompt = Anthropic.toAnthropicSystemMessage(messages)
+        XCTAssertEqual(systemPrompt, "")
     }
 }

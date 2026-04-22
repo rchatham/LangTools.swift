@@ -143,11 +143,15 @@ final class OpenAIIntegrationTests: XCTestCase {
             results.append(response)
         }
 
-        // First chunk should have assistant role
         XCTAssertEqual(results[0].choices[0].delta?.role, .assistant)
-        // Should contain tool call data
         let toolCallChunks = results.filter { $0.choices.first?.delta?.tool_calls != nil }
         XCTAssertGreaterThan(toolCallChunks.count, 0)
+        // Verify tool name from first tool call chunk
+        let firstToolChunk = toolCallChunks[0]
+        XCTAssertEqual(firstToolChunk.choices[0].delta?.tool_calls?[0].function.name, "get_weather")
+        // Accumulate and verify argument JSON
+        let arguments = results.reduce("") { $0 + (!$1.choices.isEmpty ? ($1.choices[0].delta?.tool_calls?[0].function.arguments ?? "") : "") }
+        XCTAssertTrue(arguments.contains("City0"), "Arguments should contain location City0")
         // Final chunk should have tool_calls finish reason
         let finishChunk = results.first(where: { $0.choices.first?.finish_reason == .tool_calls })
         XCTAssertNotNil(finishChunk)
@@ -215,9 +219,15 @@ final class OpenAIIntegrationTests: XCTestCase {
         do {
             _ = try await api.perform(request: request)
             XCTFail("Should have thrown an error")
-        } catch {
-            // Should throw a responseUnsuccessful or apiError
-            XCTAssertNotNil(error)
+        } catch let error as LangToolsError {
+            switch error {
+            case .responseUnsuccessful(let statusCode, _):
+                XCTAssertEqual(statusCode, 401)
+            case .apiError(let apiError):
+                XCTAssertTrue(apiError is OpenAIErrorResponse)
+            default:
+                XCTFail("Expected responseUnsuccessful or apiError, got \(error)")
+            }
         }
     }
 
@@ -234,8 +244,11 @@ final class OpenAIIntegrationTests: XCTestCase {
         do {
             _ = try await api.perform(request: request)
             XCTFail("Should have thrown an error")
+        } catch is URLError {
+            // Expected: network error propagates as URLError
         } catch {
-            XCTAssertNotNil(error)
+            XCTAssertTrue(error.localizedDescription.contains("Internet") || error.localizedDescription.contains("network"),
+                          "Expected network-related error, got: \(error)")
         }
     }
 
@@ -360,34 +373,23 @@ final class OpenAIIntegrationTests: XCTestCase {
         XCTAssertNotNil(response.choices.first?.message)
     }
 
-    // MARK: - Concurrent Requests
+    // MARK: - Sequential Requests
 
-    func testConcurrentRequests() async throws {
-        for i in 0..<5 {
-            MockURLProtocol.mockNetworkHandlers["\(OpenAI.ChatCompletionRequest.endpoint)_\(i)"] = nil
-        }
-        // Register a single handler that works for multiple calls
-        var handlerCallCount = 0
-        let handlerLock = NSLock()
-
-        // We'll test that multiple sequential requests work correctly
-        for _ in 0..<3 {
+    func testSequentialRequestsReuseProvider() async throws {
+        for i in 0..<3 {
             MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
-                handlerLock.lock()
-                handlerCallCount += 1
-                handlerLock.unlock()
                 let data = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 1)
                 return (.success(data), 200)
             }
 
             let request = OpenAI.ChatCompletionRequest(
                 model: .gpt4o,
-                messages: [.init(role: .user, content: "Hello")]
+                messages: [.init(role: .user, content: "Request \(i)")]
             )
             let response = try await api.perform(request: request)
             XCTAssertNotNil(response.choices.first?.message)
+            XCTAssertEqual(response.choices.count, 1)
         }
-        XCTAssertEqual(handlerCallCount, 3)
     }
 
     // MARK: - Custom Base URL
@@ -503,7 +505,118 @@ final class OpenAIIntegrationTests: XCTestCase {
                 break // Other LangToolsError variants are also acceptable
             }
         } catch {
-            // Non-LangToolsError is also fine, just verify we got an error
+            XCTAssertNotNil(error)
+        }
+    }
+
+    // MARK: - Malformed Structured Output
+
+    func testStructuredOutputWithInvalidJSONThrows() async throws {
+        let responseJSON = """
+        {
+            "id": "chatcmpl-bad",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "this is not valid json at all"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        }
+        """.data(using: .utf8)!
+
+        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+            (.success(responseJSON), 200)
+        }
+
+        struct TestOutput: StructuredOutput {
+            let value: String
+            static var jsonSchema: JSONSchema { .object(properties: ["value": .string()]) }
+        }
+
+        let response = try await api.perform(request: OpenAI.ChatCompletionRequest(
+            model: .gpt4o,
+            messages: [.init(role: .user, content: "Test")]
+        ))
+        XCTAssertThrowsError(try response.structuredOutput() as TestOutput)
+    }
+
+    // MARK: - Tool Callback Error Handling
+
+    func testToolCallbackErrorReturnsErrorResult() async throws {
+        let toolStreamData = PerformanceFixtures.openAIToolCallStreamData(toolCount: 1)
+        let finalStreamData = PerformanceFixtures.openAIStreamChunksData(chunkCount: 2)
+
+        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+            (.success(toolStreamData), 200)
+        }
+
+        struct ToolError: Error, LocalizedError {
+            var errorDescription: String? { "Tool execution failed" }
+        }
+
+        var errorEventFired = false
+        let tools: [OpenAI.Tool] = [.function(.init(
+            name: "get_weather",
+            description: "Get weather",
+            parameters: .init(
+                properties: ["location": .init(type: "string")],
+                required: ["location"]
+            ),
+            callback: { _, _ in
+                MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+                    (.success(finalStreamData), 200)
+                }
+                throw ToolError()
+            }
+        ))]
+        let request = OpenAI.ChatCompletionRequest(
+            model: .gpt4o,
+            messages: [.init(role: .user, content: "Weather?")],
+            stream: true,
+            tools: tools,
+            toolEventHandler: { event in
+                if case .toolCompleted(let result) = event, result?.is_error == true {
+                    errorEventFired = true
+                }
+            }
+        )
+        var results: [OpenAI.ChatCompletionResponse] = []
+        for try await response in api.stream(request: request) {
+            results.append(response)
+        }
+        XCTAssertTrue(errorEventFired, "Tool error event should have fired")
+    }
+
+    // MARK: - Stream Error Paths
+
+    func testStreamNon200StatusCode() async throws {
+        let errorJSON = """
+        {"error": {"message": "Server error", "type": "server_error", "param": null, "code": null}}
+        """.data(using: .utf8)!
+
+        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+            (.success(errorJSON), 500)
+        }
+
+        let request = OpenAI.ChatCompletionRequest(
+            model: .gpt4o,
+            messages: [.init(role: .user, content: "Hi")],
+            stream: true
+        )
+
+        do {
+            for try await _ in api.stream(request: request) {
+                XCTFail("Should not yield any responses")
+            }
+            XCTFail("Stream should have thrown")
+        } catch let error as LangToolsError {
+            if case .responseUnsuccessful(let statusCode, _) = error {
+                XCTAssertEqual(statusCode, 500)
+            }
+        } catch {
             XCTAssertNotNil(error)
         }
     }

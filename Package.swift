@@ -47,6 +47,7 @@ let package = Package(
         .testTarget(name: "GeminiTests", dependencies: ["Gemini", "OpenAI", "TestUtils"]),
         .testTarget(name: "OllamaTests", dependencies: ["Ollama", "OpenAI", "TestUtils"]),
         .testTarget(name: "AppleSpeechTests", dependencies: ["AppleSpeech"]),
+        .testTarget(name: "AgentsTests", dependencies: ["Agents", "LangTools", "OpenAI", "TestUtils"]),
 
         // Performance & integration test targets
         .testTarget(name: "PerformanceTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils"]),
