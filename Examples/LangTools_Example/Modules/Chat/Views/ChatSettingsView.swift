@@ -152,7 +152,9 @@ public struct ChatSettingsView: View {
             OllamaSettingsView()
         }
         #endif
-        .enterAPIKeyAlert(isPresented: $viewModel.enterApiKey, apiKey: $viewModel.apiKeyInputText)
+        .sheet(isPresented: $viewModel.showManageAccess) {
+            AuthSheet(preferredService: viewModel.preferredAuthService)
+        }
     }
 
     // iOS/iPadOS layout (unchanged)
@@ -165,7 +167,7 @@ public struct ChatSettingsView: View {
                 #endif
 
                 Picker("Chat Models", selection: $viewModel.model) {
-                    ForEach(Model.chatModels, id: \.self) { model in
+                    ForEach(viewModel.availableModels, id: \.self) { model in
                         Text(model.rawValue).tag(model)
                     }
                 }
@@ -201,7 +203,7 @@ public struct ChatSettingsView: View {
             #endif
 
             Button("Save Settings") { viewModel.saveSettings() }
-            Button("Update API Key") { viewModel.enterApiKey = true }
+            Button("Manage Access") { viewModel.presentManageAccess() }
             Button("Clear messages", role: .destructive) { viewModel.clearMessages() }
 
             Section(header: Text("AI Tools")) {
@@ -352,7 +354,9 @@ public struct ChatSettingsView: View {
         .sheet(isPresented: $showingOllamaSettings) {
             OllamaSettingsView()
         }
-        .enterAPIKeyAlert(isPresented: $viewModel.enterApiKey, apiKey: $viewModel.apiKeyInputText)
+        .sheet(isPresented: $viewModel.showManageAccess) {
+            AuthSheet(preferredService: viewModel.preferredAuthService)
+        }
     }
 
     // MARK: - macOS Detail Views
@@ -377,7 +381,7 @@ public struct ChatSettingsView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 16) {
                         Picker("", selection: $viewModel.model) {
-                            ForEach(Model.chatModels, id: \.self) { model in
+                            ForEach(viewModel.availableModels, id: \.self) { model in
                                 Text(model.rawValue).tag(model)
                             }
                         }
@@ -398,7 +402,7 @@ public struct ChatSettingsView: View {
                     .padding(8)
                 }
 
-                Button("Update API Key") { viewModel.enterApiKey = true }
+                Button("Manage Access") { viewModel.presentManageAccess() }
                 .buttonStyle(.bordered)
                 .padding(.top, 8)
             }
@@ -940,16 +944,17 @@ struct SystemMessageEditor: View {
 
 extension ChatSettingsView {
     @MainActor public class ViewModel: ObservableObject {
-        @Published var enterApiKey = false
+        @Published var showManageAccess = false
+        @Published var preferredAuthService: APIService?
         @Published var model: Model = UserDefaults.model {
             didSet { UserDefaults.model = model }
         }
         @Published var maxTokens = UserDefaults.maxTokens
         @Published var temperature = UserDefaults.temperature
         @Published var systemMessage = UserDefaults.systemMessage
-        @Published var apiKeyInputText: String = ""
         @Published var toolSettings = ToolSettings.shared
         @Published public var toolManager = ToolManager.shared
+        @Published public var accessManager = ProviderAccessManager.shared
 
         let clearMessages: () -> Void
 
@@ -974,20 +979,35 @@ extension ChatSettingsView {
             ToolManager.shared.objectWillChange
                 .sink { [weak self] _ in self?.objectWillChange.send() }
                 .store(in: &cancellables)
+
+            ProviderAccessManager.shared.objectWillChange
+                .sink { [weak self] _ in self?.objectWillChange.send() }
+                .store(in: &cancellables)
+        }
+
+        var availableModels: [Model] {
+            let models = accessManager.availableChatModels()
+            return models.isEmpty ? Model.chatModels : models
         }
 
         func loadSettings() {
-            model = UserDefaults.model
+            accessManager.refresh()
+            model = accessManager.validateSelectedModel(UserDefaults.model)
             maxTokens = UserDefaults.maxTokens
             temperature = UserDefaults.temperature
             systemMessage = UserDefaults.systemMessage
         }
 
         func saveSettings() {
-            UserDefaults.model = model
+            UserDefaults.model = accessManager.validateSelectedModel(model)
             UserDefaults.maxTokens = maxTokens
             UserDefaults.temperature = temperature
             UserDefaults.systemMessage = systemMessage
+        }
+
+        func presentManageAccess(for service: APIService? = nil) {
+            preferredAuthService = service
+            showManageAccess = true
         }
 
         func saveToolSettings() {

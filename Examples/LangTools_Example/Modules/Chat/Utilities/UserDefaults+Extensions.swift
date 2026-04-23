@@ -8,7 +8,7 @@ import SwiftUI
 
 public extension UserDefaults {
     static var model: Model {
-        get { standard.string(forKey: "model").flatMap(Model.init) ?? .openAI(.gpt35Turbo) }
+        get { standard.string(forKey: "model").flatMap(Model.init) ?? .openAI(.gpt4o_mini) }
         set { standard.set(newValue.rawValue, forKey: "model") }
     }
     

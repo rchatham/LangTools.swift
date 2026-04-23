@@ -111,6 +111,7 @@ struct LangTools_ExampleApp: App {
 /// Each window creates a new instance, giving each window independent chat state
 struct ChatContainerView: View {
     @StateObject private var messageService: MessageService
+    @StateObject private var authPresentation = AuthPresentationCoordinator.shared
     @ObservedObject var voiceInputHandler: VoiceInputHandlerAdapter
 
     init(voiceInputHandler: VoiceInputHandlerAdapter) {
@@ -139,6 +140,9 @@ struct ChatContainerView: View {
                     return AnyView(ContentCardRegistry.shared.view(for: content))
                 }
             )
+        }
+        .sheet(isPresented: $authPresentation.isPresented) {
+            AuthSheet(preferredService: authPresentation.preferredService)
         }
     }
 
@@ -255,36 +259,29 @@ extension MessageService: @retroactive ChatMessageService {
             }
 
         case is LangToolchainError:
-            let (serviceName, service): (String, APIService) = {
-                switch UserDefaults.model {
-                case .anthropic(_): return ("Anthropic", .anthropic)
-                case .openAI(_): return ("OpenAI", .openAI)
-                case .xAI(_): return ("xAI", .xAI)
-                case .gemini(_): return ("Gemini", .gemini)
-                case .ollama(_): return ("Ollama", .ollama)
-                }
-            }()
-
-            let textBinding = Binding(
-                get: { apiKeyInput },
-                set: { apiKeyInput = $0 }
-            )
-
+            let service = UserDefaults.model.apiService
             return ChatAlertInfo(
-                title: "Enter API Key",
-                textField: TextFieldInfo(
-                    placeholder: "Enter your API key",
-                    label: "API Key",
-                    text: textBinding
-                ),
+                title: "Provider Access Required",
                 button: ButtonInfo(
-                    text: "Save for \(serviceName)",
-                    action: { [weak self] alertInfo in
-                        let apiKey = textBinding.wrappedValue
-                        try self?.networkClient.updateApiKey(apiKey, for: service)
+                    text: "Manage Access",
+                    action: { _ in
+                        AuthPresentationCoordinator.shared.present(preferredService: service)
                     }
                 ),
-                message: "Please enter your \(serviceName) API key."
+                message: "Configure \(service.displayName) access to use this model. You can add an API key or connect an account from Manage Access."
+            )
+
+        case let error as NetworkClient.NetworkError:
+            let service = UserDefaults.model.apiService
+            return ChatAlertInfo(
+                title: "Access Configuration",
+                button: ButtonInfo(
+                    text: "Manage Access",
+                    action: { _ in
+                        AuthPresentationCoordinator.shared.present(preferredService: service)
+                    }
+                ),
+                message: error.errorDescription ?? "Update provider access settings."
             )
 
         default:
@@ -361,6 +358,3 @@ extension Message: @retroactive ChatMessageInfo {
     public weak var parentMessage: Message? { parent }
     public var childChatMessages: [Message] { childMessages }
 }
-
-// local variable used to store apiKey while passing from ui to app
-private var apiKeyInput: String = ""

@@ -16,11 +16,15 @@ public typealias Role = OpenAI.Message.Role
 
 public protocol NetworkClientProtocol {
     static var shared: NetworkClientProtocol { get }
+    var providerAccessManager: ProviderAccessManager { get }
     func performChatCompletionRequest(messages: [Message], model: Model, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message
     func streamChatCompletionRequest(messages: [Message], model: Model, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error>
     func playAudio(for text: String) async throws
-    func agentContext(messages: [Message], model: Model, eventHandler: @escaping (AgentEvent) -> Void) -> AgentContext
+    func agentContext(messages: [Message], model: Model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext
     func updateApiKey(_ apiKey: String, for llm: APIService) throws
+    func removeApiKey(for llm: APIService) throws
+    func connectAccount(_ provider: AccountLoginProvider) async throws
+    func disconnectAccount(_ provider: AccountLoginProvider) async throws
 }
 
 extension NetworkClientProtocol {
@@ -32,24 +36,31 @@ extension NetworkClientProtocol {
         try streamChatCompletionRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)
     }
 
-    func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) -> any LangToolsChatRequest & LangToolsStreamableRequest {
-        request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)
+    func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) -> any LangToolsChatRequest & LangToolsStreamableRequest where Self: NetworkClient {
+        self.request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)
     }
 
-    func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) -> AgentContext {
-        agentContext(messages: messages, model: model, eventHandler: eventHandler)
+    func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
+        try agentContext(messages: messages, model: model, eventHandler: eventHandler)
     }
 }
 
 public class NetworkClient: NSObject, NetworkClientProtocol {
     public static let shared: NetworkClientProtocol = NetworkClient()
 
-    private let keychainService = KeychainService()
-    private var userDefaults: UserDefaults { .standard }
+    private let keychainService = KeychainService.shared
+    private let accountLoginService: AccountLoginService
+    public let providerAccessManager: ProviderAccessManager
 
+    private var userDefaults: UserDefaults { .standard }
     private var langToolchain = LangToolchain()
 
-    override init() {
+    public init(
+        accountLoginService: AccountLoginService = StubAccountLoginService(),
+        providerAccessManager: ProviderAccessManager = .shared
+    ) {
+        self.accountLoginService = accountLoginService
+        self.providerAccessManager = providerAccessManager
         super.init()
         APIService.llms.forEach { llm in keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) } }
 
@@ -58,15 +69,18 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
 
         // Initialize Ollama service to start populating available models
         _ = OllamaService.shared
+        providerAccessManager.refresh()
     }
 
     public func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
+        try ensureModelAccess(for: model)
         let response = try await langToolchain.perform(request: request(messages: messages, model: model, tools: tools, toolChoice: toolChoice))
         guard let text = response.content?.text else { fatalError("the api should never return non text") }
         return Message(text: text, role: .assistant)
     }
 
     public func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<String, Error> {
+        try ensureModelAccess(for: model)
         return try langToolchain.stream(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { $0.content?.text }
     }
 
@@ -87,7 +101,8 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         }
     }
 
-    public func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) -> AgentContext {
+    public func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
+        try ensureModelAccess(for: model)
         switch model {
         case .anthropic(let model): return AgentContext(langTool: langToolchain.langTool(Anthropic.self)!, model: model, messages: messages.toAnthropicMessages(), eventHandler: eventHandler)
         case .gemini(let model): return AgentContext(langTool: langToolchain.langTool(Gemini.self)!, model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
@@ -98,9 +113,25 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
     }
 
     public func updateApiKey(_ apiKey: String, for llm: APIService) throws {
-        guard !apiKey.isEmpty else { throw NetworkError.emptyApiKey }
+        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw NetworkError.emptyApiKey }
         keychainService.saveApiKey(apiKey: apiKey, for: llm)
         registerLangTool(apiKey, for: llm)
+        providerAccessManager.refresh()
+    }
+
+    public func removeApiKey(for llm: APIService) throws {
+        keychainService.deleteApiKey(for: llm)
+        providerAccessManager.refresh()
+    }
+
+    public func connectAccount(_ provider: AccountLoginProvider) async throws {
+        let session = try await accountLoginService.beginLogin(for: provider)
+        try providerAccessManager.saveAccountSession(session)
+    }
+
+    public func disconnectAccount(_ provider: AccountLoginProvider) async throws {
+        try await accountLoginService.logout(provider: provider)
+        try providerAccessManager.removeAccountSession(for: provider)
     }
 
     func registerLangTool(_ apiKey: String, for llm: APIService) {
@@ -120,18 +151,52 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         default: return nil
         }
     }
+    func ensureModelAccess(for model: Model) throws {
+        let state = providerAccessManager.state(for: model.apiService)
+
+        switch model.apiService {
+        case .ollama:
+            return
+        case .serper:
+            throw NetworkError.incompatibleRequest
+        default:
+            break
+        }
+
+        if state.authStatus == .notConfigured {
+            throw NetworkError.missingApiKey
+        }
+
+        if state.hasAccountSession && !state.hasAPIKey {
+            throw NetworkError.accountLoginTransportNotImplemented(model.apiService)
+        }
+    }
 }
 
-public enum APIService: String, CaseIterable {
+public enum APIService: String, CaseIterable, Codable {
     case openAI, anthropic, xAI, gemini, ollama, serper
 
     static var llms: [APIService] = [.openAI, .anthropic, .xAI, .gemini, .ollama]
 }
 
 extension NetworkClient {
-    enum NetworkError: Error {
+    public enum NetworkError: LocalizedError {
         case missingApiKey
         case emptyApiKey
         case incompatibleRequest
+        case accountLoginTransportNotImplemented(APIService)
+
+        public var errorDescription: String? {
+            switch self {
+            case .missingApiKey:
+                return "This provider is not configured. Add an API key or connect an account in Manage Access."
+            case .emptyApiKey:
+                return "API key cannot be empty."
+            case .incompatibleRequest:
+                return "The selected request is incompatible with the current provider."
+            case .accountLoginTransportNotImplemented(let service):
+                return "\(service.displayName) account login is wired up for access management in this branch, but account-backed request transport is not implemented yet. Use an API key for requests today."
+            }
+        }
     }
 }
