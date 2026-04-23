@@ -1,165 +1,185 @@
 import SwiftUI
 
-public struct AuthSheet: View {
-    @Environment(\.dismiss) private var dismiss
+private struct ManageAccessPromptModifier: ViewModifier {
+    @StateObject private var coordinator = AuthPresentationCoordinator.shared
     @ObservedObject private var accessManager = ProviderAccessManager.shared
-    @State private var openAIKey = ""
-    @State private var anthropicKey = ""
-    @State private var errorMessage: String?
-    @State private var isLoading = false
+    @State private var showAPIKeyPrompt = false
+    @State private var apiKeyInput = ""
+    @State private var apiKeyService: APIService = .openAI
+    @State private var showErrorAlert = false
+    @State private var errorMessage = ""
 
     private let networkClient: NetworkClientProtocol
-    private let preferredService: APIService?
 
-    public init(
-        networkClient: NetworkClientProtocol = NetworkClient.shared,
-        preferredService: APIService? = nil
-    ) {
+    init(networkClient: NetworkClientProtocol = NetworkClient.shared) {
         self.networkClient = networkClient
-        self.preferredService = preferredService
     }
 
-    public var body: some View {
-        NavigationStack {
-            Form {
-                if let errorMessage {
-                    Section {
-                        Text(errorMessage)
-                            .foregroundColor(.red)
-                    }
-                }
-
-                providerSection(
-                    service: .openAI,
-                    accountProvider: .openAI,
-                    apiKey: $openAIKey,
-                    accountButtonTitle: "Sign in with OpenAI"
-                )
-
-                providerSection(
-                    service: .anthropic,
-                    accountProvider: .claudeCode,
-                    apiKey: $anthropicKey,
-                    accountButtonTitle: "Sign in with Claude Code"
-                )
-
-                Section("Notes") {
-                    Text("Account login is scaffolded in this branch so model access and provider state can be wired up. Existing API-key flows remain the primary supported request path until account-backed request transport is finalized.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(dialogTitle, isPresented: $coordinator.isPresented, titleVisibility: .visible) {
+                actionButtons(for: currentService)
+            } message: {
+                Text(dialogMessage(for: currentService))
             }
-            .navigationTitle("Manage Access")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") {
-                        dismiss()
-                    }
+            .alert("Enter \(apiKeyService.displayName) API Key", isPresented: $showAPIKeyPrompt) {
+                TextField("API Key", text: $apiKeyInput)
+                Button("Save") { saveAPIKey() }
+                Button("Cancel", role: .cancel) {
+                    apiKeyInput = ""
                 }
+            } message: {
+                Text(apiKeyService.description)
             }
-            .disabled(isLoading)
-            .onAppear {
-                accessManager.refresh()
+            .alert("Access Error", isPresented: $showErrorAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(errorMessage)
             }
+    }
+
+    private var currentService: APIService {
+        coordinator.preferredService ?? UserDefaults.model.apiService
+    }
+
+    private var dialogTitle: String {
+        switch currentService {
+        case .openAI:
+            return "OpenAI Access"
+        case .anthropic:
+            return "Claude / Anthropic Access"
+        default:
+            return "\(currentService.displayName) Access"
         }
     }
 
     @ViewBuilder
-    private func providerSection(
-        service: APIService,
-        accountProvider: AccountLoginProvider,
-        apiKey: Binding<String>,
-        accountButtonTitle: String
-    ) -> some View {
+    private func actionButtons(for service: APIService) -> some View {
         let state = accessManager.state(for: service)
 
-        Section(service.displayName) {
-            Text(state.statusDescription)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-
-            if !state.availableModels.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Available models")
-                        .font(.headline)
-                    Text(state.availableModels.map(\.rawValue).joined(separator: ", "))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+        switch service {
+        case .ollama:
+            Button("OK", role: .cancel) {
+                coordinator.dismiss()
             }
 
-            TextField("API Key", text: apiKey)
-#if os(iOS)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled(true)
-#endif
-
-            Button("Save API Key") {
-                do {
-                    try networkClient.updateApiKey(apiKey.wrappedValue, for: service)
-                    accessManager.refresh()
-                    apiKey.wrappedValue = ""
-                    errorMessage = nil
-                } catch {
-                    errorMessage = error.localizedDescription
-                }
+        case .serper:
+            Button("Enter API Key") {
+                presentAPIKeyPrompt(for: service)
             }
-            .disabled(apiKey.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) {
+                coordinator.dismiss()
+            }
 
-            HStack {
-                Button(accountButtonTitle) {
+        default:
+            Button("Enter \(service.displayName) API Key") {
+                presentAPIKeyPrompt(for: service)
+            }
+
+            if let accountProvider = service.accountLoginProvider {
+                Button(accountActionTitle(for: accountProvider, state: state)) {
                     Task {
-                        await connectAccount(accountProvider)
-                    }
-                }
-
-                if state.hasAccountSession {
-                    Button("Disconnect Account", role: .destructive) {
-                        Task {
-                            await disconnectAccount(accountProvider)
-                        }
+                        await handleAccountAction(for: accountProvider, state: state)
                     }
                 }
             }
 
             if state.hasAPIKey {
                 Button("Remove API Key", role: .destructive) {
-                    do {
-                        try networkClient.removeApiKey(for: service)
-                        accessManager.refresh()
-                    } catch {
-                        errorMessage = error.localizedDescription
-                    }
+                    removeAPIKey(for: service)
                 }
+            }
+
+            Button("Cancel", role: .cancel) {
+                coordinator.dismiss()
             }
         }
     }
 
-    @MainActor
-    private func connectAccount(_ provider: AccountLoginProvider) async {
-        isLoading = true
-        defer { isLoading = false }
+    private func dialogMessage(for service: APIService) -> String {
+        let state = accessManager.state(for: service)
+        let status = state.statusDescription
 
-        do {
-            try await networkClient.connectAccount(provider)
-            accessManager.refresh()
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
+        switch service {
+        case .openAI:
+            return "Current model provider: OpenAI. \(status). You can enter an API key or sign in with OpenAI."
+        case .anthropic:
+            return "Current model provider: Anthropic. \(status). You can enter an Anthropic API key or sign in with Claude Code."
+        case .xAI, .gemini:
+            return "Current model provider: \(service.displayName). \(status). Use an API key to enable requests for this provider."
+        case .ollama:
+            return "Ollama models run locally and do not require API keys or account login."
+        case .serper:
+            return "Use your Serper API key for web search capabilities."
         }
     }
 
-    @MainActor
-    private func disconnectAccount(_ provider: AccountLoginProvider) async {
-        isLoading = true
-        defer { isLoading = false }
+    private func presentAPIKeyPrompt(for service: APIService) {
+        apiKeyService = service
+        apiKeyInput = ""
+        showAPIKeyPrompt = true
+    }
 
+    private func saveAPIKey() {
         do {
-            try await networkClient.disconnectAccount(provider)
+            if apiKeyService == .serper {
+                UserDefaults.serperApiKey = apiKeyInput
+                KeychainService.shared.saveApiKey(apiKey: apiKeyInput, for: .serper)
+            } else {
+                try networkClient.updateApiKey(apiKeyInput, for: apiKeyService)
+            }
             accessManager.refresh()
-            errorMessage = nil
+            apiKeyInput = ""
+            coordinator.dismiss()
         } catch {
-            errorMessage = error.localizedDescription
+            presentError(error.localizedDescription)
         }
+    }
+
+    private func removeAPIKey(for service: APIService) {
+        do {
+            try networkClient.removeApiKey(for: service)
+            accessManager.refresh()
+            coordinator.dismiss()
+        } catch {
+            presentError(error.localizedDescription)
+        }
+    }
+
+    private func handleAccountAction(for provider: AccountLoginProvider, state: ProviderAccessState) async {
+        do {
+            if state.hasAccountSession {
+                try await networkClient.disconnectAccount(provider)
+            } else {
+                try await networkClient.connectAccount(provider)
+            }
+            accessManager.refresh()
+            coordinator.dismiss()
+        } catch {
+            presentError(error.localizedDescription)
+        }
+    }
+
+    private func accountActionTitle(for provider: AccountLoginProvider, state: ProviderAccessState) -> String {
+        if state.hasAccountSession {
+            return "Disconnect \(provider.displayName)"
+        }
+        switch provider {
+        case .openAI:
+            return "Sign in with OpenAI"
+        case .claudeCode:
+            return "Sign in with Claude Code"
+        }
+    }
+
+    private func presentError(_ message: String) {
+        errorMessage = message
+        showErrorAlert = true
+    }
+}
+
+public extension View {
+    func manageAccessPrompts(networkClient: NetworkClientProtocol = NetworkClient.shared) -> some View {
+        modifier(ManageAccessPromptModifier(networkClient: networkClient))
     }
 }

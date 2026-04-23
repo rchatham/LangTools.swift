@@ -152,9 +152,7 @@ public struct ChatSettingsView: View {
             OllamaSettingsView()
         }
         #endif
-        .sheet(isPresented: $viewModel.showManageAccess) {
-            AuthSheet(preferredService: viewModel.preferredAuthService)
-        }
+        .manageAccessPrompts()
     }
 
     // iOS/iPadOS layout (unchanged)
@@ -203,7 +201,9 @@ public struct ChatSettingsView: View {
             #endif
 
             Button("Save Settings") { viewModel.saveSettings() }
-            Button("Manage Access") { viewModel.presentManageAccess() }
+            if viewModel.canManageAccess {
+                Button(viewModel.accessButtonTitle) { viewModel.presentManageAccess() }
+            }
             Button("Clear messages", role: .destructive) { viewModel.clearMessages() }
 
             Section(header: Text("AI Tools")) {
@@ -354,9 +354,7 @@ public struct ChatSettingsView: View {
         .sheet(isPresented: $showingOllamaSettings) {
             OllamaSettingsView()
         }
-        .sheet(isPresented: $viewModel.showManageAccess) {
-            AuthSheet(preferredService: viewModel.preferredAuthService)
-        }
+        .manageAccessPrompts()
     }
 
     // MARK: - macOS Detail Views
@@ -402,9 +400,11 @@ public struct ChatSettingsView: View {
                     .padding(8)
                 }
 
-                Button("Manage Access") { viewModel.presentManageAccess() }
-                .buttonStyle(.bordered)
-                .padding(.top, 8)
+                if viewModel.canManageAccess {
+                    Button(viewModel.accessButtonTitle) { viewModel.presentManageAccess() }
+                    .buttonStyle(.bordered)
+                    .padding(.top, 8)
+                }
             }
 
             Divider()
@@ -944,8 +944,6 @@ struct SystemMessageEditor: View {
 
 extension ChatSettingsView {
     @MainActor public class ViewModel: ObservableObject {
-        @Published var showManageAccess = false
-        @Published var preferredAuthService: APIService?
         @Published var model: Model = UserDefaults.model {
             didSet { UserDefaults.model = model }
         }
@@ -998,6 +996,19 @@ extension ChatSettingsView {
             systemMessage = UserDefaults.systemMessage
         }
 
+        var canManageAccess: Bool {
+            model.apiService != .ollama
+        }
+
+        var accessButtonTitle: String {
+            switch model.apiService {
+            case .anthropic:
+                return "Manage Claude / Anthropic Access"
+            default:
+                return "Manage \(model.apiService.displayName) Access"
+            }
+        }
+
         func saveSettings() {
             UserDefaults.model = accessManager.validateSelectedModel(model)
             UserDefaults.maxTokens = maxTokens
@@ -1006,8 +1017,8 @@ extension ChatSettingsView {
         }
 
         func presentManageAccess(for service: APIService? = nil) {
-            preferredAuthService = service
-            showManageAccess = true
+            let targetService = service ?? model.apiService
+            AuthPresentationCoordinator.shared.present(preferredService: targetService)
         }
 
         func saveToolSettings() {

@@ -111,7 +111,6 @@ struct LangTools_ExampleApp: App {
 /// Each window creates a new instance, giving each window independent chat state
 struct ChatContainerView: View {
     @StateObject private var messageService: MessageService
-    @StateObject private var authPresentation = AuthPresentationCoordinator.shared
     @ObservedObject var voiceInputHandler: VoiceInputHandlerAdapter
 
     init(voiceInputHandler: VoiceInputHandlerAdapter) {
@@ -141,9 +140,7 @@ struct ChatContainerView: View {
                 }
             )
         }
-        .sheet(isPresented: $authPresentation.isPresented) {
-            AuthSheet(preferredService: authPresentation.preferredService)
-        }
+        .manageAccessPrompts()
     }
 
     private var chatSettingsView: AnyView {
