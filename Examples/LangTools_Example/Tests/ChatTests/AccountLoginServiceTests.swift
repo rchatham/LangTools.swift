@@ -2,21 +2,41 @@ import XCTest
 @testable import Chat
 
 final class AccountLoginServiceTests: XCTestCase {
-    func testStubOpenAILoginIncludesCodexModels() async throws {
+    func testStubOpenAILoginReportsNotImplemented() async throws {
         let service = StubAccountLoginService()
 
-        let session = try await service.beginLogin(for: .openAI)
-
-        XCTAssertEqual(session.provider, .openAI)
-        XCTAssertTrue(session.accessibleModelIDs.contains("gpt-5.1-codex"))
+        do {
+            _ = try await service.beginLogin(for: .openAI)
+            XCTFail("Expected beginLogin to throw")
+        } catch {
+            XCTAssertEqual(error as? AccountLoginError, .notImplemented(.openAI))
+        }
     }
 
-    func testStubClaudeCodeLoginMapsToAnthropicModels() async throws {
+    func testStubClaudeCodeLoginReportsNotImplemented() async throws {
         let service = StubAccountLoginService()
 
-        let session = try await service.beginLogin(for: .claudeCode)
+        do {
+            _ = try await service.beginLogin(for: .claudeCode)
+            XCTFail("Expected beginLogin to throw")
+        } catch {
+            XCTAssertEqual(error as? AccountLoginError, .notImplemented(.claudeCode))
+        }
+    }
 
-        XCTAssertEqual(session.provider, .claudeCode)
-        XCTAssertTrue(session.accessibleModelIDs.contains(where: { $0.hasPrefix("claude-") }))
+    func testStubOpenAIModelFetchIncludesCodexModels() async throws {
+        let service = StubAccountLoginService()
+
+        let models = try await service.fetchAccessibleModels(for: .openAI)
+
+        XCTAssertTrue(models.contains("gpt-5.1-codex"))
+    }
+
+    func testStubClaudeModelFetchMapsToAnthropicModels() async throws {
+        let service = StubAccountLoginService()
+
+        let models = try await service.fetchAccessibleModels(for: .claudeCode)
+
+        XCTAssertTrue(models.contains(where: { $0.hasPrefix("claude-") }))
     }
 }

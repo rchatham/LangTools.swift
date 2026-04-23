@@ -110,9 +110,9 @@ private struct ManageAccessPromptModifier: ViewModifier {
 
         switch service {
         case .openAI:
-            return "Current model provider: OpenAI. \(status). You can enter an API key or sign in with OpenAI."
+            return "Current model provider: OpenAI. \(status). API key entry works today. OpenAI OAuth is not implemented in this branch yet."
         case .anthropic:
-            return "Current model provider: Anthropic. \(status). You can enter an Anthropic API key or sign in with Claude Code."
+            return "Current model provider: Anthropic. \(status). API key entry works today. Claude Code login is not implemented in this branch yet."
         case .xAI, .gemini:
             return "Current model provider: \(service.displayName). \(status). Use an API key to enable requests for this provider."
         case .ollama:
@@ -180,9 +180,9 @@ private struct ManageAccessPromptModifier: ViewModifier {
         }
         switch provider {
         case .openAI:
-            return "Sign in with OpenAI"
+            return "OpenAI OAuth (coming soon)"
         case .claudeCode:
-            return "Sign in with Claude Code"
+            return "Claude Code Login (coming soon)"
         }
     }
 

@@ -2,6 +2,22 @@ import Anthropic
 import Foundation
 import OpenAI
 
+public enum AccountLoginError: LocalizedError, Equatable {
+    case notImplemented(AccountLoginProvider)
+
+    public var errorDescription: String? {
+        switch self {
+        case .notImplemented(let provider):
+            switch provider {
+            case .openAI:
+                return "OpenAI OAuth is not implemented in this branch yet. Use an API key for now."
+            case .claudeCode:
+                return "Claude Code login is not implemented in this branch yet. Use an Anthropic API key for now."
+            }
+        }
+    }
+}
+
 public protocol AccountLoginService {
     func beginLogin(for provider: AccountLoginProvider) async throws -> AccountSession
     func refreshSession(_ session: AccountSession) async throws -> AccountSession
@@ -13,26 +29,11 @@ public final class StubAccountLoginService: AccountLoginService {
     public init() {}
 
     public func beginLogin(for provider: AccountLoginProvider) async throws -> AccountSession {
-        let models = try await fetchAccessibleModels(for: provider)
-        return AccountSession(
-            provider: provider,
-            accountIdentifier: defaultIdentifier(for: provider),
-            accessToken: "stub-\(provider.rawValue)-token",
-            accessibleModelIDs: models
-        )
+        throw AccountLoginError.notImplemented(provider)
     }
 
     public func refreshSession(_ session: AccountSession) async throws -> AccountSession {
-        AccountSession(
-            id: session.id,
-            provider: session.provider,
-            accountIdentifier: session.accountIdentifier,
-            accessToken: session.accessToken,
-            refreshToken: session.refreshToken,
-            expiresAt: session.expiresAt,
-            accessibleModelIDs: try await fetchAccessibleModels(for: session.provider),
-            createdAt: session.createdAt
-        )
+        throw AccountLoginError.notImplemented(session.provider)
     }
 
     public func logout(provider: AccountLoginProvider) async throws {
@@ -48,10 +49,4 @@ public final class StubAccountLoginService: AccountLoginService {
         }
     }
 
-    private func defaultIdentifier(for provider: AccountLoginProvider) -> String {
-        switch provider {
-        case .openAI: return "openai-account"
-        case .claudeCode: return "claude-code-account"
-        }
-    }
 }
