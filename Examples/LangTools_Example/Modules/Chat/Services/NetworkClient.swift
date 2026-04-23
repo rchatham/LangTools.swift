@@ -173,8 +173,10 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
     }
 }
 
-public enum APIService: String, CaseIterable, Codable {
+public enum APIService: String, CaseIterable, Codable, Identifiable {
     case openAI, anthropic, xAI, gemini, ollama, serper
+
+    public var id: String { rawValue }
 
     static var llms: [APIService] = [.openAI, .anthropic, .xAI, .gemini, .ollama]
 }
