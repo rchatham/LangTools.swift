@@ -8,6 +8,8 @@ private struct ManageAccessPromptModifier: ViewModifier {
     @State private var apiKeyService: APIService = .openAI
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
+    @State private var showResultAlert = false
+    @State private var resultMessage = ""
 
     private let networkClient: NetworkClientProtocol
 
@@ -30,6 +32,11 @@ private struct ManageAccessPromptModifier: ViewModifier {
                 }
             } message: {
                 Text(apiKeyService.description)
+            }
+            .alert("Access Updated", isPresented: $showResultAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(resultMessage)
             }
             .alert("Access Error", isPresented: $showErrorAlert) {
                 Button("OK", role: .cancel) {}
@@ -78,6 +85,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
 
             if let accountProvider = service.accountLoginProvider {
                 Button(accountActionTitle(for: accountProvider, state: state)) {
+                    coordinator.dismiss()
                     Task {
                         await handleAccountAction(for: accountProvider, state: state)
                     }
@@ -150,11 +158,17 @@ private struct ManageAccessPromptModifier: ViewModifier {
         do {
             if state.hasAccountSession {
                 try await networkClient.disconnectAccount(provider)
+                presentResult("Disconnected \(provider.displayName).")
             } else {
                 try await networkClient.connectAccount(provider)
+                let updatedState = accessManager.state(for: provider.service)
+                if let accountIdentifier = updatedState.accountIdentifier {
+                    presentResult("Connected \(provider.displayName) as \(accountIdentifier).")
+                } else {
+                    presentResult("Connected \(provider.displayName).")
+                }
             }
             accessManager.refresh()
-            coordinator.dismiss()
         } catch {
             presentError(error.localizedDescription)
         }
@@ -170,6 +184,11 @@ private struct ManageAccessPromptModifier: ViewModifier {
         case .claudeCode:
             return "Sign in with Claude Code"
         }
+    }
+
+    private func presentResult(_ message: String) {
+        resultMessage = message
+        showResultAlert = true
     }
 
     private func presentError(_ message: String) {
