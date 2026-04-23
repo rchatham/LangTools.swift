@@ -2,6 +2,7 @@ import SwiftUI
 
 private struct ManageAccessPromptModifier: ViewModifier {
     @StateObject private var coordinator = AuthPresentationCoordinator.shared
+    @StateObject private var loginCoordinator = AccountLoginCoordinator.shared
     @ObservedObject private var accessManager = ProviderAccessManager.shared
     @State private var showAPIKeyPrompt = false
     @State private var apiKeyInput = ""
@@ -42,6 +43,22 @@ private struct ManageAccessPromptModifier: ViewModifier {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(errorMessage)
+            }
+            .overlay(alignment: .center) {
+                if loginCoordinator.isAuthenticating {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(.ultraThinMaterial)
+                        VStack(spacing: 12) {
+                            ProgressView()
+                            Text(loginCoordinator.statusMessage)
+                                .font(.callout)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(20)
+                    }
+                    .frame(width: 260, height: 120)
+                }
             }
     }
 
@@ -110,9 +127,9 @@ private struct ManageAccessPromptModifier: ViewModifier {
 
         switch service {
         case .openAI:
-            return "Current model provider: OpenAI. \(status). API key entry works today. OpenAI OAuth is not implemented in this branch yet."
+            return "Current model provider: OpenAI. \(status). You can enter an API key or sign in with OpenAI."
         case .anthropic:
-            return "Current model provider: Anthropic. \(status). API key entry works today. Claude Code login is not implemented in this branch yet."
+            return "Current model provider: Anthropic. \(status). You can enter an Anthropic API key or sign in with Claude Code."
         case .xAI, .gemini:
             return "Current model provider: \(service.displayName). \(status). Use an API key to enable requests for this provider."
         case .ollama:
@@ -180,9 +197,9 @@ private struct ManageAccessPromptModifier: ViewModifier {
         }
         switch provider {
         case .openAI:
-            return "OpenAI OAuth (coming soon)"
+            return "Login with OpenAI"
         case .claudeCode:
-            return "Claude Code Login (coming soon)"
+            return "Login with Claude Code"
         }
     }
 

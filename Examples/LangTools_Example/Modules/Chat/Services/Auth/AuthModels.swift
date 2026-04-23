@@ -19,6 +19,15 @@ public enum AccountLoginProvider: String, Codable, CaseIterable, Identifiable, E
         case .claudeCode: return .anthropic
         }
     }
+
+    public var startPathComponent: String {
+        switch self {
+        case .openAI:
+            return "openai"
+        case .claudeCode:
+            return "claude-code"
+        }
+    }
 }
 
 public enum ProviderCredential: Codable, Equatable {

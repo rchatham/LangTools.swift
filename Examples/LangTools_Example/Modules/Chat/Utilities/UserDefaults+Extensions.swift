@@ -28,6 +28,7 @@ extension UserDefaults {
     private static let deviceTokenKey = "kdeviceToken"
     private static let systemMessageKey = "systemMessage"
     private static let serperApiKeyKey = "serperApiKey"
+    private static let accountBackendBaseURLKey = "accountBackendBaseURL"
 
     static var systemMessage: String {
         get {
@@ -46,5 +47,18 @@ extension UserDefaults {
     static var serperApiKey: String? {
         get { standard.string(forKey: serperApiKeyKey) }
         set { standard.setValue(newValue, forKey: serperApiKeyKey) }
+    }
+
+    public static var accountBackendBaseURL: URL {
+        get {
+            if let value = standard.string(forKey: accountBackendBaseURLKey),
+               let url = URL(string: value) {
+                return url
+            }
+            return URL(string: "http://localhost:8080")!
+        }
+        set {
+            standard.setValue(newValue.absoluteString, forKey: accountBackendBaseURLKey)
+        }
     }
 }

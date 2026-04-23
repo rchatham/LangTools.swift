@@ -48,18 +48,23 @@ extension NetworkClientProtocol {
 public class NetworkClient: NSObject, NetworkClientProtocol {
     public static let shared: NetworkClientProtocol = NetworkClient()
 
-    private let keychainService = KeychainService.shared
+    private let keychainService: KeychainService
     private let accountLoginService: AccountLoginService
+    private let accountProxyTransport: AccountProxyTransportProtocol
     public let providerAccessManager: ProviderAccessManager
 
     private var userDefaults: UserDefaults { .standard }
     private var langToolchain = LangToolchain()
 
     public init(
-        accountLoginService: AccountLoginService = StubAccountLoginService(),
+        keychainService: KeychainService = .shared,
+        accountLoginService: AccountLoginService = BrowserAccountLoginService.shared,
+        accountProxyTransport: AccountProxyTransportProtocol = AccountProxyTransport(),
         providerAccessManager: ProviderAccessManager = .shared
     ) {
+        self.keychainService = keychainService
         self.accountLoginService = accountLoginService
+        self.accountProxyTransport = accountProxyTransport
         self.providerAccessManager = providerAccessManager
         super.init()
         APIService.llms.forEach { llm in keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) } }
@@ -74,6 +79,17 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
 
     public func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
         try ensureModelAccess(for: model)
+
+        if let session = accountSession(for: model) {
+            return try await accountProxyTransport.performChatCompletionRequest(
+                messages: messages,
+                model: model,
+                session: session,
+                tools: tools,
+                toolChoice: toolChoice
+            )
+        }
+
         let response = try await langToolchain.perform(request: request(messages: messages, model: model, tools: tools, toolChoice: toolChoice))
         guard let text = response.content?.text else { fatalError("the api should never return non text") }
         return Message(text: text, role: .assistant)
@@ -81,6 +97,18 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
 
     public func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<String, Error> {
         try ensureModelAccess(for: model)
+
+        if let session = accountSession(for: model) {
+            return try accountProxyTransport.streamChatCompletionRequest(
+                messages: messages,
+                model: model,
+                session: session,
+                stream: stream,
+                tools: tools,
+                toolChoice: toolChoice
+            )
+        }
+
         return try langToolchain.stream(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { $0.content?.text }
     }
 
@@ -103,6 +131,9 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
 
     public func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
         try ensureModelAccess(for: model)
+        if accountSession(for: model) != nil {
+            throw NetworkError.accountProxyTransportFailed("Account-backed agent execution is not implemented yet. Use an API key for agent runs.")
+        }
         switch model {
         case .anthropic(let model): return AgentContext(langTool: langToolchain.langTool(Anthropic.self)!, model: model, messages: messages.toAnthropicMessages(), eventHandler: eventHandler)
         case .gemini(let model): return AgentContext(langTool: langToolchain.langTool(Gemini.self)!, model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
@@ -167,9 +198,19 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
             throw NetworkError.missingApiKey
         }
 
-        if state.hasAccountSession && !state.hasAPIKey {
-            throw NetworkError.accountLoginTransportNotImplemented(model.apiService)
+        if !state.availableModels.isEmpty, state.availableModels.contains(model) == false {
+            throw NetworkError.modelAccessUnavailable(model.rawValue)
         }
+    }
+
+    private func accountSession(for model: Model) -> AccountSession? {
+        let state = providerAccessManager.state(for: model.apiService)
+        guard state.hasAccountSession, state.hasAPIKey == false,
+              let provider = model.apiService.accountLoginProvider
+        else {
+            return nil
+        }
+        return providerAccessManager.session(for: provider)
     }
 }
 
@@ -182,11 +223,12 @@ public enum APIService: String, CaseIterable, Codable, Identifiable {
 }
 
 extension NetworkClient {
-    public enum NetworkError: LocalizedError {
+    public enum NetworkError: LocalizedError, Equatable {
         case missingApiKey
         case emptyApiKey
         case incompatibleRequest
-        case accountLoginTransportNotImplemented(APIService)
+        case modelAccessUnavailable(String)
+        case accountProxyTransportFailed(String)
 
         public var errorDescription: String? {
             switch self {
@@ -196,8 +238,10 @@ extension NetworkClient {
                 return "API key cannot be empty."
             case .incompatibleRequest:
                 return "The selected request is incompatible with the current provider."
-            case .accountLoginTransportNotImplemented(let service):
-                return "\(service.displayName) account login is wired up for access management in this branch, but account-backed request transport is not implemented yet. Use an API key for requests today."
+            case .modelAccessUnavailable(let modelID):
+                return "Your current credentials do not include access to \(modelID)."
+            case .accountProxyTransportFailed(let message):
+                return message
             }
         }
     }

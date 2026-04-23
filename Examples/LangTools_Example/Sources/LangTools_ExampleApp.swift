@@ -36,6 +36,9 @@ struct LangTools_ExampleApp: App {
         WindowGroup {
             // Each window gets its own ChatContainerView with independent MessageService
             ChatContainerView(voiceInputHandler: voiceInputHandler)
+                .onOpenURL { url in
+                    AccountLoginCoordinator.shared.handleRedirect(url)
+                }
         }
     }
 
