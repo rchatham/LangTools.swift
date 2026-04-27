@@ -25,6 +25,13 @@ public class MessageService: Sendable {
     /// Callback fired when a message is added or modified (for persistence)
     public var messageUpdatedCallback: ((Message) -> Void)?
 
+    /// Optional hook called when an agent completes with a non-error result.
+    /// Receives the raw result string and the agent name; return a `Message` to
+    /// display it as structured content, or `nil` to fall through to the default
+    /// agent-completion event rendering.
+    /// Register this from the app target to keep `Chat` agnostic of specific agents.
+    public var agentResultParser: ((_ result: String, _ agentName: String) -> Message?)?
+
     /// Snapshot of tools filtered by the current ToolManager state.
     /// Delegates to `ToolManager.filteredTools()` for the enabled-id set, then
     /// intersects with `self.tools` so future changes to ToolManager filtering
@@ -58,11 +65,15 @@ public class MessageService: Sendable {
             var content: String = ""
             for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: activeTools) {
                 content += chunk
-                if !(messages.last?.isAssistant ?? false) {
+                // Only treat the last message as a continuation target when it is
+                // a plain assistant text message.  Content-card and agent-event
+                // messages must not be overwritten by streamed text.
+                let lastIsStreamable = messages.last.map { $0.isAssistant && $0.isStringContent } ?? false
+                if !lastIsStreamable {
                     if chunk.isEmpty { continue }
                     content = chunk.trimingLeadingNewlines()
                 }
-                let messageUuid = if let last = messages.last, last.isAssistant { last.uuid } else { UUID() }
+                let messageUuid = if lastIsStreamable, let last = messages.last { last.uuid } else { UUID() }
                 let message = Message(uuid: messageUuid, role: .assistant, contentType: .string(content.trimingTrailingNewlines()))
 
                 await MainActor.run {
@@ -84,7 +95,7 @@ public class MessageService: Sendable {
     }
 
     func systemMessage() -> String {
-        UserDefaults.systemMessage + "\n\nWhen using agent tools, you should relay all the critical details from the agent's response, the user will not have access to the agent's response. Your answer should be specific and comprehensive, but provide only the relevant information to the user or parent agent."
+        UserDefaults.systemMessage + "\n\nWhen agent tools return results, those results are displayed visually to the user as content cards. Do not repeat or summarize information already shown in the cards. You may add a brief natural-language acknowledgment but should not list out details the user can already see. Answer follow-up questions about the content if asked. If an agent tool returns an error, explain the error to the user."
     }
 
     public func deleteMessage(id: UUID) { Task { @MainActor in messages.removeAll(where: { $0.uuid == id }) } }
@@ -122,32 +133,26 @@ extension MessageService {
 
             case .toolCompleted(let agent, let result):
                 guard let result else { break }
-                // Check if result contains structured content cards
-                if let cardMessage = parseContentCards(from: result) {
-                    messages.append(cardMessage, for: agent)
+                let message = Message.createAgentToolReturnedEvent(
+                    agentName: agent,
+                    result: result
+                )
+                messages.append(message, for: agent)
+            case .completed(let agent, let result, let is_error):
+                // Give the app-level parser first crack at structured results.
+                // Append at the top level so content cards appear in the main conversation.
+                // agentResultParser is the injection point for structured agent results.
+                // ContentCardRegistry.shared.agentResultParser provides the default implementation.
+                if !is_error, let cardMessage = agentResultParser?(result, agent) {
+                    messages.append(cardMessage)
                 } else {
-                    let message = Message.createAgentToolReturnedEvent(
+                    let message = Message.createAgentCompletionEvent(
                         agentName: agent,
-                        result: result
+                        result: result,
+                        is_error: is_error
                     )
                     messages.append(message, for: agent)
                 }
-
-            case .completed(let agent, let result, let structuredResult, let is_error):
-                // Check for structured content cards in the result
-                if let data = structuredResult, !is_error {
-                    // Try to parse as EventCards (can add more card types here)
-                    if let cardMessage = parseStructuredResult(data, for: agent) {
-                        messages.append(cardMessage, for: agent)
-                    }
-                }
-
-                let message = Message.createAgentCompletionEvent(
-                    agentName: agent,
-                    result: result,
-                    is_error: is_error
-                )
-                messages.append(message, for: agent)
 
             case .error(let agent, let error):
                 let message = Message.createAgentErrorEvent(
@@ -161,104 +166,6 @@ extension MessageService {
         }
     }
 
-    // MARK: - Agent to Card Type Mapping
-
-    /// Maps agent names to their corresponding card types
-    /// The consumer (e.g., EnhancedMessageView) uses this type to decode the appropriate model
-    /// NOTE: Keys must match the agent's `name` property exactly (camelCase)
-    private static let agentCardTypes: [String: String] = [
-        "calendarAgent": "event",
-        "weatherAgent": "weather",
-        "contactsAgent": "contact",
-        "mapsAgent": "location",   // MapsAgent, not LocationAgent
-        "financeAgent": "finance"
-    ]
-
-    /// Parse tool result for structured content cards (legacy string-based parsing)
-    /// Returns a Message with contentCards if found, nil otherwise
-    private func parseContentCards(from result: String) -> Message? {
-        // Check for card JSON markers (legacy approach)
-        let markers: [(prefix: String, type: String)] = [
-            ("EVENT_CARDS_JSON:", "event"),
-            ("WEATHER_CARDS_JSON:", "weather"),
-            ("CONTACT_CARDS_JSON:", "contact"),
-            ("LOCATION_CARDS_JSON:", "location"),
-            ("FINANCE_CARDS_JSON:", "finance")
-        ]
-
-        for marker in markers {
-            if result.hasPrefix(marker.prefix) {
-                let jsonString = String(result.dropFirst(marker.prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-                // Count items by parsing as generic array
-                if let data = jsonString.data(using: .utf8),
-                   let items = try? JSONDecoder().decode([AnyCodable].self, from: data) {
-                    let count = items.count
-                    let content = ContentCardsContent(
-                        cardType: marker.type,
-                        message: count > 0 ? "Found \(count) \(marker.type)\(count == 1 ? "" : "s")" : nil,
-                        cardsJSON: jsonString,
-                        cardCount: count
-                    )
-                    return Message.contentCards(content)
-                }
-            }
-        }
-
-        return nil
-    }
-
-    /// Parse structured result data from agent completion (new structured output approach)
-    /// Returns a Message with contentCards if data matches a known card type
-    private func parseStructuredResult(_ data: Data, for agent: String) -> Message? {
-        // Determine card type from agent name
-        guard let cardType = Self.agentCardTypes[agent] else {
-            return nil
-        }
-
-        // Convert data to JSON string for storage
-        guard let jsonString = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-
-        // Try to determine if it's a single item or array, and get count
-        var cardCount = 1
-        var cardsJSON = jsonString
-
-        // Check if it's already an array
-        if let items = try? JSONDecoder().decode([AnyCodable].self, from: data) {
-            cardCount = items.count
-        } else if (try? JSONDecoder().decode(AnyCodable.self, from: data)) != nil {
-            // Single item - wrap in array for consistent handling
-            cardsJSON = "[\(jsonString)]"
-            cardCount = 1
-        } else {
-            return nil
-        }
-
-        let message: String? = cardCount > 0 ? "Found \(cardCount) \(cardType)\(cardCount == 1 ? "" : "s")" : nil
-
-        let content = ContentCardsContent(
-            cardType: cardType,
-            message: message,
-            cardsJSON: cardsJSON,
-            cardCount: cardCount
-        )
-        return Message.contentCards(content)
-    }
-}
-
-// MARK: - Generic JSON Wrapper for Type-Agnostic Parsing
-
-/// A type-erased Codable wrapper for counting JSON items without knowing their concrete type
-private struct AnyCodable: Codable {
-    init(from decoder: Decoder) throws {
-        // We don't need to store the value, just successfully decode it
-        _ = try decoder.singleValueContainer()
-    }
-
-    func encode(to encoder: Encoder) throws {
-        // Not needed for our use case
-    }
 }
 
 extension Array<Message> {

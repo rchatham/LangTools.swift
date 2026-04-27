@@ -26,7 +26,8 @@ let package = Package(
     ],
     dependencies: [
         .package(name: "langtools.swift", path: "../../"),
-        .package(name: "ChatUI", path: "../../../ChatUI/"),
+        .package(name: "ChatUI", path: "./ChatUI"),
+        .package(url: "https://github.com/rchatham/JSON.swift.git", branch: "main"),
         .package(url: "https://github.com/kishikawakatsumi/KeychainAccess.git", from: "4.0.0"),
         .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.6.0"),
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.9.0"),
@@ -38,7 +39,7 @@ let package = Package(
                 .product(name: "LangTools", package: "langtools.swift"),
                 .product(name: "OpenAI", package: "langtools.swift"),
             ],
-            path: "Sources/ToolKit"),
+            path: "Modules/ToolKit"),
         .target(
             name: "Chat",
             dependencies: [
@@ -68,11 +69,14 @@ let package = Package(
             name: "ExampleAgents",
             dependencies: [
                 .product(name: "Agents", package: "langtools.swift"),
+                .product(name: "JSONWithMacros", package: "json.swift"),
                 "ToolKit",
                 "KeychainAccess",
                 "SwiftSoup",
             ],
             path: "Modules/ExampleAgents"),
+
+        // Tests
         .testTarget(
             name: "ToolKitTests",
             dependencies: [

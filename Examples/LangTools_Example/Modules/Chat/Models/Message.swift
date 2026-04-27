@@ -23,9 +23,9 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         case .null: return nil
         case .string(let str): return str
         case .array(let arr): return arr.joined(separator: "\n")
-    case .agentEvent(let content): return content.formattedText
+        case .agentEvent(let content): return content.formattedText
         case .contentCards(let cards): return cards.message
-    }
+        }
     }
 
     public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil, createdAt: Date = Date()) {
@@ -84,6 +84,11 @@ extension Message {
     var isSystem: Bool { role == .system }
     var isToolCall: Bool { role == .tool }
 
+    public var isStringContent: Bool {
+        if case .string = contentType { return true }
+        return false
+    }
+
     public var isAgentEvent: Bool {
         if case .agentEvent = contentType { return true }
         return false
@@ -134,6 +139,7 @@ public enum ContentType: Codable, Equatable, Hashable {
     case array([String])
     // TODO: - rename this as thread?
     case agentEvent(AgentEventContent)
+    // Content cards for structured agent responses
     case contentCards(ContentCardsContent)
 
     // Custom coding keys for encoding/decoding
@@ -176,8 +182,8 @@ public enum ContentType: Codable, Equatable, Hashable {
             let content = try container.decode(AgentEventContent.self, forKey: .content)
             self = .agentEvent(content)
         case "contentCards":
-            let cards = try container.decode(ContentCardsContent.self, forKey: .content)
-            self = .contentCards(cards)
+            let content = try container.decode(ContentCardsContent.self, forKey: .content)
+            self = .contentCards(content)
         default: self = .null
         }
     }
@@ -363,7 +369,7 @@ extension Message {
         )
     }
 
-    static func contentCards(_ content: ContentCardsContent) -> Message {
-        Message(role: .system, contentType: .contentCards(content))
+    public static func contentCards(_ content: ContentCardsContent) -> Message {
+        Message(role: .assistant, contentType: .contentCards(content))
     }
 }

@@ -1,0 +1,3 @@
+[submodule "Examples/LangTools_Example/ChatUI"]
+	path = Examples/LangTools_Example/ChatUI
+	url = https://github.com/rchatham/ChatUI

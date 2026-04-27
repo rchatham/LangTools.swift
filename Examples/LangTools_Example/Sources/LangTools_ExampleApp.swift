@@ -28,6 +28,7 @@ struct LangTools_ExampleApp: App {
 
     init() {
         registerToolConfigurations()
+        registerCardTypes()
         initializeOllama()
     }
 
@@ -68,6 +69,33 @@ struct LangTools_ExampleApp: App {
         ])
     }
 
+    // MARK: - Content Card Registry
+
+    /// Binds each agent's structured output type to its decode logic and SwiftUI view.
+    /// Called once at startup before any messages are sent or rendered.
+    @MainActor
+    func registerCardTypes() {
+        let registry = ContentCardRegistry.shared
+
+        // Calendar — wrapper response: { "events": [...], "message": "..." }
+        registry.register(
+            agent: "calendarAgent",
+            cardType: "calendarEvent",
+            as: CalendarEventData.self,
+            decode: { json in
+                guard let response = try? CalendarAgentResponse(jsonString: json) else { return nil }
+                let count = response.events.count
+                let message = response.message ?? (count == 0
+                    ? "No events found"
+                    : "Found \(count) event\(count == 1 ? "" : "s")")
+                return (message, response.events)
+            },
+            render: { events in
+                ForEach(events, id: \.id) { $0.cardView() }
+            }
+        )
+    }
+
     func initializeOllama() {
         // Initialize OllamaService to start background refresh
         Task {
@@ -91,7 +119,9 @@ struct ChatContainerView: View {
             ReminderAgent(),
             ResearchAgent()
         ]
-        _messageService = StateObject(wrappedValue: MessageService(agents: agents))
+        let service = MessageService(agents: agents)
+        service.agentResultParser = ContentCardRegistry.shared.agentResultParser
+        _messageService = StateObject(wrappedValue: service)
         self.voiceInputHandler = voiceInputHandler
     }
 
@@ -101,7 +131,13 @@ struct ChatContainerView: View {
                 title: "LangTools.swift",
                 messageService: messageService,
                 settingsView: { chatSettingsView },
-                voiceInputHandler: voiceInputHandler
+                voiceInputHandler: voiceInputHandler,
+                supplementaryContent: { message in
+                    guard ToolSettings.shared.richContentEnabled,
+                          case .contentCards(let content) = message.contentType
+                    else { return nil }
+                    return AnyView(ContentCardRegistry.shared.view(for: content))
+                }
             )
         }
     }
