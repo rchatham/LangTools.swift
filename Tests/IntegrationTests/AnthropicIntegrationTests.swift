@@ -12,6 +12,7 @@ import FoundationNetworking
 #endif
 @testable import LangTools
 @testable import Anthropic
+@testable import OpenAI
 @testable import TestUtils
 
 final class AnthropicIntegrationTests: XCTestCase {
