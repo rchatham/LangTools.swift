@@ -2,9 +2,11 @@
 //  AnthropicBenchmarkTests.swift
 //  LangTools
 //
-//  Benchmarks comparing LangTools.Anthropic encoding/decoding performance
-//  against SwiftAnthropic (jamesrochabrun/SwiftAnthropic) and raw Foundation
-//  JSON operations as a baseline.
+//  Benchmarks measuring LangTools.Anthropic encoding/decoding performance
+//  against raw Foundation JSON operations as a baseline.
+//
+//  To add comparisons against third-party libraries (e.g. SwiftAnthropic),
+//  add the dependency to Package.swift and uncomment the relevant sections.
 //
 
 import XCTest
@@ -14,7 +16,6 @@ import FoundationNetworking
 @testable import LangTools
 @testable import Anthropic
 @testable import TestUtils
-import SwiftAnthropic
 
 final class AnthropicBenchmarkTests: XCTestCase {
 
@@ -124,35 +125,6 @@ final class AnthropicBenchmarkTests: XCTestCase {
         }
     }
 
-    // MARK: - SwiftAnthropic Decode Benchmarks
-
-    func testSwiftAnthropic_DecodeResponse() {
-        let decoder = JSONDecoder()
-        measure {
-            for _ in 0..<500 {
-                _ = try! decoder.decode(SwiftAnthropic.MessageResponse.self, from: Self.messageResponseJSON)
-            }
-        }
-    }
-
-    func testSwiftAnthropic_DecodeToolUseResponse() {
-        let decoder = JSONDecoder()
-        measure {
-            for _ in 0..<500 {
-                _ = try! decoder.decode(SwiftAnthropic.MessageResponse.self, from: Self.toolUseResponseJSON)
-            }
-        }
-    }
-
-    func testSwiftAnthropic_DecodeMultiBlockResponse() {
-        let decoder = JSONDecoder()
-        measure {
-            for _ in 0..<200 {
-                _ = try! decoder.decode(SwiftAnthropic.MessageResponse.self, from: Self.multiBlockResponseJSON)
-            }
-        }
-    }
-
     // MARK: - LangTools.Anthropic Encode Benchmarks
 
     func testLangTools_EncodeRequest_Simple() {
@@ -207,41 +179,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
         }
     }
 
-    // MARK: - SwiftAnthropic Encode Benchmarks
-
-    func testSwiftAnthropic_EncodeRequest_Simple() {
-        let parameters = MessageParameter(
-            model: .other("claude-sonnet-4-6"),
-            messages: [.init(role: .user, content: .text("What's the weather in SF?"))],
-            maxTokens: 4096
-        )
-        let encoder = JSONEncoder()
-        measure {
-            for _ in 0..<500 {
-                _ = try! encoder.encode(parameters)
-            }
-        }
-    }
-
-    func testSwiftAnthropic_EncodeRequest_LargeConversation() {
-        let messages: [MessageParameter.Message] = (0..<50).map { i in
-            .init(role: i % 2 == 0 ? .user : .assistant,
-                  content: .text("Message \(i) with realistic content for benchmarking encoding performance across conversation turns."))
-        }
-        let parameters = MessageParameter(
-            model: .other("claude-sonnet-4-6"),
-            messages: messages,
-            maxTokens: 4096
-        )
-        let encoder = JSONEncoder()
-        measure {
-            for _ in 0..<100 {
-                _ = try! encoder.encode(parameters)
-            }
-        }
-    }
-
-    // MARK: - Round-Trip Comparison
+    // MARK: - Round-Trip
 
     func testLangTools_RoundTrip() {
         let encoder = JSONEncoder()
@@ -258,7 +196,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
         }
     }
 
-    // MARK: - Message Construction Comparison
+    // MARK: - Message Construction
 
     func testLangTools_MessageConstruction() {
         measure {
@@ -269,16 +207,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
         }
     }
 
-    func testSwiftAnthropic_MessageConstruction() {
-        measure {
-            for i in 0..<1000 {
-                _ = MessageParameter.Message(role: .user, content: .text("Hello, what's the weather? \(i)"))
-                _ = MessageParameter.Message(role: .assistant, content: .text("The weather is sunny and 72°F. \(i)"))
-            }
-        }
-    }
-
-    // MARK: - Stream Decode Comparison
+    // MARK: - Stream Decode
 
     func testLangTools_StreamLineDecode() {
         let lines: [String] = (0..<100).map { i in
@@ -316,31 +245,6 @@ final class AnthropicBenchmarkTests: XCTestCase {
         measure {
             for _ in 0..<500 {
                 _ = try! decoder.decode(Anthropic.MessageResponse.self, from: jsonWithMultipleBlockTypes)
-            }
-        }
-    }
-
-    func testSwiftAnthropic_ContentBlockDecoding() {
-        let jsonWithMultipleBlockTypes = """
-        {
-            "content": [
-                {"text": "Here's the analysis:", "type": "text"},
-                {"type": "tool_use", "id": "toolu_1", "name": "analyze", "input": {"data": "sample"}},
-                {"text": "Based on the analysis above...", "type": "text"}
-            ],
-            "id": "msg_blocks",
-            "model": "claude-sonnet-4-6",
-            "role": "assistant",
-            "stop_reason": "end_turn",
-            "stop_sequence": null,
-            "type": "message",
-            "usage": {"input_tokens": 30, "output_tokens": 40}
-        }
-        """.data(using: .utf8)!
-        let decoder = JSONDecoder()
-        measure {
-            for _ in 0..<500 {
-                _ = try! decoder.decode(SwiftAnthropic.MessageResponse.self, from: jsonWithMultipleBlockTypes)
             }
         }
     }

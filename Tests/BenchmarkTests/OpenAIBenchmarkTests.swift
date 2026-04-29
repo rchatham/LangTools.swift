@@ -2,12 +2,11 @@
 //  OpenAIBenchmarkTests.swift
 //  LangTools
 //
-//  Benchmarks comparing LangTools.OpenAI encoding/decoding performance
-//  against SwiftOpenAI (jamesrochabrun/SwiftOpenAI) and raw Foundation
-//  JSON operations as a baseline.
+//  Benchmarks measuring LangTools.OpenAI encoding/decoding performance
+//  against raw Foundation JSON operations as a baseline.
 //
-//  These benchmarks use identical JSON payloads across all libraries to
-//  ensure a fair comparison of type-safe decoding overhead.
+//  To add comparisons against third-party libraries (e.g. SwiftOpenAI),
+//  add the dependency to Package.swift and uncomment the relevant sections.
 //
 
 import XCTest
@@ -17,13 +16,11 @@ import FoundationNetworking
 @testable import LangTools
 @testable import OpenAI
 @testable import TestUtils
-import SwiftOpenAI
 
 final class OpenAIBenchmarkTests: XCTestCase {
 
     // MARK: - Standard OpenAI Chat Completion JSON (shared across benchmarks)
 
-    /// A realistic chat completion response JSON matching the OpenAI API spec.
     static let chatCompletionJSON = """
     {
         "id": "chatcmpl-bench-001",
@@ -105,7 +102,6 @@ final class OpenAIBenchmarkTests: XCTestCase {
 
     // MARK: - Foundation Baseline (JSONSerialization)
 
-    /// Baseline: raw JSONSerialization decode (no type safety, just parsing).
     func testBaseline_JSONSerialization_DecodeResponse() {
         measure {
             for _ in 0..<500 {
@@ -155,35 +151,6 @@ final class OpenAIBenchmarkTests: XCTestCase {
         measure {
             for _ in 0..<200 {
                 _ = try! decoder.decode(OpenAI.ChatCompletionResponse.self, from: Self.multiChoiceJSON)
-            }
-        }
-    }
-
-    // MARK: - SwiftOpenAI Decode Benchmarks
-
-    func testSwiftOpenAI_DecodeResponse() {
-        let decoder = JSONDecoder()
-        measure {
-            for _ in 0..<500 {
-                _ = try! decoder.decode(ChatCompletionObject.self, from: Self.chatCompletionJSON)
-            }
-        }
-    }
-
-    func testSwiftOpenAI_DecodeToolCallResponse() {
-        let decoder = JSONDecoder()
-        measure {
-            for _ in 0..<500 {
-                _ = try! decoder.decode(ChatCompletionObject.self, from: Self.chatCompletionWithToolsJSON)
-            }
-        }
-    }
-
-    func testSwiftOpenAI_DecodeMultiChoiceResponse() {
-        let decoder = JSONDecoder()
-        measure {
-            for _ in 0..<200 {
-                _ = try! decoder.decode(ChatCompletionObject.self, from: Self.multiChoiceJSON)
             }
         }
     }
@@ -242,36 +209,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
         }
     }
 
-    // MARK: - SwiftOpenAI Encode Benchmarks
-
-    func testSwiftOpenAI_EncodeRequest_Simple() {
-        let parameters = ChatCompletionParameters(
-            messages: [.init(role: .user, content: .text("What's the weather in SF?"))],
-            model: .gpt4o
-        )
-        let encoder = JSONEncoder()
-        measure {
-            for _ in 0..<500 {
-                _ = try! encoder.encode(parameters)
-            }
-        }
-    }
-
-    func testSwiftOpenAI_EncodeRequest_LargeConversation() {
-        let messages: [ChatCompletionParameters.Message] = (0..<50).map { i in
-            .init(role: i % 2 == 0 ? .user : .assistant,
-                  content: .text("Message \(i) with realistic content for benchmarking encoding performance across conversation turns."))
-        }
-        let parameters = ChatCompletionParameters(messages: messages, model: .gpt4o)
-        let encoder = JSONEncoder()
-        measure {
-            for _ in 0..<100 {
-                _ = try! encoder.encode(parameters)
-            }
-        }
-    }
-
-    // MARK: - Round-Trip Comparison
+    // MARK: - Round-Trip
 
     func testLangTools_RoundTrip() {
         let encoder = JSONEncoder()
@@ -288,7 +226,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
         }
     }
 
-    // MARK: - Message Construction Comparison
+    // MARK: - Message Construction
 
     func testLangTools_MessageConstruction() {
         measure {
@@ -300,17 +238,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
         }
     }
 
-    func testSwiftOpenAI_MessageConstruction() {
-        measure {
-            for _ in 0..<1000 {
-                _ = ChatCompletionParameters.Message(role: .user, content: .text("Hello, what's the weather?"))
-                _ = ChatCompletionParameters.Message(role: .assistant, content: .text("The weather is sunny and 72°F."))
-                _ = ChatCompletionParameters.Message(role: .system, content: .text("You are a helpful weather assistant."))
-            }
-        }
-    }
-
-    // MARK: - Streaming Chunk Decode Comparison
+    // MARK: - Streaming Chunk Decode
 
     func testLangTools_StreamChunkDecode() {
         let chunks: [Data] = (0..<100).map { i in
@@ -323,22 +251,6 @@ final class OpenAIBenchmarkTests: XCTestCase {
             for chunk in chunks {
                 for _ in 0..<50 {
                     _ = try! decoder.decode(OpenAI.ChatCompletionResponse.self, from: chunk)
-                }
-            }
-        }
-    }
-
-    func testSwiftOpenAI_StreamChunkDecode() {
-        let chunks: [Data] = (0..<100).map { i in
-            """
-            {"id":"chatcmpl-bench","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"word\(i) "},"finish_reason":null}]}
-            """.data(using: .utf8)!
-        }
-        let decoder = JSONDecoder()
-        measure {
-            for chunk in chunks {
-                for _ in 0..<50 {
-                    _ = try! decoder.decode(ChatCompletionChunkObject.self, from: chunk)
                 }
             }
         }
