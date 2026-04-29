@@ -172,7 +172,7 @@ extension Agent {
             #if DEBUG
             print("❌ Agent '\(name)' failed: \(type(of: error)) — \(error)")
             #endif
-            context.eventHandler(.completed(agent: name, result: error.localizedDescription, is_error: true))
+            context.eventHandler(.completed(agent: name, result: error.localizedDescription, structuredResult: nil, is_error: true))
             throw AgentError("agent: \(name) - error: " + error.localizedDescription)
         }
     }
