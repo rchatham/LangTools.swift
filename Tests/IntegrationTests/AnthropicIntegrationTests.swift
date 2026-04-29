@@ -14,6 +14,7 @@ import FoundationNetworking
 @testable import Anthropic
 @testable import OpenAI
 @testable import TestUtils
+import PerformanceTestUtils
 
 final class AnthropicIntegrationTests: XCTestCase {
 

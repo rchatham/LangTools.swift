@@ -13,6 +13,7 @@ import FoundationNetworking
 @testable import LangTools
 @testable import OpenAI
 @testable import TestUtils
+import PerformanceTestUtils
 
 final class OpenAIIntegrationTests: XCTestCase {
 

@@ -13,6 +13,7 @@ import FoundationNetworking
 @testable import LangTools
 @testable import Anthropic
 @testable import TestUtils
+import PerformanceTestUtils
 
 final class AnthropicPerformanceTests: XCTestCase {
 

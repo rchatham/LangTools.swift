@@ -14,6 +14,7 @@ import FoundationNetworking
 @testable import OpenAI
 @testable import Anthropic
 @testable import TestUtils
+import PerformanceTestUtils
 
 final class LangToolchainIntegrationTests: XCTestCase {
 
