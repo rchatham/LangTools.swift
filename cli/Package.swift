@@ -34,6 +34,7 @@ let package = Package(
                 "CLI",
                 .product(name: "LangTools", package: "langtools-cli"),
                 .product(name: "OpenAI", package: "langtools-cli"),
+                .product(name: "Ollama", package: "langtools-cli"),
             ]
         ),
     ]

@@ -1,6 +1,24 @@
 {
   "pins" : [
     {
+      "identity" : "json.swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rchatham/JSON.swift.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "921c97415e5df0ef35e4a7133881498cac9f2650"
+      }
+    },
+    {
+      "identity" : "swift-syntax",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-syntax.git",
+      "state" : {
+        "revision" : "2bc86522d115234d1f588efe2bcb4ce4be8f8b82",
+        "version" : "510.0.3"
+      }
+    },
+    {
       "identity" : "swifttui",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/rensbreur/SwiftTUI",

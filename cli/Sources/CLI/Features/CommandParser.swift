@@ -79,7 +79,7 @@ enum CommandType: String, CaseIterable {
         case .cancel: return "/cancel [task-id]"
         case .settings: return "/settings"
         case .apikey: return "/apikey <service> [key]"
-        case .ollama: return "/ollama <list|pull|search|delete> [name]"
+        case .ollama: return "/ollama <subcommand> [name]"
         }
     }
 }
@@ -131,8 +131,10 @@ struct CommandParser {
         var help = "Available Commands:\n"
         help += "─────────────────────\n"
 
+        var renderedUsages = Set<String>()
         for command in CommandType.allCases {
-            help += "\(command.usage.padding(toLength: 25, withPad: " ", startingAt: 0))\(command.description)\n"
+            guard renderedUsages.insert(command.usage).inserted else { continue }
+            help += "\(command.usage.padding(toLength: 28, withPad: " ", startingAt: 0))\(command.description)\n"
         }
 
         return help

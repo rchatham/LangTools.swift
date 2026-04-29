@@ -7,6 +7,7 @@
 
 import XCTest
 @testable import CLI
+import Ollama
 
 final class ChatFlowTests: XCTestCase {
 
@@ -85,6 +86,40 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertEqual(CommandType.help.usage, "/help [command]")
         XCTAssertEqual(CommandType.load.usage, "/load <session-id>")
         XCTAssertEqual(CommandType.model.usage, "/model [model-name]")
+    }
+
+    func testHelpTextDeduplicatesExitAlias() {
+        let helpText = CommandParser.helpText()
+        XCTAssertEqual(helpText.components(separatedBy: "/exit").count - 1, 1)
+        XCTAssertNotNil(CommandParser.commandType(for: "quit"))
+        XCTAssertTrue(CommandParser.helpText(for: "quit").contains("Usage: /exit"))
+    }
+
+    func testHelpTextFormatsOllamaCommandCleanly() {
+        let helpText = CommandParser.helpText()
+        XCTAssertTrue(helpText.contains("/ollama <subcommand> [name]"))
+        XCTAssertTrue(helpText.contains("/ollama <subcommand> [name] Manage local Ollama models"))
+    }
+
+    func testOllamaRequestUsesOllamaChatRequest() {
+        let messages = [Message(text: "hi", role: .user)]
+        let request = NetworkClient.shared.request(
+            messages: messages,
+            model: .ollama(Ollama.Model(rawValue: "mistral:latest")!),
+            stream: true,
+            tools: nil,
+            toolChoice: nil
+        )
+
+        guard let ollamaRequest = request as? Ollama.ChatRequest else {
+            return XCTFail("Expected Ollama.ChatRequest for Ollama models")
+        }
+
+        XCTAssertEqual(ollamaRequest.model.rawValue, "mistral:latest")
+        XCTAssertEqual(ollamaRequest.messages.count, 1)
+        XCTAssertEqual(ollamaRequest.messages.first?.content.text, "hi")
+        XCTAssertEqual(ollamaRequest.messages.first?.role, .user)
+        XCTAssertEqual(ollamaRequest.stream, true)
     }
 
     // MARK: - Session Manager Integration Tests
