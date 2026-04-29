@@ -9,14 +9,14 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
-@testable import OpenAI
-@testable import Anthropic
+import OpenAI
+import Anthropic
 
-enum PerformanceFixtures {
+public enum PerformanceFixtures {
 
     // MARK: - OpenAI Fixtures
 
-    static func openAIChatCompletionResponseJSON(choiceCount: Int = 1) -> Data {
+    public static func openAIChatCompletionResponseJSON(choiceCount: Int = 1) -> Data {
         let choices = (0..<choiceCount).map { i in
             """
             {
@@ -63,7 +63,7 @@ enum PerformanceFixtures {
         """.data(using: .utf8)!
     }
 
-    static func openAIStreamChunksData(chunkCount: Int) -> Data {
+    public static func openAIStreamChunksData(chunkCount: Int) -> Data {
         var lines = [String]()
         // Initial chunk with role
         lines.append("data: {\"id\":\"chatcmpl-perf\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"system_fingerprint\":\"fp_test\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}")
@@ -78,7 +78,7 @@ enum PerformanceFixtures {
         return lines.joined(separator: "\n\n").data(using: .utf8)!
     }
 
-    static func openAIToolCallStreamData(toolCount: Int) -> Data {
+    public static func openAIToolCallStreamData(toolCount: Int) -> Data {
         var lines = [String]()
         // Initial chunk with role
         lines.append("data: {\"id\":\"chatcmpl-tool\",\"object\":\"chat.completion.chunk\",\"created\":1677652288,\"model\":\"gpt-4o\",\"system_fingerprint\":\"fp_test\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}")
@@ -96,7 +96,7 @@ enum PerformanceFixtures {
         return lines.joined(separator: "\n\n").data(using: .utf8)!
     }
 
-    static func openAIChatCompletionRequest(messageCount: Int) -> OpenAI.ChatCompletionRequest {
+    public static func openAIChatCompletionRequest(messageCount: Int) -> OpenAI.ChatCompletionRequest {
         let messages: [OpenAI.Message] = (0..<messageCount).map { i in
             if i % 2 == 0 {
                 return OpenAI.Message(role: .user, content: "This is test message number \(i). It contains enough text to simulate a real conversation turn with meaningful content for performance measurement.")
@@ -109,7 +109,7 @@ enum PerformanceFixtures {
 
     // MARK: - Anthropic Fixtures
 
-    static func anthropicMessageResponseJSON() -> Data {
+    public static func anthropicMessageResponseJSON() -> Data {
         return """
         {
             "content": [{"text": "This is a test response from Claude with meaningful content for performance testing. The quick brown fox jumps over the lazy dog. Lorem ipsum dolor sit amet.", "type": "text"}],
@@ -124,7 +124,7 @@ enum PerformanceFixtures {
         """.data(using: .utf8)!
     }
 
-    static func anthropicMessageResponseWithToolsJSON(toolCount: Int) -> Data {
+    public static func anthropicMessageResponseWithToolsJSON(toolCount: Int) -> Data {
         var blocks = [String]()
         blocks.append("{\"text\": \"Let me help you with that.\", \"type\": \"text\"}")
         for i in 0..<toolCount {
@@ -145,7 +145,7 @@ enum PerformanceFixtures {
         """.data(using: .utf8)!
     }
 
-    static func anthropicStreamData(chunkCount: Int) -> Data {
+    public static func anthropicStreamData(chunkCount: Int) -> Data {
         var lines = [String]()
         lines.append("event: message_start")
         lines.append("data: {\"type\": \"message_start\", \"message\": {\"id\": \"msg_perf_stream\", \"type\": \"message\", \"role\": \"assistant\", \"content\": [], \"model\": \"claude-sonnet-4-6\", \"stop_reason\": null, \"stop_sequence\": null, \"usage\": {\"input_tokens\": 25, \"output_tokens\": 1}}}")
@@ -172,7 +172,7 @@ enum PerformanceFixtures {
         return lines.joined(separator: "\n").data(using: .utf8)!
     }
 
-    static func anthropicMessageRequest(messageCount: Int) -> Anthropic.MessageRequest {
+    public static func anthropicMessageRequest(messageCount: Int) -> Anthropic.MessageRequest {
         let messages: [Anthropic.Message] = (0..<messageCount).map { i in
             if i % 2 == 0 {
                 return Anthropic.Message(role: .user, content: "This is test message number \(i). It contains enough text to simulate a real conversation turn with meaningful content for performance measurement.")
@@ -185,7 +185,7 @@ enum PerformanceFixtures {
 
     // MARK: - Shared JSON for Benchmark Comparisons
 
-    static let benchmarkChatResponseJSON = """
+    public static let benchmarkChatResponseJSON = """
     {
         "id": "chatcmpl-benchmark",
         "object": "chat.completion",
@@ -208,7 +208,7 @@ enum PerformanceFixtures {
     }
     """.data(using: .utf8)!
 
-    static let benchmarkAnthropicResponseJSON = """
+    public static let benchmarkAnthropicResponseJSON = """
     {
         "content": [{"text": "The weather in San Francisco is currently 72°F with partly cloudy skies. The humidity is at 65% and winds are coming from the west at 12 mph. It's a pleasant day overall, perfect for outdoor activities.", "type": "text"}],
         "id": "msg_benchmark",
