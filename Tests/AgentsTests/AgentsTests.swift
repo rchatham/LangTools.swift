@@ -72,7 +72,8 @@ final class AgentsTests: XCTestCase {
             messages: userMessages,
             eventHandler: events,
             parent: parent,
-            tools: tools
+            tools: tools,
+            responseSchema: nil
         )
     }
 
