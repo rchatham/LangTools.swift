@@ -240,7 +240,7 @@ final class AgentsTests: XCTestCase {
     func testSystemPromptContainsAgentInfo() async throws {
         var capturedBody: [String: Any]?
         MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
-            if let data = request.httpBody { capturedBody = try? JSONSerialization.jsonObject(with: data) as? [String: Any] }
+            if let data = request.httpBody, let json = try? JSONSerialization.jsonObject(with: data) { capturedBody = json as? [String: Any] }
             return (.success(self.mockChatResponse(content: "OK")), 200)
         }
 
@@ -265,7 +265,7 @@ final class AgentsTests: XCTestCase {
     func testSystemPromptIncludesToolList() async throws {
         var capturedBody: [String: Any]?
         MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
-            if let data = request.httpBody { capturedBody = try? JSONSerialization.jsonObject(with: data) as? [String: Any] }
+            if let data = request.httpBody, let json = try? JSONSerialization.jsonObject(with: data) { capturedBody = json as? [String: Any] }
             return (.success(self.mockChatResponse(content: "OK")), 200)
         }
 
@@ -285,7 +285,7 @@ final class AgentsTests: XCTestCase {
     func testSystemPromptIncludesDelegateAgents() async throws {
         var capturedBody: [String: Any]?
         MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
-            if let data = request.httpBody { capturedBody = try? JSONSerialization.jsonObject(with: data) as? [String: Any] }
+            if let data = request.httpBody, let json = try? JSONSerialization.jsonObject(with: data) { capturedBody = json as? [String: Any] }
             return (.success(self.mockChatResponse(content: "OK")), 200)
         }
 

@@ -57,7 +57,8 @@ final class AnthropicIntegrationTests: XCTestCase {
     func testPerformMessageRequestWithSystemPrompt() async throws {
         MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { request in
             guard let httpBody = request.httpBody,
-                  let body = try? JSONSerialization.jsonObject(with: httpBody) as? [String: Any]
+                  let json = try? JSONSerialization.jsonObject(with: httpBody),
+                  let body = json as? [String: Any]
             else { XCTFail("Missing or invalid request body"); throw URLError(.badServerResponse) }
             XCTAssertEqual(body["system"] as? String, "You are a helpful assistant.")
             let data = PerformanceFixtures.anthropicMessageResponseJSON()
