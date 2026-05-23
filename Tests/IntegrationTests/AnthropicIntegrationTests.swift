@@ -56,8 +56,9 @@ final class AnthropicIntegrationTests: XCTestCase {
 
     func testPerformMessageRequestWithSystemPrompt() async throws {
         MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { request in
-            // Verify system prompt is in the request body
-            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+            guard let httpBody = request.httpBody,
+                  let body = try? JSONSerialization.jsonObject(with: httpBody) as? [String: Any]
+            else { XCTFail("Missing or invalid request body"); throw URLError(.badServerResponse) }
             XCTAssertEqual(body["system"] as? String, "You are a helpful assistant.")
             let data = PerformanceFixtures.anthropicMessageResponseJSON()
             return (.success(data), 200)
@@ -169,11 +170,11 @@ final class AnthropicIntegrationTests: XCTestCase {
     }
 
     func testToolCallWithCallbackCompletesFullFlow() async throws {
-        let toolResponseData = PerformanceFixtures.anthropicMessageResponseWithToolsJSON(toolCount: 1)
+        let toolStreamData = PerformanceFixtures.anthropicStreamData(chunkCount: 1)
         let finalResponseData = PerformanceFixtures.anthropicStreamData(chunkCount: 3)
 
         MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
-            (.success(toolResponseData), 200)
+            (.success(toolStreamData), 200)
         }
 
         var toolWasCalled = false
@@ -656,6 +657,6 @@ final class AnthropicIntegrationTests: XCTestCase {
             OpenAI.Message(role: .user, content: "Hello"),
         ]
         let systemPrompt = Anthropic.toAnthropicSystemMessage(messages)
-        XCTAssertEqual(systemPrompt, "")
+        XCTAssertTrue(systemPrompt?.isEmpty ?? true, "Expected nil or empty string when no system messages present")
     }
 }

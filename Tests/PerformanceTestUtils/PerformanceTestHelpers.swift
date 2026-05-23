@@ -182,42 +182,4 @@ public enum PerformanceFixtures {
         }
         return Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages)
     }
-
-    // MARK: - Shared JSON for Benchmark Comparisons
-
-    public static let benchmarkChatResponseJSON = """
-    {
-        "id": "chatcmpl-benchmark",
-        "object": "chat.completion",
-        "created": 1677652288,
-        "model": "gpt-4o-2024-08-06",
-        "system_fingerprint": "fp_benchmark",
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": "The weather in San Francisco is currently 72°F with partly cloudy skies. The humidity is at 65% and winds are coming from the west at 12 mph. It's a pleasant day overall, perfect for outdoor activities."
-            },
-            "finish_reason": "stop"
-        }],
-        "usage": {
-            "prompt_tokens": 25,
-            "completion_tokens": 50,
-            "total_tokens": 75
-        }
-    }
-    """.data(using: .utf8)!
-
-    public static let benchmarkAnthropicResponseJSON = """
-    {
-        "content": [{"text": "The weather in San Francisco is currently 72°F with partly cloudy skies. The humidity is at 65% and winds are coming from the west at 12 mph. It's a pleasant day overall, perfect for outdoor activities.", "type": "text"}],
-        "id": "msg_benchmark",
-        "model": "claude-sonnet-4-6",
-        "role": "assistant",
-        "stop_reason": "end_turn",
-        "stop_sequence": null,
-        "type": "message",
-        "usage": {"input_tokens": 25, "output_tokens": 50}
-    }
-    """.data(using: .utf8)!
 }

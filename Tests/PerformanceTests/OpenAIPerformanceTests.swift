@@ -127,38 +127,42 @@ final class OpenAIPerformanceTests: XCTestCase {
 
     // MARK: - Streaming Performance
 
-    func testStreamingThroughput_SmallStream() async throws {
+    func testStreamingThroughput_SmallStream() {
         let streamData = PerformanceFixtures.openAIStreamChunksData(chunkCount: 10)
         measure {
             let exp = expectation(description: "stream")
             Task {
-                MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
-                    (.success(streamData), 200)
-                }
-                var count = 0
-                for try await _ in self.api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt4o, messages: [.init(role: .user, content: "Hi")], stream: true)) {
-                    count += 1
-                }
-                XCTAssertGreaterThan(count, 0)
+                do {
+                    MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+                        (.success(streamData), 200)
+                    }
+                    var count = 0
+                    for try await _ in self.api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt4o, messages: [.init(role: .user, content: "Hi")], stream: true)) {
+                        count += 1
+                    }
+                    XCTAssertGreaterThan(count, 0)
+                } catch { XCTFail("Streaming failed: \(error)") }
                 exp.fulfill()
             }
             wait(for: [exp], timeout: 10.0)
         }
     }
 
-    func testStreamingThroughput_MediumStream() async throws {
+    func testStreamingThroughput_MediumStream() {
         let streamData = PerformanceFixtures.openAIStreamChunksData(chunkCount: 50)
         measure {
             let exp = expectation(description: "stream")
             Task {
-                MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
-                    (.success(streamData), 200)
-                }
-                var count = 0
-                for try await _ in self.api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt4o, messages: [.init(role: .user, content: "Hi")], stream: true)) {
-                    count += 1
-                }
-                XCTAssertGreaterThan(count, 0)
+                do {
+                    MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+                        (.success(streamData), 200)
+                    }
+                    var count = 0
+                    for try await _ in self.api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt4o, messages: [.init(role: .user, content: "Hi")], stream: true)) {
+                        count += 1
+                    }
+                    XCTAssertGreaterThan(count, 0)
+                } catch { XCTFail("Streaming failed: \(error)") }
                 exp.fulfill()
             }
             wait(for: [exp], timeout: 10.0)

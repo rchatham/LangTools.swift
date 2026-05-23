@@ -78,20 +78,15 @@ final class AgentsTests: XCTestCase {
     }
 
     private func mockChatResponse(content: String) -> Data {
-        return """
-        {
+        let body: [String: Any] = [
             "id": "chatcmpl-agent-test",
             "object": "chat.completion",
             "created": 1700000000,
             "model": "gpt-4o",
-            "choices": [{
-                "index": 0,
-                "message": {"role": "assistant", "content": "\(content)"},
-                "finish_reason": "stop"
-            }],
-            "usage": {"prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70}
-        }
-        """.data(using: .utf8)!
+            "choices": [["index": 0, "message": ["role": "assistant", "content": content], "finish_reason": "stop"]],
+            "usage": ["prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70]
+        ]
+        return try! JSONSerialization.data(withJSONObject: body)
     }
 
     private func mockEmptyResponse() -> Data {
@@ -245,7 +240,7 @@ final class AgentsTests: XCTestCase {
     func testSystemPromptContainsAgentInfo() async throws {
         var capturedBody: [String: Any]?
         MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
-            capturedBody = try? JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any]
+            capturedBody = request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             return (.success(self.mockChatResponse(content: "OK")), 200)
         }
 
@@ -270,7 +265,7 @@ final class AgentsTests: XCTestCase {
     func testSystemPromptIncludesToolList() async throws {
         var capturedBody: [String: Any]?
         MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
-            capturedBody = try? JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any]
+            capturedBody = request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             return (.success(self.mockChatResponse(content: "OK")), 200)
         }
 
@@ -290,7 +285,7 @@ final class AgentsTests: XCTestCase {
     func testSystemPromptIncludesDelegateAgents() async throws {
         var capturedBody: [String: Any]?
         MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
-            capturedBody = try? JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any]
+            capturedBody = request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             return (.success(self.mockChatResponse(content: "OK")), 200)
         }
 
