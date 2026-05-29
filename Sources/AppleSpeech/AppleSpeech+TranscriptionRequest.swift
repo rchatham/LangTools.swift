@@ -8,6 +8,7 @@
 import Foundation
 import Speech
 import AVFoundation
+import LangTools
 
 extension AppleSpeech {
     /// Request for transcribing audio using Apple's Speech framework
@@ -26,7 +27,8 @@ extension AppleSpeech {
     /// )
     /// let transcript = try await request.execute()
     /// ```
-    public struct TranscriptionRequest {
+    public struct TranscriptionRequest: LangToolsSpeechTranscriptionRequest {
+        public typealias TranscriptionResponse = String
         /// Audio file URL to transcribe
         public let audioURL: URL
 
@@ -38,6 +40,12 @@ extension AppleSpeech {
 
         /// Task hint for better recognition accuracy
         public let taskHint: SFSpeechRecognitionTaskHint
+
+        public var speechAudioData: Data? { nil }
+        public var speechAudioFileURL: URL? { audioURL }
+        public var speechAudioFormat: String? { audioURL.pathExtension.isEmpty ? nil : audioURL.pathExtension }
+        public var speechLanguageIdentifier: String? { locale.identifier }
+        public var speechPrompt: String? { nil }
 
         public init(
             audioURL: URL,

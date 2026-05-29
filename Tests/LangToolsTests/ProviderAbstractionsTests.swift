@@ -40,4 +40,18 @@ final class ProviderAbstractionsTests: XCTestCase {
         XCTAssertEqual(request.sourceLanguageIdentifier, "en-US")
         XCTAssertEqual(request.targetLanguageIdentifier, "es-ES")
     }
+
+    func testStringConformsToTranscriptionResponse() {
+        let response: any LangToolsTranscriptionResponse = "hello world"
+
+        XCTAssertEqual(response.transcriptText, "hello world")
+        XCTAssertNil(response.detectedLanguageIdentifier)
+    }
+
+    func testDataConformsToAudioResponse() {
+        let data = Data([0x01, 0x02, 0x03])
+        let response: any LangToolsAudioResponse = data
+
+        XCTAssertEqual(response.audioData, data)
+    }
 }

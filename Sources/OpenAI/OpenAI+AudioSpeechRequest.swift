@@ -13,6 +13,8 @@ extension OpenAI {
     /// Generates audio from the input text.
     /// Learn more: [OpenAI Speech – Documentation](https://platform.openai.com/docs/api-reference/audio/createSpeech)
     public struct AudioSpeechRequest: Codable, LangToolsRequest, LangToolsTTSRequest {
+        public typealias Response = Data
+        public typealias SpeechResponse = Data
         public typealias LangTool = OpenAI
         public static var endpoint: String { "audio/speech" }
 
@@ -75,6 +77,11 @@ private extension OpenAI.AudioSpeechRequest {
 }
 
 public extension OpenAI.AudioSpeechRequest {
+    var speechText: String { input }
+    var speechVoiceIdentifier: String? { voice.rawValue }
+    var speechSpeed: Double? { speed }
+    var speechResponseFormat: String? { responseFormat?.rawValue }
+
     enum Speed: Double {
         case normal = 1.0
         case max = 4.0

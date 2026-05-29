@@ -8,6 +8,7 @@
 import XCTest
 import Speech
 import AVFoundation
+import LangTools
 @testable import AppleSpeech
 
 final class TranscriptionRequestTests: XCTestCase {
@@ -53,6 +54,20 @@ final class TranscriptionRequestTests: XCTestCase {
         XCTAssertEqual(request.locale, .current)
         XCTAssertTrue(request.reportPartialResults)
         XCTAssertEqual(request.taskHint, .unspecified)
+    }
+
+    func testTranscriptionRequestExposesGenericSTTShape() {
+        let request = AppleSpeech.TranscriptionRequest(
+            audioURL: testAudioURL,
+            locale: Locale(identifier: "en-US")
+        )
+
+        let genericRequest: any LangToolsSpeechTranscriptionRequest = request
+        XCTAssertNil(genericRequest.speechAudioData)
+        XCTAssertEqual(genericRequest.speechAudioFileURL, testAudioURL)
+        XCTAssertEqual(genericRequest.speechAudioFormat, "wav")
+        XCTAssertEqual(genericRequest.speechLanguageIdentifier, "en-US")
+        XCTAssertNil(genericRequest.speechPrompt)
     }
 
     // MARK: - Task Hint Tests
