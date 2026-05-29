@@ -231,59 +231,6 @@ public enum LangToolsRequestError: Error {
     }
 }
 
-// MARK: - Speech Audio Requests
-
-/// Provider-neutral response for requests that return synthesized audio.
-public protocol LangToolsAudioResponse {
-    var audioData: Data { get }
-}
-
-extension Data: LangToolsAudioResponse {
-    public var audioData: Data { self }
-}
-
-/// Provider-neutral response for requests that return transcribed text.
-public protocol LangToolsTranscriptionResponse {
-    var transcriptText: String { get }
-    var detectedLanguageIdentifier: String? { get }
-}
-
-extension String: LangToolsTranscriptionResponse {
-    public var transcriptText: String { self }
-    public var detectedLanguageIdentifier: String? { nil }
-}
-
-/// Provider-neutral shape for text-to-speech requests.
-///
-/// Concrete providers keep their native request type while exposing these
-/// normalized properties so apps can reason about TTS requests generically.
-public protocol LangToolsSpeechSynthesisRequest {
-    associatedtype SpeechResponse: LangToolsAudioResponse
-    var speechText: String { get }
-    var speechVoiceIdentifier: String? { get }
-    var speechSpeed: Double? { get }
-    var speechResponseFormat: String? { get }
-}
-
-/// HTTP/API-backed text-to-speech request handled by a `LangTools` provider.
-public protocol LangToolsTTSRequest: LangToolsRequest, LangToolsSpeechSynthesisRequest where Response == SpeechResponse {}
-
-/// Provider-neutral shape for speech-to-text requests.
-///
-/// Providers may use in-memory audio, file URLs, or platform-native request
-/// types. At least one audio source should be non-nil for concrete requests.
-public protocol LangToolsSpeechTranscriptionRequest {
-    associatedtype TranscriptionResponse: LangToolsTranscriptionResponse
-    var speechAudioData: Data? { get }
-    var speechAudioFileURL: URL? { get }
-    var speechAudioFormat: String? { get }
-    var speechLanguageIdentifier: String? { get }
-    var speechPrompt: String? { get }
-}
-
-/// HTTP/API-backed speech-to-text request handled by a `LangTools` provider.
-public protocol LangToolsSTTRequest: LangToolsRequest, LangToolsSpeechTranscriptionRequest where Response == TranscriptionResponse {}
-
 public enum HTTPMethod: String {
     case get = "GET"
     case post = "POST"
