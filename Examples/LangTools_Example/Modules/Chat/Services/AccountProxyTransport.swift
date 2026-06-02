@@ -28,7 +28,7 @@ public final class AccountProxyTransport: AccountProxyTransportProtocol {
 
     public func streamChatCompletionRequest(messages: [Message], model: Model, session: AccountSession, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     let response = try await send(messages: messages, model: model, session: session, stream: stream, tools: tools, toolChoice: toolChoice)
                     continuation.yield(response.content)
@@ -37,6 +37,7 @@ public final class AccountProxyTransport: AccountProxyTransportProtocol {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 

@@ -38,7 +38,7 @@ public final class AuthSessionStore {
         try AccountLoginProvider.allCases.compactMap { try session(for: $0) }
     }
 
-    func key(for provider: AccountLoginProvider) -> String {
+    private func key(for provider: AccountLoginProvider) -> String {
         "\(provider.rawValue):accountSession"
     }
 }

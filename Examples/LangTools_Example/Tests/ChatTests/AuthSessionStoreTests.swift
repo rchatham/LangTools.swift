@@ -12,6 +12,11 @@ final class AuthSessionStoreTests: XCTestCase {
         store = AuthSessionStore(keychain: keychain)
     }
 
+    override func tearDown() {
+        try? keychain.removeAll()
+        super.tearDown()
+    }
+
     func testSaveAndLoadSession() throws {
         let session = AccountSession(
             provider: .openAI,

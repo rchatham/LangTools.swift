@@ -15,16 +15,21 @@ public struct AccountBackendConfiguration: Equatable {
         components.scheme = Self.callbackScheme
         components.host = Self.callbackHost
         components.path = "/callback/\(provider.rawValue)"
-        return components.url ?? URL(string: "\(Self.callbackScheme)://\(Self.callbackHost)/callback/\(provider.rawValue)")!
+        guard let url = components.url else {
+            preconditionFailure("Failed to build callback URL for \(provider.rawValue)")
+        }
+        return url
     }
 
     public func loginStartURL(for provider: AccountLoginProvider, state: String) -> URL {
-        var components = URLComponents(url: baseURL.appending(path: "/auth/\(provider.startPathComponent)/start"), resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: baseURL.appending(path: "/auth/\(provider.startPathComponent)/start"), resolvingAgainstBaseURL: false) else {
+            return baseURL
+        }
         components.queryItems = [
             URLQueryItem(name: "redirect_uri", value: callbackURL(for: provider).absoluteString),
             URLQueryItem(name: "state", value: state)
         ]
-        return components.url!
+        return components.url ?? baseURL
     }
 
     public func exchangeURL(for provider: AccountLoginProvider) -> URL {

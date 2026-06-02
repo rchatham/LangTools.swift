@@ -19,6 +19,11 @@ final class NetworkClientAuthTests: XCTestCase {
         accessManager = ProviderAccessManager(keychainService: keychainService, sessionStore: sessionStore)
     }
 
+    override func tearDown() {
+        try? keychain.removeAll()
+        super.tearDown()
+    }
+
     func testAccountSessionUsesProxyTransport() async throws {
         let session = AccountSession(
             provider: .openAI,

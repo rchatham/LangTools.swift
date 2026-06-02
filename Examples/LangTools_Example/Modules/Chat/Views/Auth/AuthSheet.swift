@@ -1,8 +1,8 @@
 import SwiftUI
 
 private struct ManageAccessPromptModifier: ViewModifier {
-    @StateObject private var coordinator = AuthPresentationCoordinator.shared
-    @StateObject private var loginCoordinator = AccountLoginCoordinator.shared
+    @ObservedObject private var coordinator = AuthPresentationCoordinator.shared
+    @ObservedObject private var loginCoordinator = AccountLoginCoordinator.shared
     @ObservedObject private var accessManager = ProviderAccessManager.shared
     @State private var showAPIKeyPrompt = false
     @State private var apiKeyInput = ""
@@ -146,14 +146,18 @@ private struct ManageAccessPromptModifier: ViewModifier {
     }
 
     private func saveAPIKey() {
+        let trimmed = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            presentError("API key cannot be empty.")
+            return
+        }
         do {
             if apiKeyService == .serper {
-                UserDefaults.serperApiKey = apiKeyInput
-                KeychainService.shared.saveApiKey(apiKey: apiKeyInput, for: .serper)
+                UserDefaults.serperApiKey = trimmed
+                KeychainService.shared.saveApiKey(apiKey: trimmed, for: .serper)
             } else {
-                try networkClient.updateApiKey(apiKeyInput, for: apiKeyService)
+                try networkClient.updateApiKey(trimmed, for: apiKeyService)
             }
-            accessManager.refresh()
             apiKeyInput = ""
             coordinator.dismiss()
         } catch {
@@ -164,7 +168,6 @@ private struct ManageAccessPromptModifier: ViewModifier {
     private func removeAPIKey(for service: APIService) {
         do {
             try networkClient.removeApiKey(for: service)
-            accessManager.refresh()
             coordinator.dismiss()
         } catch {
             presentError(error.localizedDescription)
@@ -185,7 +188,6 @@ private struct ManageAccessPromptModifier: ViewModifier {
                     presentResult("Connected \(provider.displayName).")
                 }
             }
-            accessManager.refresh()
         } catch {
             presentError(error.localizedDescription)
         }

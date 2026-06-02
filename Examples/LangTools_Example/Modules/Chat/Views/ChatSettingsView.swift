@@ -952,7 +952,7 @@ extension ChatSettingsView {
         @Published var systemMessage = UserDefaults.systemMessage
         @Published var toolSettings = ToolSettings.shared
         @Published public var toolManager = ToolManager.shared
-        @Published public var accessManager = ProviderAccessManager.shared
+        public var accessManager = ProviderAccessManager.shared
 
         let clearMessages: () -> Void
 

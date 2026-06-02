@@ -16,7 +16,6 @@ public typealias Role = OpenAI.Message.Role
 
 public protocol NetworkClientProtocol {
     static var shared: NetworkClientProtocol { get }
-    var providerAccessManager: ProviderAccessManager { get }
     func performChatCompletionRequest(messages: [Message], model: Model, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message
     func streamChatCompletionRequest(messages: [Message], model: Model, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error>
     func playAudio(for text: String) async throws
@@ -91,7 +90,9 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         }
 
         let response = try await langToolchain.perform(request: request(messages: messages, model: model, tools: tools, toolChoice: toolChoice))
-        guard let text = response.content?.text else { fatalError("the api should never return non text") }
+        guard let text = response.content?.text else {
+            throw NetworkError.unexpectedResponseFormat
+        }
         return Message(text: text, role: .assistant)
     }
 
@@ -132,15 +133,22 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
     public func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
         try ensureModelAccess(for: model)
         if accountSession(for: model) != nil {
-            throw NetworkError.accountProxyTransportFailed("Account-backed agent execution is not implemented yet. Use an API key for agent runs.")
+            throw NetworkError.accountProxyTransportFailed("Account-backed agent execution is not supported. Use an API key for agent runs.")
         }
         switch model {
-        case .anthropic(let model): return AgentContext(langTool: langToolchain.langTool(Anthropic.self)!, model: model, messages: messages.toAnthropicMessages(), eventHandler: eventHandler)
-        case .gemini(let model): return AgentContext(langTool: langToolchain.langTool(Gemini.self)!, model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
-        case .openAI(let model): return AgentContext(langTool: langToolchain.langTool(OpenAI.self)!, model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
-        case .xAI(let model): return AgentContext(langTool: langToolchain.langTool(XAI.self)!, model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
-        case .ollama(let model): return AgentContext(langTool: langToolchain.langTool(Ollama.self)!, model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .anthropic(let model): return AgentContext(langTool: try requiredLangTool(Anthropic.self), model: model, messages: messages.toAnthropicMessages(), eventHandler: eventHandler)
+        case .gemini(let model): return AgentContext(langTool: try requiredLangTool(Gemini.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .openAI(let model): return AgentContext(langTool: try requiredLangTool(OpenAI.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .xAI(let model): return AgentContext(langTool: try requiredLangTool(XAI.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .ollama(let model): return AgentContext(langTool: try requiredLangTool(Ollama.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
         }
+    }
+
+    private func requiredLangTool<T: LangTools>(_ type: T.Type) throws -> T {
+        guard let tool = langToolchain.langTool(type) else {
+            throw NetworkError.langToolNotRegistered(String(describing: type))
+        }
+        return tool
     }
 
     public func updateApiKey(_ apiKey: String, for llm: APIService) throws {
@@ -182,7 +190,7 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         default: return nil
         }
     }
-    func ensureModelAccess(for model: Model) throws {
+    private func ensureModelAccess(for model: Model) throws {
         let state = providerAccessManager.state(for: model.apiService)
 
         switch model.apiService {
@@ -229,6 +237,8 @@ extension NetworkClient {
         case incompatibleRequest
         case modelAccessUnavailable(String)
         case accountProxyTransportFailed(String)
+        case unexpectedResponseFormat
+        case langToolNotRegistered(String)
 
         public var errorDescription: String? {
             switch self {
@@ -242,6 +252,10 @@ extension NetworkClient {
                 return "Your current credentials do not include access to \(modelID)."
             case .accountProxyTransportFailed(let message):
                 return message
+            case .unexpectedResponseFormat:
+                return "The API returned a response in an unexpected format."
+            case .langToolNotRegistered(let name):
+                return "\(name) is not registered. Provide an API key to enable this provider."
             }
         }
     }

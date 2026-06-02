@@ -300,7 +300,6 @@ public final class StubAccountLoginService: AccountLoginService {
     }
 
     public func handleRedirect(_ url: URL) async throws -> AccountSession {
-        _ = url
         throw AccountLoginError.invalidCallbackURL
     }
 
@@ -308,9 +307,7 @@ public final class StubAccountLoginService: AccountLoginService {
         throw AccountLoginError.missingStoredSession(session.provider)
     }
 
-    public func logout(provider: AccountLoginProvider) async throws {
-        _ = provider
-    }
+    public func logout(provider: AccountLoginProvider) async throws {}
 
     public func fetchAccessibleModels(for provider: AccountLoginProvider) async throws -> [String] {
         switch provider {

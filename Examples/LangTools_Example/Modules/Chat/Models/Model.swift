@@ -88,13 +88,6 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         }
     }
 
-    public var isCodexModel: Bool {
-        if case .openAI(let model) = self {
-            return OpenAI.Model.codex.contains(model)
-        }
-        return false
-    }
-
     public static func availableChatModels(accessManager: ProviderAccessManager = .shared) -> [Model] {
         accessManager.availableChatModels()
     }

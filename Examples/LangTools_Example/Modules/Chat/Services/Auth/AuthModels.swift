@@ -71,6 +71,13 @@ public struct AccountSession: Codable, Equatable, Identifiable {
     }
 }
 
+extension AccountSession: CustomStringConvertible, CustomDebugStringConvertible {
+    public var description: String {
+        "AccountSession(id: \(id), provider: \(provider), accountIdentifier: \(accountIdentifier), accessToken: <redacted>)"
+    }
+    public var debugDescription: String { description }
+}
+
 public enum ProviderAuthStatus: Equatable {
     case notConfigured
     case apiKeyConfigured

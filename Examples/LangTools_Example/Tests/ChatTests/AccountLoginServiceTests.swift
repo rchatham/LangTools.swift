@@ -3,6 +3,11 @@ import XCTest
 @testable import Chat
 
 final class AccountLoginServiceTests: XCTestCase {
+    override func tearDown() {
+        MockURLProtocol.requestHandler = nil
+        super.tearDown()
+    }
+
     func testParseRedirectAcceptsValidOpenAICallback() throws {
         let url = URL(string: "langtools-example-auth://auth/callback/openAI?code=test-code&state=test-state")!
 

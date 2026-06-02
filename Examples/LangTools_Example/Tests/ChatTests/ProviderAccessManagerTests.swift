@@ -16,6 +16,11 @@ final class ProviderAccessManagerTests: XCTestCase {
         accessManager = ProviderAccessManager(keychainService: keychainService, sessionStore: sessionStore)
     }
 
+    override func tearDown() {
+        try? keychain.removeAll()
+        super.tearDown()
+    }
+
     func testNoCredentialsHidesRemoteModels() {
         accessManager.refresh()
 
@@ -44,6 +49,6 @@ final class ProviderAccessManagerTests: XCTestCase {
 
         let models = accessManager.state(for: .openAI).availableModels
         XCTAssertEqual(models.map(\.rawValue), ["gpt-5.1-codex"])
-        XCTAssertTrue(models.first?.isCodexModel ?? false)
+        XCTAssertEqual(models.first?.rawValue, "gpt-5.1-codex")
     }
 }

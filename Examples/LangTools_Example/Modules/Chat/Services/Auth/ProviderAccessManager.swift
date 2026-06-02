@@ -37,7 +37,12 @@ public final class ProviderAccessManager: ObservableObject {
                 accountIdentifier: session?.accountIdentifier
             )
         }
-        states = newStates
+        if Thread.isMainThread {
+            states = newStates
+        } else {
+            let captured = newStates
+            DispatchQueue.main.async { [weak self] in self?.states = captured }
+        }
     }
 
     public func saveAccountSession(_ session: AccountSession) throws {
@@ -91,14 +96,15 @@ public final class ProviderAccessManager: ObservableObject {
     }
 
     private func authStatus(apiKey: String?, session: AccountSession?) -> ProviderAuthStatus {
-        switch (apiKey?.isEmpty == false, session != nil) {
-        case (true, true):
-            return .apiKeyAndAccount(session!.provider)
-        case (true, false):
+        let hasKey = apiKey?.isEmpty == false
+        switch (hasKey, session) {
+        case (true, let session?):
+            return .apiKeyAndAccount(session.provider)
+        case (true, nil):
             return .apiKeyConfigured
-        case (false, true):
-            return .accountConnected(session!.provider)
-        case (false, false):
+        case (false, let session?):
+            return .accountConnected(session.provider)
+        case (false, nil):
             return .notConfigured
         }
     }
