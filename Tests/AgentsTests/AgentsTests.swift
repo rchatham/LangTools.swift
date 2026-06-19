@@ -57,15 +57,21 @@ final class AgentsTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func buildContext<T: LangTools>(langTool: T, model: T.Model, messages: [any LangToolsMessage], eventHandler: @escaping (AgentEvent) -> Void, parent: (any Agent)?, tools: [any LangToolsTool]?) -> AgentContext {
-        AgentContext(langTool: langTool, model: model, messages: messages, eventHandler: eventHandler, parent: parent, tools: tools, responseSchema: nil)
-    }
-
     private func makeContext(
         events: @escaping (AgentEvent) -> Void = { _ in },
         parent: (any Agent)? = nil
     ) -> AgentContext {
-        return buildContext(langTool: api!, model: .gpt4o, messages: [OpenAI.Message(role: .user, content: "Hello")], eventHandler: events, parent: parent, tools: nil)
+        let langTool: any LangTools = api!
+        let model: any RawRepresentable = OpenAI.Model.gpt4o
+        return AgentContext(
+            langTool: langTool,
+            model: model,
+            messages: [OpenAI.Message(role: .user, content: "Hello")],
+            eventHandler: events,
+            parent: parent,
+            tools: nil,
+            responseSchema: nil
+        )
     }
 
     private func mockChatResponse(content: String) -> Data {
