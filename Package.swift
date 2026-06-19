@@ -23,6 +23,8 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/rchatham/JSON.swift.git", branch: "main"),
+        .package(url: "https://github.com/jamesrochabrun/SwiftOpenAI.git", from: "4.4.0"),
+        .package(url: "https://github.com/jamesrochabrun/SwiftAnthropic.git", from: "2.2.0"),
     ],
     targets: [
         // Targets
@@ -45,11 +47,16 @@ let package = Package(
         .testTarget(name: "GeminiTests", dependencies: ["Gemini", "OpenAI", "TestUtils"]),
         .testTarget(name: "OllamaTests", dependencies: ["Ollama", "OpenAI", "TestUtils"]),
         .testTarget(name: "AppleSpeechTests", dependencies: ["AppleSpeech"]),
-        // New test targets temporarily disabled to isolate CI failure
-        // .testTarget(name: "AgentsTests", dependencies: ["Agents", "LangTools", "OpenAI", "TestUtils"]),
-        // .testTarget(name: "PerformanceTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils", "PerformanceTestUtils"]),
-        // .testTarget(name: "IntegrationTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils", "PerformanceTestUtils"]),
-        // .testTarget(name: "BenchmarkTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils"]),
+        .testTarget(name: "AgentsTests", dependencies: ["Agents", "LangTools", "OpenAI", "TestUtils"]),
+
+        // Performance & integration test targets
+        .testTarget(name: "PerformanceTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils", "PerformanceTestUtils"]),
+        .testTarget(name: "IntegrationTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils", "PerformanceTestUtils"]),
+        .testTarget(name: "BenchmarkTests", dependencies: [
+            "LangTools", "OpenAI", "Anthropic", "TestUtils",
+            .product(name: "SwiftOpenAI", package: "SwiftOpenAI"),
+            .product(name: "SwiftAnthropic", package: "SwiftAnthropic"),
+        ]),
 
         // Executable target
         .executableTarget(name: "ChatCLI", dependencies: ["LangTools", "OpenAI", "Anthropic", "XAI", "Gemini", "Ollama"]),

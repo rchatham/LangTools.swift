@@ -2,11 +2,8 @@
 //  AnthropicBenchmarkTests.swift
 //  LangTools
 //
-//  Benchmarks measuring LangTools.Anthropic encoding/decoding performance
-//  against raw Foundation JSON operations as a baseline.
-//
-//  To add comparisons against third-party libraries (e.g. SwiftAnthropic),
-//  add the dependency to Package.swift and uncomment the relevant sections.
+//  Benchmarks comparing LangTools.Anthropic encoding/decoding performance
+//  against SwiftAnthropic and raw Foundation JSON operations as a baseline.
 //
 
 import XCTest
@@ -16,87 +13,35 @@ import FoundationNetworking
 @testable import LangTools
 @testable import Anthropic
 @testable import TestUtils
+import SwiftAnthropic
 
 final class AnthropicBenchmarkTests: XCTestCase {
 
-    // MARK: - Standard Anthropic Message JSON (shared across benchmarks)
-
     static let messageResponseJSON = """
-    {
-        "content": [{"text": "The weather in San Francisco is currently 72°F with partly cloudy skies. The humidity is at 65% and winds are coming from the west at 12 mph. It's a pleasant day overall, perfect for outdoor activities. I'd recommend wearing light layers as it may cool down in the evening.", "type": "text"}],
-        "id": "msg_bench_001",
-        "model": "claude-sonnet-4-6",
-        "role": "assistant",
-        "stop_reason": "end_turn",
-        "stop_sequence": null,
-        "type": "message",
-        "usage": {"input_tokens": 25, "output_tokens": 60}
-    }
+    {"content":[{"text":"The weather in San Francisco is currently 72°F with partly cloudy skies. The humidity is at 65% and winds are coming from the west at 12 mph.","type":"text"}],"id":"msg_bench","model":"claude-sonnet-4-6","role":"assistant","stop_reason":"end_turn","stop_sequence":null,"type":"message","usage":{"input_tokens":25,"output_tokens":60}}
     """.data(using: .utf8)!
 
     static let toolUseResponseJSON = """
-    {
-        "content": [
-            {"text": "I'll check the weather for you.", "type": "text"},
-            {"type": "tool_use", "id": "toolu_bench_001", "name": "get_weather", "input": {"location": "San Francisco, CA", "unit": "fahrenheit"}}
-        ],
-        "id": "msg_bench_tools",
-        "model": "claude-sonnet-4-6",
-        "role": "assistant",
-        "stop_reason": "tool_use",
-        "stop_sequence": null,
-        "type": "message",
-        "usage": {"input_tokens": 50, "output_tokens": 30}
-    }
+    {"content":[{"text":"I'll check the weather.","type":"text"},{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{"location":"San Francisco","unit":"fahrenheit"}}],"id":"msg_bench_tool","model":"claude-sonnet-4-6","role":"assistant","stop_reason":"tool_use","stop_sequence":null,"type":"message","usage":{"input_tokens":50,"output_tokens":30}}
     """.data(using: .utf8)!
 
-    static let multiBlockResponseJSON: Data = {
-        var blocks = [String]()
-        for i in 0..<5 {
-            blocks.append("{\"text\": \"Response block \(i): This is a detailed response with enough content to represent a realistic model output. It includes multiple sentences to ensure meaningful payload size.\", \"type\": \"text\"}")
-        }
-        let content = blocks.joined(separator: ",")
-        return """
-        {
-            "content": [\(content)],
-            "id": "msg_bench_multi",
-            "model": "claude-sonnet-4-6",
-            "role": "assistant",
-            "stop_reason": "end_turn",
-            "stop_sequence": null,
-            "type": "message",
-            "usage": {"input_tokens": 50, "output_tokens": 300}
-        }
-        """.data(using: .utf8)!
+    static let snakeCaseDecoder: JSONDecoder = {
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        return d
     }()
 
-    // MARK: - Foundation Baseline (JSONSerialization)
+    // MARK: - Decode: Foundation Baseline
 
-    func testBaseline_JSONSerialization_DecodeResponse() {
+    func testBaseline_DecodeResponse() {
         measure {
             for _ in 0..<500 {
-                _ = try! JSONSerialization.jsonObject(with: Self.messageResponseJSON, options: [])
+                _ = try! JSONSerialization.jsonObject(with: Self.messageResponseJSON)
             }
         }
     }
 
-    func testBaseline_JSONSerialization_DecodeToolUseResponse() {
-        measure {
-            for _ in 0..<500 {
-                _ = try! JSONSerialization.jsonObject(with: Self.toolUseResponseJSON, options: [])
-            }
-        }
-    }
-
-    func testBaseline_JSONSerialization_DecodeMultiBlock() {
-        measure {
-            for _ in 0..<200 {
-                _ = try! JSONSerialization.jsonObject(with: Self.multiBlockResponseJSON, options: [])
-            }
-        }
-    }
-
-    // MARK: - LangTools.Anthropic Decode Benchmarks
+    // MARK: - Decode: LangTools.Anthropic
 
     func testLangTools_DecodeResponse() {
         let decoder = JSONDecoder()
@@ -116,18 +61,29 @@ final class AnthropicBenchmarkTests: XCTestCase {
         }
     }
 
-    func testLangTools_DecodeMultiBlockResponse() {
-        let decoder = JSONDecoder()
+    // MARK: - Decode: SwiftAnthropic
+
+    func testSwiftAnthropic_DecodeResponse() {
+        let decoder = Self.snakeCaseDecoder
         measure {
-            for _ in 0..<200 {
-                _ = try! decoder.decode(Anthropic.MessageResponse.self, from: Self.multiBlockResponseJSON)
+            for _ in 0..<500 {
+                _ = try! decoder.decode(SwiftAnthropic.MessageResponse.self, from: Self.messageResponseJSON)
             }
         }
     }
 
-    // MARK: - LangTools.Anthropic Encode Benchmarks
+    func testSwiftAnthropic_DecodeToolUseResponse() {
+        let decoder = Self.snakeCaseDecoder
+        measure {
+            for _ in 0..<500 {
+                _ = try! decoder.decode(SwiftAnthropic.MessageResponse.self, from: Self.toolUseResponseJSON)
+            }
+        }
+    }
 
-    func testLangTools_EncodeRequest_Simple() {
+    // MARK: - Encode: LangTools.Anthropic
+
+    func testLangTools_EncodeRequest() {
         let request = Anthropic.MessageRequest(
             model: .claude46Sonnet,
             messages: [.init(role: .user, content: "What's the weather in SF?")]
@@ -140,35 +96,10 @@ final class AnthropicBenchmarkTests: XCTestCase {
         }
     }
 
-    func testLangTools_EncodeRequest_WithTools() {
-        let tools: [Anthropic.Tool] = [.init(
-            name: "get_weather",
-            description: "Get the current weather in a given location",
-            tool_schema: .init(
-                properties: [
-                    "location": .init(type: "string", description: "City and state"),
-                    "unit": .init(type: "string", enumValues: ["celsius", "fahrenheit"], description: "Temperature unit"),
-                ],
-                required: ["location"]
-            )
-        )]
-        let request = Anthropic.MessageRequest(
-            model: .claude46Sonnet,
-            messages: [.init(role: .user, content: "What's the weather?")],
-            tools: tools
-        )
-        let encoder = JSONEncoder()
-        measure {
-            for _ in 0..<500 {
-                _ = try! encoder.encode(request)
-            }
-        }
-    }
-
     func testLangTools_EncodeRequest_LargeConversation() {
         let messages: [Anthropic.Message] = (0..<50).map { i in
             Anthropic.Message(role: i % 2 == 0 ? .user : .assistant,
-                              content: "Message \(i) with realistic content for benchmarking encoding performance across conversation turns.")
+                              content: "Message \(i) with realistic content for benchmarking.")
         }
         let request = Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages)
         let encoder = JSONEncoder()
@@ -179,19 +110,36 @@ final class AnthropicBenchmarkTests: XCTestCase {
         }
     }
 
-    // MARK: - Round-Trip
+    // MARK: - Encode: SwiftAnthropic
 
-    func testLangTools_RoundTrip() {
-        let encoder = JSONEncoder()
-        let decoder = JSONDecoder()
-        let request = Anthropic.MessageRequest(
-            model: .claude46Sonnet,
-            messages: [.init(role: .user, content: "Round-trip benchmark test")]
+    func testSwiftAnthropic_EncodeRequest() {
+        let params = MessageParameter(
+            model: .other("claude-sonnet-4-6"),
+            messages: [.init(role: .user, content: .text("What's the weather in SF?"))],
+            maxTokens: 4096
         )
+        let encoder = JSONEncoder()
         measure {
-            for _ in 0..<200 {
-                let data = try! encoder.encode(request)
-                _ = try! decoder.decode(Anthropic.MessageRequest.self, from: data)
+            for _ in 0..<500 {
+                _ = try! encoder.encode(params)
+            }
+        }
+    }
+
+    func testSwiftAnthropic_EncodeRequest_LargeConversation() {
+        let messages: [MessageParameter.Message] = (0..<50).map { i in
+            .init(role: i % 2 == 0 ? .user : .assistant,
+                  content: .text("Message \(i) with realistic content for benchmarking."))
+        }
+        let params = MessageParameter(
+            model: .other("claude-sonnet-4-6"),
+            messages: messages,
+            maxTokens: 4096
+        )
+        let encoder = JSONEncoder()
+        measure {
+            for _ in 0..<100 {
+                _ = try! encoder.encode(params)
             }
         }
     }
@@ -202,12 +150,21 @@ final class AnthropicBenchmarkTests: XCTestCase {
         measure {
             for _ in 0..<1000 {
                 _ = Anthropic.Message(role: .user, content: "Hello, what's the weather?")
-                _ = Anthropic.Message(role: .assistant, content: "The weather is sunny and 72°F.")
+                _ = Anthropic.Message(role: .assistant, content: "It's sunny and 72°F.")
             }
         }
     }
 
-    // MARK: - Stream Decode
+    func testSwiftAnthropic_MessageConstruction() {
+        measure {
+            for _ in 0..<1000 {
+                _ = MessageParameter.Message(role: .user, content: .text("Hello, what's the weather?"))
+                _ = MessageParameter.Message(role: .assistant, content: .text("It's sunny and 72°F."))
+            }
+        }
+    }
+
+    // MARK: - Stream Line Decode
 
     func testLangTools_StreamLineDecode() {
         let lines: [String] = (0..<100).map { i in
@@ -222,29 +179,19 @@ final class AnthropicBenchmarkTests: XCTestCase {
         }
     }
 
-    // MARK: - Content Block Type Overhead
+    // MARK: - Round-Trip
 
-    func testLangTools_ContentBlockDecoding() {
-        let jsonWithMultipleBlockTypes = """
-        {
-            "content": [
-                {"text": "Here's the analysis:", "type": "text"},
-                {"type": "tool_use", "id": "toolu_1", "name": "analyze", "input": {"data": "sample"}},
-                {"text": "Based on the analysis above...", "type": "text"}
-            ],
-            "id": "msg_blocks",
-            "model": "claude-sonnet-4-6",
-            "role": "assistant",
-            "stop_reason": "end_turn",
-            "stop_sequence": null,
-            "type": "message",
-            "usage": {"input_tokens": 30, "output_tokens": 40}
-        }
-        """.data(using: .utf8)!
+    func testLangTools_RoundTrip() {
+        let encoder = JSONEncoder()
         let decoder = JSONDecoder()
+        let request = Anthropic.MessageRequest(
+            model: .claude46Sonnet,
+            messages: [.init(role: .user, content: "Round-trip benchmark")]
+        )
         measure {
-            for _ in 0..<500 {
-                _ = try! decoder.decode(Anthropic.MessageResponse.self, from: jsonWithMultipleBlockTypes)
+            for _ in 0..<200 {
+                let data = try! encoder.encode(request)
+                _ = try! decoder.decode(Anthropic.MessageRequest.self, from: data)
             }
         }
     }
