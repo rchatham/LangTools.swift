@@ -444,7 +444,7 @@ final class AnthropicIntegrationTests: XCTestCase {
         XCTAssertEqual(result?.type, .message_start)
     }
 
-    func testStreamDecodeSkipsPingEvents() throws {
+    func testStreamDecodeReturnsPingEvents() throws {
         let pingLine = "data: {\"type\": \"ping\"}"
         let result: Anthropic.MessageResponse? = try Anthropic.decodeStream(pingLine)
         XCTAssertNotNil(result)
@@ -620,11 +620,12 @@ final class AnthropicIntegrationTests: XCTestCase {
             }
             XCTFail("Stream should have thrown")
         } catch let error as LangToolsError {
-            if case .responseUnsuccessful(let statusCode, _) = error {
-                XCTAssertEqual(statusCode, 529)
+            guard case .responseUnsuccessful(let statusCode, _) = error else {
+                return XCTFail("Expected responseUnsuccessful, got \(error)")
             }
+            XCTAssertEqual(statusCode, 529)
         } catch {
-            XCTAssertNotNil(error)
+            XCTFail("Expected LangToolsError, got \(type(of: error)): \(error)")
         }
     }
 
@@ -660,6 +661,7 @@ final class AnthropicIntegrationTests: XCTestCase {
             OpenAI.Message(role: .user, content: "Hello"),
         ]
         let systemPrompt = Anthropic.toAnthropicSystemMessage(messages)
-        XCTAssertTrue(systemPrompt?.isEmpty ?? true, "Expected nil or empty string when no system messages present")
+        XCTAssertNotNil(systemPrompt, "toAnthropicSystemMessage should return a value")
+        XCTAssertEqual(systemPrompt, "", "Expected empty string when no system messages present")
     }
 }

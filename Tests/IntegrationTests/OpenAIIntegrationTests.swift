@@ -577,8 +577,11 @@ final class OpenAIIntegrationTests: XCTestCase {
             stream: true,
             tools: tools,
             toolEventHandler: { event in
-                if case .toolCompleted(let result) = event, result?.is_error == true {
-                    errorEventFired = true
+                if case .toolCompleted(let result) = event {
+                    XCTAssertNotNil(result, "Tool completion result should not be nil")
+                    if result?.is_error == true {
+                        errorEventFired = true
+                    }
                 }
             }
         )
@@ -612,11 +615,12 @@ final class OpenAIIntegrationTests: XCTestCase {
             }
             XCTFail("Stream should have thrown")
         } catch let error as LangToolsError {
-            if case .responseUnsuccessful(let statusCode, _) = error {
-                XCTAssertEqual(statusCode, 500)
+            guard case .responseUnsuccessful(let statusCode, _) = error else {
+                return XCTFail("Expected responseUnsuccessful, got \(error)")
             }
+            XCTAssertEqual(statusCode, 500)
         } catch {
-            XCTAssertNotNil(error)
+            XCTFail("Expected LangToolsError, got \(type(of: error)): \(error)")
         }
     }
 }

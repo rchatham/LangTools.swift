@@ -48,6 +48,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
 
     func testLangTools_DecodeResponse() {
         let decoder = JSONDecoder()
+        XCTAssertNoThrow(try decoder.decode(OpenAI.ChatCompletionResponse.self, from: Self.chatCompletionJSON), "Fixture validation")
         measure {
             for _ in 0..<500 {
                 _ = try! decoder.decode(OpenAI.ChatCompletionResponse.self, from: Self.chatCompletionJSON)
@@ -57,6 +58,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
 
     func testLangTools_DecodeToolCallResponse() {
         let decoder = JSONDecoder()
+        XCTAssertNoThrow(try decoder.decode(OpenAI.ChatCompletionResponse.self, from: Self.toolCallJSON), "Fixture validation")
         measure {
             for _ in 0..<500 {
                 _ = try! decoder.decode(OpenAI.ChatCompletionResponse.self, from: Self.toolCallJSON)
@@ -66,6 +68,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
 
     func testLangTools_DecodeStreamChunk() {
         let decoder = JSONDecoder()
+        XCTAssertNoThrow(try decoder.decode(OpenAI.ChatCompletionResponse.self, from: Self.streamChunkJSON), "Fixture validation")
         measure {
             for _ in 0..<1000 {
                 _ = try! decoder.decode(OpenAI.ChatCompletionResponse.self, from: Self.streamChunkJSON)
@@ -112,6 +115,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
             messages: [.init(role: .user, content: "What's the weather in SF?")]
         )
         let encoder = JSONEncoder()
+        XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
         measure {
             for _ in 0..<500 {
                 _ = try! encoder.encode(request)
@@ -126,6 +130,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
         }
         let request = OpenAI.ChatCompletionRequest(model: .gpt4o, messages: messages)
         let encoder = JSONEncoder()
+        XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
         measure {
             for _ in 0..<100 {
                 _ = try! encoder.encode(request)

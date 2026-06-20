@@ -44,6 +44,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
 
     func testLangTools_DecodeResponse() {
         let decoder = JSONDecoder()
+        XCTAssertNoThrow(try decoder.decode(Anthropic.MessageResponse.self, from: Self.messageResponseJSON), "Fixture validation")
         measure {
             for _ in 0..<500 {
                 _ = try! decoder.decode(Anthropic.MessageResponse.self, from: Self.messageResponseJSON)
@@ -53,6 +54,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
 
     func testLangTools_DecodeToolUseResponse() {
         let decoder = JSONDecoder()
+        XCTAssertNoThrow(try decoder.decode(Anthropic.MessageResponse.self, from: Self.toolUseResponseJSON), "Fixture validation")
         measure {
             for _ in 0..<500 {
                 _ = try! decoder.decode(Anthropic.MessageResponse.self, from: Self.toolUseResponseJSON)
@@ -92,6 +94,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
             messages: [.init(role: .user, content: "What's the weather in SF?")]
         )
         let encoder = JSONEncoder()
+        XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
         measure {
             for _ in 0..<500 {
                 _ = try! encoder.encode(request)
@@ -106,6 +109,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
         }
         let request = Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages)
         let encoder = JSONEncoder()
+        XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
         measure {
             for _ in 0..<100 {
                 _ = try! encoder.encode(request)
