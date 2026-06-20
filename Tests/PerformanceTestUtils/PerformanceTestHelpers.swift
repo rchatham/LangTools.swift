@@ -172,6 +172,34 @@ public enum PerformanceFixtures {
         return lines.joined(separator: "\n").data(using: .utf8)!
     }
 
+    public static func anthropicToolUseStreamData(toolName: String = "get_weather", toolId: String = "toolu_test_001") -> Data {
+        var lines = [String]()
+        lines.append("event: message_start")
+        lines.append("data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_tool_stream\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":50,\"output_tokens\":1}}}")
+        lines.append("")
+        lines.append("event: content_block_start")
+        lines.append("data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"\(toolId)\",\"name\":\"\(toolName)\",\"input\":{}}}")
+        lines.append("")
+        lines.append("event: content_block_delta")
+        lines.append("data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}")
+        lines.append("")
+        lines.append("event: content_block_delta")
+        lines.append("data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"location\\\": \\\"San Francisco\\\"\"}}")
+        lines.append("")
+        lines.append("event: content_block_delta")
+        lines.append("data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\", \\\"unit\\\": \\\"fahrenheit\\\"}\"}}")
+        lines.append("")
+        lines.append("event: content_block_stop")
+        lines.append("data: {\"type\":\"content_block_stop\",\"index\":0}")
+        lines.append("")
+        lines.append("event: message_delta")
+        lines.append("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":30}}")
+        lines.append("")
+        lines.append("event: message_stop")
+        lines.append("data: {\"type\":\"message_stop\"}")
+        return lines.joined(separator: "\n").data(using: .utf8)!
+    }
+
     public static func anthropicMessageRequest(messageCount: Int) -> Anthropic.MessageRequest {
         let messages: [Anthropic.Message] = (0..<messageCount).map { i in
             if i % 2 == 0 {

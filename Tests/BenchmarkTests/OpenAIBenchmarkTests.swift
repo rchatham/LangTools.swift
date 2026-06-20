@@ -5,6 +5,9 @@
 //  Benchmarks comparing LangTools.OpenAI encoding/decoding performance
 //  against SwiftOpenAI and raw Foundation JSON operations as a baseline.
 //
+//  To enable competitor benchmarks, uncomment the SwiftOpenAI dependency
+//  in Package.swift.
+//
 
 import XCTest
 #if canImport(FoundationNetworking)
@@ -13,7 +16,9 @@ import FoundationNetworking
 @testable import LangTools
 @testable import OpenAI
 @testable import TestUtils
+#if canImport(SwiftOpenAI)
 import SwiftOpenAI
+#endif
 
 final class OpenAIBenchmarkTests: XCTestCase {
 
@@ -59,8 +64,18 @@ final class OpenAIBenchmarkTests: XCTestCase {
         }
     }
 
+    func testLangTools_DecodeStreamChunk() {
+        let decoder = JSONDecoder()
+        measure {
+            for _ in 0..<1000 {
+                _ = try! decoder.decode(OpenAI.ChatCompletionResponse.self, from: Self.streamChunkJSON)
+            }
+        }
+    }
+
     // MARK: - Decode: SwiftOpenAI
 
+    #if canImport(SwiftOpenAI)
     func testSwiftOpenAI_DecodeResponse() {
         let decoder = JSONDecoder()
         measure {
@@ -79,17 +94,6 @@ final class OpenAIBenchmarkTests: XCTestCase {
         }
     }
 
-    // MARK: - Decode: Streaming Chunks
-
-    func testLangTools_DecodeStreamChunk() {
-        let decoder = JSONDecoder()
-        measure {
-            for _ in 0..<1000 {
-                _ = try! decoder.decode(OpenAI.ChatCompletionResponse.self, from: Self.streamChunkJSON)
-            }
-        }
-    }
-
     func testSwiftOpenAI_DecodeStreamChunk() {
         let decoder = JSONDecoder()
         measure {
@@ -98,6 +102,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
             }
         }
     }
+    #endif
 
     // MARK: - Encode: LangTools.OpenAI
 
@@ -130,6 +135,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
 
     // MARK: - Encode: SwiftOpenAI
 
+    #if canImport(SwiftOpenAI)
     func testSwiftOpenAI_EncodeRequest() {
         let params = ChatCompletionParameters(
             messages: [.init(role: .user, content: .text("What's the weather in SF?"))],
@@ -156,6 +162,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
             }
         }
     }
+    #endif
 
     // MARK: - Message Construction
 
@@ -169,6 +176,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
         }
     }
 
+    #if canImport(SwiftOpenAI)
     func testSwiftOpenAI_MessageConstruction() {
         measure {
             for _ in 0..<1000 {
@@ -178,6 +186,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
             }
         }
     }
+    #endif
 
     // MARK: - Round-Trip
 

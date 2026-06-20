@@ -5,6 +5,9 @@
 //  Benchmarks comparing LangTools.Anthropic encoding/decoding performance
 //  against SwiftAnthropic and raw Foundation JSON operations as a baseline.
 //
+//  To enable competitor benchmarks, uncomment the SwiftAnthropic dependency
+//  in Package.swift.
+//
 
 import XCTest
 #if canImport(FoundationNetworking)
@@ -13,7 +16,9 @@ import FoundationNetworking
 @testable import LangTools
 @testable import Anthropic
 @testable import TestUtils
+#if canImport(SwiftAnthropic)
 import SwiftAnthropic
+#endif
 
 final class AnthropicBenchmarkTests: XCTestCase {
 
@@ -24,12 +29,6 @@ final class AnthropicBenchmarkTests: XCTestCase {
     static let toolUseResponseJSON = """
     {"content":[{"text":"I'll check the weather.","type":"text"},{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{"location":"San Francisco","unit":"fahrenheit"}}],"id":"msg_bench_tool","model":"claude-sonnet-4-6","role":"assistant","stop_reason":"tool_use","stop_sequence":null,"type":"message","usage":{"input_tokens":50,"output_tokens":30}}
     """.data(using: .utf8)!
-
-    static let snakeCaseDecoder: JSONDecoder = {
-        let d = JSONDecoder()
-        d.keyDecodingStrategy = .convertFromSnakeCase
-        return d
-    }()
 
     // MARK: - Decode: Foundation Baseline
 
@@ -63,8 +62,10 @@ final class AnthropicBenchmarkTests: XCTestCase {
 
     // MARK: - Decode: SwiftAnthropic
 
+    #if canImport(SwiftAnthropic)
     func testSwiftAnthropic_DecodeResponse() {
-        let decoder = Self.snakeCaseDecoder
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
         measure {
             for _ in 0..<500 {
                 _ = try! decoder.decode(SwiftAnthropic.MessageResponse.self, from: Self.messageResponseJSON)
@@ -73,13 +74,15 @@ final class AnthropicBenchmarkTests: XCTestCase {
     }
 
     func testSwiftAnthropic_DecodeToolUseResponse() {
-        let decoder = Self.snakeCaseDecoder
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
         measure {
             for _ in 0..<500 {
                 _ = try! decoder.decode(SwiftAnthropic.MessageResponse.self, from: Self.toolUseResponseJSON)
             }
         }
     }
+    #endif
 
     // MARK: - Encode: LangTools.Anthropic
 
@@ -112,6 +115,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
 
     // MARK: - Encode: SwiftAnthropic
 
+    #if canImport(SwiftAnthropic)
     func testSwiftAnthropic_EncodeRequest() {
         let params = MessageParameter(
             model: .other("claude-sonnet-4-6"),
@@ -143,6 +147,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
             }
         }
     }
+    #endif
 
     // MARK: - Message Construction
 
@@ -155,6 +160,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
         }
     }
 
+    #if canImport(SwiftAnthropic)
     func testSwiftAnthropic_MessageConstruction() {
         measure {
             for _ in 0..<1000 {
@@ -163,6 +169,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
             }
         }
     }
+    #endif
 
     // MARK: - Stream Line Decode
 

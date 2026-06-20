@@ -164,10 +164,8 @@ final class OpenAIIntegrationTests: XCTestCase {
         // Second response: final text response after tool execution
         let finalStreamData = PerformanceFixtures.openAIStreamChunksData(chunkCount: 3)
 
-        var callCount = 0
         MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
-            callCount += 1
-            return (.success(toolStreamData), 200)
+            (.success(toolStreamData), 200)
         }
 
         var toolWasCalled = false

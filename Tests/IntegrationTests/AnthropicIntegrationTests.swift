@@ -56,11 +56,13 @@ final class AnthropicIntegrationTests: XCTestCase {
 
     func testPerformMessageRequestWithSystemPrompt() async throws {
         MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { request in
-            guard let httpBody = request.httpBody,
-                  let json = try? JSONSerialization.jsonObject(with: httpBody),
-                  let body = json as? [String: Any]
-            else { XCTFail("Missing or invalid request body"); throw URLError(.badServerResponse) }
-            XCTAssertEqual(body["system"] as? String, "You are a helpful assistant.")
+            if let httpBody = request.httpBody,
+               let json = try? JSONSerialization.jsonObject(with: httpBody),
+               let body = json as? [String: Any] {
+                XCTAssertEqual(body["system"] as? String, "You are a helpful assistant.")
+            } else {
+                XCTFail("Missing or invalid request body")
+            }
             let data = PerformanceFixtures.anthropicMessageResponseJSON()
             return (.success(data), 200)
         }
@@ -171,7 +173,7 @@ final class AnthropicIntegrationTests: XCTestCase {
     }
 
     func testToolCallWithCallbackCompletesFullFlow() async throws {
-        let toolStreamData = PerformanceFixtures.anthropicStreamData(chunkCount: 1)
+        let toolStreamData = PerformanceFixtures.anthropicToolUseStreamData(toolName: "get_weather")
         let finalResponseData = PerformanceFixtures.anthropicStreamData(chunkCount: 3)
 
         MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
