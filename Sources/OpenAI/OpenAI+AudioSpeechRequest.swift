@@ -14,7 +14,6 @@ extension OpenAI {
     /// Learn more: [OpenAI Speech – Documentation](https://platform.openai.com/docs/api-reference/audio/createSpeech)
     public struct AudioSpeechRequest: Codable, LangToolsRequest, LangToolsTTSRequest {
         public typealias Response = Data
-        public typealias SpeechResponse = Data
         public typealias LangTool = OpenAI
         public static var endpoint: String { "audio/speech" }
 

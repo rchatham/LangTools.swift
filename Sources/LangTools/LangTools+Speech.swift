@@ -7,7 +7,7 @@ public protocol LangToolsAudioResponse {
     var audioData: Data { get }
 }
 
-extension Data: LangToolsAudioResponse {
+extension Data: @retroactive LangToolsAudioResponse {
     public var audioData: Data { self }
 }
 
@@ -17,7 +17,7 @@ public protocol LangToolsTranscriptionResponse {
     var detectedLanguageIdentifier: String? { get }
 }
 
-extension String: LangToolsTranscriptionResponse {
+extension String: @retroactive LangToolsTranscriptionResponse {
     public var transcriptText: String { self }
     public var detectedLanguageIdentifier: String? { nil }
 }
@@ -27,7 +27,6 @@ extension String: LangToolsTranscriptionResponse {
 /// Concrete providers keep their native request type while exposing these
 /// normalized properties so apps can reason about TTS requests generically.
 public protocol LangToolsSpeechSynthesisRequest {
-    associatedtype SpeechResponse: LangToolsAudioResponse
     var speechText: String { get }
     var speechVoiceIdentifier: String? { get }
     var speechSpeed: Double? { get }
@@ -35,7 +34,7 @@ public protocol LangToolsSpeechSynthesisRequest {
 }
 
 /// HTTP/API-backed text-to-speech request handled by a `LangTools` provider.
-public protocol LangToolsTTSRequest: LangToolsRequest, LangToolsSpeechSynthesisRequest where Response == SpeechResponse {}
+public protocol LangToolsTTSRequest: LangToolsRequest, LangToolsSpeechSynthesisRequest where Response: LangToolsAudioResponse {}
 
 /// Provider-neutral shape for speech-to-text requests.
 ///
@@ -51,4 +50,9 @@ public protocol LangToolsSpeechTranscriptionRequest {
 }
 
 /// HTTP/API-backed speech-to-text request handled by a `LangTools` provider.
+///
+/// - Important: **Breaking change from the original `Response == String` constraint.**
+///   `Response` must now conform to `LangToolsTranscriptionResponse`. Existing conformances
+///   can declare `typealias TranscriptionResponse = String` as a migration path, since
+///   `String` already conforms to `LangToolsTranscriptionResponse`.
 public protocol LangToolsSTTRequest: LangToolsRequest, LangToolsSpeechTranscriptionRequest where Response == TranscriptionResponse {}

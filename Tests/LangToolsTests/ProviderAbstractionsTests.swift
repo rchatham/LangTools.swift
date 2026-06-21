@@ -30,7 +30,7 @@ final class ProviderAbstractionsTests: XCTestCase {
     }
 
     func testTranslationRequestUsesBCP47Identifiers() {
-        let request = TextTranslationRequest(
+        let request = LangToolsTextTranslationRequest(
             text: "Hello",
             sourceLanguageIdentifier: "en-US",
             targetLanguageIdentifier: "es-ES"
@@ -53,5 +53,63 @@ final class ProviderAbstractionsTests: XCTestCase {
         let response: any LangToolsAudioResponse = data
 
         XCTAssertEqual(response.audioData, data)
+    }
+
+    // MARK: - State equality
+
+    func testProviderAuthorizationStateEquality() {
+        XCTAssertEqual(ProviderAuthorizationState.authorized, .authorized)
+        XCTAssertEqual(ProviderAuthorizationState.denied, .denied)
+        XCTAssertEqual(ProviderAuthorizationState.unavailable(reason: "x"), .unavailable(reason: "x"))
+        XCTAssertNotEqual(ProviderAuthorizationState.authorized, .denied)
+        XCTAssertNotEqual(ProviderAuthorizationState.unavailable(reason: "a"), .unavailable(reason: "b"))
+    }
+
+    func testProviderAssetStateEquality() {
+        XCTAssertEqual(ProviderAssetState.ready, .ready)
+        XCTAssertEqual(ProviderAssetState.failed(reason: "disk full"), .failed(reason: "disk full"))
+        XCTAssertNotEqual(ProviderAssetState.ready, .missing)
+        XCTAssertNotEqual(ProviderAssetState.failed(reason: "a"), .failed(reason: "b"))
+    }
+
+    func testSpeechAutoDetectWinnerUndetectedNotNilAmbiguous() {
+        let winner = SpeechAutoDetectWinner.undetected
+        XCTAssertNotEqual(winner, .primary)
+        XCTAssertNotEqual(winner, .secondary)
+        XCTAssertEqual(winner, .undetected)
+    }
+
+    // MARK: - Generic abstraction boundary
+
+    func testGenericTTSBoundaryAcceptsAnyLangToolsSpeechSynthesisRequest() {
+        func speechText(from request: some LangToolsSpeechSynthesisRequest) -> String {
+            request.speechText
+        }
+
+        struct StubTTS: LangToolsSpeechSynthesisRequest {
+            var speechText: String { "stub" }
+            var speechVoiceIdentifier: String? { nil }
+            var speechSpeed: Double? { nil }
+            var speechResponseFormat: String? { nil }
+        }
+
+        XCTAssertEqual(speechText(from: StubTTS()), "stub")
+    }
+
+    func testGenericSTTBoundaryAcceptsAnyLangToolsSpeechTranscriptionRequest() {
+        func audioFormat(from request: some LangToolsSpeechTranscriptionRequest) -> String? {
+            request.speechAudioFormat
+        }
+
+        struct StubSTT: LangToolsSpeechTranscriptionRequest {
+            typealias TranscriptionResponse = String
+            var speechAudioData: Data? { nil }
+            var speechAudioFileURL: URL? { nil }
+            var speechAudioFormat: String? { "wav" }
+            var speechLanguageIdentifier: String? { nil }
+            var speechPrompt: String? { nil }
+        }
+
+        XCTAssertEqual(audioFormat(from: StubSTT()), "wav")
     }
 }

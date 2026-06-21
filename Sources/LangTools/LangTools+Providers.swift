@@ -61,7 +61,9 @@ public enum ProviderAssetState: Equatable, Sendable {
 public enum SpeechAutoDetectWinner: Equatable, Sendable {
     case primary
     case secondary
-    case none
+    /// No winner was determined (e.g. inconclusive detection). Named `undetected`
+    /// rather than `none` to avoid shadowing `Optional.none` in generic contexts.
+    case undetected
 }
 
 /// Speech recognition events emitted by an STT provider.
@@ -82,6 +84,10 @@ public protocol SpeechRecognitionProviding: AnyObject {
     var assetState: ProviderAssetState { get }
     var isListening: Bool { get }
     var currentTranscript: String { get }
+    /// Called on `@MainActor` whenever a speech recognition event fires.
+    /// Conforming types must guarantee delivery on the main actor. Setting this
+    /// property is not thread-safe; update it only from the main actor before
+    /// calling `startRecognition()`.
     var eventHandler: (@MainActor @Sendable (SpeechRecognitionEvent) -> Void)? { get set }
 
     func configure(languageIdentifier: String)
@@ -89,13 +95,14 @@ public protocol SpeechRecognitionProviding: AnyObject {
     func refreshAuthorizationState()
     func prepareAssetsIfNeeded()
     func startRecognition() throws
+    @available(iOS 16, macOS 13, *)
     func startDualLanguageRecognition(otherLanguageIdentifier: String) throws
     func stopRecognition(finalizePending: Bool, clearTranscript: Bool)
     func finalizeRecognition()
 }
 
 /// A text translation request expressed in provider-neutral language IDs.
-public struct TextTranslationRequest: Equatable, Sendable {
+public struct LangToolsTextTranslationRequest: Equatable, Sendable {
     public let text: String
     public let sourceLanguageIdentifier: String
     public let targetLanguageIdentifier: String
@@ -108,7 +115,7 @@ public struct TextTranslationRequest: Equatable, Sendable {
 }
 
 /// A text translation response expressed in provider-neutral language IDs.
-public struct TextTranslationResponse: Equatable, Sendable {
+public struct LangToolsTextTranslationResponse: Equatable, Sendable {
     public let translatedText: String
     public let detectedSourceLanguageIdentifier: String?
 
@@ -125,11 +132,15 @@ public protocol TextTranslationProviding: Sendable {
     var capabilities: ProviderCapabilities { get }
 
     func prepare(sourceLanguageIdentifier: String, targetLanguageIdentifier: String) async throws
-    func translate(_ request: TextTranslationRequest) async throws -> TextTranslationResponse
+    func translate(_ request: LangToolsTextTranslationRequest) async throws -> LangToolsTextTranslationResponse
 }
 
-/// A speech-synthesis request expressed in provider-neutral language IDs.
-public struct SpeechSynthesisRequest: Equatable, Sendable {
+/// Provider-neutral input for a live (platform) speech-synthesis provider.
+///
+/// Named `LangToolsSpeechSynthesisInput` rather than `LangToolsSpeechSynthesisRequest`
+/// to avoid collision with the protocol `LangToolsSpeechSynthesisRequest` in
+/// `LangTools+Speech.swift`, which abstracts HTTP/API TTS endpoints.
+public struct LangToolsSpeechSynthesisInput: Equatable, Sendable {
     public let text: String
     public let languageIdentifier: String
     public let voiceIdentifier: String?
@@ -151,6 +162,6 @@ public protocol SpeechSynthesisProviding: AnyObject {
     var capabilities: ProviderCapabilities { get }
     var isSpeaking: Bool { get }
 
-    func speak(_ request: SpeechSynthesisRequest) throws
+    func speak(_ request: LangToolsSpeechSynthesisInput) throws
     func stopSpeaking()
 }

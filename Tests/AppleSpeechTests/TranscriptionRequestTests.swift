@@ -70,6 +70,14 @@ final class TranscriptionRequestTests: XCTestCase {
         XCTAssertNil(genericRequest.speechPrompt)
     }
 
+    func testSpeechAudioFormatIsNilWhenPathExtensionIsEmpty() {
+        let noExtURL = URL(fileURLWithPath: "/tmp/audiofile")
+        let request = AppleSpeech.TranscriptionRequest(audioURL: noExtURL)
+
+        XCTAssertNil(request.speechAudioFormat,
+            "speechAudioFormat should be nil when the URL has no path extension")
+    }
+
     // MARK: - Task Hint Tests
 
     func testTaskHintVariations() {
