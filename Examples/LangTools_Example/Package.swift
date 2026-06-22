@@ -50,7 +50,6 @@ let package = Package(
                 .product(name: "XAI", package: "langtools.swift"),
                 .product(name: "Gemini", package: "langtools.swift"),
                 .product(name: "Ollama", package: "langtools.swift"),
-                .product(name: "AppleSpeech", package: "langtools.swift"),
                 "ToolKit",
                 "KeychainAccess",
             ],

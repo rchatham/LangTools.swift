@@ -9,7 +9,7 @@ import XCTest
 import Speech
 import AVFoundation
 import LangTools
-@testable import AppleSpeech
+@testable import AppleLangTools
 
 final class TranscriptionRequestTests: XCTestCase {
 

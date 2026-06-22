@@ -18,7 +18,6 @@ let package = Package(
         .library(name: "XAI", targets: ["XAI"]),
         .library(name: "Gemini", targets: ["Gemini"]),
         .library(name: "Ollama", targets: ["Ollama"]),
-        .library(name: "AppleSpeech", targets: ["AppleSpeech"]),
         .library(name: "AppleLangTools", targets: ["AppleLangTools"]),
         .library(name: "WhisperKitLangTools", targets: ["WhisperKitLangTools"]),
         .executable(name: "ChatCLI", targets: ["ChatCLI"]),
@@ -36,9 +35,8 @@ let package = Package(
         .target(name: "XAI", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
         .target(name: "Gemini", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
         .target(name: "Ollama", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
-        .target(name: "AppleSpeech", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
-        .target(name: "AppleLangTools", dependencies: [.target(name: "LangTools"), .target(name: "AppleSpeech")]),
-        .target(name: "WhisperKitLangTools", dependencies: [.target(name: "LangTools"), .product(name: "WhisperKit", package: "WhisperKit")]),
+        .target(name: "AppleLangTools", dependencies: [.target(name: "LangTools")], path: "Sources/Apple", resources: [.process("README.md")]),
+        .target(name: "WhisperKitLangTools", dependencies: [.target(name: "LangTools"), .product(name: "WhisperKit", package: "WhisperKit")], path: "Sources/WhisperKit"),
         .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], path: "Tests/TestUtils", resources: [.process("Resources/")]),
 
         // Test targets
@@ -48,7 +46,7 @@ let package = Package(
         .testTarget(name: "XAITests", dependencies: ["XAI", "OpenAI", "TestUtils"]),
         .testTarget(name: "GeminiTests", dependencies: ["Gemini", "OpenAI", "TestUtils"]),
         .testTarget(name: "OllamaTests", dependencies: ["Ollama", "OpenAI", "TestUtils"]),
-        .testTarget(name: "AppleSpeechTests", dependencies: ["AppleSpeech"]),
+        .testTarget(name: "AppleSpeechTests", dependencies: ["AppleLangTools"]),
 
         // Executable target
         .executableTarget(name: "ChatCLI", dependencies: ["LangTools", "OpenAI", "Anthropic", "XAI", "Gemini", "Ollama"]),

@@ -2,7 +2,6 @@ import AVFoundation
 import Foundation
 import LangTools
 import Speech
-import AppleSpeech
 
 private extension SFSpeechRecognizerAuthorizationStatus {
     var providerAuthorizationState: ProviderAuthorizationState {
