@@ -101,6 +101,13 @@ public protocol SpeechRecognitionProviding: AnyObject {
     func finalizeRecognition()
 }
 
+/// Shared contract for providers that can transcribe already-captured audio data.
+@MainActor
+public protocol SpeechAudioDataTranscribing: SpeechRecognitionProviding {
+    /// Transcribe audio data in a provider-supported format.
+    func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse
+}
+
 /// A text translation request expressed in provider-neutral language IDs.
 public struct LangToolsTextTranslationRequest: Equatable, Sendable {
     public let text: String

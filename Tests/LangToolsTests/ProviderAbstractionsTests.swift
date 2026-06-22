@@ -112,4 +112,36 @@ final class ProviderAbstractionsTests: XCTestCase {
 
         XCTAssertEqual(audioFormat(from: StubSTT()), "wav")
     }
+
+    @MainActor
+    func testAudioDataTranscribingBoundaryAcceptsCapturedAudio() async throws {
+        final class StubProvider: SpeechAudioDataTranscribing {
+            let providerID = LangToolsProviderID(rawValue: "stub.audio")
+            let displayName = "Stub Audio"
+            let capabilities = ProviderCapabilities(runsOnDevice: true)
+            let authorizationState: ProviderAuthorizationState = .authorized
+            let assetState: ProviderAssetState = .notRequired
+            let isListening = false
+            var currentTranscript = ""
+            var eventHandler: (@MainActor @Sendable (SpeechRecognitionEvent) -> Void)?
+
+            func configure(languageIdentifier: String) {}
+            func requestAuthorization() async -> ProviderAuthorizationState { .authorized }
+            func refreshAuthorizationState() {}
+            func prepareAssetsIfNeeded() {}
+            func startRecognition() throws {}
+            func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {}
+            func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {}
+            func finalizeRecognition() {}
+
+            func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse {
+                "bytes: \(audioData.count)"
+            }
+        }
+
+        let provider: any SpeechAudioDataTranscribing = StubProvider()
+        let response = try await provider.transcribe(audioData: Data([1, 2, 3]))
+
+        XCTAssertEqual(response.transcriptText, "bytes: 3")
+    }
 }
