@@ -7,7 +7,7 @@ public protocol LangToolsAudioResponse {
     var audioData: Data { get }
 }
 
-extension Data: @retroactive LangToolsAudioResponse {
+extension Data: LangToolsAudioResponse {
     public var audioData: Data { self }
 }
 
@@ -17,7 +17,7 @@ public protocol LangToolsTranscriptionResponse {
     var detectedLanguageIdentifier: String? { get }
 }
 
-extension String: @retroactive LangToolsTranscriptionResponse {
+extension String: LangToolsTranscriptionResponse {
     public var transcriptText: String { self }
     public var detectedLanguageIdentifier: String? { nil }
 }

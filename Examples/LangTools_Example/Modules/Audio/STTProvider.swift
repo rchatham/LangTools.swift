@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import LangTools
 
 /// Error types for speech-to-text operations
 public enum STTError: Error, LocalizedError {
@@ -34,21 +35,37 @@ public enum STTError: Error, LocalizedError {
     }
 }
 
-/// Protocol for speech-to-text providers
-public protocol STTProviderProtocol {
-    /// Display name for the provider
-    var name: String { get }
+/// Example-app speech recognition provider that demonstrates LangTools' provider-neutral
+/// live recognition contract plus the example app's file/data transcription flow.
+@MainActor
+public protocol SpeechRecognitionProvider: SpeechRecognitionProviding {
+    /// Example UI provider bucket.
+    var providerType: STTProviderType { get }
 
-    /// Whether this provider is available on the current device
+    /// Whether this provider is available on the current device/configuration.
     var isAvailable: Bool { get }
 
-    /// Request permission for speech recognition (if needed)
+    /// Request permission for speech recognition (if needed).
     func requestPermission() async throws -> Bool
 
-    /// Transcribe audio data to text
-    /// - Parameter audioData: Audio data in a supported format (typically WAV or M4A)
-    /// - Returns: Transcribed text
-    func transcribe(audioData: Data) async throws -> String
+    /// Transcribe audio data to provider-neutral text.
+    /// - Parameter audioData: Audio data in a supported format (typically WAV or M4A).
+    /// - Returns: A LangTools transcription response. `String` responses use LangTools' built-in conformance.
+    func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse
+}
+
+public extension SpeechRecognitionProvider {
+    var name: String { displayName }
+
+    func requestPermission() async throws -> Bool {
+        await requestAuthorization() == .authorized
+    }
+
+    func prepareAssetsIfNeeded() {}
+
+    func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {
+        throw STTError.notAvailable
+    }
 }
 
 /// Types of STT providers available - matches ToolSettings.STTProvider

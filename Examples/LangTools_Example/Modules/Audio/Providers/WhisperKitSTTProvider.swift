@@ -8,6 +8,7 @@
 import Foundation
 import AVFoundation
 import Chat
+import LangTools
 
 #if canImport(WhisperKit)
 import WhisperKit
@@ -41,8 +42,20 @@ public enum WhisperKitLoadingState: Equatable {
 
 /// WhisperKit-based speech-to-text provider (on-device ML)
 @available(macOS 13, iOS 16, *)
-public class WhisperKitSTTProvider: STTProviderProtocol, ObservableObject {
-    public let name = "WhisperKit"
+public class WhisperKitSTTProvider: SpeechRecognitionProvider, ObservableObject {
+    public let providerType: STTProviderType = .whisperKit
+    public let providerID = LangToolsProviderID(rawValue: "whisperkit.local")
+    public let displayName = "WhisperKit"
+    public let capabilities = ProviderCapabilities(
+        runsOnDevice: true,
+        supportsStreamingPartials: true,
+        supportsContinuousMode: true,
+        supportsDualLanguageAutoDetect: false,
+        requiresNetwork: false,
+        requiresModelDownload: true
+    )
+    public var eventHandler: (@MainActor @Sendable (SpeechRecognitionEvent) -> Void)?
+    public private(set) var currentTranscript: String = ""
 
     #if canImport(WhisperKit)
     private var whisperKit: WhisperKit?
@@ -77,6 +90,19 @@ public class WhisperKitSTTProvider: STTProviderProtocol, ObservableObject {
 
     public init() {}
 
+    public var authorizationState: ProviderAuthorizationState { .authorized }
+
+    public var assetState: ProviderAssetState {
+        switch loadingState {
+        case .idle: return .unknown
+        case .downloading, .loading: return .preparing
+        case .ready: return .ready
+        case .failed(let reason): return .failed(reason: reason)
+        }
+    }
+
+    public var isListening: Bool { isStreaming }
+
     public var isAvailable: Bool {
         #if canImport(WhisperKit)
         guard let whisperKit = whisperKit else { return false }
@@ -84,6 +110,48 @@ public class WhisperKitSTTProvider: STTProviderProtocol, ObservableObject {
         #else
         return false
         #endif
+    }
+
+    public func requestAuthorization() async -> ProviderAuthorizationState {
+        .authorized
+    }
+
+    public func refreshAuthorizationState() {}
+
+    public func configure(languageIdentifier: String) {
+        ToolSettings.shared.sttLanguage = .init(rawValue: languageIdentifier) ?? ToolSettings.shared.sttLanguage
+    }
+
+    public func startRecognition() throws {
+        Task {
+            try await startStreamingTranscription { [weak self] text, isFinal in
+                Task { @MainActor [weak self] in
+                    self?.currentTranscript = text
+                    self?.eventHandler?(isFinal ? .finalTranscription(text) : .partialTranscription(text))
+                }
+            }
+        }
+    }
+
+    public func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {
+        Task {
+            if finalizePending {
+                let text = await stopStreamingTranscription()
+                currentTranscript = text
+                eventHandler?(.finalTranscription(text))
+            } else {
+                _ = await stopStreamingTranscription()
+            }
+            if clearTranscript { currentTranscript = "" }
+        }
+    }
+
+    public func finalizeRecognition() {
+        Task {
+            let text = await stopStreamingTranscription()
+            currentTranscript = text
+            eventHandler?(.finalTranscription(text))
+        }
     }
 
     public func requestPermission() async throws -> Bool {
@@ -98,7 +166,7 @@ public class WhisperKitSTTProvider: STTProviderProtocol, ObservableObject {
         #endif
     }
 
-    public func transcribe(audioData: Data) async throws -> String {
+    public func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse {
         #if canImport(WhisperKit)
         print("[WhisperKit] Received audio data: \(audioData.count) bytes")
 
@@ -170,6 +238,10 @@ public class WhisperKitSTTProvider: STTProviderProtocol, ObservableObject {
                     throw STTError.transcriptionFailed("No speech detected")
                 }
 
+                await MainActor.run {
+                    self.currentTranscript = transcribedText
+                    self.eventHandler?(.finalTranscription(transcribedText))
+                }
                 return transcribedText
             } catch let error as STTError {
                 throw error

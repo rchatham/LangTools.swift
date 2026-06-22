@@ -11,10 +11,31 @@ import LangTools
 import Chat
 
 /// OpenAI Whisper-based speech-to-text provider
-public class OpenAISTTProvider: STTProviderProtocol {
-    public let name = "OpenAI Whisper"
+public class OpenAISTTProvider: SpeechRecognitionProvider {
+    public let providerType: STTProviderType = .openAIWhisper
+    public let providerID = LangToolsProviderID(rawValue: "openai.whisper")
+    public let displayName = "OpenAI Whisper"
+    public let capabilities = ProviderCapabilities(
+        runsOnDevice: false,
+        supportsStreamingPartials: false,
+        supportsContinuousMode: false,
+        supportsDualLanguageAutoDetect: false,
+        requiresNetwork: true,
+        requiresModelDownload: false
+    )
+    public var eventHandler: (@MainActor @Sendable (SpeechRecognitionEvent) -> Void)?
+    public private(set) var currentTranscript: String = ""
 
     private var openAI: OpenAI?
+    private var languageIdentifier: String?
+
+    public var authorizationState: ProviderAuthorizationState {
+        openAI == nil ? .unavailable(reason: "Missing OpenAI API key") : .authorized
+    }
+
+    public var assetState: ProviderAssetState { .notRequired }
+
+    public var isListening: Bool { false }
 
     public init() {
         // Load API key from Keychain
@@ -27,6 +48,29 @@ public class OpenAISTTProvider: STTProviderProtocol {
         openAI != nil
     }
 
+    public func requestAuthorization() async -> ProviderAuthorizationState {
+        refreshApiKey()
+        return authorizationState
+    }
+
+    public func refreshAuthorizationState() {
+        refreshApiKey()
+    }
+
+    public func configure(languageIdentifier: String) {
+        self.languageIdentifier = languageIdentifier == "auto" ? nil : languageIdentifier
+    }
+
+    public func startRecognition() throws {
+        throw STTError.notAvailable
+    }
+
+    public func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {
+        if clearTranscript { currentTranscript = "" }
+    }
+
+    public func finalizeRecognition() {}
+
     public func requestPermission() async throws -> Bool {
         // OpenAI doesn't need device permissions, just API key
         guard isAvailable else {
@@ -35,7 +79,7 @@ public class OpenAISTTProvider: STTProviderProtocol {
         return true
     }
 
-    public func transcribe(audioData: Data) async throws -> String {
+    public func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse {
         // Try to refresh API key if not available
         if openAI == nil {
             refreshApiKey()
@@ -60,7 +104,7 @@ public class OpenAISTTProvider: STTProviderProtocol {
 
         // Get language setting ("auto" means nil for auto-detection)
         let languageSetting = ToolSettings.shared.sttLanguage.rawValue
-        let language: String? = languageSetting == "auto" ? nil : languageSetting
+        let language: String? = languageIdentifier ?? (languageSetting == "auto" ? nil : languageSetting)
 
         // Create transcription request with WAV format
         let request = OpenAI.AudioTranscriptionRequest(
@@ -74,9 +118,14 @@ public class OpenAISTTProvider: STTProviderProtocol {
 
         // Perform the request
         do {
+            let genericRequest: any LangToolsSTTRequest = request
+            print("[OpenAI] Sending \(genericRequest.speechAudioFormat ?? "unknown") audio through LangTools STT abstraction")
             let response = try await openAI.perform(request: request)
-            print("[OpenAI] Transcription successful: '\(response.text)'")
-            return response.text
+            let transcription: any LangToolsTranscriptionResponse = response
+            currentTranscript = transcription.transcriptText
+            eventHandler?(.finalTranscription(transcription.transcriptText))
+            print("[OpenAI] Transcription successful: '\(transcription.transcriptText)'")
+            return transcription
         } catch {
             print("[OpenAI] API error: \(error)")
             print("[OpenAI] Error type: \(type(of: error))")

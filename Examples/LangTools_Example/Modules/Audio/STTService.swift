@@ -57,7 +57,7 @@ public class STTService: ObservableObject {
     @Published public private(set) var whisperKitLoadingState: WhisperKitLoadingState = .idle
 
     // Provider registry
-    private var providers: [STTProviderType: STTProviderProtocol] = [:]
+    private var providers: [STTProviderType: any SpeechRecognitionProvider] = [:]
     private var currentProviderType: STTProviderType = .appleSpeech
     private var whisperKitCancellable: AnyCancellable?
 
@@ -86,7 +86,7 @@ public class STTService: ObservableObject {
     // MARK: - Provider Registration
 
     /// Register a provider for a given type
-    public func registerProvider(_ provider: STTProviderProtocol, for type: STTProviderType) {
+    public func registerProvider(_ provider: any SpeechRecognitionProvider, for type: STTProviderType) {
         providers[type] = provider
 
         // If this is WhisperKit, observe its loading state
@@ -126,7 +126,7 @@ public class STTService: ObservableObject {
     }
 
     /// Get the current provider
-    public var currentProvider: STTProviderProtocol? {
+    public var currentProvider: (any SpeechRecognitionProvider)? {
         providers[currentProviderType]
     }
 
@@ -367,7 +367,8 @@ public class STTService: ObservableObject {
         print("[STTService] Processing OpenAI chunk: \(audioData.count) bytes")
 
         do {
-            let partialText = try await provider.transcribe(audioData: audioData)
+            let partialResponse = try await provider.transcribe(audioData: audioData)
+            let partialText = partialResponse.transcriptText
             if !partialText.isEmpty {
                 partialTranscription = partialText
             }
@@ -508,7 +509,8 @@ public class STTService: ObservableObject {
         status = .transcribing
 
         do {
-            let text = try await provider.transcribe(audioData: audioData)
+            let response = try await provider.transcribe(audioData: audioData)
+            let text = response.transcriptText
             transcribedText = text
             status = .complete(text)
             isProcessing = false

@@ -72,8 +72,11 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
 
     public func playAudio(for text: String) async throws {
         let audioReq = OpenAI.AudioSpeechRequest(model: .tts_1_hd, input: text, voice: .alloy, responseFormat: .mp3, speed: 1.2)
+        let genericRequest: any LangToolsTTSRequest = audioReq
+        print("[NetworkClient] TTS via LangTools abstraction: voice=\(genericRequest.speechVoiceIdentifier ?? "default"), format=\(genericRequest.speechResponseFormat ?? "default")")
         let audioResponse: Data = try await langToolchain.perform(request: audioReq)
-        do { try AudioPlayer.shared.play(data: audioResponse) }
+        let genericResponse: any LangToolsAudioResponse = audioResponse
+        do { try AudioPlayer.shared.play(data: genericResponse.audioData) }
         catch { print(error.localizedDescription) }
     }
 

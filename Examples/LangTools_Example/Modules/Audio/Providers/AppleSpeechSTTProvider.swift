@@ -8,11 +8,46 @@
 import Foundation
 import Speech
 import AVFoundation
+import AppleSpeech
 import Chat
+import LangTools
+
+private extension SFSpeechRecognizerAuthorizationStatus {
+    var providerAuthorizationState: ProviderAuthorizationState {
+        switch self {
+        case .notDetermined: return .notDetermined
+        case .authorized: return .authorized
+        case .denied: return .denied
+        case .restricted: return .restricted
+        @unknown default: return .unavailable(reason: "Unknown speech authorization status")
+        }
+    }
+}
 
 /// Apple Speech Framework-based speech-to-text provider
-public class AppleSpeechSTTProvider: STTProviderProtocol {
-    public let name = "Apple Speech"
+public class AppleSpeechSTTProvider: SpeechRecognitionProvider {
+    public let providerType: STTProviderType = .appleSpeech
+    public let providerID = LangToolsProviderID(rawValue: "apple.speech")
+    public let displayName = "Apple Speech"
+    public let capabilities = ProviderCapabilities(
+        runsOnDevice: true,
+        supportsStreamingPartials: true,
+        supportsContinuousMode: true,
+        supportsDualLanguageAutoDetect: true,
+        requiresNetwork: false,
+        requiresModelDownload: false
+    )
+    public var eventHandler: (@MainActor @Sendable (SpeechRecognitionEvent) -> Void)?
+
+    public var authorizationState: ProviderAuthorizationState {
+        Self.authorizationStatus.providerAuthorizationState
+    }
+
+    public var assetState: ProviderAssetState { .notRequired }
+
+    public var isListening: Bool { isStreaming }
+
+    public private(set) var currentTranscript: String = ""
 
     private var speechRecognizer: SFSpeechRecognizer?
     private var currentLocale: Locale
@@ -55,37 +90,36 @@ public class AppleSpeechSTTProvider: STTProviderProtocol {
         return recognizer.isAvailable
     }
 
-    public func requestPermission() async throws -> Bool {
-        // Request speech recognition permission
+    public func requestAuthorization() async -> ProviderAuthorizationState {
         let status = await withCheckedContinuation { continuation in
             SFSpeechRecognizer.requestAuthorization { status in
                 continuation.resume(returning: status)
             }
         }
-
-        switch status {
-        case .authorized:
-            return true
-        case .denied, .restricted:
-            throw STTError.permissionDenied
-        case .notDetermined:
-            throw STTError.permissionDenied
-        @unknown default:
-            throw STTError.permissionDenied
-        }
+        return status.providerAuthorizationState
     }
 
-    public func transcribe(audioData: Data) async throws -> String {
+    public func refreshAuthorizationState() {}
+
+    public func configure(languageIdentifier: String) {
+        setLocale(Locale(identifier: languageIdentifier))
+    }
+
+    public func requestPermission() async throws -> Bool {
+        let state = await requestAuthorization()
+        guard state == .authorized else { throw STTError.permissionDenied }
+        return true
+    }
+
+    public func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse {
         // Ensure we're using the current language setting
         updateLocaleFromSettings()
 
-        guard let recognizer = speechRecognizer, recognizer.isAvailable else {
+        guard speechRecognizer?.isAvailable == true else {
             throw STTError.notAvailable
         }
 
-        // Check authorization
-        let status = SFSpeechRecognizer.authorizationStatus()
-        guard status == .authorized else {
+        guard SFSpeechRecognizer.authorizationStatus() == .authorized else {
             throw STTError.permissionDenied
         }
 
@@ -105,48 +139,13 @@ public class AppleSpeechSTTProvider: STTProviderProtocol {
             throw STTError.transcriptionFailed("Audio conversion failed: \(error.localizedDescription)")
         }
 
-        // Create recognition request with streaming enabled
-        let request = SFSpeechURLRecognitionRequest(url: tempURL)
-        request.shouldReportPartialResults = true
+        let request = AppleSpeech.TranscriptionRequest(audioURL: tempURL, locale: currentLocale)
+        let genericRequest: any LangToolsSpeechTranscriptionRequest = request
+        print("[AppleSpeech] Transcribing \(genericRequest.speechAudioFormat ?? "unknown") audio with LangTools request abstraction")
 
-        // Perform recognition with proper continuation handling
-        return try await withCheckedThrowingContinuation { continuation in
-            var hasResumed = false
-
-            recognizer.recognitionTask(with: request) { result, error in
-                // Prevent multiple resumes
-                guard !hasResumed else { return }
-
-                if let error = error {
-                    hasResumed = true
-                    print("[AppleSpeech] Recognition error: \(error)")
-                    continuation.resume(throwing: STTError.transcriptionFailed(error.localizedDescription))
-                    return
-                }
-
-                guard let result = result else {
-                    hasResumed = true
-                    print("[AppleSpeech] No result returned")
-                    continuation.resume(throwing: STTError.transcriptionFailed("No result returned"))
-                    return
-                }
-
-                let text = result.bestTranscription.formattedString
-
-                if result.isFinal {
-                    hasResumed = true
-                    print("[AppleSpeech] Transcription complete: '\(text)'")
-                    if text.isEmpty {
-                        continuation.resume(throwing: STTError.transcriptionFailed("No speech detected"))
-                    } else {
-                        continuation.resume(returning: text)
-                    }
-                } else {
-                    print("[AppleSpeech] Partial transcription: '\(text)'")
-                    // Partial results handled by streaming methods
-                }
-            }
-        }
+        let transcript = try await request.execute()
+        currentTranscript = transcript
+        return transcript
     }
 
     /// Get supported locales for speech recognition
@@ -160,6 +159,26 @@ public class AppleSpeechSTTProvider: STTProviderProtocol {
     }
 
     // MARK: - Real-time Streaming Transcription
+
+    public func startRecognition() throws {
+        try startStreamingTranscription(
+            onPartialResult: { _ in },
+            onFinalResult: { _ in }
+        )
+    }
+
+    public func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {
+        if finalizePending {
+            _ = stopStreamingTranscription()
+        } else {
+            cancelStreamingTranscription()
+        }
+        if clearTranscript { currentTranscript = "" }
+    }
+
+    public func finalizeRecognition() {
+        _ = stopStreamingTranscription()
+    }
 
     /// Start real-time streaming transcription
     /// - Parameters:
@@ -235,10 +254,14 @@ public class AppleSpeechSTTProvider: STTProviderProtocol {
 
                 if result.isFinal {
                     print("[AppleSpeech] Streaming final result: '\(text)'")
+                    self.currentTranscript = text
+                    self.eventHandler?(.finalTranscription(text))
                     self.onFinalResultCallback?(text)
                     self.cleanupStreaming()
                 } else {
                     print("[AppleSpeech] Streaming partial: '\(text)'")
+                    self.currentTranscript = text
+                    self.eventHandler?(.partialTranscription(text))
                     self.onPartialResultCallback?(text)
                 }
             }
