@@ -95,6 +95,24 @@ public final class ProviderAccessManager: ObservableObject {
         state(for: service).availableModels.map(\.rawValue)
     }
 
+    public func statesForAccessUI() -> [ProviderAccessState] {
+        APIService.allCases
+            .filter { $0 != .ollama && $0 != .serper }
+            .map(state(for:))
+    }
+
+    public func unavailableReason(for service: APIService) -> String? {
+        let state = state(for: service)
+        guard service != .ollama, service != .serper else { return nil }
+        if state.authStatus == .notConfigured {
+            return "Connect \(service.displayName) with an API key or account to show its models."
+        }
+        if state.availableModels.isEmpty {
+            return "\(service.displayName) is connected, but no chat models are currently available."
+        }
+        return nil
+    }
+
     private func authStatus(apiKey: String?, session: AccountSession?) -> ProviderAuthStatus {
         let hasKey = apiKey?.isEmpty == false
         switch (hasKey, session) {

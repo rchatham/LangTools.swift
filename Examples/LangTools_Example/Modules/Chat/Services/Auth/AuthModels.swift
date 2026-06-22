@@ -41,6 +41,8 @@ public struct AccountSession: Codable, Equatable, Identifiable {
     public let accountIdentifier: String
     public let accessToken: String
     public let refreshToken: String?
+    public let idToken: String?
+    public let tokenType: String?
     public let expiresAt: Date?
     public let accessibleModelIDs: [String]
     public let createdAt: Date
@@ -51,6 +53,8 @@ public struct AccountSession: Codable, Equatable, Identifiable {
         accountIdentifier: String,
         accessToken: String,
         refreshToken: String? = nil,
+        idToken: String? = nil,
+        tokenType: String? = nil,
         expiresAt: Date? = nil,
         accessibleModelIDs: [String] = [],
         createdAt: Date = Date()
@@ -60,6 +64,8 @@ public struct AccountSession: Codable, Equatable, Identifiable {
         self.accountIdentifier = accountIdentifier
         self.accessToken = accessToken
         self.refreshToken = refreshToken
+        self.idToken = idToken
+        self.tokenType = tokenType
         self.expiresAt = expiresAt
         self.accessibleModelIDs = accessibleModelIDs
         self.createdAt = createdAt
@@ -68,6 +74,11 @@ public struct AccountSession: Codable, Equatable, Identifiable {
     public var isExpired: Bool {
         guard let expiresAt else { return false }
         return expiresAt <= Date()
+    }
+
+    public var needsRefresh: Bool {
+        guard let expiresAt else { return false }
+        return expiresAt <= Date().addingTimeInterval(5 * 60)
     }
 }
 
@@ -138,6 +149,40 @@ public struct ProviderAccessState: Equatable {
             }
             return "API key + \(provider.displayName) account"
         }
+    }
+
+    public var badgeTitle: String {
+        switch authStatus {
+        case .notConfigured:
+            return "Not Connected"
+        case .apiKeyConfigured:
+            return "API Key"
+        case .accountConnected:
+            return "Account"
+        case .apiKeyAndAccount:
+            return "API Key + Account"
+        }
+    }
+
+    public var authSummary: String {
+        switch service {
+        case .openAI:
+            return "Add an API key for API requests or sign in with OpenAI to unlock account-based model access."
+        case .anthropic:
+            return "Add an Anthropic API key or sign in with Claude Code for account-based access."
+        case .xAI, .gemini:
+            return "Add an API key to enable this provider."
+        case .ollama:
+            return "Local models do not require sign-in."
+        case .serper:
+            return "Add a Serper API key for search."
+        }
+    }
+}
+
+public extension ProviderAuthStatus {
+    var isConfigured: Bool {
+        self != .notConfigured
     }
 }
 

@@ -103,9 +103,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
             if let accountProvider = service.accountLoginProvider {
                 Button(accountActionTitle(for: accountProvider, state: state)) {
                     coordinator.dismiss()
-                    Task {
-                        await handleAccountAction(for: accountProvider, state: state)
-                    }
+                    handleAccountAction(for: accountProvider, state: state)
                 }
             }
 
@@ -127,11 +125,11 @@ private struct ManageAccessPromptModifier: ViewModifier {
 
         switch service {
         case .openAI:
-            return "Current model provider: OpenAI. \(status). You can enter an API key or sign in with OpenAI."
+            return "Models are shown when their provider is configured. OpenAI status: \(status). Add an API key for direct API requests, or sign in with OpenAI via LangToolsAuthCLI to unlock account-based access like Codex."
         case .anthropic:
-            return "Current model provider: Anthropic. \(status). You can enter an Anthropic API key or sign in with Claude Code."
+            return "Models are shown when their provider is configured. Anthropic status: \(status). Add an Anthropic API key or sign in with Claude Code for account-based access."
         case .xAI, .gemini:
-            return "Current model provider: \(service.displayName). \(status). Use an API key to enable requests for this provider."
+            return "\(service.displayName) status: \(status). Use an API key to enable this provider and make its models appear in the picker."
         case .ollama:
             return "Ollama models run locally and do not require API keys or account login."
         case .serper:
@@ -174,22 +172,25 @@ private struct ManageAccessPromptModifier: ViewModifier {
         }
     }
 
-    private func handleAccountAction(for provider: AccountLoginProvider, state: ProviderAccessState) async {
-        do {
-            if state.hasAccountSession {
-                try await networkClient.disconnectAccount(provider)
-                presentResult("Disconnected \(provider.displayName).")
-            } else {
-                try await networkClient.connectAccount(provider)
-                let updatedState = accessManager.state(for: provider.service)
-                if let accountIdentifier = updatedState.accountIdentifier {
-                    presentResult("Connected \(provider.displayName) as \(accountIdentifier).")
+    private func handleAccountAction(for provider: AccountLoginProvider, state: ProviderAccessState) {
+        Task {
+            do {
+                if state.hasAccountSession {
+                    try await networkClient.disconnectAccount(provider)
+                    presentResult("Disconnected \(provider.displayName).")
                 } else {
-                    presentResult("Connected \(provider.displayName).")
+                    try await networkClient.connectAccount(provider)
+                    let updatedState = accessManager.state(for: provider.service)
+                    if let accountIdentifier = updatedState.accountIdentifier {
+                        presentResult("Connected \(provider.displayName) as \(accountIdentifier).")
+                    } else {
+                        presentResult("Connected \(provider.displayName).")
+                    }
                 }
+                accessManager.refresh()
+            } catch {
+                presentError(error.localizedDescription)
             }
-        } catch {
-            presentError(error.localizedDescription)
         }
     }
 
@@ -199,7 +200,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
         }
         switch provider {
         case .openAI:
-            return "Login with OpenAI"
+            return "Login with OpenAI via CLI"
         case .claudeCode:
             return "Login with Claude Code"
         }

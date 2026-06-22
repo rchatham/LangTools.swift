@@ -1,3 +1,4 @@
+import Anthropic
 import Foundation
 import KeychainAccess
 import LangTools
@@ -24,7 +25,7 @@ final class NetworkClientAuthTests: XCTestCase {
         super.tearDown()
     }
 
-    func testAccountSessionUsesProxyTransport() async throws {
+    func testOpenAIAccountSessionIsExplicitlyGated() async throws {
         let session = AccountSession(
             provider: .openAI,
             accountIdentifier: "openai-user",
@@ -42,16 +43,48 @@ final class NetworkClientAuthTests: XCTestCase {
             providerAccessManager: accessManager
         )
 
+        do {
+            _ = try await client.performChatCompletionRequest(
+                messages: [Message(text: "Hello", role: .user)],
+                model: .openAI(.gpt51_codex),
+                tools: nil,
+                toolChoice: nil
+            )
+            XCTFail("Expected OpenAI account-backed transport to be gated")
+        } catch let error as NetworkClient.NetworkError {
+            XCTAssertEqual(error, .accountProxyTransportFailed("OpenAI account-backed chat is not implemented yet. Use an API key for requests."))
+            XCTAssertNil(proxyTransport.lastSession)
+        }
+    }
+
+    func testClaudeCodeAccountSessionStillUsesProxyTransport() async throws {
+        let anthropicModel = try XCTUnwrap(Anthropic.Model.allCases.first)
+        let session = AccountSession(
+            provider: .claudeCode,
+            accountIdentifier: "claude-user",
+            accessToken: "access-token",
+            accessibleModelIDs: [anthropicModel.rawValue]
+        )
+        try sessionStore.save(session)
+        accessManager.refresh()
+
+        let proxyTransport = TestAccountProxyTransport()
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: proxyTransport,
+            providerAccessManager: accessManager
+        )
+
         let message = try await client.performChatCompletionRequest(
             messages: [Message(text: "Hello", role: .user)],
-            model: .openAI(.gpt51_codex),
+            model: .anthropic(anthropicModel),
             tools: nil,
             toolChoice: nil
         )
 
         XCTAssertEqual(message.text, "proxied response")
-        XCTAssertEqual(proxyTransport.lastSession?.accountIdentifier, "openai-user")
-        XCTAssertEqual(proxyTransport.lastModel?.rawValue, "gpt-5.1-codex")
+        XCTAssertEqual(proxyTransport.lastSession?.accountIdentifier, "claude-user")
     }
 
     func testMissingAuthThrowsMissingApiKey() async throws {

@@ -80,6 +80,10 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         try ensureModelAccess(for: model)
 
         if let session = accountSession(for: model) {
+            guard session.provider != .openAI else {
+                throw NetworkError.accountProxyTransportFailed("OpenAI account-backed chat is not implemented yet. Use an API key for requests.")
+            }
+
             return try await accountProxyTransport.performChatCompletionRequest(
                 messages: messages,
                 model: model,
@@ -100,6 +104,10 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         try ensureModelAccess(for: model)
 
         if let session = accountSession(for: model) {
+            guard session.provider != .openAI else {
+                throw NetworkError.accountProxyTransportFailed("OpenAI account-backed chat is not implemented yet. Use an API key for requests.")
+            }
+
             return try accountProxyTransport.streamChatCompletionRequest(
                 messages: messages,
                 model: model,
@@ -243,7 +251,7 @@ extension NetworkClient {
         public var errorDescription: String? {
             switch self {
             case .missingApiKey:
-                return "This provider is not configured. Add an API key or connect an account in Manage Access."
+                return "This provider is not configured. Add an API key or connect an account in Manage Access so its models appear in the picker."
             case .emptyApiKey:
                 return "API key cannot be empty."
             case .incompatibleRequest:

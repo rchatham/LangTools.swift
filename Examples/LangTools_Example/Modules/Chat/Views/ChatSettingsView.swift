@@ -170,6 +170,41 @@ public struct ChatSettingsView: View {
                     }
                 }
                 .pickerStyle(.menu)
+
+                Text("Available models depend on which providers you have connected. If a provider is missing, add an API key or sign in from Manage Access.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            if viewModel.canManageAccess {
+                Section(header: Text("Model Access")) {
+                    Text("Models come from connected providers. API keys enable direct API requests, while account sign-in can unlock provider-specific access like Codex.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    ForEach(viewModel.providerAccessStates, id: \.service) { state in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(state.service.displayName)
+                                Spacer()
+                                Text(state.badgeTitle)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Text(state.statusDescription)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            if let reason = viewModel.unavailableReason(for: state.service) {
+                                Text(reason)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            Button(accessActionTitle(for: state.service)) {
+                                viewModel.presentManageAccess(for: state.service)
+                            }
+                        }
+                    }
+                }
             }
 
             Section(header: Text("System Message")) {
@@ -401,8 +436,49 @@ public struct ChatSettingsView: View {
                 }
 
                 if viewModel.canManageAccess {
-                    Button(viewModel.accessButtonTitle) { viewModel.presentManageAccess() }
-                    .buttonStyle(.bordered)
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Model Access")
+                                .font(.headline)
+
+                            Text("Models appear here when their provider is configured. Add an API key for direct API requests, or sign in with an account for provider-specific access like Codex.")
+                                .font(.body)
+                                .foregroundColor(.secondary)
+
+                            ForEach(viewModel.providerAccessStates, id: \.service) { state in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack(alignment: .firstTextBaseline) {
+                                        Text(state.service.displayName)
+                                            .font(.headline)
+                                        Spacer()
+                                        Text(state.badgeTitle)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+
+                                    Text(state.statusDescription)
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+
+                                    if let reason = viewModel.unavailableReason(for: state.service) {
+                                        Text(reason)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+
+                                    Button(accessActionTitle(for: state.service)) {
+                                        viewModel.presentManageAccess(for: state.service)
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+
+                                if state.service != viewModel.providerAccessStates.last?.service {
+                                    Divider()
+                                }
+                            }
+                        }
+                        .padding(8)
+                    }
                     .padding(.top, 8)
                 }
             }
@@ -793,6 +869,15 @@ public struct ChatSettingsView: View {
     }
 
     // Helper function to provide model descriptions
+    private func accessActionTitle(for service: APIService) -> String {
+        switch service {
+        case .anthropic:
+            return "Manage Claude / Anthropic Access"
+        default:
+            return "Manage \(service.displayName) Access"
+        }
+    }
+
     private func modelDescription(for model: Model) -> String {
         switch model {
         case _ where model.rawValue.contains("gpt-3.5"):
@@ -998,6 +1083,14 @@ extension ChatSettingsView {
 
         var canManageAccess: Bool {
             model.apiService != .ollama
+        }
+
+        var providerAccessStates: [ProviderAccessState] {
+            accessManager.statesForAccessUI()
+        }
+
+        func unavailableReason(for service: APIService) -> String? {
+            accessManager.unavailableReason(for: service)
         }
 
         var accessButtonTitle: String {

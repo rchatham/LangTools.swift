@@ -3,6 +3,12 @@ import Foundation
 #if os(iOS) || os(macOS)
 import AuthenticationServices
 #endif
+#if os(macOS)
+import AppKit
+#endif
+#if os(iOS)
+import UIKit
+#endif
 
 public enum AccountLoginPhase: Equatable {
     case idle
@@ -75,6 +81,7 @@ public final class AccountLoginCoordinator: NSObject, ObservableObject, AccountL
                     self.complete(with: .failure(error ?? AccountLoginError.missingCallbackURL))
                 }
             }
+            session.presentationContextProvider = self
             session.prefersEphemeralWebBrowserSession = true
             authenticationSession = session
             phase = .waitingForCallback(provider)
@@ -113,3 +120,16 @@ public final class AccountLoginCoordinator: NSObject, ObservableObject, AccountL
         }
     }
 }
+
+#if os(iOS) || os(macOS)
+extension AccountLoginCoordinator: ASWebAuthenticationPresentationContextProviding {
+    public func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        #if os(macOS)
+        NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first ?? ASPresentationAnchor()
+        #else
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        return scenes.flatMap(\.windows).first { $0.isKeyWindow } ?? ASPresentationAnchor()
+        #endif
+    }
+}
+#endif

@@ -22,6 +22,9 @@ final class AuthSessionStoreTests: XCTestCase {
             provider: .openAI,
             accountIdentifier: "user@example.com",
             accessToken: "token",
+            refreshToken: "refresh-token",
+            idToken: "id-token",
+            tokenType: "Bearer",
             accessibleModelIDs: ["gpt-4o-mini", "gpt-5.1-codex"]
         )
 
@@ -29,6 +32,28 @@ final class AuthSessionStoreTests: XCTestCase {
         let loaded = try store.session(for: .openAI)
 
         XCTAssertEqual(loaded, session)
+    }
+
+    func testLoadOlderSessionPayloadWithoutNewOptionalFields() throws {
+        let json = """
+        {
+          "id": "\(UUID())",
+          "provider": "openAI",
+          "accountIdentifier": "user@example.com",
+          "accessToken": "token",
+          "refreshToken": "refresh-token",
+          "expiresAt": null,
+          "accessibleModelIDs": ["gpt-5.1-codex"],
+          "createdAt": 0
+        }
+        """
+        try keychain.set(json, key: "openAI:accountSession")
+
+        let loaded = try store.session(for: .openAI)
+
+        XCTAssertEqual(loaded?.accountIdentifier, "user@example.com")
+        XCTAssertNil(loaded?.idToken)
+        XCTAssertNil(loaded?.tokenType)
     }
 
     func testRemoveSession() throws {

@@ -21,6 +21,15 @@ public struct AccountBackendConfiguration: Equatable {
         return url
     }
 
+    public func openAILocalhostCallbackURL(port: UInt16, host: String = "127.0.0.1") -> URL {
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = host
+        components.port = Int(port)
+        components.path = "/auth/callback"
+        return components.url ?? URL(string: "http://\(host):\(port)/auth/callback")!
+    }
+
     public func loginStartURL(for provider: AccountLoginProvider, state: String) -> URL {
         guard var components = URLComponents(url: baseURL.appending(path: "/auth/\(provider.startPathComponent)/start"), resolvingAgainstBaseURL: false) else {
             return baseURL
