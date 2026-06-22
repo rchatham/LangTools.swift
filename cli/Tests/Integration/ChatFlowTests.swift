@@ -124,6 +124,35 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertFalse(output.contains("You:"))
     }
 
+    func testModelCapabilitiesForOllamaShowLimitedToolReliability() {
+        let capabilities = Model.ollama(Ollama.Model(rawValue: "llama3.2:latest")!).capabilities
+
+        XCTAssertTrue(capabilities.supportsTools)
+        XCTAssertEqual(capabilities.toolReliability, .limited)
+        XCTAssertFalse(capabilities.isRecommendedForTools)
+        XCTAssertEqual(capabilities.cautionText, "Local/Ollama models may be unreliable for tool-heavy tasks")
+    }
+
+    func testModelCapabilitiesForGeminiReportUnavailableTools() {
+        let capabilities = Model.gemini(.gemini3Flash).capabilities
+
+        XCTAssertFalse(capabilities.supportsTools)
+        XCTAssertEqual(capabilities.toolReliability, .unavailable)
+        XCTAssertFalse(capabilities.supportsStructuredOutput)
+        XCTAssertEqual(capabilities.cautionText, "Tool calling is not currently available for this model in the CLI")
+    }
+
+    func testStatusLinesIncludeCapabilities() {
+        let lines = CLI.statusLines(model: .ollama(Ollama.Model(rawValue: "llama3.2:latest")!)).joined(separator: "\n")
+
+        XCTAssertTrue(lines.contains("Capabilities:"))
+        XCTAssertTrue(lines.contains("Provider:    Ollama"))
+        XCTAssertTrue(lines.contains("Tool reliability:   limited"))
+        XCTAssertTrue(lines.contains("Recommended tools:"))
+        XCTAssertTrue(lines.contains("Structured output:"))
+        XCTAssertTrue(lines.contains("Local/Ollama models may be unreliable for tool-heavy tasks"))
+    }
+
     func testOllamaRequestUsesOllamaChatRequest() {
         let messages = [Message(text: "hi", role: .user)]
         let request = NetworkClient.shared.request(

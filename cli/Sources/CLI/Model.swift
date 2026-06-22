@@ -20,6 +20,34 @@ enum Provider: String, CaseIterable {
     case ollama = "Ollama"
 }
 
+enum ToolReliabilityTier: String {
+    case recommended = "recommended"
+    case limited = "limited"
+    case unavailable = "unavailable"
+}
+
+struct ModelCapabilities: Equatable {
+    let supportsTools: Bool
+    let toolReliability: ToolReliabilityTier
+    let supportsStreaming: Bool
+    let supportsStructuredOutput: Bool
+
+    var isRecommendedForTools: Bool {
+        toolReliability == .recommended
+    }
+
+    var cautionText: String? {
+        switch toolReliability {
+        case .recommended:
+            return nil
+        case .limited:
+            return "Local/Ollama models may be unreliable for tool-heavy tasks"
+        case .unavailable:
+            return "Tool calling is not currently available for this model in the CLI"
+        }
+    }
+}
+
 enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equatable {
     typealias RawValue = String
     case openAI(OpenAI.Model)
@@ -78,6 +106,32 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
         case .xAI: return .xAI
         case .gemini: return .gemini
         case .ollama: return .ollama
+        }
+    }
+
+    var capabilities: ModelCapabilities {
+        switch self {
+        case .anthropic, .openAI, .xAI:
+            return ModelCapabilities(
+                supportsTools: true,
+                toolReliability: .recommended,
+                supportsStreaming: true,
+                supportsStructuredOutput: true
+            )
+        case .gemini:
+            return ModelCapabilities(
+                supportsTools: false,
+                toolReliability: .unavailable,
+                supportsStreaming: true,
+                supportsStructuredOutput: false
+            )
+        case .ollama:
+            return ModelCapabilities(
+                supportsTools: true,
+                toolReliability: .limited,
+                supportsStreaming: true,
+                supportsStructuredOutput: false
+            )
         }
     }
 

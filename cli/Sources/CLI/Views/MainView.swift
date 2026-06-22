@@ -522,10 +522,18 @@ struct MainView: View {
         let config = Configuration.load()
         var lines = ["── Status ──────────────────────────"]
         lines.append("Model: \(UserDefaults.model.rawValue)")
+        lines.append("Provider: \(UserDefaults.model.provider.rawValue)")
         lines.append("Max Tokens: \(UserDefaults.maxTokens == 0 ? "default" : String(UserDefaults.maxTokens))")
         lines.append("Temperature: \(UserDefaults.temperature == 0 ? "default" : String(format: "%.1f", UserDefaults.temperature))")
         lines.append("Theme: \(config.theme.rawValue)")
         lines.append("Streaming: \(config.streamingEnabled ? "enabled" : "disabled")")
+        lines.append("")
+        lines.append("Capabilities:")
+        for capabilityLine in CLI.capabilityStatusLines(for: UserDefaults.model) {
+            if capabilityLine != "Capabilities:" {
+                lines.append(capabilityLine)
+            }
+        }
         lines.append("")
         lines.append("API Keys:")
         for service in APIService.allCases {

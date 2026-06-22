@@ -470,32 +470,57 @@ struct CLI {
     // MARK: - /status
 
     static func showStatus() {
-        print("\n\("Status".blue)")
-        print("─────────────────")
-        print("Version:     \(cliVersion)")
-        print("Model:       \(UserDefaults.model.rawValue)")
-        print("Max Tokens:  \(UserDefaults.maxTokens == 0 ? "default" : String(UserDefaults.maxTokens))")
-        print("Temperature: \(UserDefaults.temperature)")
+        for line in statusLines() {
+            print(line)
+        }
+    }
+
+    static func statusLines(model: Model = UserDefaults.model) -> [String] {
+        var lines: [String] = []
+        lines.append("\n\("Status".blue)")
+        lines.append("─────────────────")
+        lines.append("Version:     \(cliVersion)")
+        lines.append("Model:       \(model.rawValue)")
+        lines.append("Provider:    \(model.provider.rawValue)")
+        lines.append("Max Tokens:  \(UserDefaults.maxTokens == 0 ? "default" : String(UserDefaults.maxTokens))")
+        lines.append("Temperature: \(UserDefaults.temperature)")
         let chatMessages = messageService.messages.map {
             ChatMessage(role: $0.role == .user ? .user : .assistant, content: $0.text ?? "")
         }
         let usage = ContextManager.shared.contextUsage(for: chatMessages)
-        print("Context:     \(usage.formattedUsage)")
-        print("")
-        print("API Keys:")
+        lines.append("Context:     \(usage.formattedUsage)")
+        lines.append("")
+        lines.append(contentsOf: capabilityStatusLines(for: model))
+        lines.append("")
+        lines.append("API Keys:")
         for service in APIService.allCases {
             if service == .ollama {
                 let ollamaModels = Ollama.Model.allCases
                 let modelList = ollamaModels.isEmpty ? "none pulled yet" : ollamaModels.map { $0.rawValue }.joined(separator: ", ")
-                print("  ollama: \("✓ local (no key needed)".green) [\(modelList)]")
+                lines.append("  ollama: \("✓ local (no key needed)".green) [\(modelList)]")
             } else {
                 let hasKey = UserDefaults.getApiKey(for: service) != nil
                 let status = hasKey ? "✓ set".green : "✗ not set".red
-                print("  \(service.rawValue): \(status)")
+                lines.append("  \(service.rawValue): \(status)")
             }
         }
-        print("")
-        print("Tools: \(ToolRegistry.shared.toolNames.count) registered")
+        lines.append("")
+        lines.append("Tools: \(ToolRegistry.shared.toolNames.count) registered")
+        return lines
+    }
+
+    static func capabilityStatusLines(for model: Model) -> [String] {
+        let capabilities = model.capabilities
+        var lines = ["Capabilities:"]
+        lines.append("  Tool calls:         \(capabilities.supportsTools ? "supported".green : "not available".yellow)")
+        lines.append("  Tool reliability:   \(capabilities.toolReliability.rawValue)")
+        lines.append("  Recommended tools:  \(capabilities.isRecommendedForTools ? "yes".green : "no".yellow)")
+        lines.append("  Streaming:          \(capabilities.supportsStreaming ? "supported".green : "not available".yellow)")
+        lines.append("  Structured output:  \(capabilities.supportsStructuredOutput ? "supported".green : "not available".yellow)")
+        if let cautionText = capabilities.cautionText {
+            lines.append("  Note:               \(cautionText)".yellow)
+        }
+        return lines
     }
 
     // MARK: - API key setup
