@@ -19,8 +19,6 @@ let package = Package(
         .library(name: "Gemini", targets: ["Gemini"]),
         .library(name: "Ollama", targets: ["Ollama"]),
         .library(name: "AppleSpeech", targets: ["AppleSpeech"]),
-        .executable(name: "ChatCLI", targets: ["ChatCLI"]),
-        .executable(name: "LangToolsAuthCLI", targets: ["LangToolsAuthCLI"]),
     ],
     dependencies: [
         .package(url: "https://github.com/rchatham/JSON.swift.git", branch: "main"),
@@ -46,8 +44,5 @@ let package = Package(
         .testTarget(name: "OllamaTests", dependencies: ["Ollama", "OpenAI", "TestUtils"]),
         .testTarget(name: "AppleSpeechTests", dependencies: ["AppleSpeech"]),
 
-        // Executable targets
-        .executableTarget(name: "ChatCLI", dependencies: ["LangTools", "OpenAI", "Anthropic", "XAI", "Gemini", "Ollama"]),
-        .executableTarget(name: "LangToolsAuthCLI", dependencies: []),
     ]
 )

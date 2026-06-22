@@ -181,7 +181,7 @@
 				B1D1EBDC2CA2518E00AD7FA6 /* Frameworks */,
 				B1D1EBDD2CA2518E00AD7FA6 /* Resources */,
 				B1FC36C62D625AF000BB049B /* Embed Frameworks */,
-				B1F0A0013BUNDLE0001 /* Bundle LangToolsAuthCLI */,
+				B1F0A0013BUNDLE0001 /* Bundle LangToolsCLI */,
 			);
 			buildRules = (
 			);
@@ -319,7 +319,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		B1F0A0013BUNDLE0001 /* Bundle LangToolsAuthCLI */ = {
+		B1F0A0013BUNDLE0001 /* Bundle LangToolsCLI */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -327,17 +327,19 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/../../LangToolsCLI/.build/debug/LangToolsCLI",
+				"$(SRCROOT)/../../LangToolsCLI/.build/arm64-apple-macosx/debug/LangToolsCLI",
 			);
-			name = "Bundle LangToolsAuthCLI";
+			name = "Bundle LangToolsCLI";
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/LangToolsAuthCLI",
-				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/LangToolsAuthCLI.cstemp",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/LangToolsCLI",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/LangToolsCLI.cstemp",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -eu\n\nif [ \"$PLATFORM_NAME\" != \"macosx\" ]; then\n  echo \"Skipping LangToolsAuthCLI bundling for platform: $PLATFORM_NAME\"\n  exit 0\nfi\n\nCLI_SOURCE=\"$SRCROOT/../../.build/debug/LangToolsAuthCLI\"\nCLI_DEST_DIR=\"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers\"\nCLI_DEST=\"$CLI_DEST_DIR/LangToolsAuthCLI\"\n\nif [ ! -x \"$CLI_SOURCE\" ]; then\n  echo \"error: Missing prebuilt LangToolsAuthCLI at $CLI_SOURCE\"\n  echo \"Build it first with: swift build --target LangToolsAuthCLI\"\n  exit 1\nfi\n\nmkdir -p \"$CLI_DEST_DIR\"\ncp \"$CLI_SOURCE\" \"$CLI_DEST\"\nchmod +x \"$CLI_DEST\"\n\nif [ -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ] && [ \"$EXPANDED_CODE_SIGN_IDENTITY\" != \"-\" ]; then\n  /usr/bin/codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none --generate-entitlement-der \"$CLI_DEST\"\nelse\n  /usr/bin/codesign --force --sign - --timestamp=none \"$CLI_DEST\"\nfi\n\necho \"Bundled LangToolsAuthCLI to $CLI_DEST\"";
+			shellScript = "set -eu\n\nif [ \"$PLATFORM_NAME\" != \"macosx\" ]; then\n  echo \"Skipping LangToolsCLI bundling for platform: $PLATFORM_NAME\"\n  exit 0\nfi\n\nCLI_SOURCE=\"$SRCROOT/../../LangToolsCLI/.build/debug/LangToolsCLI\"\nCLI_DEST_DIR=\"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers\"\nCLI_DEST=\"$CLI_DEST_DIR/LangToolsCLI\"\n\nif [ ! -x \"$CLI_SOURCE\" ]; then\n  echo \"error: Missing prebuilt LangToolsCLI at $CLI_SOURCE\"\n  echo \"Build it first with: cd $SRCROOT/../../LangToolsCLI && swift build --product LangToolsCLI\"\n  exit 1\nfi\n\nmkdir -p \"$CLI_DEST_DIR\"\ncp \"$CLI_SOURCE\" \"$CLI_DEST\"\nchmod +x \"$CLI_DEST\"\n\nif [ -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ] && [ \"$EXPANDED_CODE_SIGN_IDENTITY\" != \"-\" ]; then\n  /usr/bin/codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none --generate-entitlement-der \"$CLI_DEST\"\nelse\n  /usr/bin/codesign --force --sign - --timestamp=none \"$CLI_DEST\"\nfi\n\necho \"Bundled LangToolsCLI to $CLI_DEST\"";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */

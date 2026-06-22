@@ -20,15 +20,15 @@ public enum CLIAccountSessionBridgeError: LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .cliUnavailable:
-            return "LangToolsAuthCLI is not available. Build/install it first."
+            return "LangToolsCLI is not available. Build/install it first."
         case .unsupportedPlatform:
-            return "LangToolsAuthCLI is only available on macOS."
+            return "LangToolsCLI is only available on macOS."
         case .sandboxRequiresPrebuiltCLI:
-            return "LangToolsAuthCLI must be provided as a prebuilt executable when the app is sandboxed. Set LANGTOOLS_AUTH_CLI_PATH or bundle the CLI binary with the app."
+            return "LangToolsCLI must be provided as a prebuilt executable when the app is sandboxed. Set LANGTOOLS_AUTH_CLI_PATH or bundle the CLI binary with the app."
         case .commandFailed(let message):
             return message
         case .invalidSessionData:
-            return "LangToolsAuthCLI returned invalid session data."
+            return "LangToolsCLI returned invalid session data."
         }
     }
 }
@@ -36,16 +36,18 @@ public enum CLIAccountSessionBridgeError: LocalizedError, Equatable {
 public struct CLIAccountSessionBridge {
     private let runner: CommandRunning
     private let decoder: JSONDecoder
+    private let logger: CLIBridgeLogger
 
-    public init(runner: CommandRunning = ProcessRunner()) {
+    public init(runner: CommandRunning = ProcessRunner(), logger: CLIBridgeLogger = CLIBridgeLogger()) {
         self.runner = runner
+        self.logger = logger
         self.decoder = JSONDecoder()
         self.decoder.dateDecodingStrategy = .iso8601
     }
 
     public func loginOpenAI() async throws -> AccountSession {
         let command = try resolveCommand()
-        let loginResult = try await runner.run(executable: command.executable, arguments: command.arguments + ["auth", "login", "openai"])
+        let loginResult = try await runLogged(command: command, extraArguments: ["auth", "login", "openai"], action: "OpenAI login")
         guard loginResult.status == 0 else {
             throw CLIAccountSessionBridgeError.commandFailed(commandFailureMessage(for: loginResult, action: "OpenAI login", executable: command.executable))
         }
@@ -54,7 +56,7 @@ public struct CLIAccountSessionBridge {
 
     public func logoutOpenAI() async throws {
         let command = try resolveCommand()
-        let result = try await runner.run(executable: command.executable, arguments: command.arguments + ["auth", "logout", "openai"])
+        let result = try await runLogged(command: command, extraArguments: ["auth", "logout", "openai"], action: "OpenAI logout")
         guard result.status == 0 else {
             throw CLIAccountSessionBridgeError.commandFailed(commandFailureMessage(for: result, action: "OpenAI logout", executable: command.executable))
         }
@@ -65,7 +67,7 @@ public struct CLIAccountSessionBridge {
     }
 
     private func exportOpenAISession(using command: ResolvedCommand) async throws -> AccountSession {
-        let result = try await runner.run(executable: command.executable, arguments: command.arguments + ["auth", "export-session", "openai", "--format", "json"])
+        let result = try await runLogged(command: command, extraArguments: ["auth", "export-session", "openai", "--format", "json"], action: "OpenAI session export")
         guard result.status == 0 else {
             throw CLIAccountSessionBridgeError.commandFailed(commandFailureMessage(for: result, action: "OpenAI session export", executable: command.executable))
         }
@@ -81,16 +83,25 @@ public struct CLIAccountSessionBridge {
 
     private func commandFailureMessage(for result: CommandResult, action: String, executable: String) -> String {
         let stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-        if stderr.isEmpty == false {
-            return stderr
-        }
-
         let stdout = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        if stdout.isEmpty == false {
-            return stdout
+        let logHint = "See \(logger.logFilePath) for helper output."
+
+        if stderr.isEmpty == false {
+            return "\(stderr)\n\n\(logHint)"
         }
 
-        return "\(action) failed: LangToolsAuthCLI exited with status \(result.status) at \(executable)."
+        if stdout.isEmpty == false {
+            return "\(stdout)\n\n\(logHint)"
+        }
+
+        return "\(action) failed: LangToolsCLI exited with status \(result.status) at \(executable). \(logHint)"
+    }
+
+    private func runLogged(command: ResolvedCommand, extraArguments: [String], action: String) async throws -> CommandResult {
+        let arguments = command.arguments + extraArguments
+        let result = try await runner.run(executable: command.executable, arguments: arguments)
+        logger.log(action: action, executable: command.executable, arguments: arguments, result: result)
+        return result
     }
 
     private func resolveCommand() throws -> ResolvedCommand {
@@ -102,18 +113,20 @@ public struct CLIAccountSessionBridge {
             return ResolvedCommand(executable: candidate, arguments: [])
         }
 
-        let packageRoot = URL(fileURLWithPath: #filePath)
+        let examplePackageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // Auth
             .deletingLastPathComponent() // Services
             .deletingLastPathComponent() // Chat
             .deletingLastPathComponent() // Modules
             .deletingLastPathComponent() // LangTools_Example
-            .deletingLastPathComponent() // Examples
 
-        let binaryPath = packageRoot
+        let repoRoot = examplePackageRoot.deletingLastPathComponent().deletingLastPathComponent()
+        let cliPackageRoot = repoRoot.appendingPathComponent("LangToolsCLI")
+
+        let binaryPath = cliPackageRoot
             .appendingPathComponent(".build")
             .appendingPathComponent("debug")
-            .appendingPathComponent("LangToolsAuthCLI")
+            .appendingPathComponent("LangToolsCLI")
 
         if FileManager.default.isExecutableFile(atPath: binaryPath.path) {
             return ResolvedCommand(executable: binaryPath.path, arguments: [])
@@ -125,7 +138,7 @@ public struct CLIAccountSessionBridge {
 
         return ResolvedCommand(
             executable: "/usr/bin/env",
-            arguments: ["swift", "run", "--package-path", packageRoot.path, "LangToolsAuthCLI"]
+            arguments: ["swift", "run", "--package-path", cliPackageRoot.path, "LangToolsCLI"]
         )
     }
 
@@ -137,11 +150,11 @@ public struct CLIAccountSessionBridge {
         let bundleURL = Bundle.main.bundleURL
         let contentsURL = bundleURL.appendingPathComponent("Contents")
         return [
-            bundleURL.appendingPathComponent("LangToolsAuthCLI").path,
-            bundleURL.appendingPathComponent("Contents/MacOS/LangToolsAuthCLI").path,
-            bundleURL.appendingPathComponent("Contents/Helpers/LangToolsAuthCLI").path,
-            contentsURL.appendingPathComponent("MacOS/LangToolsAuthCLI").path,
-            contentsURL.appendingPathComponent("Helpers/LangToolsAuthCLI").path,
+            bundleURL.appendingPathComponent("LangToolsCLI").path,
+            bundleURL.appendingPathComponent("Contents/MacOS/LangToolsCLI").path,
+            bundleURL.appendingPathComponent("Contents/Helpers/LangToolsCLI").path,
+            contentsURL.appendingPathComponent("MacOS/LangToolsCLI").path,
+            contentsURL.appendingPathComponent("Helpers/LangToolsCLI").path,
         ]
     }
 }
@@ -149,6 +162,59 @@ public struct CLIAccountSessionBridge {
 private struct ResolvedCommand {
     let executable: String
     let arguments: [String]
+}
+
+public struct CLIBridgeLogger {
+    private let fileURL: URL
+    private let formatter: ISO8601DateFormatter
+
+    public init(fileURL: URL? = nil) {
+        self.formatter = ISO8601DateFormatter()
+        self.formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        if let fileURL {
+            self.fileURL = fileURL
+        } else {
+            let baseDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                ?? FileManager.default.temporaryDirectory
+            let logsDirectory = baseDirectory
+                .appendingPathComponent("LangTools_Example", isDirectory: true)
+                .appendingPathComponent("Logs", isDirectory: true)
+            try? FileManager.default.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
+            self.fileURL = logsDirectory.appendingPathComponent("LangToolsCLI-bridge.log")
+        }
+    }
+
+    public var logFilePath: String {
+        fileURL.path
+    }
+
+    public func log(action: String, executable: String, arguments: [String], result: CommandResult) {
+        let lines = [
+            "[\(formatter.string(from: Date()))] \(action)",
+            "executable: \(executable)",
+            "arguments: \(arguments.joined(separator: " "))",
+            "status: \(result.status)",
+            "stdout:",
+            result.stdout.isEmpty ? "<empty>" : result.stdout,
+            "stderr:",
+            result.stderr.isEmpty ? "<empty>" : result.stderr,
+            String(repeating: "-", count: 80)
+        ]
+        let entry = lines.joined(separator: "\n") + "\n"
+
+        if let data = entry.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: fileURL.path) == false {
+                FileManager.default.createFile(atPath: fileURL.path, contents: data)
+            } else if let handle = try? FileHandle(forWritingTo: fileURL) {
+                defer { try? handle.close() }
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: data)
+            }
+        }
+
+        NSLog("%@", entry)
+    }
 }
 
 public struct ProcessRunner: CommandRunning {
