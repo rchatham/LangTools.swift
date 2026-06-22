@@ -18,6 +18,16 @@ import SwiftUI
 #endif
 
 class MessageService: ObservableObject {
+    final class ToolCallTrace {
+        var calledToolNames: [String] = []
+        var completionResults: [String] = []
+        var errorResults: [String] = []
+
+        var sawToolCall: Bool {
+            !calledToolNames.isEmpty
+        }
+    }
+
     var messages: [Message] = []
 
     /// All registered tools wired to ToolRegistry for execution
@@ -44,20 +54,23 @@ class MessageService: ObservableObject {
             messages.append(Message(text: message, role: .user))
         }
 
+        let model = UserDefaults.model
         let toolChoice = (tools?.isEmpty ?? true) ? nil : OpenAI.ChatCompletionRequest.ToolChoice.auto
+        let toolTrace = ToolCallTrace()
         if !silent {
             print("\rAssistant: ".yellow, terminator: "")
         }
         let uuid = UUID(); var content: String = ""
         let stream = try streamChatCompletionRequest(
             messages: messages,
+            model: model,
             stream: stream,
             tools: tools,
-            toolChoice: toolChoice
+            toolChoice: toolChoice,
+            toolTrace: toolTrace
         )
         for try await chunk in stream {
             if !silent {
-                // hack to print new lines as long as they aren't the last one
                 if content.hasSuffix("\n") {
                     print("")
                 }
@@ -69,22 +82,42 @@ class MessageService: ObservableObject {
             }
 
             content += chunk
-            let message = Message(uuid: uuid, text: content.trimingTrailingNewlines(), role: .assistant)
+            upsertAssistantMessage(id: uuid, text: content.trimingTrailingNewlines())
+        }
 
-            if let last = messages.last, last.uuid == uuid {
-                messages[messages.endIndex - 1] = message
-            } else {
-                messages.append(message)
+        let finalContent = resolvedAssistantContent(content: content, toolTrace: toolTrace, model: model)
+        if finalContent != content.trimingTrailingNewlines() {
+            if !silent, !finalContent.isEmpty {
+                if !content.isEmpty {
+                    print("")
+                }
+                print(finalContent, terminator: "")
             }
+            upsertAssistantMessage(id: uuid, text: finalContent)
         }
 
         if !silent {
-            print("") // Add a newline after the complete response
+            print("")
         }
     }
 
-    func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [OpenAI.Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<String, Error> {
-        return try langToolchain.stream(request: networkClient.request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { $0.content?.text }
+    func streamChatCompletionRequest(
+        messages: [Message],
+        model: Model = UserDefaults.model,
+        stream: Bool = true,
+        tools: [OpenAI.Tool]? = nil,
+        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil,
+        toolTrace: ToolCallTrace? = nil
+    ) throws -> AsyncThrowingStream<String, Error> {
+        let request = networkClient.request(
+            messages: messages,
+            model: model,
+            stream: stream,
+            tools: tools,
+            toolChoice: toolChoice,
+            toolEventHandler: makeToolEventHandler(for: toolTrace)
+        )
+        return try langToolchain.stream(request: request).compactMapAsyncThrowingStream { $0.content?.text }
     }
 
     func handleLangToolsError(_ error: LangToolsError) {
@@ -132,9 +165,81 @@ class MessageService: ObservableObject {
         case .multipleChoiceIndexOutOfBounds:
             print("Multiple choice index out of bounds")
         case .failedToDecodeFunctionArguments:
-            print("Failed to decode function arguments")
+            print("The model emitted malformed tool arguments.")
         case .missingRequiredFunctionArguments:
-            print("Missing required function arguments")
+            print("The model omitted required tool arguments.")
+        }
+    }
+
+    func makeToolEventHandler(for toolTrace: ToolCallTrace?) -> (LangToolsToolEvent) -> Void {
+        guard let toolTrace else {
+            return { _ in }
+        }
+
+        return { event in
+            switch event {
+            case .toolCalled(let toolSelection):
+                if let name = toolSelection.name {
+                    toolTrace.calledToolNames.append(name)
+                }
+            case .toolCompleted(let toolResult):
+                guard let toolResult else { return }
+                if toolResult.is_error {
+                    toolTrace.errorResults.append(toolResult.result)
+                } else {
+                    toolTrace.completionResults.append(toolResult.result)
+                }
+            }
+        }
+    }
+
+    func resolvedAssistantContent(content: String, toolTrace: ToolCallTrace, model: Model) -> String {
+        let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedContent.isEmpty else {
+            return content.trimingTrailingNewlines()
+        }
+
+        if let fallback = fallbackMessageForEmptyAssistantResponse(toolTrace: toolTrace, model: model) {
+            return fallback
+        }
+
+        return content.trimingTrailingNewlines()
+    }
+
+    func fallbackMessageForEmptyAssistantResponse(toolTrace: ToolCallTrace, model: Model) -> String? {
+        if let unknownTool = toolTrace.calledToolNames.first(where: { ToolRegistry.shared.tool(named: $0) == nil }) {
+            return "The model requested unsupported tool '\(unknownTool)'. Try rephrasing or switching models."
+        }
+
+        if let malformedArguments = toolTrace.errorResults.first(where: {
+            $0.localizedCaseInsensitiveContains("Failed to decode function arguments") ||
+            $0.localizedCaseInsensitiveContains("Missing required function arguments") ||
+            $0.localizedCaseInsensitiveContains("Invalid parameters")
+        }) {
+            return "The model emitted malformed tool arguments. \(malformedArguments)"
+        }
+
+        if let toolFailure = toolTrace.errorResults.first {
+            return "A tool call failed before the assistant produced a response. \(toolFailure)"
+        }
+
+        if toolTrace.sawToolCall {
+            if model.capabilities.toolReliability == .limited {
+                return "The model attempted a tool call but did not produce a usable reply. Local/Ollama models may be unreliable for tool-heavy tasks."
+            }
+            return "The assistant did not return a usable reply after tool handling. Try again."
+        }
+
+        return nil
+    }
+
+    private func upsertAssistantMessage(id: UUID, text: String) {
+        let message = Message(uuid: id, text: text, role: .assistant)
+
+        if let last = messages.last, last.uuid == id {
+            messages[messages.endIndex - 1] = message
+        } else {
+            messages.append(message)
         }
     }
 

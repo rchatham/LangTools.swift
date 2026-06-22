@@ -91,7 +91,12 @@ final class ToolRegistry {
 
     /// Get a tool by name
     func tool(named name: String) -> (any ExecutableTool.Type)? {
-        return tools[name]
+        if let tool = tools[name] {
+            return tool
+        }
+
+        let normalizedName = normalizeToolName(name)
+        return tools.first { normalizeToolName($0.key) == normalizedName }?.value
     }
 
     /// Execute a tool by name with parameters
@@ -109,7 +114,10 @@ final class ToolRegistry {
                 name: tool.name,
                 description: tool.description,
                 parameters: tool.parametersSchema,
-                callback: nil
+                callback: { _, parameters in
+                    let swiftParameters = parameters.mapValues { $0.foundationValue }
+                    return try await tool.execute(parameters: swiftParameters)
+                }
             ))
         }
     }
@@ -117,6 +125,33 @@ final class ToolRegistry {
     /// List all registered tool names
     var toolNames: [String] {
         return Array(tools.keys).sorted()
+    }
+
+    private func normalizeToolName(_ name: String) -> String {
+        name
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "_", with: "")
+    }
+}
+
+private extension JSON {
+    var foundationValue: Any {
+        switch self {
+        case .string(let value):
+            return value
+        case .number(let value):
+            return value
+        case .bool(let value):
+            return value
+        case .null:
+            return NSNull()
+        case .array(let values):
+            return values.map(\.foundationValue)
+        case .object(let values):
+            return values.mapValues(\.foundationValue)
+        }
     }
 }
 

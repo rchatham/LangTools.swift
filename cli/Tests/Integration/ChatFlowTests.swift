@@ -153,6 +153,50 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertTrue(lines.contains("Local/Ollama models may be unreliable for tool-heavy tasks"))
     }
 
+    func testToolRegistryProvidesExecutableCallbacks() {
+        let tool = ToolRegistry.shared.asOpenAITools().first { $0.name == "Read" }
+
+        XCTAssertNotNil(tool)
+        XCTAssertNotNil(tool?.callback)
+    }
+
+    func testFallbackMessageForUnknownToolName() {
+        let trace = MessageService.ToolCallTrace()
+        trace.calledToolNames = ["Available Tools"]
+
+        let message = MessageService().fallbackMessageForEmptyAssistantResponse(
+            toolTrace: trace,
+            model: .ollama(Ollama.Model(rawValue: "llama3.2:latest")!)
+        )
+
+        XCTAssertEqual(message, "The model requested unsupported tool 'Available Tools'. Try rephrasing or switching models.")
+    }
+
+    func testFallbackMessageForMalformedToolArguments() {
+        let trace = MessageService.ToolCallTrace()
+        trace.calledToolNames = ["Read"]
+        trace.errorResults = ["Failed to decode function arguments: {not-json}"]
+
+        let message = MessageService().fallbackMessageForEmptyAssistantResponse(
+            toolTrace: trace,
+            model: .openAI(.gpt4o_mini)
+        )
+
+        XCTAssertEqual(message, "The model emitted malformed tool arguments. Failed to decode function arguments: {not-json}")
+    }
+
+    func testFallbackMessageForLimitedModelEmptyToolReply() {
+        let trace = MessageService.ToolCallTrace()
+        trace.calledToolNames = ["Read"]
+
+        let message = MessageService().fallbackMessageForEmptyAssistantResponse(
+            toolTrace: trace,
+            model: .ollama(Ollama.Model(rawValue: "llama3.2:latest")!)
+        )
+
+        XCTAssertEqual(message, "The model attempted a tool call but did not produce a usable reply. Local/Ollama models may be unreliable for tool-heavy tasks.")
+    }
+
     func testOllamaRequestUsesOllamaChatRequest() {
         let messages = [Message(text: "hi", role: .user)]
         let request = NetworkClient.shared.request(
