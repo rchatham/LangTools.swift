@@ -6,12 +6,34 @@ import XAI
 import Gemini
 import Ollama
 import SwiftTUI
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 let cliVersion = "0.1.0"
 
 var langToolchain = LangToolchain()
 let messageService = MessageService()
 let networkClient = NetworkClient.shared
+
+enum CLIRunMode {
+    case interactive
+    case nonInteractive
+
+    var isInteractive: Bool {
+        self == .interactive
+    }
+
+    static var current: CLIRunMode {
+        let stdinIsTTY = isatty(STDIN_FILENO) != 0
+        let stdoutIsTTY = isatty(STDOUT_FILENO) != 0
+        return stdinIsTTY && stdoutIsTTY ? .interactive : .nonInteractive
+    }
+}
+
+private var ansiColorsEnabled = true
 
 @main
 struct CLI {
@@ -30,13 +52,16 @@ struct CLI {
             return
         }
 
+        let runMode = CLIRunMode.current
+        ansiColorsEnabled = runMode.isInteractive
+
         // --tui flag
         let useTUI = args.contains("--tui")
 
         if useTUI {
             Application(rootView: MainView()).start()
         } else {
-            try await runTraditionalCLI()
+            try await runTraditionalCLI(runMode: runMode)
         }
     }
 
@@ -83,44 +108,77 @@ struct CLI {
 
     // MARK: - Traditional CLI
 
-    static func runTraditionalCLI() async throws {
-        // Load API keys from environment variables first, then prompt for missing ones
+    static func runTraditionalCLI(runMode: CLIRunMode) async throws {
         loadAPIKeysFromEnvironment()
-        // Populate locally-available Ollama models (non-fatal if Ollama isn't running)
         await networkClient.fetchOllamaModels()
-        try await checkAndRequestAPIKeys()
+        try await checkAndRequestAPIKeys(runMode: runMode)
 
         print("LangTools \(cliVersion)")
         print("Type /help for available commands, or --tui for the TUI mode")
         print("Model: \(UserDefaults.model.rawValue)")
 
+        if runMode.isInteractive {
+            try await runInteractiveLoop()
+        } else {
+            try await runNonInteractiveLoop()
+        }
+    }
+
+    static func runInteractiveLoop() async throws {
         while true {
             print("\nYou: ".green, terminator: "")
-            guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) else { continue }
-
-            let parsed = CommandParser.parse(input)
-            switch parsed {
-            case .empty:
-                continue
-            case .command(let cmd):
-                let shouldExit = await handleCommand(cmd)
-                if shouldExit { return }
-                continue
-            case .message(let text):
-                // Legacy bare-word shortcuts
-                if text.lowercased() == "exit" { print("Goodbye!"); return }
-                if text.lowercased() == "model" { try? await changeModel(); continue }
-                if text.lowercased() == "test" {
-                    await AgentTestRunner.runInteractiveTests(messageService: messageService)
-                    continue
-                }
-
-                do {
-                    try await messageService.performMessageCompletionRequest(message: text, stream: true)
-                } catch {
-                    print("Error: \(error.localizedDescription)".red)
-                }
+            guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                print("\nGoodbye!")
+                return
             }
+
+            let shouldExit = try await processInput(input, runMode: .interactive)
+            if shouldExit { return }
+        }
+    }
+
+    static func runNonInteractiveLoop() async throws {
+        while let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) {
+            let shouldExit = try await processInput(input, runMode: .nonInteractive)
+            if shouldExit { return }
+        }
+    }
+
+    static func processInput(_ input: String, runMode: CLIRunMode) async throws -> Bool {
+        let parsed = CommandParser.parse(input)
+        switch parsed {
+        case .empty:
+            return false
+        case .command(let cmd):
+            return await handleCommand(cmd, runMode: runMode)
+        case .message(let text):
+            if text.lowercased() == "exit" {
+                print("Goodbye!")
+                return true
+            }
+            if text.lowercased() == "model" {
+                if runMode.isInteractive {
+                    try? await changeModel()
+                } else {
+                    print("/model is only available in interactive mode.".yellow)
+                }
+                return false
+            }
+            if text.lowercased() == "test" {
+                if runMode.isInteractive {
+                    await AgentTestRunner.runInteractiveTests(messageService: messageService)
+                } else {
+                    print("test is only available in interactive mode.".yellow)
+                }
+                return false
+            }
+
+            do {
+                try await messageService.performMessageCompletionRequest(message: text, stream: true)
+            } catch {
+                print("Error: \(error.localizedDescription)".red)
+            }
+            return false
         }
     }
 
@@ -151,10 +209,15 @@ struct CLI {
     // MARK: - Command dispatch
 
     /// Handle a parsed slash command. Returns true if the loop should exit.
-    static func handleCommand(_ command: SlashCommand) async -> Bool {
+    static func handleCommand(_ command: SlashCommand, runMode: CLIRunMode) async -> Bool {
         guard let type = CommandParser.commandType(for: command.name) else {
             print("Unknown command: /\(command.name)".red)
             print("Type /help for available commands")
+            return false
+        }
+
+        if !runMode.isInteractive && !isCommandSupportedInNonInteractiveMode(command, type: type) {
+            print("/\(command.name) is only available in interactive mode.".yellow)
             return false
         }
 
@@ -437,7 +500,7 @@ struct CLI {
 
     // MARK: - API key setup
 
-    static func checkAndRequestAPIKeys() async throws {
+    static func checkAndRequestAPIKeys(runMode: CLIRunMode) async throws {
         // Only prompt for the default model's provider
         let defaultService: APIService
         switch UserDefaults.model {
@@ -449,6 +512,7 @@ struct CLI {
         }
 
         if UserDefaults.getApiKey(for: defaultService) == nil {
+            guard runMode.isInteractive else { return }
             print("\nNo API key found for \(defaultService.rawValue) (current model provider)")
             print("Enter your \(defaultService.rawValue) API key (or press Enter to skip): ", terminator: "")
             if let apiKey = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines), !apiKey.isEmpty {
@@ -461,6 +525,18 @@ struct CLI {
             } else {
                 print("Skipping — use /apikey or set \(defaultService.rawValue.uppercased())_API_KEY env var later".yellow)
             }
+        }
+    }
+
+    static func isCommandSupportedInNonInteractiveMode(_ command: SlashCommand, type: CommandType) -> Bool {
+        switch type {
+        case .help, .status, .tools, .exit, .quit:
+            return true
+        case .ollama:
+            let subcommand = command.arguments.first?.lowercased() ?? "list"
+            return ["", "list", "ls"].contains(subcommand)
+        case .clear, .save, .load, .sessions, .model, .compact, .plan, .tasks, .cancel, .settings, .apikey:
+            return false
         }
     }
 
@@ -898,7 +974,10 @@ enum ANSIColor: String, CaseIterable {
 }
 
 extension String {
-    func colored(_ color: ANSIColor) -> String { return color + self + ANSIColor.default }
+    func colored(_ color: ANSIColor) -> String {
+        guard ansiColorsEnabled else { return self }
+        return color + self + ANSIColor.default
+    }
     var black: String { return colored(.black) }
     var red: String { return colored(.red) }
     var green: String { return colored(.green) }

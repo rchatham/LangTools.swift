@@ -8,6 +8,7 @@
 import XCTest
 @testable import CLI
 import Ollama
+import Foundation
 
 final class ChatFlowTests: XCTestCase {
 
@@ -99,6 +100,28 @@ final class ChatFlowTests: XCTestCase {
         let helpText = CommandParser.helpText()
         XCTAssertTrue(helpText.contains("/ollama <subcommand> [name]"))
         XCTAssertTrue(helpText.contains("/ollama <subcommand> [name] Manage local Ollama models"))
+    }
+
+    func testNonInteractiveCommandAllowlist() {
+        XCTAssertTrue(CLI.isCommandSupportedInNonInteractiveMode(SlashCommand(name: "help", arguments: [], rawArguments: ""), type: .help))
+        XCTAssertTrue(CLI.isCommandSupportedInNonInteractiveMode(SlashCommand(name: "status", arguments: [], rawArguments: ""), type: .status))
+        XCTAssertTrue(CLI.isCommandSupportedInNonInteractiveMode(SlashCommand(name: "ollama", arguments: ["list"], rawArguments: "list"), type: .ollama))
+
+        XCTAssertFalse(CLI.isCommandSupportedInNonInteractiveMode(SlashCommand(name: "model", arguments: [], rawArguments: ""), type: .model))
+        XCTAssertFalse(CLI.isCommandSupportedInNonInteractiveMode(SlashCommand(name: "apikey", arguments: ["openai"], rawArguments: "openai"), type: .apikey))
+        XCTAssertFalse(CLI.isCommandSupportedInNonInteractiveMode(SlashCommand(name: "ollama", arguments: ["pull", "llama3.2"], rawArguments: "pull llama3.2"), type: .ollama))
+    }
+
+    func testPipedHelpOmitsInteractivePrompt() throws {
+        let output = try runCLI(input: "/help\n")
+        XCTAssertTrue(output.contains("Available Commands:"))
+        XCTAssertFalse(output.contains("You:"))
+    }
+
+    func testPipedInteractiveOnlyCommandShowsFriendlyError() throws {
+        let output = try runCLI(input: "/model\n")
+        XCTAssertTrue(output.contains("/model is only available in interactive mode."))
+        XCTAssertFalse(output.contains("You:"))
     }
 
     func testOllamaRequestUsesOllamaChatRequest() {
@@ -303,5 +326,38 @@ final class ChatFlowTests: XCTestCase {
 
         XCTAssertTrue(formatted.contains("Unknown command"))
         XCTAssertTrue(formatted.contains("/foo"))
+    }
+
+    private func runCLI(input: String) throws -> String {
+        let process = Process()
+        process.currentDirectoryURL = URL(fileURLWithPath: packageDirectory())
+        process.executableURL = URL(fileURLWithPath: executablePath())
+
+        let stdout = Pipe()
+        let stdin = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stdout
+        process.standardInput = stdin
+
+        try process.run()
+        stdin.fileHandleForWriting.write(Data(input.utf8))
+        try stdin.fileHandleForWriting.close()
+        process.waitUntilExit()
+
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private func packageDirectory(file: StaticString = #filePath) -> String {
+        URL(fileURLWithPath: String(describing: file))
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .path
+    }
+
+    private func executablePath() -> String {
+        let packageURL = URL(fileURLWithPath: packageDirectory())
+        return packageURL.appendingPathComponent(".build/arm64-apple-macosx/debug/langtools").path
     }
 }
