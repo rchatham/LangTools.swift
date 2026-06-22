@@ -82,6 +82,7 @@ public protocol SpeechRecognitionProviding: AnyObject {
     var capabilities: ProviderCapabilities { get }
     var authorizationState: ProviderAuthorizationState { get }
     var assetState: ProviderAssetState { get }
+    var isAvailable: Bool { get }
     var isListening: Bool { get }
     var currentTranscript: String { get }
     /// Called on `@MainActor` whenever a speech recognition event fires.
@@ -94,18 +95,13 @@ public protocol SpeechRecognitionProviding: AnyObject {
     func requestAuthorization() async -> ProviderAuthorizationState
     func refreshAuthorizationState()
     func prepareAssetsIfNeeded()
+    /// Transcribe already-captured audio data in a provider-supported format.
+    func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse
     func startRecognition() throws
     @available(iOS 16, macOS 13, *)
     func startDualLanguageRecognition(otherLanguageIdentifier: String) throws
     func stopRecognition(finalizePending: Bool, clearTranscript: Bool)
     func finalizeRecognition()
-}
-
-/// Shared contract for providers that can transcribe already-captured audio data.
-@MainActor
-public protocol SpeechAudioDataTranscribing: SpeechRecognitionProviding {
-    /// Transcribe audio data in a provider-supported format.
-    func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse
 }
 
 /// A text translation request expressed in provider-neutral language IDs.

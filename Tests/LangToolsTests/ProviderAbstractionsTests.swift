@@ -114,13 +114,14 @@ final class ProviderAbstractionsTests: XCTestCase {
     }
 
     @MainActor
-    func testAudioDataTranscribingBoundaryAcceptsCapturedAudio() async throws {
-        final class StubProvider: SpeechAudioDataTranscribing {
+    func testSpeechRecognitionProviderAcceptsCapturedAudio() async throws {
+        final class StubProvider: SpeechRecognitionProviding {
             let providerID = LangToolsProviderID(rawValue: "stub.audio")
             let displayName = "Stub Audio"
             let capabilities = ProviderCapabilities(runsOnDevice: true)
             let authorizationState: ProviderAuthorizationState = .authorized
             let assetState: ProviderAssetState = .notRequired
+            let isAvailable = true
             let isListening = false
             var currentTranscript = ""
             var eventHandler: (@MainActor @Sendable (SpeechRecognitionEvent) -> Void)?
@@ -139,7 +140,7 @@ final class ProviderAbstractionsTests: XCTestCase {
             }
         }
 
-        let provider: any SpeechAudioDataTranscribing = StubProvider()
+        let provider: any SpeechRecognitionProviding = StubProvider()
         let response = try await provider.transcribe(audioData: Data([1, 2, 3]))
 
         XCTAssertEqual(response.transcriptText, "bytes: 3")

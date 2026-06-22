@@ -38,12 +38,9 @@ public enum STTError: Error, LocalizedError {
 /// Example-app speech recognition provider that demonstrates LangTools' provider-neutral
 /// live recognition contract plus the example app's file/data transcription flow.
 @MainActor
-public protocol SpeechRecognitionProvider: SpeechAudioDataTranscribing {
+public protocol SpeechRecognitionProvider: SpeechRecognitionProviding {
     /// Example UI provider bucket.
     var providerType: STTProviderType { get }
-
-    /// Whether this provider is available on the current device/configuration.
-    var isAvailable: Bool { get }
 
     /// Request permission for speech recognition (if needed).
     func requestPermission() async throws -> Bool

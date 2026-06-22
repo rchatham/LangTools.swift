@@ -22,7 +22,7 @@ public enum WhisperKitLoadingState: Equatable, Sendable {
 /// Reusable WhisperKit speech-to-text provider adapter.
 @available(macOS 13, iOS 16, *)
 @MainActor
-public final class WhisperKitSpeechRecognitionProvider: SpeechAudioDataTranscribing, ObservableObject {
+public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProviding, ObservableObject {
     public let providerID = LangToolsProviderID(rawValue: "whisperkit.local")
     public let displayName = "WhisperKit"
     public let capabilities = ProviderCapabilities(

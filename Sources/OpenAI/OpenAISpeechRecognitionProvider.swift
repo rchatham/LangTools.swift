@@ -3,7 +3,7 @@ import LangTools
 
 /// Reusable OpenAI speech-to-text provider adapter.
 @MainActor
-public final class OpenAISpeechRecognitionProvider: SpeechAudioDataTranscribing {
+public final class OpenAISpeechRecognitionProvider: SpeechRecognitionProviding {
     public let providerID = LangToolsProviderID(rawValue: "openai.whisper")
     public let displayName = "OpenAI Whisper"
     public let capabilities = ProviderCapabilities(
@@ -26,6 +26,7 @@ public final class OpenAISpeechRecognitionProvider: SpeechAudioDataTranscribing 
     }
 
     public var assetState: ProviderAssetState { .notRequired }
+    public var isAvailable: Bool { openAI != nil }
     public var isListening: Bool { false }
 
     public init(openAI: OpenAI? = nil, languageIdentifier: String? = nil) {
