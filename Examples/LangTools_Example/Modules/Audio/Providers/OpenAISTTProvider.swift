@@ -2,50 +2,41 @@
 //  OpenAISTTProvider.swift
 //  Audio
 //
-//  OpenAI Whisper-based speech-to-text provider
+//  Example-app OpenAI Whisper speech-to-text adapter
 //
 
 import Foundation
-import OpenAI
 import LangTools
+import OpenAI
+import OpenAILangTools
 import Chat
 
-/// OpenAI Whisper-based speech-to-text provider
+/// Example-app OpenAI Whisper provider that supplies keychain/settings integration
+/// around the reusable OpenAILangTools provider.
 public class OpenAISTTProvider: SpeechRecognitionProvider {
     public let providerType: STTProviderType = .openAIWhisper
-    public let providerID = LangToolsProviderID(rawValue: "openai.whisper")
-    public let displayName = "OpenAI Whisper"
-    public let capabilities = ProviderCapabilities(
-        runsOnDevice: false,
-        supportsStreamingPartials: false,
-        supportsContinuousMode: false,
-        supportsDualLanguageAutoDetect: false,
-        requiresNetwork: true,
-        requiresModelDownload: false
-    )
-    public var eventHandler: (@MainActor @Sendable (SpeechRecognitionEvent) -> Void)?
-    public private(set) var currentTranscript: String = ""
 
-    private var openAI: OpenAI?
+    private let provider = OpenAISpeechRecognitionProvider()
     private var languageIdentifier: String?
 
-    public var authorizationState: ProviderAuthorizationState {
-        openAI == nil ? .unavailable(reason: "Missing OpenAI API key") : .authorized
+    public var providerID: LangToolsProviderID { provider.providerID }
+    public var displayName: String { provider.displayName }
+    public var capabilities: ProviderCapabilities { provider.capabilities }
+    public var eventHandler: (@MainActor @Sendable (SpeechRecognitionEvent) -> Void)? {
+        get { provider.eventHandler }
+        set { provider.eventHandler = newValue }
     }
-
-    public var assetState: ProviderAssetState { .notRequired }
-
-    public var isListening: Bool { false }
+    public var currentTranscript: String { provider.currentTranscript }
+    public var authorizationState: ProviderAuthorizationState { provider.authorizationState }
+    public var assetState: ProviderAssetState { provider.assetState }
+    public var isListening: Bool { provider.isListening }
 
     public init() {
-        // Load API key from Keychain
-        if let apiKey = KeychainService.shared.getApiKey(for: .openAI) {
-            openAI = OpenAI(apiKey: apiKey)
-        }
+        refreshApiKey()
     }
 
     public var isAvailable: Bool {
-        openAI != nil
+        authorizationState == .authorized
     }
 
     public func requestAuthorization() async -> ProviderAuthorizationState {
@@ -59,99 +50,64 @@ public class OpenAISTTProvider: SpeechRecognitionProvider {
 
     public func configure(languageIdentifier: String) {
         self.languageIdentifier = languageIdentifier == "auto" ? nil : languageIdentifier
+        provider.configure(languageIdentifier: languageIdentifier)
     }
 
+    public func prepareAssetsIfNeeded() {}
+
     public func startRecognition() throws {
-        throw STTError.notAvailable
+        try provider.startRecognition()
+    }
+
+    public func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {
+        try provider.startDualLanguageRecognition(otherLanguageIdentifier: otherLanguageIdentifier)
     }
 
     public func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {
-        if clearTranscript { currentTranscript = "" }
+        provider.stopRecognition(finalizePending: finalizePending, clearTranscript: clearTranscript)
     }
 
-    public func finalizeRecognition() {}
+    public func finalizeRecognition() {
+        provider.finalizeRecognition()
+    }
 
     public func requestPermission() async throws -> Bool {
-        // OpenAI doesn't need device permissions, just API key
-        guard isAvailable else {
-            throw STTError.providerNotConfigured
-        }
+        guard isAvailable else { throw STTError.providerNotConfigured }
         return true
     }
 
     public func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse {
-        // Try to refresh API key if not available
-        if openAI == nil {
-            refreshApiKey()
-        }
+        if !isAvailable { refreshApiKey() }
+        guard isAvailable else { throw STTError.providerNotConfigured }
 
-        guard let openAI = openAI else {
-            print("[OpenAI] Provider not configured - missing API key")
-            throw STTError.providerNotConfigured
-        }
-
-        print("[OpenAI] Received audio data: \(audioData.count) bytes")
-
-        // Convert CAF audio to WAV format (16kHz mono) for Whisper API
         let wavData: Data
         do {
             wavData = try AudioConverter.convertToWAV(cafData: audioData)
-            print("[OpenAI] Converted to WAV: \(wavData.count) bytes")
         } catch {
-            print("[OpenAI] Audio conversion failed: \(error)")
             throw STTError.transcriptionFailed("Audio conversion failed: \(error.localizedDescription)")
         }
 
-        // Get language setting ("auto" means nil for auto-detection)
         let languageSetting = ToolSettings.shared.sttLanguage.rawValue
-        let language: String? = languageIdentifier ?? (languageSetting == "auto" ? nil : languageSetting)
+        let language = languageIdentifier ?? (languageSetting == "auto" ? nil : languageSetting)
 
-        // Create transcription request with WAV format
-        let request = OpenAI.AudioTranscriptionRequest(
-            file: wavData,
-            fileType: .wav,
-            language: language,
-            responseFormat: .json
-        )
-
-        print("[OpenAI] Sending request to Whisper API...")
-
-        // Perform the request
         do {
-            let genericRequest: any LangToolsSTTRequest = request
-            print("[OpenAI] Sending \(genericRequest.speechAudioFormat ?? "unknown") audio through LangTools STT abstraction")
-            let response = try await openAI.perform(request: request)
-            let transcription: any LangToolsTranscriptionResponse = response
-            currentTranscript = transcription.transcriptText
-            eventHandler?(.finalTranscription(transcription.transcriptText))
-            print("[OpenAI] Transcription successful: '\(transcription.transcriptText)'")
-            return transcription
+            return try await provider.transcribe(audioData: wavData, fileType: .wav, language: language)
         } catch {
-            print("[OpenAI] API error: \(error)")
-            print("[OpenAI] Error type: \(type(of: error))")
-            if let urlError = error as? URLError {
-                print("[OpenAI] URLError code: \(urlError.code.rawValue)")
-            }
             throw STTError.transcriptionFailed("OpenAI API error: \(error.localizedDescription)")
         }
     }
 
     /// Update the API key (called when user updates settings)
     public func updateApiKey(_ apiKey: String) {
-        openAI = OpenAI(apiKey: apiKey)
+        provider.updateOpenAI(OpenAI(apiKey: apiKey))
     }
 
     /// Refresh API key from Keychain
     public func refreshApiKey() {
-        let service: APIService = .openAI
-        print("[OpenAI STT] Refreshing API key from keychain...")
-        print("[OpenAI STT] Looking up key for service: \(service), rawValue: '\(service.rawValue)'")
-        if let apiKey = KeychainService.shared.getApiKey(for: service) {
-            print("[OpenAI STT] Found API key (length: \(apiKey.count))")
-            openAI = OpenAI(apiKey: apiKey)
+        if let apiKey = KeychainService.shared.getApiKey(for: .openAI) {
+            provider.updateOpenAI(OpenAI(apiKey: apiKey))
         } else {
-            print("[OpenAI STT] No API key found in keychain for '\(service.rawValue):apiKey'")
-            openAI = nil
+            provider.updateOpenAI(nil)
         }
     }
 }

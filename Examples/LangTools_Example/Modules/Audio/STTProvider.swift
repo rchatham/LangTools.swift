@@ -38,7 +38,7 @@ public enum STTError: Error, LocalizedError {
 /// Example-app speech recognition provider that demonstrates LangTools' provider-neutral
 /// live recognition contract plus the example app's file/data transcription flow.
 @MainActor
-public protocol SpeechRecognitionProvider: SpeechRecognitionProviding {
+public protocol SpeechRecognitionProvider: SpeechAudioDataTranscribing {
     /// Example UI provider bucket.
     var providerType: STTProviderType { get }
 
@@ -48,10 +48,6 @@ public protocol SpeechRecognitionProvider: SpeechRecognitionProviding {
     /// Request permission for speech recognition (if needed).
     func requestPermission() async throws -> Bool
 
-    /// Transcribe audio data to provider-neutral text.
-    /// - Parameter audioData: Audio data in a supported format (typically WAV or M4A).
-    /// - Returns: A LangTools transcription response. `String` responses use LangTools' built-in conformance.
-    func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse
 }
 
 public extension SpeechRecognitionProvider {
