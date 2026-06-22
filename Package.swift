@@ -20,7 +20,6 @@ let package = Package(
         .library(name: "Ollama", targets: ["Ollama"]),
         .library(name: "AppleSpeech", targets: ["AppleSpeech"]),
         .library(name: "AppleLangTools", targets: ["AppleLangTools"]),
-        .library(name: "OpenAILangTools", targets: ["OpenAILangTools"]),
         .library(name: "WhisperKitLangTools", targets: ["WhisperKitLangTools"]),
         .executable(name: "ChatCLI", targets: ["ChatCLI"]),
     ],
@@ -39,7 +38,6 @@ let package = Package(
         .target(name: "Ollama", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
         .target(name: "AppleSpeech", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
         .target(name: "AppleLangTools", dependencies: [.target(name: "LangTools"), .target(name: "AppleSpeech")]),
-        .target(name: "OpenAILangTools", dependencies: [.target(name: "LangTools"), .target(name: "OpenAI")]),
         .target(name: "WhisperKitLangTools", dependencies: [.target(name: "LangTools"), .product(name: "WhisperKit", package: "WhisperKit")]),
         .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], path: "Tests/TestUtils", resources: [.process("Resources/")]),
 

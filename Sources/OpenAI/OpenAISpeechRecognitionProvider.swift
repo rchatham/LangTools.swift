@@ -1,6 +1,5 @@
 import Foundation
 import LangTools
-import OpenAI
 
 /// Reusable OpenAI speech-to-text provider adapter.
 @MainActor
@@ -47,11 +46,11 @@ public final class OpenAISpeechRecognitionProvider: SpeechAudioDataTranscribing 
     public func prepareAssetsIfNeeded() {}
 
     public func startRecognition() throws {
-        throw OpenAILangToolsSpeechError.liveRecognitionUnsupported
+        throw OpenAISpeechProviderError.liveRecognitionUnsupported
     }
 
     public func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {
-        throw OpenAILangToolsSpeechError.liveRecognitionUnsupported
+        throw OpenAISpeechProviderError.liveRecognitionUnsupported
     }
 
     public func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {
@@ -71,7 +70,7 @@ public final class OpenAISpeechRecognitionProvider: SpeechAudioDataTranscribing 
         prompt: String? = nil,
         responseFormat: OpenAI.AudioTranscriptionRequest.ResponseFormat? = .json
     ) async throws -> any LangToolsTranscriptionResponse {
-        guard let openAI else { throw OpenAILangToolsSpeechError.providerNotConfigured }
+        guard let openAI else { throw OpenAISpeechProviderError.providerNotConfigured }
 
         let request = OpenAI.AudioTranscriptionRequest(
             file: audioData,
@@ -87,7 +86,7 @@ public final class OpenAISpeechRecognitionProvider: SpeechAudioDataTranscribing 
     }
 }
 
-public enum OpenAILangToolsSpeechError: Error, LocalizedError {
+public enum OpenAISpeechProviderError: Error, LocalizedError {
     case providerNotConfigured
     case liveRecognitionUnsupported
 

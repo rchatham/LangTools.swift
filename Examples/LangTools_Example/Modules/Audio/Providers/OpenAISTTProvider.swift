@@ -8,11 +8,10 @@
 import Foundation
 import LangTools
 import OpenAI
-import OpenAILangTools
 import Chat
 
 /// Example-app OpenAI Whisper provider that supplies keychain/settings integration
-/// around the reusable OpenAILangTools provider.
+/// around the reusable OpenAI provider.
 public class OpenAISTTProvider: SpeechRecognitionProvider {
     public let providerType: STTProviderType = .openAIWhisper
 

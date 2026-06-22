@@ -1,6 +1,5 @@
 import Foundation
 import LangTools
-import OpenAI
 
 /// Reusable OpenAI text-to-speech provider adapter.
 @MainActor
@@ -30,7 +29,7 @@ public final class OpenAISpeechSynthesisProvider: SpeechSynthesisProviding {
     }
 
     public func speak(_ request: LangToolsSpeechSynthesisInput) throws {
-        throw OpenAILangToolsSpeechError.liveRecognitionUnsupported
+        throw OpenAISpeechProviderError.liveRecognitionUnsupported
     }
 
     public func stopSpeaking() {
