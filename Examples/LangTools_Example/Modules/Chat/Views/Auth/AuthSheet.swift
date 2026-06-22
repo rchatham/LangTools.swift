@@ -173,24 +173,45 @@ private struct ManageAccessPromptModifier: ViewModifier {
     }
 
     private func handleAccountAction(for provider: AccountLoginProvider, state: ProviderAccessState) {
-        Task {
+        Task { @MainActor in
             do {
                 if state.hasAccountSession {
                     try await networkClient.disconnectAccount(provider)
-                    presentResult("Disconnected \(provider.displayName).")
+                    presentResult(disconnectMessage(for: provider))
                 } else {
                     try await networkClient.connectAccount(provider)
                     let updatedState = accessManager.state(for: provider.service)
-                    if let accountIdentifier = updatedState.accountIdentifier {
-                        presentResult("Connected \(provider.displayName) as \(accountIdentifier).")
-                    } else {
-                        presentResult("Connected \(provider.displayName).")
-                    }
+                    presentResult(connectMessage(for: provider, state: updatedState))
                 }
                 accessManager.refresh()
             } catch {
                 presentError(error.localizedDescription)
             }
+        }
+    }
+
+    private func connectMessage(for provider: AccountLoginProvider, state: ProviderAccessState) -> String {
+        let accountLine: String
+        if let accountIdentifier = state.accountIdentifier {
+            accountLine = "Connected \(provider.displayName) as \(accountIdentifier)."
+        } else {
+            accountLine = "Connected \(provider.displayName)."
+        }
+
+        switch provider {
+        case .openAI:
+            return "\(accountLine) Return to LangTools Example to continue. Model access has been refreshed, and you can close the browser tab."
+        case .claudeCode:
+            return "\(accountLine) Return to LangTools Example to continue."
+        }
+    }
+
+    private func disconnectMessage(for provider: AccountLoginProvider) -> String {
+        switch provider {
+        case .openAI:
+            return "Disconnected OpenAI. Model access has been refreshed."
+        case .claudeCode:
+            return "Disconnected Claude Code."
         }
     }
 

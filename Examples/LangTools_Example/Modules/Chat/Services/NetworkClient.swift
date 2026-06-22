@@ -173,12 +173,16 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
 
     public func connectAccount(_ provider: AccountLoginProvider) async throws {
         let session = try await accountLoginService.beginLogin(for: provider)
-        try providerAccessManager.saveAccountSession(session)
+        try await MainActor.run {
+            try providerAccessManager.saveAccountSession(session)
+        }
     }
 
     public func disconnectAccount(_ provider: AccountLoginProvider) async throws {
         try await accountLoginService.logout(provider: provider)
-        try providerAccessManager.removeAccountSession(for: provider)
+        try await MainActor.run {
+            try providerAccessManager.removeAccountSession(for: provider)
+        }
     }
 
     func registerLangTool(_ apiKey: String, for llm: APIService) {

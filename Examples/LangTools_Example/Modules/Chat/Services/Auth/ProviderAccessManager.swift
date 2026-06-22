@@ -37,11 +37,11 @@ public final class ProviderAccessManager: ObservableObject {
                 accountIdentifier: session?.accountIdentifier
             )
         }
+        let applyStates = { self.states = newStates }
         if Thread.isMainThread {
-            states = newStates
+            applyStates()
         } else {
-            let captured = newStates
-            DispatchQueue.main.async { [weak self] in self?.states = captured }
+            DispatchQueue.main.async(execute: applyStates)
         }
     }
 

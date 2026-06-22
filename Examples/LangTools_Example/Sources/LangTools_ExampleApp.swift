@@ -33,13 +33,21 @@ struct LangTools_ExampleApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
-            // Each window gets its own ChatContainerView with independent MessageService
+        #if os(macOS)
+        Window("LangTools.swift", id: "main") {
             ChatContainerView(voiceInputHandler: voiceInputHandler)
                 .onOpenURL { url in
                     AccountLoginCoordinator.shared.handleRedirect(url)
                 }
         }
+        #else
+        WindowGroup {
+            ChatContainerView(voiceInputHandler: voiceInputHandler)
+                .onOpenURL { url in
+                    AccountLoginCoordinator.shared.handleRedirect(url)
+                }
+        }
+        #endif
     }
 
     // @MainActor is required because ToolManager is @MainActor-isolated.
