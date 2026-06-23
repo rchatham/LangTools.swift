@@ -468,9 +468,14 @@ final class ChatFlowTests: XCTestCase {
     }
 
     private func runCLI(input: String) throws -> String {
+        try runCLI(arguments: [], input: input)
+    }
+
+    private func runCLI(arguments: [String], input: String = "") throws -> String {
         let process = Process()
         process.currentDirectoryURL = URL(fileURLWithPath: packageDirectory())
         process.executableURL = URL(fileURLWithPath: executablePath())
+        process.arguments = arguments
 
         let stdout = Pipe()
         let stdin = Pipe()

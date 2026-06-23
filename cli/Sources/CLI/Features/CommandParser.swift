@@ -21,6 +21,12 @@ struct SlashCommand {
     let rawArguments: String
 }
 
+struct CommandHelpDefinition {
+    let description: String
+    let usage: String
+    let examples: [String]
+}
+
 /// Available slash commands
 enum CommandType: String, CaseIterable {
     case help = "help"
@@ -41,47 +47,45 @@ enum CommandType: String, CaseIterable {
     case apikey = "apikey"
     case ollama = "ollama"
 
-    var description: String {
+    var help: CommandHelpDefinition {
         switch self {
-        case .help: return "Show available commands"
-        case .clear: return "Clear the chat history"
-        case .exit, .quit: return "Exit the application"
-        case .save: return "Save current session"
-        case .load: return "Load a saved session"
-        case .sessions: return "List saved sessions"
-        case .model: return "Change the current model"
-        case .tools: return "List available tools"
-        case .status: return "Show current status"
-        case .compact: return "Compact conversation context"
-        case .plan: return "Enter plan mode"
-        case .tasks: return "Show running tasks"
-        case .cancel: return "Cancel running operation"
-        case .settings: return "Open settings menu"
-        case .apikey: return "Set API key for a service"
-        case .ollama: return "Manage local Ollama models"
+        case .help:
+            return .init(description: "Show available commands", usage: "/help [command]", examples: ["/help", "/help ollama", "/help model"])
+        case .clear:
+            return .init(description: "Clear the chat history", usage: "/clear", examples: ["/clear"])
+        case .exit, .quit:
+            return .init(description: "Exit the application", usage: "/exit", examples: ["/exit"])
+        case .save:
+            return .init(description: "Save current session", usage: "/save [name]", examples: ["/save", "/save refactor-session"])
+        case .load:
+            return .init(description: "Load a saved session", usage: "/load <session-id>", examples: ["/load 123E4567-E89B-12D3-A456-426614174000"])
+        case .sessions:
+            return .init(description: "List saved sessions", usage: "/sessions", examples: ["/sessions"])
+        case .model:
+            return .init(description: "Change the current model", usage: "/model [model-name]", examples: ["/model", "/model claude-4-6-sonnet", "/model llama3.2:latest"])
+        case .tools:
+            return .init(description: "List available tools", usage: "/tools", examples: ["/tools"])
+        case .status:
+            return .init(description: "Show current status", usage: "/status", examples: ["/status"])
+        case .compact:
+            return .init(description: "Compact conversation context", usage: "/compact", examples: ["/compact"])
+        case .plan:
+            return .init(description: "Enter plan mode", usage: "/plan", examples: ["/plan"])
+        case .tasks:
+            return .init(description: "Show running tasks", usage: "/tasks", examples: ["/tasks"])
+        case .cancel:
+            return .init(description: "Cancel running operation", usage: "/cancel [task-id]", examples: ["/cancel", "/cancel task-123"])
+        case .settings:
+            return .init(description: "Open settings menu", usage: "/settings", examples: ["/settings"])
+        case .apikey:
+            return .init(description: "Set API key for a service", usage: "/apikey <service> [key]", examples: ["/apikey openAI", "/apikey anthropic sk-ant-..."])
+        case .ollama:
+            return .init(description: "Manage local Ollama models", usage: "/ollama <subcommand> [name]", examples: ["/ollama list", "/ollama pull llama3.2:latest", "/ollama search mistral"])
         }
     }
 
-    var usage: String {
-        switch self {
-        case .help: return "/help [command]"
-        case .clear: return "/clear"
-        case .exit, .quit: return "/exit"
-        case .save: return "/save [name]"
-        case .load: return "/load <session-id>"
-        case .sessions: return "/sessions"
-        case .model: return "/model [model-name]"
-        case .tools: return "/tools"
-        case .status: return "/status"
-        case .compact: return "/compact"
-        case .plan: return "/plan"
-        case .tasks: return "/tasks"
-        case .cancel: return "/cancel [task-id]"
-        case .settings: return "/settings"
-        case .apikey: return "/apikey <service> [key]"
-        case .ollama: return "/ollama <subcommand> [name]"
-        }
-    }
+    var description: String { help.description }
+    var usage: String { help.usage }
 }
 
 /// Parses user input for commands
@@ -146,10 +150,14 @@ struct CommandParser {
             return "Unknown command: \(commandName)\nType /help for available commands."
         }
 
+        let examples = command.help.examples.map { "  \($0)" }.joined(separator: "\n")
+
         return """
         Command: /\(command.rawValue)
         Usage: \(command.usage)
         Description: \(command.description)
+        Examples:
+        \(examples)
         """
     }
 }

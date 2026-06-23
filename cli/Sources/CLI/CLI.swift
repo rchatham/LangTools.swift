@@ -85,24 +85,7 @@ struct CLI {
           OLLAMA_HOST         Ollama base URL (default: http://localhost:11434)
 
         COMMANDS (in chat)
-          /help [command]     Show help
-          /model              Change the active model
-          /status             Show model, tokens, API key status
-          /clear              Clear conversation history
-          /save [name]        Save current session
-          /load <id>          Load a saved session
-          /sessions           List saved sessions
-          /compact            Compact conversation context
-          /plan               Enter plan mode
-          /tasks              Show running background tasks
-          /tools              List available tools
-          /apikey <svc> [key] Set an API key
-          /settings           Open settings menu
-          /ollama list        List local Ollama models
-          /ollama pull <name> Download an Ollama model
-          /ollama search <q>  Search the Ollama library
-          /ollama delete <n>  Delete a local Ollama model
-          /exit               Quit
+        \(CommandParser.helpText())
         """)
     }
 
