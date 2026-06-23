@@ -9,13 +9,12 @@ import Foundation
 import SwiftUI
 import Combine
 import ChatUI
-import Chat
 
 /// Adapter to bridge STTService to ChatUI's VoiceInputHandler protocol
 @MainActor
 public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
     private let sttService: STTService
-    private let settings: ToolSettings // TODO: - refactor ToolSettings out of Audio to avoid importing Chat
+    private let settings: any VoiceInputSettingsProviding
     private var cancellables = Set<AnyCancellable>()
 
     /// Unified audio level monitor for UI visualization (separate from transcription)
@@ -30,9 +29,21 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
     /// WhisperKit loading state for UI feedback
     @Published public private(set) var whisperKitLoadingState: WhisperKitLoadingState = .idle
 
-    public init(sttService: STTService = .shared, settings: ToolSettings = .shared) {
+    public convenience init(settings: any VoiceInputSettingsProviding) {
+        self.init(sttService: .shared, settings: settings)
+    }
+
+    public init(sttService: STTService, settings: any VoiceInputSettingsProviding) {
         self.sttService = sttService
         self.settings = settings
+
+        sttService.configure(
+            STTServiceConfiguration(
+                languageIdentifierProvider: { [weak settings] in settings?.sttLanguageIdentifier },
+                isOpenAISimulatedStreamingEnabled: { [weak settings] in settings?.enableOpenAISimulatedStreaming ?? false },
+                openAIStreamingChunkInterval: { [weak settings] in settings?.openAIStreamingChunkInterval ?? 3.0 }
+            )
+        )
 
         // Setup providers
         setupProviders()
@@ -50,7 +61,7 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
         }
 
         // Forward settings changes to trigger view updates and provider switching
-        settings.objectWillChange
+        settings.settingsDidChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.updateProviderFromSettings()
@@ -83,18 +94,26 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
         print("[VoiceInputHandlerAdapter] Setting up STT providers...")
 
         // Register Apple Speech (always available)
-        let appleSpeechProvider = AppleSpeechSTTProvider()
+        let appleSpeechProvider = AppleSpeechSTTProvider(
+            languageIdentifierProvider: { [weak settings] in settings?.sttLanguageIdentifier }
+        )
         sttService.registerProvider(appleSpeechProvider, for: .appleSpeech)
         print("[VoiceInputHandlerAdapter] Registered Apple Speech provider")
 
         // Register OpenAI Whisper
-        let openAIProvider = OpenAISTTProvider()
+        let openAIProvider = OpenAISTTProvider(
+            apiKeyProvider: { [weak settings] in settings?.openAIApiKey },
+            languageIdentifierProvider: { [weak settings] in settings?.sttLanguageIdentifier }
+        )
         sttService.registerProvider(openAIProvider, for: .openAIWhisper)
         print("[VoiceInputHandlerAdapter] Registered OpenAI Whisper provider")
 
         // Register WhisperKit (on-device ML)
         if #available(macOS 13, iOS 16, *) {
-            let whisperKitProvider = WhisperKitSTTProvider()
+            let whisperKitProvider = WhisperKitSTTProvider(
+                modelVariantProvider: { [weak settings] in settings?.whisperKitModelVariant ?? "base" },
+                languageIdentifierProvider: { [weak settings] in settings?.sttLanguageIdentifier }
+            )
             sttService.registerProvider(whisperKitProvider, for: .whisperKit)
             print("[VoiceInputHandlerAdapter] Registered WhisperKit provider")
 
@@ -115,14 +134,7 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
     /// Update the current provider based on settings
     private func updateProviderFromSettings() {
         let providerType: STTProviderType
-        switch settings.sttProvider {
-        case .appleSpeech:
-            providerType = .appleSpeech
-        case .openAIWhisper:
-            providerType = .openAIWhisper
-        case .whisperKit:
-            providerType = .whisperKit
-        }
+        providerType = settings.sttProviderType
 
         sttService.setProvider(providerType)
         print("[VoiceInputHandlerAdapter] Set STT provider to: \(providerType.rawValue)")

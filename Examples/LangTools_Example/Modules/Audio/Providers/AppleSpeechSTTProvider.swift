@@ -6,7 +6,6 @@
 //
 
 import AppleLangTools
-import Chat
 import Foundation
 import LangTools
 import Speech
@@ -17,6 +16,7 @@ public class AppleSpeechSTTProvider: SpeechRecognitionProvider {
     public let providerType: STTProviderType = .appleSpeech
 
     private let provider: AppleSpeechRecognitionProvider
+    private let languageIdentifierProvider: @MainActor () -> String?
     private var currentLocale: Locale
 
     public var providerID: LangToolsProviderID { provider.providerID }
@@ -32,7 +32,11 @@ public class AppleSpeechSTTProvider: SpeechRecognitionProvider {
     public var currentTranscript: String { provider.currentTranscript }
     public var isStreaming: Bool { provider.isStreaming }
 
-    public init(locale: Locale = .current) {
+    public init(
+        locale: Locale = .current,
+        languageIdentifierProvider: @escaping @MainActor () -> String? = { nil }
+    ) {
+        self.languageIdentifierProvider = languageIdentifierProvider
         currentLocale = locale
         provider = AppleSpeechRecognitionProvider(locale: locale)
     }
@@ -49,8 +53,7 @@ public class AppleSpeechSTTProvider: SpeechRecognitionProvider {
     }
 
     public func updateLocaleFromSettings() {
-        let languageSetting = ToolSettings.shared.sttLanguage.rawValue
-        let locale = languageSetting == "auto" ? Locale.current : Locale(identifier: languageSetting)
+        let locale = languageIdentifierProvider().map(Locale.init(identifier:)) ?? Locale.current
         setLocale(locale)
     }
 

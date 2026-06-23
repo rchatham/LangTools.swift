@@ -5,6 +5,7 @@
 //  Protocol for speech-to-text providers
 //
 
+import Combine
 import Foundation
 import LangTools
 
@@ -61,7 +62,21 @@ public extension SpeechRecognitionProvider {
     }
 }
 
-/// Types of STT providers available - matches ToolSettings.STTProvider
+/// Settings needed by Audio without depending on the Chat module's concrete settings store.
+@MainActor
+public protocol VoiceInputSettingsProviding: AnyObject {
+    var voiceInputEnabled: Bool { get }
+    var sttProviderType: STTProviderType { get }
+    var voiceButtonReplaceSend: Bool { get }
+    var sttLanguageIdentifier: String? { get }
+    var whisperKitModelVariant: String { get }
+    var enableOpenAISimulatedStreaming: Bool { get }
+    var openAIStreamingChunkInterval: TimeInterval { get }
+    var openAIApiKey: String? { get }
+    var settingsDidChange: AnyPublisher<Void, Never> { get }
+}
+
+/// Types of STT providers available to the audio module.
 public enum STTProviderType: String, CaseIterable, Identifiable, Codable {
     case appleSpeech = "Apple Speech"
     case openAIWhisper = "OpenAI Whisper"

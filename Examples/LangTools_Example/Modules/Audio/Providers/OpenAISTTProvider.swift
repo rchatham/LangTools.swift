@@ -8,7 +8,6 @@
 import Foundation
 import LangTools
 import OpenAI
-import Chat
 
 /// Example-app OpenAI Whisper provider that supplies keychain/settings integration
 /// around the reusable OpenAI provider.
@@ -16,6 +15,8 @@ public class OpenAISTTProvider: SpeechRecognitionProvider {
     public let providerType: STTProviderType = .openAIWhisper
 
     private let provider = OpenAISpeechRecognitionProvider()
+    private let apiKeyProvider: @MainActor () -> String?
+    private let languageIdentifierProvider: @MainActor () -> String?
     private var languageIdentifier: String?
 
     public var providerID: LangToolsProviderID { provider.providerID }
@@ -30,7 +31,12 @@ public class OpenAISTTProvider: SpeechRecognitionProvider {
     public var assetState: ProviderAssetState { provider.assetState }
     public var isListening: Bool { provider.isListening }
 
-    public init() {
+    public init(
+        apiKeyProvider: @escaping @MainActor () -> String? = { nil },
+        languageIdentifierProvider: @escaping @MainActor () -> String? = { nil }
+    ) {
+        self.apiKeyProvider = apiKeyProvider
+        self.languageIdentifierProvider = languageIdentifierProvider
         refreshApiKey()
     }
 
@@ -86,8 +92,7 @@ public class OpenAISTTProvider: SpeechRecognitionProvider {
             throw STTError.transcriptionFailed("Audio conversion failed: \(error.localizedDescription)")
         }
 
-        let languageSetting = ToolSettings.shared.sttLanguage.rawValue
-        let language = languageIdentifier ?? (languageSetting == "auto" ? nil : languageSetting)
+        let language = languageIdentifier ?? languageIdentifierProvider()
 
         do {
             return try await provider.transcribe(audioData: wavData, fileType: .wav, language: language)
@@ -103,7 +108,7 @@ public class OpenAISTTProvider: SpeechRecognitionProvider {
 
     /// Refresh API key from Keychain
     public func refreshApiKey() {
-        if let apiKey = KeychainService.shared.getApiKey(for: .openAI) {
+        if let apiKey = apiKeyProvider() {
             provider.updateOpenAI(OpenAI(apiKey: apiKey))
         } else {
             provider.updateOpenAI(nil)

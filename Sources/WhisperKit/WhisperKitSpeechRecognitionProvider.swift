@@ -17,6 +17,16 @@ public enum WhisperKitLoadingState: Equatable, Sendable {
         case .idle, .ready, .failed: return false
         }
     }
+
+    public var description: String {
+        switch self {
+        case .idle: return "Idle"
+        case .downloading: return "Downloading model"
+        case .loading: return "Loading model"
+        case .ready: return "Ready"
+        case .failed(let message): return "Failed: \(message)"
+        }
+    }
 }
 
 /// Reusable WhisperKit speech-to-text provider adapter.

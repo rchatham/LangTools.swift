@@ -5,7 +5,6 @@
 //  Example-app WhisperKit speech-to-text adapter
 //
 
-import Chat
 import Combine
 import Foundation
 import LangTools
@@ -13,7 +12,7 @@ import WhisperKitLangTools
 
 public typealias WhisperKitLoadingState = WhisperKitLangTools.WhisperKitLoadingState
 
-/// Example-app WhisperKit provider that supplies ToolSettings integration around
+/// Example-app WhisperKit provider that supplies injected settings around
 /// the reusable WhisperKitLangTools provider.
 @available(macOS 13, iOS 16, *)
 public class WhisperKitSTTProvider: SpeechRecognitionProvider, ObservableObject {
@@ -38,13 +37,13 @@ public class WhisperKitSTTProvider: SpeechRecognitionProvider, ObservableObject 
     public var isListening: Bool { provider.isListening }
     public var modelState: String { provider.modelState }
 
-    public init() {
+    public init(
+        modelVariantProvider: @escaping @MainActor () -> String = { "base" },
+        languageIdentifierProvider: @escaping @MainActor () -> String? = { nil }
+    ) {
         provider = WhisperKitSpeechRecognitionProvider(
-            modelVariantProvider: { ToolSettings.shared.whisperKitModelSize.rawValue },
-            languageIdentifierProvider: {
-                let language = ToolSettings.shared.sttLanguage.rawValue
-                return language == "auto" ? nil : language
-            }
+            modelVariantProvider: modelVariantProvider,
+            languageIdentifierProvider: languageIdentifierProvider
         )
 
         provider.$loadingState
@@ -68,7 +67,6 @@ public class WhisperKitSTTProvider: SpeechRecognitionProvider, ObservableObject 
     }
 
     public func configure(languageIdentifier: String) {
-        ToolSettings.shared.sttLanguage = .init(rawValue: languageIdentifier) ?? ToolSettings.shared.sttLanguage
         provider.configure(languageIdentifier: languageIdentifier)
     }
 
