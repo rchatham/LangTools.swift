@@ -126,6 +126,8 @@ class ChatViewModel: ObservableObject {
         errorMessage = nil
 
         do {
+            let existingMessageCount = messageService.messages.count
+
             // Create assistant message placeholder
             let assistantMessage = ChatMessage(role: .assistant, content: "")
             messages.append(assistantMessage)
@@ -242,22 +244,7 @@ class ChatViewModel: ObservableObject {
     }
 
     func showHelp() {
-        let helpText = """
-        Available commands:
-          /help     - Show this help message
-          /clear    - Clear chat history
-          /model    - Show current model
-          /tools    - List available tools
-          /history  - Show input history
-          /exit     - Exit the application
-
-        Keyboard shortcuts:
-          Enter     - Send message
-          Up/Down   - Navigate input history
-          Ctrl+C    - Cancel current operation
-          Ctrl+L    - Clear screen
-        """
-        messages.append(ChatMessage(role: .system, content: helpText))
+        messages.append(ChatMessage(role: .system, content: HelpSystem.fullHelp()))
     }
 
     func showModel() {
@@ -342,6 +329,21 @@ class ChatViewModel: ObservableObject {
 
     func clearError() {
         errorMessage = nil
+    }
+
+    private static func chatMessage(from message: Message) -> ChatMessage? {
+        guard let text = message.text, !text.isEmpty else { return nil }
+
+        switch message.role {
+        case .user:
+            return nil
+        case .assistant:
+            return ChatMessage(role: .assistant, content: text)
+        case .system, .developer:
+            return ChatMessage(role: .system, content: text)
+        case .tool:
+            return ChatMessage(role: .tool, content: text)
+        }
     }
 }
 

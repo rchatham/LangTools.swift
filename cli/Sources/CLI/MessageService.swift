@@ -25,9 +25,22 @@ class MessageService: ObservableObject {
     }
 
     final class ToolCallTrace {
+        struct ToolEventRecord {
+            let kind: Kind
+            let name: String?
+            let message: String?
+
+            enum Kind {
+                case called
+                case completed
+                case failed
+            }
+        }
+
         var calledToolNames: [String] = []
         var completionResults: [String] = []
         var errorResults: [String] = []
+        var events: [ToolEventRecord] = []
 
         var sawToolCall: Bool {
             !calledToolNames.isEmpty
@@ -68,10 +81,9 @@ class MessageService: ObservableObject {
         let toolDecision = toolAvailabilityDecision(for: model, tools: tools, toolChoice: requestedToolChoice)
         emitToolWarningIfNeeded(toolDecision.warning, model: model, silent: silent)
         let toolTrace = ToolCallTrace()
-        if !silent {
-            print("\rAssistant: ".yellow, terminator: "")
-        }
         let uuid = UUID(); var content: String = ""
+        var didRenderAssistantPrefix = false
+        var didRenderAssistantContent = false
         let stream = try streamChatCompletionRequest(
             messages: messages,
             model: model,
@@ -81,33 +93,43 @@ class MessageService: ObservableObject {
             toolTrace: toolTrace
         )
         for try await chunk in stream {
-            if !silent {
-                if content.hasSuffix("\n") {
-                    print("")
-                }
+            if let displayableChunk = displayableAssistantChunk(from: chunk) {
+                if !silent {
+                    renderAssistantPrefixIfNeeded(rendered: &didRenderAssistantPrefix)
+                    if didRenderAssistantContent, content.hasSuffix("\n") {
+                        print("")
+                    }
 
-                await MainActor.run {
-                    print("\(chunk.trimingTrailingNewlines())", terminator: "")
+                    await MainActor.run {
+                        print(displayableChunk, terminator: "")
+                    }
+                    fflush(stdout)
                 }
-                fflush(stdout)
+                didRenderAssistantContent = true
             }
 
             content += chunk
             upsertAssistantMessage(id: uuid, text: content.trimingTrailingNewlines())
         }
 
+        if silent, let toolSummary = toolEventSummaryMessage(toolTrace: toolTrace, model: model) {
+            messages.append(Message(text: toolSummary, role: .system))
+        }
+
         let finalContent = resolvedAssistantContent(content: content, toolTrace: toolTrace, model: model)
         if finalContent != content.trimingTrailingNewlines() {
             if !silent, !finalContent.isEmpty {
-                if !content.isEmpty {
+                renderAssistantPrefixIfNeeded(rendered: &didRenderAssistantPrefix)
+                if didRenderAssistantContent {
                     print("")
                 }
                 print(finalContent, terminator: "")
+                didRenderAssistantContent = true
             }
             upsertAssistantMessage(id: uuid, text: finalContent)
         }
 
-        if !silent {
+        if !silent, didRenderAssistantPrefix {
             print("")
         }
     }
@@ -147,9 +169,9 @@ class MessageService: ObservableObject {
             print("API response unsuccessful status code: \(code)")
             if let error { handleLangToolApiError(error) }
         case .streamParsingFailure:
-            print("Failed to parse streaming response")
-        case .failedToDecodeStream(let buffer, let error):
-            print("Failed to decode stream: \(buffer), error: \(error.localizedDescription)")
+            print("Failed to parse the streaming response.")
+        case .failedToDecodeStream:
+            print("Failed to decode the streaming response. Try again or switch models.")
         case .invalidContentType:
             print("Invalid content type")
         default: break
@@ -263,13 +285,16 @@ class MessageService: ObservableObject {
             case .toolCalled(let toolSelection):
                 if let name = toolSelection.name {
                     toolTrace.calledToolNames.append(name)
+                    toolTrace.events.append(.init(kind: .called, name: name, message: nil))
                 }
             case .toolCompleted(let toolResult):
                 guard let toolResult else { return }
                 if toolResult.is_error {
                     toolTrace.errorResults.append(toolResult.result)
+                    toolTrace.events.append(.init(kind: .failed, name: nil, message: toolResult.result))
                 } else {
                     toolTrace.completionResults.append(toolResult.result)
+                    toolTrace.events.append(.init(kind: .completed, name: nil, message: toolResult.result))
                 }
             }
         }
@@ -277,15 +302,41 @@ class MessageService: ObservableObject {
 
     func resolvedAssistantContent(content: String, toolTrace: ToolCallTrace, model: Model) -> String {
         let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmedContent.isEmpty else {
+        guard !trimmedContent.isEmpty else {
+            if let fallback = fallbackMessageForEmptyAssistantResponse(toolTrace: toolTrace, model: model) {
+                return fallback
+            }
             return content.trimingTrailingNewlines()
         }
 
-        if let fallback = fallbackMessageForEmptyAssistantResponse(toolTrace: toolTrace, model: model) {
-            return fallback
+        if looksLikeSerializedToolCallArtifact(trimmedContent) {
+            return fallbackMessageForSerializedToolArtifact(model: model)
         }
 
         return content.trimingTrailingNewlines()
+    }
+
+    func toolEventSummaryMessage(toolTrace: ToolCallTrace, model: Model) -> String? {
+        if let unknownTool = toolTrace.calledToolNames.first(where: { ToolRegistry.shared.tool(named: $0) == nil }) {
+            return "Tool warning: model requested unsupported tool '\(unknownTool)'."
+        }
+
+        if toolTrace.errorResults.contains(where: isMalformedToolArgumentError(_:)) {
+            return "Tool error: model emitted malformed tool arguments."
+        }
+
+        if let toolFailure = toolTrace.errorResults.first {
+            return formatToolFailureLine(toolFailure)
+        }
+
+        if toolTrace.sawToolCall {
+            if model.capabilities.toolReliability == .limited {
+                return "Warning: model attempted a tool call but produced no usable reply."
+            }
+            return "Warning: assistant produced no usable reply after tool handling."
+        }
+
+        return nil
     }
 
     func fallbackMessageForEmptyAssistantResponse(toolTrace: ToolCallTrace, model: Model) -> String? {
@@ -293,16 +344,12 @@ class MessageService: ObservableObject {
             return "The model requested unsupported tool '\(unknownTool)'. Try rephrasing or switching models."
         }
 
-        if let malformedArguments = toolTrace.errorResults.first(where: {
-            $0.localizedCaseInsensitiveContains("Failed to decode function arguments") ||
-            $0.localizedCaseInsensitiveContains("Missing required function arguments") ||
-            $0.localizedCaseInsensitiveContains("Invalid parameters")
-        }) {
-            return "The model emitted malformed tool arguments. \(malformedArguments)"
+        if toolTrace.errorResults.contains(where: isMalformedToolArgumentError(_:)) {
+            return "The model emitted malformed tool arguments. Try again or switch models."
         }
 
         if let toolFailure = toolTrace.errorResults.first {
-            return "A tool call failed before the assistant produced a response. \(toolFailure)"
+            return "\(formatToolFailureLine(toolFailure)) Try again if the task still needs that tool."
         }
 
         if toolTrace.sawToolCall {
@@ -313,6 +360,44 @@ class MessageService: ObservableObject {
         }
 
         return nil
+    }
+
+    func fallbackMessageForSerializedToolArtifact(model: Model) -> String {
+        if model.capabilities.toolReliability == .limited {
+            return "The model produced an unusable tool-call artifact instead of a normal reply. Local/Ollama models may be unreliable for tool-heavy tasks."
+        }
+        return "The model produced an unusable tool-call artifact instead of a normal reply. Try again or switch models."
+    }
+
+    func looksLikeSerializedToolCallArtifact(_ content: String) -> Bool {
+        let normalized = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.hasPrefix("{"), normalized.hasSuffix("}") else { return false }
+        guard normalized.localizedCaseInsensitiveContains("\"name\"") else { return false }
+        return normalized.localizedCaseInsensitiveContains("\"parameters\"") || normalized.localizedCaseInsensitiveContains("\"arguments\"")
+    }
+
+    func displayableAssistantChunk(from chunk: String) -> String? {
+        let trimmed = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return chunk.trimingTrailingNewlines()
+    }
+
+    func formatToolFailureLine(_ message: String) -> String {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Tool error: The tool failed before the assistant produced a response." }
+        return "Tool error: \(trimmed)"
+    }
+
+    func isMalformedToolArgumentError(_ message: String) -> Bool {
+        message.localizedCaseInsensitiveContains("Failed to decode function arguments") ||
+        message.localizedCaseInsensitiveContains("Missing required function arguments") ||
+        message.localizedCaseInsensitiveContains("Invalid parameters")
+    }
+
+    private func renderAssistantPrefixIfNeeded(rendered: inout Bool) {
+        guard !rendered else { return }
+        print("\rAssistant: ".yellow, terminator: "")
+        rendered = true
     }
 
     private func upsertAssistantMessage(id: UUID, text: String) {

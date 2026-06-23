@@ -211,7 +211,59 @@ final class ChatFlowTests: XCTestCase {
             model: .openAI(.gpt4o_mini)
         )
 
-        XCTAssertEqual(message, "The model emitted malformed tool arguments. Failed to decode function arguments: {not-json}")
+        XCTAssertEqual(message, "The model emitted malformed tool arguments. Try again or switch models.")
+    }
+
+    func testDisplayableAssistantChunkSuppressesWhitespaceOnlyOutput() {
+        let service = MessageService()
+
+        XCTAssertNil(service.displayableAssistantChunk(from: "\n"))
+        XCTAssertNil(service.displayableAssistantChunk(from: "   \n\t"))
+        XCTAssertEqual(service.displayableAssistantChunk(from: "Hello\n"), "Hello")
+    }
+
+    func testFormatToolFailureLineUsesCompactPrefix() {
+        let service = MessageService()
+
+        XCTAssertEqual(service.formatToolFailureLine("File not found"), "Tool error: File not found")
+        XCTAssertEqual(service.formatToolFailureLine("   \n"), "Tool error: The tool failed before the assistant produced a response.")
+    }
+
+    func testToolEventSummaryMessageForMalformedArguments() {
+        let trace = MessageService.ToolCallTrace()
+        trace.calledToolNames = ["Read"]
+        trace.errorResults = ["Failed to decode function arguments: {bad}"]
+
+        let message = MessageService().toolEventSummaryMessage(toolTrace: trace, model: .openAI(.gpt4o_mini))
+        XCTAssertEqual(message, "Tool error: model emitted malformed tool arguments.")
+    }
+
+    func testToolEventSummaryMessageForLimitedModelEmptyReply() {
+        let trace = MessageService.ToolCallTrace()
+        trace.calledToolNames = ["Read"]
+
+        let message = MessageService().toolEventSummaryMessage(
+            toolTrace: trace,
+            model: .ollama(Ollama.Model(rawValue: "llama3.2:latest")!)
+        )
+        XCTAssertEqual(message, "Warning: model attempted a tool call but produced no usable reply.")
+    }
+
+    func testResolvedAssistantContentReplacesSerializedToolArtifact() {
+        let service = MessageService()
+        let trace = MessageService.ToolCallTrace()
+        let artifact = "{\"name\":\"ask_user_question\",\"parameters\":{\"question\":\"Which tool should we use?\"}}"
+
+        let resolved = service.resolvedAssistantContent(
+            content: artifact,
+            toolTrace: trace,
+            model: .ollama(Ollama.Model(rawValue: "llama3.2:latest")!)
+        )
+
+        XCTAssertEqual(
+            resolved,
+            "The model produced an unusable tool-call artifact instead of a normal reply. Local/Ollama models may be unreliable for tool-heavy tasks."
+        )
     }
 
     func testFallbackMessageForLimitedModelEmptyToolReply() {

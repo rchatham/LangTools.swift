@@ -181,21 +181,20 @@ struct MainView: View {
         // Call LLM via MessageService (silent mode to avoid stdout corruption in TUI)
         Task {
             do {
+                let existingMessageCount = messageService.messages.count
+
                 try await messageService.performMessageCompletionRequest(
                     message: trimmed,
                     stream: true,
                     silent: true
                 )
 
-                // Copy the response from MessageService to our ChatMessage array
-                if let lastMessage = messageService.messages.last,
-                   lastMessage.role == .assistant,
-                   let content = lastMessage.text {
-                    messages[messages.count - 1] = ChatMessage(
-                        role: .assistant,
-                        content: content
-                    )
+                if messages.last?.role == .assistant, messages.last?.content.isEmpty == true {
+                    messages.removeLast()
                 }
+
+                let newMessages = messageService.messages.dropFirst(existingMessageCount).compactMap(Self.chatMessage(from:))
+                messages.append(contentsOf: newMessages)
 
                 statusMessage = "Ready"
             } catch {
@@ -517,6 +516,21 @@ struct MainView: View {
         }
         lines.append("────────────────────────────────────")
         messages.append(ChatMessage(role: .system, content: lines.joined(separator: "\n")))
+    }
+
+    private static func chatMessage(from message: Message) -> ChatMessage? {
+        guard let text = message.text, !text.isEmpty else { return nil }
+
+        switch message.role {
+        case .user:
+            return nil
+        case .assistant:
+            return ChatMessage(role: .assistant, content: text)
+        case .system, .developer:
+            return ChatMessage(role: .system, content: text)
+        case .tool:
+            return ChatMessage(role: .tool, content: text)
+        }
     }
 }
 
