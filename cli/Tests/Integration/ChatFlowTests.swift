@@ -102,6 +102,22 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertTrue(helpText.contains("/ollama <subcommand> [name] Manage local Ollama models"))
     }
 
+    func testCommandSpecificHelpIncludesExamples() {
+        let helpText = CommandParser.helpText(for: "ollama")
+
+        XCTAssertTrue(helpText.contains("Examples:"))
+        XCTAssertTrue(helpText.contains("/ollama list"))
+        XCTAssertTrue(helpText.contains("/ollama pull llama3.2:latest"))
+    }
+
+    func testPrintUsageUsesSharedCommandHelp() {
+        let output = try! runCLI(arguments: ["--help"])
+
+        XCTAssertTrue(output.contains("COMMANDS (in chat)"))
+        XCTAssertTrue(output.contains("/help [command]"))
+        XCTAssertTrue(output.contains("/ollama <subcommand> [name]"))
+    }
+
     func testNonInteractiveCommandAllowlist() {
         XCTAssertTrue(CLI.isCommandSupportedInNonInteractiveMode(SlashCommand(name: "help", arguments: [], rawArguments: ""), type: .help))
         XCTAssertTrue(CLI.isCommandSupportedInNonInteractiveMode(SlashCommand(name: "status", arguments: [], rawArguments: ""), type: .status))

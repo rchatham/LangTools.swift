@@ -50,6 +50,8 @@ class MessageService: ObservableObject {
             handleLangToolsError(error)
         } catch let error as LangToolsRequestError {
             handleLangToolsRequestError(error)
+        } catch let error as LangToolchainError {
+            handleLangToolchainError(error)
         } catch {
             print("Unexpected error: \(error.localizedDescription)")
             throw error
@@ -152,6 +154,44 @@ class MessageService: ObservableObject {
             print("Invalid content type")
         default: break
         }
+    }
+
+    func handleLangToolchainError(_ error: LangToolchainError) {
+        switch error {
+        case .toolchainCannotHandleRequest:
+            for line in missingProviderMessageLines(for: UserDefaults.model) {
+                print(line)
+            }
+        }
+    }
+
+    func missingProviderMessageLines(for model: Model) -> [String] {
+        let provider = model.provider
+        let envVar: String
+        let serviceName: String
+
+        switch provider {
+        case .openAI:
+            envVar = "OPENAI_API_KEY"
+            serviceName = "OpenAI"
+        case .anthropic:
+            envVar = "ANTHROPIC_API_KEY"
+            serviceName = "Anthropic"
+        case .xAI:
+            envVar = "XAI_API_KEY"
+            serviceName = "xAI"
+        case .gemini:
+            envVar = "GEMINI_API_KEY"
+            serviceName = "Gemini"
+        case .ollama:
+            return ["The current Ollama model could not be reached. Check that Ollama is running and the model is available."]
+        }
+
+        return [
+            "No configured provider could handle the current model '\(model.rawValue)'.",
+            "Set a \(serviceName) API key with /apikey or export \(envVar), then try again.",
+            "Use /status to inspect configuration or /model to switch models."
+        ]
     }
 
     func handleLangToolApiError(_ error: Error) {
