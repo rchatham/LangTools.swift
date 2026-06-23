@@ -29,7 +29,7 @@ public final class OpenAISpeechSynthesisProvider: SpeechSynthesisProviding {
     }
 
     public func speak(_ request: LangToolsSpeechSynthesisInput) throws {
-        throw OpenAISpeechProviderError.liveRecognitionUnsupported
+        throw OpenAISpeechProviderError.speechSynthesisPlaybackUnsupported
     }
 
     public func stopSpeaking() {

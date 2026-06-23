@@ -62,7 +62,6 @@ let package = Package(
                 .product(name: "LangTools", package: "langtools.swift"),
                 .product(name: "AppleLangTools", package: "langtools.swift"),
                 .product(name: "WhisperKitLangTools", package: "langtools.swift"),
-                .product(name: "WhisperKit", package: "WhisperKit", condition: .when(platforms: [.macOS, .iOS])),
             ],
             path: "Modules/Audio"),
         .target(

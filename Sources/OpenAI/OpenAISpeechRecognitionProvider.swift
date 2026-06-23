@@ -90,6 +90,7 @@ public final class OpenAISpeechRecognitionProvider: SpeechRecognitionProviding {
 public enum OpenAISpeechProviderError: Error, LocalizedError {
     case providerNotConfigured
     case liveRecognitionUnsupported
+    case speechSynthesisPlaybackUnsupported
 
     public var errorDescription: String? {
         switch self {
@@ -97,6 +98,8 @@ public enum OpenAISpeechProviderError: Error, LocalizedError {
             return "OpenAI speech provider is not configured"
         case .liveRecognitionUnsupported:
             return "OpenAI speech provider does not support live recognition"
+        case .speechSynthesisPlaybackUnsupported:
+            return "OpenAI speech provider does not support local speech playback; use synthesize(_:voice:) to request audio data"
         }
     }
 }

@@ -108,6 +108,9 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
     }
 
     public func startRecognition() throws {
+        guard isAvailable else {
+            throw WhisperKitLangToolsSpeechError.providerNotConfigured
+        }
         Task {
             try await startStreamingTranscription { [weak self] text, isFinal in
                 Task { @MainActor [weak self] in

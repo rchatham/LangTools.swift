@@ -24,7 +24,7 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
         runsOnDevice: true,
         supportsStreamingPartials: true,
         supportsContinuousMode: true,
-        supportsDualLanguageAutoDetect: true,
+        supportsDualLanguageAutoDetect: false,
         requiresNetwork: false,
         requiresModelDownload: false
     )
@@ -43,6 +43,7 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var audioEngine: AVAudioEngine?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var recognitionSessionID = UUID()
     private var onPartialResultCallback: ((String) -> Void)?
     private var onFinalResultCallback: ((String) -> Void)?
 
@@ -164,28 +165,38 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
             throw AppleLangToolsSpeechError.recordingFailed("No valid audio input device available")
         }
 
+        let sessionID = UUID()
+        recognitionSessionID = sessionID
+
         recognitionTask = recognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            guard let self else { return }
             if error != nil {
-                self.cleanupStreaming()
+                Task { @MainActor [weak self] in
+                    guard let self, self.recognitionSessionID == sessionID else { return }
+                    self.cleanupStreaming()
+                }
                 return
             }
             guard let result else { return }
             let text = result.bestTranscription.formattedString
-            if result.isFinal {
-                self.currentTranscript = text
-                self.eventHandler?(.finalTranscription(text))
-                self.onFinalResultCallback?(text)
-                self.cleanupStreaming()
-            } else {
-                self.currentTranscript = text
-                self.eventHandler?(.partialTranscription(text))
-                self.onPartialResultCallback?(text)
+            let isFinal = result.isFinal
+            Task { @MainActor [weak self] in
+                guard let self, self.recognitionSessionID == sessionID else { return }
+                if isFinal {
+                    self.currentTranscript = text
+                    self.eventHandler?(.finalTranscription(text))
+                    self.onFinalResultCallback?(text)
+                    self.cleanupStreaming()
+                } else {
+                    self.currentTranscript = text
+                    self.eventHandler?(.partialTranscription(text))
+                    self.onPartialResultCallback?(text)
+                }
             }
         }
 
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
-            self?.recognitionRequest?.append(buffer)
+        let streamingRequest = recognitionRequest
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in
+            streamingRequest.append(buffer)
         }
         audioEngine.prepare()
         try audioEngine.start()
@@ -212,6 +223,7 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
         recognitionRequest = nil
         audioEngine = nil
         recognitionTask = nil
+        recognitionSessionID = UUID()
         onPartialResultCallback = nil
         onFinalResultCallback = nil
     }
