@@ -189,6 +189,19 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertNotNil(tool?.callback)
     }
 
+    func testAskUserQuestionToolRejectsNonInteractiveExecution() {
+        XCTAssertThrowsError(try AskUserQuestionTool.validateInteractiveInput(isInteractive: false)) { error in
+            guard let toolError = error as? ToolError else {
+                return XCTFail("Expected ToolError")
+            }
+
+            XCTAssertEqual(
+                toolError.errorDescription,
+                "Tool 'ask_user_question' execution failed: This tool requires an interactive terminal. Ask a direct question instead when running non-interactively."
+            )
+        }
+    }
+
     func testFallbackMessageForUnknownToolName() {
         let trace = MessageService.ToolCallTrace()
         trace.calledToolNames = ["Available Tools"]

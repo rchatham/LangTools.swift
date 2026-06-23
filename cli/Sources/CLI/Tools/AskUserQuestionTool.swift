@@ -7,6 +7,11 @@
 
 import Foundation
 import OpenAI
+#if os(macOS)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// A question option
 struct QuestionOption: Codable {
@@ -114,6 +119,8 @@ struct AskUserQuestionTool: ExecutableTool {
     )
 
     static func execute(parameters: [String: Any]) async throws -> String {
+        try validateInteractiveInput(isInteractive: isInteractiveSession())
+
         guard let jsonString = ToolRegistry.extractString(parameters, key: "questionsJson"),
               let data = jsonString.data(using: .utf8) else {
             throw ToolError.missingRequiredParameter(tool: name, parameter: "questionsJson")
@@ -172,5 +179,18 @@ struct AskUserQuestionTool: ExecutableTool {
         } catch {
             throw ToolError.invalidParameters(tool: name, reason: "Invalid JSON: \(error.localizedDescription)")
         }
+    }
+
+    static func validateInteractiveInput(isInteractive: Bool) throws {
+        guard isInteractive else {
+            throw ToolError.executionFailed(
+                tool: name,
+                reason: "This tool requires an interactive terminal. Ask a direct question instead when running non-interactively."
+            )
+        }
+    }
+
+    static func isInteractiveSession() -> Bool {
+        isatty(STDIN_FILENO) != 0 && isatty(STDOUT_FILENO) != 0
     }
 }
