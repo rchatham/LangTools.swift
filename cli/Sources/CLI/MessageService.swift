@@ -18,6 +18,12 @@ import SwiftUI
 #endif
 
 class MessageService: ObservableObject {
+    struct ToolAvailabilityDecision {
+        let tools: [OpenAI.Tool]?
+        let toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?
+        let warning: String?
+    }
+
     final class ToolCallTrace {
         var calledToolNames: [String] = []
         var completionResults: [String] = []
@@ -29,6 +35,7 @@ class MessageService: ObservableObject {
     }
 
     var messages: [Message] = []
+    private var emittedToolWarnings: Set<String> = []
 
     /// All registered tools wired to ToolRegistry for execution
     var tools: [OpenAI.Tool]? {
@@ -55,7 +62,9 @@ class MessageService: ObservableObject {
         }
 
         let model = UserDefaults.model
-        let toolChoice = (tools?.isEmpty ?? true) ? nil : OpenAI.ChatCompletionRequest.ToolChoice.auto
+        let requestedToolChoice = (tools?.isEmpty ?? true) ? nil : OpenAI.ChatCompletionRequest.ToolChoice.auto
+        let toolDecision = toolAvailabilityDecision(for: model, tools: tools, toolChoice: requestedToolChoice)
+        emitToolWarningIfNeeded(toolDecision.warning, model: model, silent: silent)
         let toolTrace = ToolCallTrace()
         if !silent {
             print("\rAssistant: ".yellow, terminator: "")
@@ -65,8 +74,8 @@ class MessageService: ObservableObject {
             messages: messages,
             model: model,
             stream: stream,
-            tools: tools,
-            toolChoice: toolChoice,
+            tools: toolDecision.tools,
+            toolChoice: toolDecision.toolChoice,
             toolTrace: toolTrace
         )
         for try await chunk in stream {
@@ -168,6 +177,39 @@ class MessageService: ObservableObject {
             print("The model emitted malformed tool arguments.")
         case .missingRequiredFunctionArguments:
             print("The model omitted required tool arguments.")
+        }
+    }
+
+    func toolAvailabilityDecision(
+        for model: Model,
+        tools: [OpenAI.Tool]?,
+        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?
+    ) -> ToolAvailabilityDecision {
+        guard let tools, !tools.isEmpty else {
+            return ToolAvailabilityDecision(tools: nil, toolChoice: nil, warning: nil)
+        }
+
+        let capabilities = model.capabilities
+        switch capabilities.toolReliability {
+        case .recommended:
+            return ToolAvailabilityDecision(tools: tools, toolChoice: toolChoice, warning: nil)
+        case .limited:
+            return ToolAvailabilityDecision(tools: tools, toolChoice: toolChoice, warning: capabilities.toolWarningText)
+        case .unavailable:
+            return ToolAvailabilityDecision(tools: nil, toolChoice: nil, warning: capabilities.toolWarningText)
+        }
+    }
+
+    func emitToolWarningIfNeeded(_ warning: String?, model: Model, silent: Bool) {
+        guard let warning else { return }
+
+        let warningKey = "\(model.rawValue)::\(warning)"
+        guard emittedToolWarnings.insert(warningKey).inserted else { return }
+
+        if silent {
+            messages.append(Message(text: warning, role: .system))
+        } else {
+            print(warning.yellow)
         }
     }
 

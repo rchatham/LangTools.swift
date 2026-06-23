@@ -46,6 +46,17 @@ struct ModelCapabilities: Equatable {
             return "Tool calling is not currently available for this model in the CLI"
         }
     }
+
+    var toolWarningText: String? {
+        switch toolReliability {
+        case .recommended:
+            return nil
+        case .limited:
+            return "Warning: This model may be unreliable for tool-heavy tasks."
+        case .unavailable:
+            return "Warning: Tool calling is not currently available for this model in the CLI. Continuing without tools."
+        }
+    }
 }
 
 enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equatable {

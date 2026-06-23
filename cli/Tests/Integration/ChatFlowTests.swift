@@ -197,6 +197,56 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertEqual(message, "The model attempted a tool call but did not produce a usable reply. Local/Ollama models may be unreliable for tool-heavy tasks.")
     }
 
+    func testToolAvailabilityDecisionDisablesUnavailableTools() {
+        let tool = ToolRegistry.shared.asOpenAITools().first!
+        let decision = MessageService().toolAvailabilityDecision(
+            for: .gemini(.gemini3Flash),
+            tools: [tool],
+            toolChoice: .auto
+        )
+
+        XCTAssertNil(decision.tools)
+        XCTAssertNil(decision.toolChoice)
+        XCTAssertEqual(decision.warning, "Warning: Tool calling is not currently available for this model in the CLI. Continuing without tools.")
+    }
+
+    func testToolAvailabilityDecisionWarnsForLimitedModels() {
+        let tool = ToolRegistry.shared.asOpenAITools().first!
+        let decision = MessageService().toolAvailabilityDecision(
+            for: .ollama(Ollama.Model(rawValue: "llama3.2:latest")!),
+            tools: [tool],
+            toolChoice: .auto
+        )
+
+        XCTAssertNotNil(decision.tools)
+        if case .auto? = decision.toolChoice {
+            XCTAssertTrue(true)
+        } else {
+            XCTFail("Expected automatic tool choice for limited models")
+        }
+        XCTAssertEqual(decision.warning, "Warning: This model may be unreliable for tool-heavy tasks.")
+    }
+
+    func testEmitToolWarningInSilentModeAddsSystemMessageOnce() {
+        let service = MessageService()
+        let model = Model.ollama(Ollama.Model(rawValue: "llama3.2:latest")!)
+        let warning = "Warning: This model may be unreliable for tool-heavy tasks."
+
+        service.emitToolWarningIfNeeded(warning, model: model, silent: true)
+        service.emitToolWarningIfNeeded(warning, model: model, silent: true)
+
+        let warningMessages = service.messages.filter { $0.role == .system && $0.text == warning }
+        XCTAssertEqual(warningMessages.count, 1)
+    }
+
+    func testMissingProviderMessageForOpenAIModel() {
+        let lines = MessageService().missingProviderMessageLines(for: .openAI(.gpt5_2)).joined(separator: "\n")
+
+        XCTAssertTrue(lines.contains("No configured provider could handle the current model 'gpt-5.2'."))
+        XCTAssertTrue(lines.contains("OPENAI_API_KEY"))
+        XCTAssertTrue(lines.contains("Use /status to inspect configuration or /model to switch models."))
+    }
+
     func testOllamaRequestUsesOllamaChatRequest() {
         let messages = [Message(text: "hi", role: .user)]
         let request = NetworkClient.shared.request(
