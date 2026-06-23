@@ -133,10 +133,12 @@ class ChatViewModel: ObservableObject {
             // Get response from LLM
             try await messageService.performMessageCompletionRequest(message: trimmed, stream: true, silent: true)
 
-            // Update the last message with the response
-            if let lastContent = messageService.messages.last?.text {
-                messages[messages.count - 1] = ChatMessage(role: .assistant, content: lastContent)
+            if messages.last?.role == .assistant, messages.last?.content.isEmpty == true {
+                messages.removeLast()
             }
+
+            let newMessages = messageService.messages.dropFirst(existingMessageCount).compactMap(Self.chatMessage(from:))
+            messages.append(contentsOf: newMessages)
 
             statusMessage = "Ready"
         } catch {

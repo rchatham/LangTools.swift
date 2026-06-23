@@ -457,32 +457,7 @@ struct MainView: View {
     // MARK: - Command Implementations
 
     private func showHelp() {
-        let helpText = """
-        Available commands:
-          /help      - Show this help message
-          /settings  - Open settings overlay
-          /status    - Show current configuration
-          /clear     - Clear chat history
-          /model     - Change model (opens settings)
-          /apikey    - Set API keys (opens settings)
-          /tools     - List available tools
-          /history   - Show input history
-          /save      - Save current session
-          /sessions  - List saved sessions
-          /compact   - Compact conversation context
-          /plan      - Enter plan mode
-          /tasks     - Show running background tasks
-          /exit      - Exit the application
-
-        Tips:
-          Type "/" and press Enter for command autocomplete
-          In autocomplete: type number or refine with /prefix
-
-        Keyboard shortcuts:
-          Enter     - Send message / confirm selection
-          Ctrl+C    - Cancel current operation
-        """
-        messages.append(ChatMessage(role: .system, content: helpText))
+        messages.append(ChatMessage(role: .system, content: HelpSystem.fullHelp()))
     }
 
     private func showModel() {

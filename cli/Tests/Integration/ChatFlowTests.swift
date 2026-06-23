@@ -108,6 +108,19 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertTrue(helpText.contains("Examples:"))
         XCTAssertTrue(helpText.contains("/ollama list"))
         XCTAssertTrue(helpText.contains("/ollama pull llama3.2:latest"))
+        XCTAssertTrue(helpText.contains("Details:"))
+        XCTAssertTrue(helpText.contains("Notes:"))
+        XCTAssertTrue(helpText.contains("See also:"))
+    }
+
+    func testHighValueCommandHelpIncludesTailoredGuidance() {
+        let modelHelp = CommandParser.helpText(for: "model")
+        let toolsHelp = CommandParser.helpText(for: "tools")
+        let statusHelp = CommandParser.helpText(for: "status")
+
+        XCTAssertTrue(modelHelp.contains("Cloud models usually require a matching API key."))
+        XCTAssertTrue(toolsHelp.contains("Tool use depends on the active model and provider capabilities."))
+        XCTAssertTrue(statusHelp.contains("Capability lines indicate whether tools, streaming, and structured output are supported or recommended."))
     }
 
     func testPrintUsageUsesSharedCommandHelp() {
@@ -422,10 +435,12 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertTrue(fullHelp.contains("LangTools CLI Help"))
         XCTAssertTrue(fullHelp.contains("KEYBOARD SHORTCUTS"))
         XCTAssertTrue(fullHelp.contains("TOOL USAGE"))
+        XCTAssertTrue(fullHelp.contains(CommandParser.helpText()))
 
         let quickRef = HelpSystem.quickReference()
         XCTAssertTrue(quickRef.contains("/help"))
         XCTAssertTrue(quickRef.contains("/exit"))
+        XCTAssertTrue(quickRef.contains(CommandType.status.description))
 
         let gettingStarted = HelpSystem.gettingStarted()
         XCTAssertTrue(gettingStarted.contains("Getting Started"))
@@ -438,6 +453,32 @@ final class ChatFlowTests: XCTestCase {
             let help = HelpSystem.toolHelp(for: tool)
             XCTAssertFalse(help.contains("Unknown tool"), "Tool \(tool) should have documentation")
         }
+    }
+
+    func testHelpSystemCommandHelpUsesSharedMetadata() {
+        let help = HelpSystem.commandHelp(for: "status")
+
+        XCTAssertTrue(help.contains("Usage: /status"))
+        XCTAssertTrue(help.contains("Description: Show current status"))
+        XCTAssertTrue(help.contains("Examples:"))
+        XCTAssertTrue(help.contains("Details:"))
+        XCTAssertTrue(help.contains("See also:"))
+    }
+
+    func testSilentToolWarningIsRecordedForTUI() {
+        let service = MessageService()
+        let model = Model.ollama(Ollama.Model(rawValue: "llama3.2:latest")!)
+        let trace = MessageService.ToolCallTrace()
+        trace.calledToolNames = ["Read"]
+
+        service.emitToolWarningIfNeeded("Warning: This model may be unreliable for tool-heavy tasks.", model: model, silent: true)
+        if let summary = service.toolEventSummaryMessage(toolTrace: trace, model: model) {
+            service.messages.append(Message(text: summary, role: .system))
+        }
+
+        let systemMessages = service.messages.compactMap { $0.role == .system ? $0.text : nil }
+        XCTAssertTrue(systemMessages.contains("Warning: This model may be unreliable for tool-heavy tasks."))
+        XCTAssertTrue(systemMessages.contains("Warning: model attempted a tool call but produced no usable reply."))
     }
 
     // MARK: - Error Formatter Integration Tests

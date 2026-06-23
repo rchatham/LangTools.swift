@@ -85,7 +85,7 @@ struct CLI {
           OLLAMA_HOST         Ollama base URL (default: http://localhost:11434)
 
         COMMANDS (in chat)
-        \(CommandParser.helpText())
+        \(HelpSystem.commandList())
         """)
     }
 
@@ -212,9 +212,9 @@ struct CLI {
 
         case .help:
             if command.arguments.isEmpty {
-                print(CommandParser.helpText())
+                print(HelpSystem.commandList())
             } else {
-                print(CommandParser.helpText(for: command.arguments[0]))
+                print(HelpSystem.commandHelp(for: command.arguments[0]))
             }
 
         case .model:

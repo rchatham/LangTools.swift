@@ -12,6 +12,14 @@ struct HelpSystem {
 
     // MARK: - Command Help
 
+    static func commandList() -> String {
+        CommandParser.helpText()
+    }
+
+    static func commandHelp(for commandName: String) -> String {
+        CommandParser.helpText(for: commandName)
+    }
+
     /// Generate full help text
     static func fullHelp() -> String {
         """
@@ -19,7 +27,7 @@ struct HelpSystem {
         ║                      LangTools CLI Help                        ║
         ╚════════════════════════════════════════════════════════════════╝
 
-        \(CommandParser.helpText())
+        \(commandList())
 
         ═══════════════════════════════════════════════════════════════════
 
@@ -71,15 +79,15 @@ struct HelpSystem {
 
     /// Generate quick reference card
     static func quickReference() -> String {
-        """
+        let commands: [CommandType] = [.help, .clear, .status, .model, .save, .exit]
+        let lines = commands.map {
+            "\($0.usage.padding(toLength: 12, withPad: " ", startingAt: 0))- \($0.description)"
+        }.joined(separator: "\n")
+
+        return """
         Quick Reference
         ───────────────
-        /help     - Show this help
-        /clear    - Clear history
-        /status   - Show status
-        /model    - Change model
-        /save     - Save session
-        /exit     - Quit
+        \(lines)
         """
     }
 
