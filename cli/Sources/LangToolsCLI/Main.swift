@@ -35,6 +35,8 @@ private struct CommandRouter {
             try await ChatCommand.run()
         case "auth":
             try await AuthCLI.run(arguments: Array(arguments.dropFirst()))
+        case "openai-chat":
+            try await OpenAIAccountChatCommand.run(arguments: Array(arguments.dropFirst()))
         case "help", "--help", "-h":
             print(Self.usage)
         default:
@@ -50,5 +52,6 @@ private struct CommandRouter {
       LangToolsCLI auth export-session openai --format json
       LangToolsCLI auth status openai --format json
       LangToolsCLI auth logout openai
+      LangToolsCLI openai-chat --model <model-id> --messages-file <path>
     """
 }

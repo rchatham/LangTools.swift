@@ -25,7 +25,7 @@ final class NetworkClientAuthTests: XCTestCase {
         super.tearDown()
     }
 
-    func testOpenAIAccountSessionIsExplicitlyGated() async throws {
+    func testOpenAIAccountSessionUsesCLIChatBridge() async throws {
         let session = AccountSession(
             provider: .openAI,
             accountIdentifier: "openai-user",
@@ -36,25 +36,25 @@ final class NetworkClientAuthTests: XCTestCase {
         accessManager.refresh()
 
         let proxyTransport = TestAccountProxyTransport()
+        let bridge = TestOpenAIAccountChatBridge()
         let client = NetworkClient(
             keychainService: keychainService,
             accountLoginService: StubAccountLoginService(),
             accountProxyTransport: proxyTransport,
+            openAIAccountChatBridge: bridge,
             providerAccessManager: accessManager
         )
 
-        do {
-            _ = try await client.performChatCompletionRequest(
-                messages: [Message(text: "Hello", role: .user)],
-                model: .openAI(.gpt51_codex),
-                tools: nil,
-                toolChoice: nil
-            )
-            XCTFail("Expected OpenAI account-backed transport to be gated")
-        } catch let error as NetworkClient.NetworkError {
-            XCTAssertEqual(error, .accountProxyTransportFailed("OpenAI account-backed chat is not implemented yet. Use an API key for requests."))
-            XCTAssertNil(proxyTransport.lastSession)
-        }
+        let message = try await client.performChatCompletionRequest(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .openAI(.gpt51_codex),
+            tools: nil,
+            toolChoice: nil
+        )
+
+        XCTAssertEqual(message.text, "cli response")
+        XCTAssertEqual(bridge.lastModel, .openAI(.gpt51_codex))
+        XCTAssertNil(proxyTransport.lastSession)
     }
 
     func testClaudeCodeAccountSessionStillUsesProxyTransport() async throws {
@@ -106,6 +106,58 @@ final class NetworkClientAuthTests: XCTestCase {
         } catch let error as NetworkClient.NetworkError {
             XCTAssertEqual(error, .missingApiKey)
         }
+    }
+
+    func testOpenAIAccountChatBridgeErrorsPropagate() async throws {
+        let session = AccountSession(
+            provider: .openAI,
+            accountIdentifier: "openai-user",
+            accessToken: "access-token",
+            accessibleModelIDs: ["gpt-5.1-codex"]
+        )
+        try sessionStore.save(session)
+        accessManager.refresh()
+
+        let expectedError = CLIAccountSessionBridgeError.commandFailed("Error: OpenAI request failed (status 429): You exceeded your current quota")
+        let bridge = TestOpenAIAccountChatBridge(error: expectedError)
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            openAIAccountChatBridge: bridge,
+            providerAccessManager: accessManager
+        )
+
+        do {
+            _ = try await client.performChatCompletionRequest(
+                messages: [Message(text: "Hello", role: .user)],
+                model: .openAI(.gpt51_codex),
+                tools: nil,
+                toolChoice: nil
+            )
+            XCTFail("Expected bridge error")
+        } catch let error as CLIAccountSessionBridgeError {
+            XCTAssertEqual(error, expectedError)
+        }
+    }
+}
+
+private final class TestOpenAIAccountChatBridge: OpenAIAccountChatBridging {
+    private(set) var lastMessages: [Message] = []
+    private(set) var lastModel: Model?
+    private let error: Error?
+
+    init(error: Error? = nil) {
+        self.error = error
+    }
+
+    func performOpenAIChat(messages: [Message], model: Model) async throws -> Message {
+        lastMessages = messages
+        lastModel = model
+        if let error {
+            throw error
+        }
+        return Message(text: "cli response", role: .assistant)
     }
 }
 

@@ -165,14 +165,16 @@ public final class LocalhostOAuthCallbackListener {
     }
 
     private static func callbackHTML(title: String, message: String, success: Bool) -> String {
-        let accent = success ? "#1f8f4e" : "#b42318"
+        let accent = success ? "#0D0D0D" : "#b42318"
+        let titleColor = success ? "#0D0D0D" : "#b42318"
+        let secondary = success ? "#5D5D5D" : "#7a271a"
         let returnURL = "langtools-example-auth://auth/return"
         let returnButton = success
             ? "<a class=\"button\" href=\"\(returnURL)\">Return to LangTools Example</a>"
             : ""
-        let hint = success
-            ? "Your OpenAI account is connected in LangTools Example. You can close this tab if the app is already in front."
-            : "If the app does not update automatically, switch back to it and check the latest status there."
+        let footer = success
+            ? "You may now return to the app or close this page"
+            : message
         return """
         <!doctype html>
         <html lang=\"en\">
@@ -181,32 +183,100 @@ public final class LocalhostOAuthCallbackListener {
           <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
           <title>\(title)</title>
           <style>
-            :root { color-scheme: light dark; }
-            body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; background: #f5f5f7; color: #111827; }
-            .wrap { max-width: 560px; margin: 48px auto; padding: 24px; }
-            .card { background: rgba(255,255,255,0.92); border-radius: 16px; padding: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); }
-            .badge { display: inline-block; padding: 6px 10px; border-radius: 999px; background: \(accent); color: white; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
-            h1 { margin: 14px 0 8px; font-size: 28px; }
-            p { margin: 0 0 12px; line-height: 1.5; color: #374151; }
-            .hint { font-size: 14px; color: #6b7280; }
-            .button { display: inline-block; margin: 8px 0 14px; padding: 11px 16px; border-radius: 10px; background: \(accent); color: white; font-weight: 600; text-decoration: none; }
-            .button:hover { opacity: 0.92; }
-            @media (prefers-color-scheme: dark) {
-              body { background: #111827; color: #f9fafb; }
-              .card { background: rgba(31,41,55,0.92); box-shadow: none; }
-              p { color: #d1d5db; }
-              .hint { color: #9ca3af; }
+            :root { color-scheme: light; }
+            * { box-sizing: border-box; }
+            body {
+              margin: 0;
+              min-height: 100vh;
+              background: #ffffff;
+              color: #0D0D0D;
+              font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            }
+            .container {
+              min-height: 100vh;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              padding: 32px;
+            }
+            .content {
+              width: min(680px, 100%);
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              text-align: center;
+              gap: 24px;
+              margin-top: -10vh;
+            }
+            .logo {
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              width: 128px;
+              height: 128px;
+              border-radius: 28px;
+              border: 1px solid rgba(13, 13, 13, 0.10);
+              box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
+              background: #ffffff;
+            }
+            .logo svg {
+              width: 56px;
+              height: 56px;
+            }
+            h1 {
+              margin: 0;
+              font-size: clamp(44px, 8vw, 64px);
+              line-height: 1.05;
+              font-weight: 400;
+              color: \(titleColor);
+              letter-spacing: -0.03em;
+            }
+            .message {
+              margin: 0;
+              font-size: 24px;
+              line-height: 1.35;
+              color: \(secondary);
+            }
+            .button {
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+              min-height: 48px;
+              padding: 12px 20px;
+              border-radius: 999px;
+              background: \(accent);
+              color: #ffffff;
+              text-decoration: none;
+              font-size: 16px;
+              font-weight: 510;
+              line-height: 1;
+            }
+            .button:hover { opacity: 0.94; }
+            @media (max-width: 640px) {
+              .logo {
+                width: 96px;
+                height: 96px;
+                border-radius: 22px;
+              }
+              .logo svg {
+                width: 44px;
+                height: 44px;
+              }
+              .message {
+                font-size: 20px;
+              }
             }
           </style>
         </head>
         <body>
-          <div class=\"wrap\">
-            <div class=\"card\">
-              <div class=\"badge\">\(success ? "Success" : "Error")</div>
+          <div class=\"container\">
+            <div class=\"content\">
+              <div class=\"logo\" aria-hidden=\"true\">
+                <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\" fill=\"none\" viewBox=\"0 0 32 32\"><path stroke=\"#000\" stroke-linecap=\"round\" stroke-width=\"2.484\" d=\"M22.356 19.797H17.17M9.662 12.29l1.979 3.576a.511.511 0 0 1-.005.504l-1.974 3.409M30.758 16c0 8.15-6.607 14.758-14.758 14.758-8.15 0-14.758-6.607-14.758-14.758C1.242 7.85 7.85 1.242 16 1.242c8.15 0 14.758 6.608 14.758 14.758Z\"/></svg>
+              </div>
               <h1>\(title)</h1>
-              <p>\(message)</p>
+              <p class=\"message\">\(footer)</p>
               \(returnButton)
-              <p class=\"hint\">\(hint)</p>
             </div>
           </div>
         </body>

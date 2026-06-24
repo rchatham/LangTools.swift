@@ -292,9 +292,57 @@ extension MessageService: @retroactive ChatMessageService {
                 message: error.errorDescription ?? "Update provider access settings."
             )
 
+        case let error as CLIAccountSessionBridgeError:
+            return handleCLIAccountError(error)
+
         default:
             return nil // ChatAlertInfo( title: "Unknown Error", message: "An unexpected error occurred." )
         }
+    }
+
+    private func handleCLIAccountError(_ error: CLIAccountSessionBridgeError) -> ChatAlertInfo {
+        let message = normalizedCLIErrorMessage(error)
+        let lowercasedMessage = message.lowercased()
+
+        if lowercasedMessage.contains("status 429") || lowercasedMessage.contains("quota") || lowercasedMessage.contains("billing") {
+            return ChatAlertInfo(
+                title: "OpenAI Account Quota Exceeded",
+                button: ButtonInfo(
+                    text: "Manage Access",
+                    action: { _ in
+                        AuthPresentationCoordinator.shared.present(preferredService: .openAI)
+                    }
+                ),
+                message: "Your OpenAI account-backed session could not complete this request because its quota is exhausted. Add an OpenAI API key, switch to another provider, or update your OpenAI billing/quota settings.\n\n\(message)"
+            )
+        }
+
+        if lowercasedMessage.contains("rate limit") {
+            return ChatAlertInfo(
+                title: "OpenAI Rate Limited",
+                button: ButtonInfo(
+                    text: "OK",
+                    role: .cancel
+                ),
+                message: message
+            )
+        }
+
+        return ChatAlertInfo(
+            title: "OpenAI Account Error",
+            button: ButtonInfo(
+                text: "OK",
+                role: .cancel
+            ),
+            message: message
+        )
+    }
+
+    private func normalizedCLIErrorMessage(_ error: CLIAccountSessionBridgeError) -> String {
+        let rawMessage = error.errorDescription ?? "LangToolsCLI request failed."
+        let withoutPrefix = rawMessage.replacingOccurrences(of: "Error: ", with: "")
+        let components = withoutPrefix.components(separatedBy: "\n\nSee ")
+        return components.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? withoutPrefix
     }
 
     func handleApiError(_ error: Error) -> ChatAlertInfo? {

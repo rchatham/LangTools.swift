@@ -11,11 +11,12 @@ let networkClient = NetworkClient.shared
 
 struct ChatCommand {
     static func run() async throws {
-        try await checkAndRequestAPIKeys(messageService: messageService)
+        networkClient.refreshCredentials()
 
         print("Chat CLI Started")
         print("Commands: 'exit', 'model', 'test', '/auth ...'")
         print("Current model: \(UserDefaults.model.rawValue)")
+        print("Tip: use /auth login openai to enable OpenAI account-backed chat without an API key.")
 
         while true {
             print("\nYou: ".green, terminator: "")
@@ -54,19 +55,7 @@ struct ChatCommand {
         let parts = trimmed.split(separator: " ").map(String.init)
         guard parts.first == "/auth" else { return }
         try await AuthCLI.run(arguments: Array(parts.dropFirst()))
-    }
-
-    static func checkAndRequestAPIKeys(messageService: MessageService) async throws {
-        for service in APIService.allCases {
-            if UserDefaults.getApiKey(for: service) == nil {
-                print("\nNo API key found for \(service.rawValue)")
-                print("Please enter your \(service.rawValue) API key: ", terminator: "")
-                if let apiKey = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) {
-                    try networkClient.updateApiKey(apiKey, for: service)
-                    print("\(service.rawValue) API key saved successfully")
-                }
-            }
-        }
+        networkClient.refreshCredentials()
     }
 
     static func changeModel() async throws {

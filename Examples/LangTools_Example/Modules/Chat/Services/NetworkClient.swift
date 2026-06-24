@@ -50,6 +50,7 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
     private let keychainService: KeychainService
     private let accountLoginService: AccountLoginService
     private let accountProxyTransport: AccountProxyTransportProtocol
+    private let openAIAccountChatBridge: OpenAIAccountChatBridging
     public let providerAccessManager: ProviderAccessManager
 
     private var userDefaults: UserDefaults { .standard }
@@ -59,11 +60,13 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         keychainService: KeychainService = .shared,
         accountLoginService: AccountLoginService = BrowserAccountLoginService.shared,
         accountProxyTransport: AccountProxyTransportProtocol = AccountProxyTransport(),
+        openAIAccountChatBridge: OpenAIAccountChatBridging = CLIAccountSessionBridge(),
         providerAccessManager: ProviderAccessManager = .shared
     ) {
         self.keychainService = keychainService
         self.accountLoginService = accountLoginService
         self.accountProxyTransport = accountProxyTransport
+        self.openAIAccountChatBridge = openAIAccountChatBridge
         self.providerAccessManager = providerAccessManager
         super.init()
         APIService.llms.forEach { llm in keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) } }
@@ -80,8 +83,8 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         try ensureModelAccess(for: model)
 
         if let session = accountSession(for: model) {
-            guard session.provider != .openAI else {
-                throw NetworkError.accountProxyTransportFailed("OpenAI account-backed chat is not implemented yet. Use an API key for requests.")
+            if session.provider == .openAI {
+                return try await openAIAccountChatBridge.performOpenAIChat(messages: messages, model: model)
             }
 
             return try await accountProxyTransport.performChatCompletionRequest(
@@ -104,8 +107,21 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         try ensureModelAccess(for: model)
 
         if let session = accountSession(for: model) {
-            guard session.provider != .openAI else {
-                throw NetworkError.accountProxyTransportFailed("OpenAI account-backed chat is not implemented yet. Use an API key for requests.")
+            if session.provider == .openAI {
+                return AsyncThrowingStream { continuation in
+                    let task = Task {
+                        do {
+                            let message = try await openAIAccountChatBridge.performOpenAIChat(messages: messages, model: model)
+                            if let text = message.text {
+                                continuation.yield(text)
+                            }
+                            continuation.finish()
+                        } catch {
+                            continuation.finish(throwing: error)
+                        }
+                    }
+                    continuation.onTermination = { _ in task.cancel() }
+                }
             }
 
             return try accountProxyTransport.streamChatCompletionRequest(

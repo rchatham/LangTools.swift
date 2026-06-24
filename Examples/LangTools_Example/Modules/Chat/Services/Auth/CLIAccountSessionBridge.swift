@@ -16,6 +16,7 @@ public enum CLIAccountSessionBridgeError: LocalizedError, Equatable {
     case sandboxRequiresPrebuiltCLI
     case commandFailed(String)
     case invalidSessionData
+    case invalidChatResponse
 
     public var errorDescription: String? {
         switch self {
@@ -29,11 +30,17 @@ public enum CLIAccountSessionBridgeError: LocalizedError, Equatable {
             return message
         case .invalidSessionData:
             return "LangToolsCLI returned invalid session data."
+        case .invalidChatResponse:
+            return "LangToolsCLI returned an invalid chat response."
         }
     }
 }
 
-public struct CLIAccountSessionBridge {
+public protocol OpenAIAccountChatBridging {
+    func performOpenAIChat(messages: [Message], model: Model) async throws -> Message
+}
+
+public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
     private let runner: CommandRunning
     private let decoder: JSONDecoder
     private let logger: CLIBridgeLogger
@@ -66,6 +73,29 @@ public struct CLIAccountSessionBridge {
         try await exportOpenAISession(using: resolveCommand())
     }
 
+    public func performOpenAIChat(messages: [Message], model: Model) async throws -> Message {
+        let command = try resolveCommand()
+        let requestFileURL = try writeOpenAIChatRequestFile(messages: messages)
+        defer { try? FileManager.default.removeItem(at: requestFileURL) }
+
+        let result = try await runLogged(
+            command: command,
+            extraArguments: ["openai-chat", "--model", model.rawValue, "--messages-file", requestFileURL.path],
+            action: "OpenAI chat"
+        )
+        guard result.status == 0 else {
+            throw CLIAccountSessionBridgeError.commandFailed(commandFailureMessage(for: result, action: "OpenAI chat", executable: command.executable))
+        }
+        guard let data = result.stdout.data(using: .utf8) else {
+            throw CLIAccountSessionBridgeError.invalidChatResponse
+        }
+        let decoder = JSONDecoder()
+        guard let response = try? decoder.decode(OpenAIChatCLIResponse.self, from: data) else {
+            throw CLIAccountSessionBridgeError.invalidChatResponse
+        }
+        return Message(text: response.content, role: .assistant)
+    }
+
     private func exportOpenAISession(using command: ResolvedCommand) async throws -> AccountSession {
         let result = try await runLogged(command: command, extraArguments: ["auth", "export-session", "openai", "--format", "json"], action: "OpenAI session export")
         guard result.status == 0 else {
@@ -79,6 +109,24 @@ public struct CLIAccountSessionBridge {
         } catch {
             throw CLIAccountSessionBridgeError.invalidSessionData
         }
+    }
+
+    private func writeOpenAIChatRequestFile(messages: [Message]) throws -> URL {
+        let payload = OpenAIChatCLIRequestFile(
+            messages: messages.compactMap { message in
+                guard let content = message.text else { return nil }
+                return OpenAIChatCLIMessage(role: message.role, content: content)
+            }
+        )
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(payload)
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-openai-chat-")
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("json")
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: fileURL)
+        return fileURL
     }
 
     private func commandFailureMessage(for result: CommandResult, action: String, executable: String) -> String {
@@ -121,7 +169,7 @@ public struct CLIAccountSessionBridge {
             .deletingLastPathComponent() // LangTools_Example
 
         let repoRoot = examplePackageRoot.deletingLastPathComponent().deletingLastPathComponent()
-        let cliPackageRoot = repoRoot.appendingPathComponent("LangToolsCLI")
+        let cliPackageRoot = repoRoot.appendingPathComponent("cli")
 
         let binaryPath = cliPackageRoot
             .appendingPathComponent(".build")
@@ -162,6 +210,19 @@ public struct CLIAccountSessionBridge {
 private struct ResolvedCommand {
     let executable: String
     let arguments: [String]
+}
+
+private struct OpenAIChatCLIRequestFile: Codable {
+    let messages: [OpenAIChatCLIMessage]
+}
+
+private struct OpenAIChatCLIMessage: Codable {
+    let role: Role
+    let content: String
+}
+
+private struct OpenAIChatCLIResponse: Codable {
+    let content: String
 }
 
 public struct CLIBridgeLogger {
