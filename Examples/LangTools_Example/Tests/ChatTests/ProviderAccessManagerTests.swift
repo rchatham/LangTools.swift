@@ -51,4 +51,19 @@ final class ProviderAccessManagerTests: XCTestCase {
         XCTAssertEqual(models.map(\.rawValue), ["gpt-5.1-codex"])
         XCTAssertEqual(models.first?.rawValue, "gpt-5.1-codex")
     }
+
+    func testOpenAIAccountSessionWithoutAccessibleModelIDsFallsBackToCodexModels() throws {
+        let session = AccountSession(
+            provider: .openAI,
+            accountIdentifier: "openai-user",
+            accessToken: "token",
+            accessibleModelIDs: []
+        )
+
+        try sessionStore.save(session)
+        accessManager.refresh()
+
+        let modelIDs = accessManager.state(for: .openAI).availableModels.map(\.rawValue)
+        XCTAssertEqual(modelIDs, ["gpt-5.1-codex", "gpt-5.3-codex"])
+    }
 }

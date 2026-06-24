@@ -411,7 +411,7 @@ public final class AccountLoginBackendClient: AccountLoginBackendClientProtocol 
     public func fetchAccessibleModels(for provider: AccountLoginProvider, session: AccountSession?) async throws -> [String] {
         switch provider {
         case .openAI:
-            return OpenAI.Model.chatModels.map(\.rawValue)
+            return OpenAI.Model.codex.map(\.rawValue)
         case .claudeCode:
             guard let session else {
                 throw AccountLoginError.missingStoredSession(provider)
@@ -603,7 +603,7 @@ public final class StubAccountLoginService: AccountLoginService {
     public func fetchAccessibleModels(for provider: AccountLoginProvider) async throws -> [String] {
         switch provider {
         case .openAI:
-            return OpenAI.Model.chatModels.map(\.rawValue)
+            return OpenAI.Model.codex.map(\.rawValue)
         case .claudeCode:
             return Anthropic.Model.activeCases.map(\.rawValue)
         }

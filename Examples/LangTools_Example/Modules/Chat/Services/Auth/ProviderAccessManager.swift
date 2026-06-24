@@ -148,6 +148,9 @@ public final class ProviderAccessManager: ObservableObject {
 
         switch service {
         case .openAI:
+            if hasSession, hasAPIKey == false {
+                return OpenAI.Model.codex.map { .openAI($0) }
+            }
             return OpenAI.Model.chatModels.map { .openAI($0) }
         case .anthropic:
             return Anthropic.Model.activeCases.map { .anthropic($0) }
