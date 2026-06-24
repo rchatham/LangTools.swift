@@ -48,6 +48,8 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
 
     @Published public private(set) var loadingState: WhisperKitLoadingState = .idle
     @Published public private(set) var isStreaming = false
+    /// Last asynchronous startup/streaming error reported after `startRecognition()` returns.
+    @Published public private(set) var lastError: WhisperKitLangToolsSpeechError?
 
     private var whisperKit: WhisperKit?
     private var isInitializing = false
@@ -96,6 +98,10 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
         whisperKit?.modelState.description ?? "unloaded"
     }
 
+    var configuredLanguageIdentifier: String? {
+        languageIdentifierProvider()
+    }
+
     public func configure(languageIdentifier: String) {
         languageIdentifierProvider = { languageIdentifier == "auto" ? nil : languageIdentifier }
     }
@@ -111,12 +117,21 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
         guard isAvailable else {
             throw WhisperKitLangToolsSpeechError.providerNotConfigured
         }
+        lastError = nil
         Task {
-            try await startStreamingTranscription { [weak self] text, isFinal in
-                Task { @MainActor [weak self] in
-                    self?.currentTranscript = text
-                    self?.eventHandler?(isFinal ? .finalTranscription(text) : .partialTranscription(text))
+            do {
+                try await startStreamingTranscription { [weak self] text, isFinal in
+                    Task { @MainActor [weak self] in
+                        self?.currentTranscript = text
+                        self?.eventHandler?(isFinal ? .finalTranscription(text) : .partialTranscription(text))
+                    }
                 }
+            } catch let error as WhisperKitLangToolsSpeechError {
+                isStreaming = false
+                lastError = error
+            } catch {
+                isStreaming = false
+                lastError = .transcriptionFailed(error.localizedDescription)
             }
         }
     }

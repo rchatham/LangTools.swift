@@ -38,16 +38,25 @@ public final class OpenAISpeechSynthesisProvider: SpeechSynthesisProviding {
 
     public func synthesize(
         _ request: LangToolsSpeechSynthesisInput,
-        voice: OpenAI.AudioSpeechRequest.AudioSpeechVoice = .alloy
+        voice: OpenAI.AudioSpeechRequest.AudioSpeechVoice? = nil
     ) async throws -> any LangToolsAudioResponse {
-        let audioRequest = OpenAI.AudioSpeechRequest(
+        let audioData: Data = try await openAI.perform(request: audioSpeechRequest(for: request, voice: voice))
+        return audioData
+    }
+
+    func audioSpeechRequest(
+        for request: LangToolsSpeechSynthesisInput,
+        voice: OpenAI.AudioSpeechRequest.AudioSpeechVoice? = nil
+    ) -> OpenAI.AudioSpeechRequest {
+        let resolvedVoice = voice
+            ?? request.voiceIdentifier.flatMap(OpenAI.AudioSpeechRequest.AudioSpeechVoice.init(rawValue:))
+            ?? .alloy
+        return OpenAI.AudioSpeechRequest(
             model: model,
             input: request.text,
-            voice: voice,
+            voice: resolvedVoice,
             responseFormat: responseFormat,
             speed: request.rate
         )
-        let audioData: Data = try await openAI.perform(request: audioRequest)
-        return audioData
     }
 }

@@ -7,8 +7,7 @@ let package = Package(
     name: "LangTools",
     platforms: [
         .macOS(.v14),
-        .iOS(.v16),
-        .watchOS(.v8)
+        .iOS(.v16)
     ],
     products: [
         .library(name: "LangTools", targets: ["LangTools"]),
@@ -47,6 +46,7 @@ let package = Package(
         .testTarget(name: "GeminiTests", dependencies: ["Gemini", "OpenAI", "TestUtils"]),
         .testTarget(name: "OllamaTests", dependencies: ["Ollama", "OpenAI", "TestUtils"]),
         .testTarget(name: "AppleSpeechTests", dependencies: ["AppleLangTools"]),
+        .testTarget(name: "WhisperKitLangToolsTests", dependencies: ["WhisperKitLangTools"]),
 
         // Executable target
         .executableTarget(name: "ChatCLI", dependencies: ["LangTools", "OpenAI", "Anthropic", "XAI", "Gemini", "Ollama"]),

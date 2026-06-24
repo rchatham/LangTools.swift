@@ -50,4 +50,41 @@ final class AudioRequestAbstractionTests: XCTestCase {
         XCTAssertEqual(genericResponse.transcriptText, "Hello")
         XCTAssertEqual(genericResponse.detectedLanguageIdentifier, "en")
     }
+
+    @MainActor
+    func testSpeechSynthesisProviderUsesExplicitVoiceOverNeutralVoiceIdentifier() async throws {
+        let request = makeSpeechSynthesisProvider().audioSpeechRequest(
+            for: LangToolsSpeechSynthesisInput(text: "Hello", languageIdentifier: "en", voiceIdentifier: "nova"),
+            voice: .echo
+        )
+
+        XCTAssertEqual(request.voice, .echo)
+    }
+
+    @MainActor
+    func testSpeechSynthesisProviderFallsBackToNeutralVoiceIdentifier() async throws {
+        let request = makeSpeechSynthesisProvider().audioSpeechRequest(
+            for: LangToolsSpeechSynthesisInput(text: "Hello", languageIdentifier: "en", voiceIdentifier: "nova")
+        )
+
+        XCTAssertEqual(request.voice, .nova)
+    }
+
+    @MainActor
+    func testSpeechSynthesisProviderFallsBackToAlloyForInvalidOrMissingNeutralVoiceIdentifier() async throws {
+        let invalidVoiceRequest = makeSpeechSynthesisProvider().audioSpeechRequest(
+            for: LangToolsSpeechSynthesisInput(text: "Hello", languageIdentifier: "en", voiceIdentifier: "invalid")
+        )
+        let missingVoiceRequest = makeSpeechSynthesisProvider().audioSpeechRequest(
+            for: LangToolsSpeechSynthesisInput(text: "Hello", languageIdentifier: "en")
+        )
+
+        XCTAssertEqual(invalidVoiceRequest.voice, .alloy)
+        XCTAssertEqual(missingVoiceRequest.voice, .alloy)
+    }
+
+    @MainActor
+    private func makeSpeechSynthesisProvider() -> OpenAISpeechSynthesisProvider {
+        OpenAISpeechSynthesisProvider(openAI: OpenAI(apiKey: "test"))
+    }
 }

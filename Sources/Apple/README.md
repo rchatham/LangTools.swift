@@ -88,7 +88,6 @@ let request = AppleSpeech.TranscriptionRequest(
 
 - iOS 16.0+
 - macOS 14.0+
-- watchOS 8.0+
 
 ## Error Handling
 
