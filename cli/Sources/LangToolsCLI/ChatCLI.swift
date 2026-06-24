@@ -9,20 +9,18 @@ var langToolchain = LangToolchain()
 let messageService = MessageService()
 let networkClient = NetworkClient.shared
 
-@main
-struct ChatCLI {
-    static func main() async throws {
-
-        // Check and request API keys if needed
-        try await checkAndRequestAPIKeys(messageService: messageService)
+struct ChatCommand {
+    static func run() async throws {
+        networkClient.refreshCredentials()
 
         print("Chat CLI Started")
-        print("Commands: 'exit', 'model', 'test'")
+        print("Commands: 'exit', 'model', 'test', '/auth ...'")
         print("Current model: \(UserDefaults.model.rawValue)")
+        print("Tip: use /auth login openai to enable OpenAI account-backed chat without an API key.")
 
         while true {
             print("\nYou: ".green, terminator: "")
-            guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) else { continue }
+            guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines), input.isEmpty == false else { continue }
 
             if input.lowercased() == "exit" {
                 print("Goodbye!")
@@ -39,6 +37,11 @@ struct ChatCLI {
                 continue
             }
 
+            if input.hasPrefix("/auth") {
+                try await handleAuthCommand(input)
+                continue
+            }
+
             do {
                 try await messageService.performMessageCompletionRequest(message: input, stream: true)
             } catch {
@@ -47,17 +50,12 @@ struct ChatCLI {
         }
     }
 
-    static func checkAndRequestAPIKeys(messageService: MessageService) async throws {
-        for service in APIService.allCases {
-            if UserDefaults.getApiKey(for: service) == nil {
-                print("\nNo API key found for \(service.rawValue)")
-                print("Please enter your \(service.rawValue) API key: ", terminator: "")
-                if let apiKey = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) {
-                    try networkClient.updateApiKey(apiKey, for: service)
-                    print("\(service.rawValue) API key saved successfully")
-                }
-            }
-        }
+    static func handleAuthCommand(_ input: String) async throws {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = trimmed.split(separator: " ").map(String.init)
+        guard parts.first == "/auth" else { return }
+        try await AuthCLI.run(arguments: Array(parts.dropFirst()))
+        networkClient.refreshCredentials()
     }
 
     static func changeModel() async throws {
@@ -102,22 +100,22 @@ enum ANSIColor: String, CaseIterable {
     case `default` = "\u{001B}[0;0m"
 
     static func + (lhs: ANSIColor, rhs: String) -> String {
-        return lhs.rawValue + rhs
+        lhs.rawValue + rhs
     }
 
     static func + (lhs: String, rhs: ANSIColor) -> String {
-        return lhs + rhs.rawValue
+        lhs + rhs.rawValue
     }
 }
 
 extension String {
-    func colored(_ color: ANSIColor) -> String { return color + self + ANSIColor.default }
-    var black: String { return colored(.black) }
-    var red: String { return colored(.red) }
-    var green: String { return colored(.green) }
-    var yellow: String { return colored(.yellow) }
-    var blue: String { return colored(.blue) }
-    var magenta: String { return colored(.magenta) }
-    var cyan: String { return colored(.cyan) }
-    var white: String { return colored(.white) }
+    func colored(_ color: ANSIColor) -> String { color + self + ANSIColor.default }
+    var black: String { colored(.black) }
+    var red: String { colored(.red) }
+    var green: String { colored(.green) }
+    var yellow: String { colored(.yellow) }
+    var blue: String { colored(.blue) }
+    var magenta: String { colored(.magenta) }
+    var cyan: String { colored(.cyan) }
+    var white: String { colored(.white) }
 }
