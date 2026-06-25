@@ -227,9 +227,9 @@ final class OpenAIPerformanceTests: XCTestCase {
 
     func testModelValidationPerformance() {
         let request = OpenAI.ChatCompletionRequest(model: .gpt4o, messages: [.init(role: .user, content: "Hi")])
+        let validators = OpenAI.requestValidators
         measure {
             for _ in 0..<10000 {
-                let validators = OpenAI.requestValidators
                 _ = validators.contains(where: { $0(request) })
             }
         }

@@ -558,10 +558,10 @@ final class AnthropicIntegrationTests: XCTestCase {
             case .apiError(let apiError):
                 XCTAssertTrue(apiError is AnthropicErrorResponse)
             default:
-                break
+                XCTFail("Expected responseUnsuccessful or apiError, got \(error)")
             }
         } catch {
-            XCTAssertNotNil(error)
+            XCTFail("Expected LangToolsError, got \(type(of: error)): \(error)")
         }
     }
 

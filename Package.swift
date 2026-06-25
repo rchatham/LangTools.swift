@@ -55,7 +55,7 @@ let package = Package(
         .testTarget(name: "PerformanceTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils", "PerformanceTestUtils"]),
         .testTarget(name: "IntegrationTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils", "PerformanceTestUtils"]),
         .testTarget(name: "BenchmarkTests", dependencies: [
-            "LangTools", "OpenAI", "Anthropic", "TestUtils",
+            "LangTools", "OpenAI", "Anthropic",
             // Uncomment when benchmark deps are enabled above:
             // .product(name: "SwiftOpenAI", package: "SwiftOpenAI"),
             // .product(name: "SwiftAnthropic", package: "SwiftAnthropic"),

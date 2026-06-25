@@ -501,10 +501,10 @@ final class OpenAIIntegrationTests: XCTestCase {
             case .apiError(let apiError):
                 XCTAssertTrue(apiError is OpenAIErrorResponse)
             default:
-                break // Other LangToolsError variants are also acceptable
+                XCTFail("Expected responseUnsuccessful or apiError, got \(error)")
             }
         } catch {
-            XCTAssertNotNil(error)
+            XCTFail("Expected LangToolsError, got \(type(of: error)): \(error)")
         }
     }
 

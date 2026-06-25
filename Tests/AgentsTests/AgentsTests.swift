@@ -189,6 +189,8 @@ final class AgentsTests: XCTestCase {
 
         let d = AgentEvent.completed(agent: "A", result: "done")
         let e = AgentEvent.completed(agent: "A", result: "done", is_error: false)
+        let f = AgentEvent.completed(agent: "A", result: "done", is_error: true)
         XCTAssertEqual(d, e)
+        XCTAssertNotEqual(d, f, "Events with different is_error should not be equal")
     }
 }

@@ -15,7 +15,6 @@ import FoundationNetworking
 #endif
 @testable import LangTools
 @testable import Anthropic
-@testable import TestUtils
 #if canImport(SwiftAnthropic)
 import SwiftAnthropic
 #endif

@@ -15,7 +15,6 @@ import FoundationNetworking
 #endif
 @testable import LangTools
 @testable import OpenAI
-@testable import TestUtils
 #if canImport(SwiftOpenAI)
 import SwiftOpenAI
 #endif

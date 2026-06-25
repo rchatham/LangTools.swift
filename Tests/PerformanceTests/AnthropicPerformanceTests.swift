@@ -231,9 +231,9 @@ final class AnthropicPerformanceTests: XCTestCase {
 
     func testModelValidationPerformance() {
         let request = Anthropic.MessageRequest(model: .claude46Sonnet, messages: [.init(role: .user, content: "Hi")])
+        let validators = Anthropic.requestValidators
         measure {
             for _ in 0..<10000 {
-                let validators = Anthropic.requestValidators
                 _ = validators.contains(where: { $0(request) })
             }
         }
