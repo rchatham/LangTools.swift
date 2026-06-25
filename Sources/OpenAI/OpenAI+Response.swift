@@ -33,7 +33,6 @@ public extension OpenAI {
         public let incomplete_details: IncompleteDetails?
 
         /// The per-chunk delta, populated only while streaming. Excluded from Codable.
-        @CodableIgnored
         public var streamingDelta: Delta?
 
         public init(id: String? = nil, object: String? = nil, created_at: Int? = nil, model: String? = nil, status: String? = nil, output: [OutputItem] = [], usage: Usage? = nil, error: ResponseError? = nil, incomplete_details: IncompleteDetails? = nil, delta: Delta? = nil) {
@@ -48,6 +47,44 @@ public extension OpenAI {
             self.incomplete_details = incomplete_details
             self.streamingDelta = delta
         }
+
+        // MARK: - Codable
+
+        // A custom implementation (rather than synthesised) is required so that `output`
+        // tolerates being absent: terminal events such as `response.failed` / `response.incomplete`
+        // can omit it, and a synthesised decoder would throw `keyNotFound` (default property
+        // values are not applied by synthesised `Decodable`), masking the real error/status.
+        enum CodingKeys: String, CodingKey {
+            case id, object, created_at, model, status, output, usage, error, incomplete_details
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decodeIfPresent(String.self, forKey: .id)
+            object = try container.decodeIfPresent(String.self, forKey: .object)
+            created_at = try container.decodeIfPresent(Int.self, forKey: .created_at)
+            model = try container.decodeIfPresent(String.self, forKey: .model)
+            status = try container.decodeIfPresent(String.self, forKey: .status)
+            output = try container.decodeIfPresent([OutputItem].self, forKey: .output) ?? []
+            usage = try container.decodeIfPresent(Usage.self, forKey: .usage)
+            error = try container.decodeIfPresent(ResponseError.self, forKey: .error)
+            incomplete_details = try container.decodeIfPresent(IncompleteDetails.self, forKey: .incomplete_details)
+            streamingDelta = nil
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeIfPresent(id, forKey: .id)
+            try container.encodeIfPresent(object, forKey: .object)
+            try container.encodeIfPresent(created_at, forKey: .created_at)
+            try container.encodeIfPresent(model, forKey: .model)
+            try container.encodeIfPresent(status, forKey: .status)
+            try container.encode(output, forKey: .output)
+            try container.encodeIfPresent(usage, forKey: .usage)
+            try container.encodeIfPresent(error, forKey: .error)
+            try container.encodeIfPresent(incomplete_details, forKey: .incomplete_details)
+        }
+
 
         // MARK: - LangToolsStreamableResponse
 
