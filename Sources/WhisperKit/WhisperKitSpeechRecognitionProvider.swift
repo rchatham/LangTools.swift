@@ -310,22 +310,21 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
             silenceThreshold: 0.3,
             useVAD: true
         ) { [weak self] oldState, newState in
-            guard let self else { return }
-            let confirmedText = newState.confirmedSegments.map { self.stripSpecialTokens($0.text) }.joined(separator: " ")
-            let unconfirmedText = newState.unconfirmedSegments.map { self.stripSpecialTokens($0.text) }.joined(separator: " ")
-            let fullText = (confirmedText + " " + unconfirmedText).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !fullText.isEmpty { self.lastTranscribedText = fullText }
-            let isFinal = !newState.isRecording && oldState.isRecording
-            let oldFullText = (oldState.confirmedSegments.map { self.stripSpecialTokens($0.text) } + oldState.unconfirmedSegments.map { self.stripSpecialTokens($0.text) }).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !fullText.isEmpty && (fullText != oldFullText || isFinal) {
-                onPartialResult(fullText, isFinal)
-            }
-            if isFinal {
-                if let continuation = self.finalTranscriptionContinuation {
-                    self.finalTranscriptionContinuation = nil
-                    continuation.resume(returning: fullText)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let confirmedText = newState.confirmedSegments.map { self.stripSpecialTokens($0.text) }.joined(separator: " ")
+                let unconfirmedText = newState.unconfirmedSegments.map { self.stripSpecialTokens($0.text) }.joined(separator: " ")
+                let fullText = (confirmedText + " " + unconfirmedText).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !fullText.isEmpty { self.lastTranscribedText = fullText }
+                let isFinal = !newState.isRecording && oldState.isRecording
+                let oldFullText = (oldState.confirmedSegments.map { self.stripSpecialTokens($0.text) } + oldState.unconfirmedSegments.map { self.stripSpecialTokens($0.text) }).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !fullText.isEmpty && (fullText != oldFullText || isFinal) {
+                    onPartialResult(fullText, isFinal)
                 }
-                Task { @MainActor [weak self] in self?.isStreaming = false }
+                if isFinal {
+                    self.completeFinalTranscription(fullText)
+                    self.isStreaming = false
+                }
             }
         }
 
@@ -335,21 +334,25 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
 
     public func stopStreamingTranscription() async -> String {
         guard isStreaming else { return lastTranscribedText }
+        guard finalTranscriptionContinuation == nil else { return lastTranscribedText }
         let result = await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
             finalTranscriptionContinuation = continuation
             let transcriber = audioStreamTranscriber
             Task.detached { await transcriber?.stopStreamTranscription() }
-            Task {
+            Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-                if let continuation = self.finalTranscriptionContinuation {
-                    self.finalTranscriptionContinuation = nil
-                    continuation.resume(returning: self.lastTranscribedText)
-                }
+                self.completeFinalTranscription(self.lastTranscribedText)
             }
         }
         isStreaming = false
         lastTranscribedText = ""
         return result
+    }
+
+    private func completeFinalTranscription(_ text: String) {
+        guard let continuation = finalTranscriptionContinuation else { return }
+        finalTranscriptionContinuation = nil
+        continuation.resume(returning: text)
     }
 }
 

@@ -194,18 +194,25 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
             }
         }
 
-        let streamingRequest = recognitionRequest
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in
-            streamingRequest.append(buffer)
+        do {
+            let streamingRequest = recognitionRequest
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in
+                streamingRequest.append(buffer)
+            }
+            audioEngine.prepare()
+            try audioEngine.start()
+        } catch {
+            cleanupStreaming()
+            throw error
         }
-        audioEngine.prepare()
-        try audioEngine.start()
     }
 
+    /// Ends the current streaming request and returns the best-known transcript, if any.
+    /// The final result may still arrive asynchronously through the final-result callback.
     @discardableResult
     public func stopStreamingTranscription() -> String? {
         recognitionRequest?.endAudio()
-        return nil
+        return currentTranscript.isEmpty ? nil : currentTranscript
     }
 
     public func cancelStreamingTranscription() {
