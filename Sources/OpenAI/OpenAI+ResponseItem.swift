@@ -133,6 +133,19 @@ public extension OpenAI {
                         codingPath: encoder.codingPath,
                         debugDescription: "An Item carrying multiple tool calls cannot be encoded directly; encode it via OpenAI.ResponseRequest, which flattens each call into its own function_call input item."))
                 }
+                // Text alongside a tool call also cannot be represented as a single item;
+                // ResponseRequest.encode emits the text as a separate message item.
+                let hasText: Bool
+                switch content {
+                case .null: hasText = false
+                case .string(let s): hasText = !s.isEmpty
+                case .array(let a): hasText = !a.isEmpty
+                }
+                guard !hasText else {
+                    throw EncodingError.invalidValue(content, EncodingError.Context(
+                        codingPath: encoder.codingPath,
+                        debugDescription: "An Item carrying both text and a tool call cannot be encoded directly; encode it via OpenAI.ResponseRequest, which emits the text as a separate message item."))
+                }
                 var c = encoder.container(keyedBy: FunctionCallKeys.self)
                 try c.encode("function_call", forKey: .type)
                 try c.encodeIfPresent(first.id, forKey: .call_id)

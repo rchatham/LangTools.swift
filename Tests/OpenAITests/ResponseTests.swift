@@ -99,6 +99,14 @@ final class ResponseTests: XCTestCase {
         XCTAssertEqual(item.tool_calls?.first?.name, "lookup")
     }
 
+    func testEncodingItemWithTextAndToolCallDirectlyThrows() throws {
+        let mixed = OpenAI.Item(
+            role: .assistant,
+            content: .string("text"),
+            tool_calls: [.init(index: 0, id: "c1", type: .function, function: .init(name: "f", arguments: "{}"))])
+        XCTAssertThrowsError(try JSONEncoder().encode(mixed))
+    }
+
     func testAssistantTextAndToolCallsFlattenedToInputItems() throws {
         let assistant = OpenAI.Item(
             role: .assistant,
