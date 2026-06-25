@@ -7,7 +7,8 @@ let package = Package(
     name: "LangTools",
     platforms: [
         .macOS(.v14),
-        .iOS(.v16)
+        .iOS(.v16),
+        .watchOS(.v8)
     ],
     products: [
         .library(name: "LangTools", targets: ["LangTools"]),
@@ -35,7 +36,7 @@ let package = Package(
         .target(name: "Gemini", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
         .target(name: "Ollama", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
         .target(name: "AppleLangTools", dependencies: [.target(name: "LangTools")], path: "Sources/Apple", resources: [.process("README.md")]),
-        .target(name: "WhisperKitLangTools", dependencies: [.target(name: "LangTools"), .product(name: "WhisperKit", package: "WhisperKit")], path: "Sources/WhisperKit"),
+        .target(name: "WhisperKitLangTools", dependencies: [.target(name: "LangTools"), .product(name: "WhisperKit", package: "WhisperKit", condition: .when(platforms: [.macOS, .iOS]))], path: "Sources/WhisperKit"),
         .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], path: "Tests/TestUtils", resources: [.process("Resources/")]),
 
         // Test targets

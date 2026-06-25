@@ -1,6 +1,8 @@
-import AVFoundation
 import Foundation
 import LangTools
+
+#if canImport(WhisperKit) && canImport(AVFoundation) && !os(watchOS)
+import AVFoundation
 import WhisperKit
 
 /// WhisperKit loading state for provider UIs.
@@ -59,6 +61,7 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
     private var audioStreamTranscriber: AudioStreamTranscriber?
     private var finalTranscriptionContinuation: CheckedContinuation<String, Never>?
     private var lastTranscribedText = ""
+    private var hasEmittedFinalTranscription = false
 
     public init(
         modelVariant: String = "base",
@@ -118,12 +121,17 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
             throw WhisperKitLangToolsSpeechError.providerNotConfigured
         }
         lastError = nil
+        hasEmittedFinalTranscription = false
         Task {
             do {
                 try await startStreamingTranscription { [weak self] text, isFinal in
                     Task { @MainActor [weak self] in
                         self?.currentTranscript = text
-                        self?.eventHandler?(isFinal ? .finalTranscription(text) : .partialTranscription(text))
+                        if isFinal {
+                            self?.emitFinalTranscriptionIfNeeded(text)
+                        } else {
+                            self?.eventHandler?(.partialTranscription(text))
+                        }
                     }
                 }
             } catch let error as WhisperKitLangToolsSpeechError {
@@ -145,7 +153,7 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
             if finalizePending {
                 let text = await stopStreamingTranscription()
                 currentTranscript = text
-                eventHandler?(.finalTranscription(text))
+                emitFinalTranscriptionIfNeeded(text)
             } else {
                 _ = await stopStreamingTranscription()
             }
@@ -157,7 +165,7 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
         Task {
             let text = await stopStreamingTranscription()
             currentTranscript = text
-            eventHandler?(.finalTranscription(text))
+            emitFinalTranscriptionIfNeeded(text)
         }
     }
 
@@ -328,6 +336,7 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
             }
         }
 
+        hasEmittedFinalTranscription = false
         isStreaming = true
         try await audioStreamTranscriber?.startStreamTranscription()
     }
@@ -353,6 +362,12 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
         guard let continuation = finalTranscriptionContinuation else { return }
         finalTranscriptionContinuation = nil
         continuation.resume(returning: text)
+    }
+
+    private func emitFinalTranscriptionIfNeeded(_ text: String) {
+        guard !hasEmittedFinalTranscription else { return }
+        hasEmittedFinalTranscription = true
+        eventHandler?(.finalTranscription(text))
     }
 }
 
@@ -408,3 +423,4 @@ enum WhisperKitLangToolsAudioConverter {
         return try Data(contentsOf: tempWAV)
     }
 }
+#endif
