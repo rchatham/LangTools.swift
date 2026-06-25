@@ -191,6 +191,23 @@ final class ResponseTests: XCTestCase {
         XCTAssertEqual(results.last?.status, "completed")
     }
 
+    func testFailedResponseStreamSurfacesError() async throws {
+        // The `response.failed` payload omits `output`, exercising the tolerant decode.
+        MockURLProtocol.mockNetworkHandlers[OpenAI.ResponseRequest.endpoint] = { _ in
+            return (.success(try self.getData(filename: "response_failed_stream", fileExtension: "txt")!), 200)
+        }
+        var combined = OpenAI.ResponseResponse.empty
+        for try await response in api.stream(request: OpenAI.ResponseRequest(
+            model: .gpt4o_mini,
+            messages: [OpenAI.Item(role: .user, content: "Hi")],
+            stream: true)) {
+            combined = combined.combining(with: response)
+        }
+        XCTAssertEqual(combined.status, "failed")
+        XCTAssertEqual(combined.error?.code, "server_error")
+        XCTAssertEqual(combined.error?.message, "boom")
+    }
+
     func testToolCallStream() async throws {
         MockURLProtocol.mockNetworkHandlers[OpenAI.ResponseRequest.endpoint] = { _ in
             return (.success(try self.getData(filename: "response_tool_call_stream", fileExtension: "txt")!), 200)

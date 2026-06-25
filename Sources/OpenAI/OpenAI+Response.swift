@@ -197,7 +197,7 @@ public extension OpenAI {
                 else { mergedArguments = (arguments ?? "") + (next.arguments ?? "") }
                 let mergedContent: [OutputContent]?
                 switch (content, next.content) {
-                case (let a?, let b?): mergedContent = a + b
+                case (let a?, let b?): mergedContent = OutputItem.mergeContent(a, with: b)
                 case (let a?, nil): mergedContent = a
                 case (nil, let b?): mergedContent = b
                 case (nil, nil): mergedContent = nil
@@ -211,6 +211,20 @@ public extension OpenAI {
                     call_id: call_id ?? next.call_id,
                     name: name ?? next.name,
                     arguments: mergedArguments)
+            }
+
+            /// Appends `next` content parts, coalescing consecutive `output_text` parts into a
+            /// single entry so streamed text deltas don't accumulate one object per chunk.
+            static func mergeContent(_ base: [OutputContent], with next: [OutputContent]) -> [OutputContent] {
+                var result = base
+                for part in next {
+                    if part.type == "output_text", let last = result.indices.last, result[last].type == "output_text" {
+                        result[last].text = (result[last].text ?? "") + (part.text ?? "")
+                    } else {
+                        result.append(part)
+                    }
+                }
+                return result
             }
         }
 

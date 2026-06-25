@@ -68,10 +68,7 @@ public extension OpenAI {
         }
 
         /// Returns `true` when the request is configured with a structured output schema.
-        public var usesStructuredOutput: Bool {
-            if case .json_schema? = text?.format { return true }
-            return false
-        }
+        public var usesStructuredOutput: Bool { responseSchema != nil }
 
         // MARK: - Initializers
 
@@ -116,7 +113,9 @@ public extension OpenAI {
             if let string = try? container.decode(String.self, forKey: .input) {
                 messages = [Item(role: .user, content: .string(string))]
             } else {
-                messages = (try? container.decode([Item].self, forKey: .input)) ?? []
+                // decodeIfPresent (not try?) so a malformed item surfaces an error rather than
+                // silently discarding the whole conversation; absent `input` tolerates to [].
+                messages = try container.decodeIfPresent([Item].self, forKey: .input) ?? []
             }
             instructions = try container.decodeIfPresent(String.self, forKey: .instructions)
             tools = try container.decodeIfPresent([Tool].self, forKey: .tools)
