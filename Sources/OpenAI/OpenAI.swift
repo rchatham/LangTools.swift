@@ -101,6 +101,21 @@ final public class OpenAI: LangTools {
     }
 }
 
+extension OpenAI {
+    /// Sanitises a structured-output schema name to OpenAI's required pattern
+    /// `^[a-zA-Z0-9_-]{1,64}$`: non-conforming characters become `_`, the result is
+    /// truncated to 64 characters, and an empty result falls back to `"structured_response"`.
+    static func sanitizeSchemaName(_ name: String) -> String {
+        let cleaned = name
+            .unicodeScalars
+            .map { CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-")).contains($0) ? Character($0) : "_" }
+            .map(String.init)
+            .joined()
+        let truncated = String(cleaned.prefix(64))
+        return truncated.isEmpty ? "structured_response" : truncated
+    }
+}
+
 public struct OpenAIErrorResponse: Error, Codable {
     public let error: APIError
 

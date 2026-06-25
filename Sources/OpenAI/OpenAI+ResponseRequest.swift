@@ -218,7 +218,7 @@ public extension OpenAI {
                     public let strict: Bool
 
                     public init(name: String, schema: JSONSchema, strict: Bool = true) {
-                        self.name = ChatCompletionRequest.ResponseFormat.JSONSchemaFormat.sanitize(name: name)
+                        self.name = OpenAI.sanitizeSchemaName(name)
                         self.schema = schema
                         self.strict = strict
                     }
