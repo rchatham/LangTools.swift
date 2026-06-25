@@ -92,8 +92,7 @@ final class AnthropicIntegrationTests: XCTestCase {
             results.append(response)
         }
 
-        XCTAssertGreaterThan(results.count, 1)
-        // First result should have message_start with role
+        guard results.count > 1 else { return XCTFail("Stream produced \(results.count) results, expected > 1") }
         XCTAssertEqual(results[0].message?.role, .assistant)
     }
 
@@ -176,6 +175,8 @@ final class AnthropicIntegrationTests: XCTestCase {
         let toolStreamData = PerformanceFixtures.anthropicToolUseStreamData(toolName: "get_weather")
         let finalResponseData = PerformanceFixtures.anthropicStreamData(chunkCount: 3)
 
+        // First request returns tool use; callback registers handler for second request.
+        // Safe because the tool completion loop is sequential: callback completes before next request.
         MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
             (.success(toolStreamData), 200)
         }

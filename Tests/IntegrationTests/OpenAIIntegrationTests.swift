@@ -91,8 +91,7 @@ final class OpenAIIntegrationTests: XCTestCase {
             results.append(response)
         }
 
-        XCTAssertGreaterThan(results.count, 1)
-        // First chunk should have role
+        guard results.count > 1 else { return XCTFail("Stream produced \(results.count) results, expected > 1") }
         XCTAssertEqual(results[0].choices[0].delta?.role, .assistant)
         // Last content chunk should have finish_reason
         let lastWithChoices = results.last(where: { !$0.choices.isEmpty })
@@ -144,12 +143,12 @@ final class OpenAIIntegrationTests: XCTestCase {
             results.append(response)
         }
 
+        guard !results.isEmpty else { return XCTFail("Stream produced no results") }
         XCTAssertEqual(results[0].choices[0].delta?.role, .assistant)
         let toolCallChunks = results.filter { $0.choices.first?.delta?.tool_calls != nil }
-        XCTAssertGreaterThan(toolCallChunks.count, 0)
+        guard !toolCallChunks.isEmpty else { return XCTFail("No tool-call chunks received") }
         // Verify tool name from first tool call chunk
-        let firstToolChunk = toolCallChunks[0]
-        XCTAssertEqual(firstToolChunk.choices[0].delta?.tool_calls?[0].function.name, "get_weather")
+        XCTAssertEqual(toolCallChunks[0].choices[0].delta?.tool_calls?[0].function.name, "get_weather")
         // Accumulate and verify argument JSON
         let arguments = results.reduce("") { $0 + (!$1.choices.isEmpty ? ($1.choices[0].delta?.tool_calls?[0].function.arguments ?? "") : "") }
         XCTAssertTrue(arguments.contains("City0"), "Arguments should contain location City0")
@@ -159,11 +158,12 @@ final class OpenAIIntegrationTests: XCTestCase {
     }
 
     func testToolCallWithCallbackCompletesFullFlow() async throws {
-        // First response: tool call
         let toolStreamData = PerformanceFixtures.openAIToolCallStreamData(toolCount: 1)
-        // Second response: final text response after tool execution
         let finalStreamData = PerformanceFixtures.openAIStreamChunksData(chunkCount: 3)
 
+        // First request returns tool call; callback registers handler for second request.
+        // This matches the pattern used in OpenAITests.testToolCallWithFunctionCallbackStreamResponse.
+        // Safe because the tool completion loop is sequential: callback completes before next request.
         MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
             (.success(toolStreamData), 200)
         }
@@ -548,6 +548,7 @@ final class OpenAIIntegrationTests: XCTestCase {
         let toolStreamData = PerformanceFixtures.openAIToolCallStreamData(toolCount: 1)
         let finalStreamData = PerformanceFixtures.openAIStreamChunksData(chunkCount: 2)
 
+        // Sequential: callback completes before next request (see OpenAITests pattern)
         MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
             (.success(toolStreamData), 200)
         }
