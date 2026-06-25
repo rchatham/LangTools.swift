@@ -321,7 +321,9 @@ extension OpenAI {
                 guard let item, item.type == "function_call" else { return nil }
                 return ResponseResponse(output: [item])
             case "response.function_call_arguments.delta":
-                guard let delta else { return nil }
+                // Require item_id: without it the delta can't be merged into its call and
+                // would orphan into a duplicate function_call item, so drop it instead.
+                guard let delta, let item_id else { return nil }
                 return ResponseResponse(output: [.init(type: "function_call", id: item_id, arguments: delta)])
             case "response.completed", "response.incomplete", "response.failed":
                 guard let response else { return nil }
