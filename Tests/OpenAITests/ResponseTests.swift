@@ -70,7 +70,7 @@ final class ResponseTests: XCTestCase {
         let toolResult = OpenAI.Item(tool_selection_id: "call_9", result: "sunny")
         let request = OpenAI.ResponseRequest(
             model: .gpt4o_mini,
-            messages: [OpenAI.Item(role: .user, content: "weather?"), assistant, toolResult])
+            messages: [.init(role: .user, content: "weather?"), assistant, toolResult])
 
         let json = try JSONSerialization.jsonObject(with: request.data()) as! [String: Any]
         let input = json["input"] as! [[String: Any]]
@@ -89,7 +89,7 @@ final class ResponseTests: XCTestCase {
     }
 
     func testStructuredOutputEncoding() throws {
-        var request = OpenAI.ResponseRequest(model: .gpt4o_mini, messages: [OpenAI.Item(role: .user, content: "Hi")])
+        var request = OpenAI.ResponseRequest(model: .gpt4o_mini, messages: [.init(role: .user, content: "Hi")])
         request.responseSchema = JSONSchema.object(
             properties: ["name": .string(), "age": .integer()],
             required: ["name", "age"],
@@ -137,7 +137,7 @@ final class ResponseTests: XCTestCase {
         }
         let response = try await api.perform(request: OpenAI.ResponseRequest(
             model: .gpt4o_mini,
-            messages: [OpenAI.Item(role: .user, content: "Hi")]))
+            messages: [.init(role: .user, content: "Hi")]))
         XCTAssertEqual(response.outputText, "Hello there! How can I help you today?")
         XCTAssertEqual(response.usage?.total_tokens, 19)
     }
