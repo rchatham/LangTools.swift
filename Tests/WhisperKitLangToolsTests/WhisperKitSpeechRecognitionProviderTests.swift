@@ -1,5 +1,7 @@
 import XCTest
 import LangTools
+
+#if canImport(WhisperKit) && canImport(AVFoundation) && !os(watchOS)
 @testable import WhisperKitLangTools
 
 @available(macOS 13, iOS 16, *)
@@ -42,3 +44,4 @@ final class WhisperKitSpeechRecognitionProviderTests: XCTestCase {
         XCTAssertEqual(provider.assetState, .unknown)
     }
 }
+#endif
