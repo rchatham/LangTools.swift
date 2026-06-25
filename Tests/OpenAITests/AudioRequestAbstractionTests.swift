@@ -52,6 +52,27 @@ final class AudioRequestAbstractionTests: XCTestCase {
     }
 
     @MainActor
+    func testOpenAISTTProviderExposesReusableSpeechRecognitionProvider() {
+        let provider = OpenAISTTProvider(openAI: OpenAI(apiKey: "test"), defaultFileType: .mp3)
+
+        XCTAssertTrue(provider.isAvailable)
+        XCTAssertEqual(provider.providerID.rawValue, "openai.whisper")
+        XCTAssertFalse(provider.capabilities.runsOnDevice)
+        XCTAssertFalse(provider.capabilities.supportsStreamingPartials)
+    }
+
+    @MainActor
+    func testOpenAISTTProviderDoesNotRequireAVFoundationConversion() {
+        let provider = OpenAISTTProvider(defaultFileType: .mp3)
+
+        provider.updateDefaultFileType(.m4a)
+        provider.configure(languageIdentifier: "auto")
+
+        XCTAssertFalse(provider.isAvailable)
+        XCTAssertEqual(provider.authorizationState, .unavailable(reason: "Missing OpenAI client"))
+    }
+
+    @MainActor
     func testSpeechSynthesisProviderUsesExplicitVoiceOverNeutralVoiceIdentifier() async throws {
         let request = makeSpeechSynthesisProvider().audioSpeechRequest(
             for: LangToolsSpeechSynthesisInput(text: "Hello", languageIdentifier: "en", voiceIdentifier: "nova"),
