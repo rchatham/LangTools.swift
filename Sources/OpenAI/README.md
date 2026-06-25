@@ -5,6 +5,7 @@ Swift interface for OpenAI's APIs, part of the LangTools framework.
 ## Features
 
 - 🤖 Chat Completions with GPT models
+- 🧩 Responses API (`/v1/responses`) with streaming, tools & structured output
 - 🗣️ Text-to-Speech and Speech-to-Text
 - 📊 Embeddings generation
 - 🔄 Streaming support
@@ -131,6 +132,74 @@ let request = OpenAI.ChatCompletionRequest(
 
 let response = try await openai.perform(request: request)
 ```
+
+### Responses API
+
+The [Responses API](https://platform.openai.com/docs/api-reference/responses) is
+OpenAI's newer, stateful interface. It models a conversation as an array of input
+items and returns an array of output items (messages, function calls, reasoning).
+`OpenAI.ResponseRequest` bridges this onto the same LangTools engine, so streaming,
+the function-calling loop, and structured output all work the same way they do for
+Chat Completions.
+
+Basic request:
+```swift
+let request = OpenAI.ResponseRequest(
+    model: .gpt4o_mini,
+    messages: [OpenAI.Item(role: .user, content: "Hello!")],
+    instructions: "You are a helpful assistant."
+)
+
+let response = try await openai.perform(request: request)
+print(response.outputText)
+```
+
+Streaming:
+```swift
+let request = OpenAI.ResponseRequest(
+    model: .gpt4o_mini,
+    messages: [OpenAI.Item(role: .user, content: "Write a haiku about Swift.")],
+    stream: true
+)
+
+for try await chunk in openai.stream(request: request) {
+    if let text = chunk.delta?.content { print(text, terminator: "") }
+}
+```
+
+Function calling (automatic tool loop):
+```swift
+let request = OpenAI.ResponseRequest(
+    model: .gpt4o_mini,
+    messages: [OpenAI.Item(role: .user, content: "What's the weather in London?")],
+    tools: [.function(.init(
+        name: "get_weather",
+        description: "Get the current weather",
+        parameters: .init(properties: ["location": .init(type: "string")], required: ["location"]),
+        callback: { _, args in "Sunny in \(args["location"]?.stringValue ?? "")" }))]
+)
+
+let response = try await openai.perform(request: request)
+print(response.outputText)
+```
+
+Hosted tools (`web_search`, `file_search`, `code_interpreter`, …) can be supplied
+alongside function tools, e.g. `tools: [.webSearch]`.
+
+Structured output (the schema is sent as `text.format`):
+```swift
+var request = OpenAI.ResponseRequest(
+    model: .gpt4o_mini,
+    messages: [OpenAI.Item(role: .user, content: "Extract the name and age.")]
+)
+request.responseSchema = JSONSchema.object(
+    properties: ["name": .string(), "age": .integer()],
+    required: ["name", "age"]
+)
+let (response, output) = try await openai.perform(request: request, as: Person.self)
+```
+
+To continue a server-side stored conversation, pass `previous_response_id`.
 
 ### Text-to-Speech
 
