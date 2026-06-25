@@ -9,6 +9,8 @@ import Foundation
 import SwiftUI
 import Combine
 import ChatUI
+import OpenAI
+import class OpenAI.OpenAISTTProvider
 
 /// Adapter to bridge STTService to ChatUI's VoiceInputHandler protocol
 @MainActor
@@ -103,7 +105,10 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
         // Register OpenAI Whisper
         let openAIProvider = OpenAISTTProvider(
             apiKeyProvider: { [weak settings] in settings?.openAIApiKey },
-            languageIdentifierProvider: { [weak settings] in settings?.sttLanguageIdentifier }
+            languageIdentifierProvider: { [weak settings] in settings?.sttLanguageIdentifier },
+            audioInputNormalizer: { audioData in
+                (try AudioConverter.convertToWAV(cafData: audioData), OpenAI.AudioTranscriptionRequest.FileType.wav)
+            }
         )
         sttService.registerProvider(openAIProvider, for: .openAIWhisper)
         print("[VoiceInputHandlerAdapter] Registered OpenAI Whisper provider")

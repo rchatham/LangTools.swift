@@ -11,6 +11,7 @@ import SwiftUI
 import Combine
 import AVFoundation
 import Speech
+import class OpenAI.OpenAISTTProvider
 
 /// STT processing status for UI feedback
 public enum STTStatus: Equatable {
