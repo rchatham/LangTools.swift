@@ -116,8 +116,10 @@ public extension OpenAI {
                     self.content = .array([.toolResult(.init(tool_selection_id: callID, result: output))])
                     self.tool_calls = nil
                     return
+                case "message":
+                    break // a typed message item — fall through to the message decode below
                 default:
-                    break
+                    throw DecodingError.dataCorruptedError(forKey: .type, in: fc, debugDescription: "Unsupported input item type: \(type)")
                 }
             }
             let container = try decoder.container(keyedBy: MessageKeys.self)
@@ -183,7 +185,7 @@ public extension OpenAI {
             case .string(let str):
                 try container.encode(str, forKey: .content)
             case .null:
-                try container.encode("", forKey: .content)
+                break // omit the content key entirely; the API rejects "content": ""
             case .array(let parts):
                 var arr = container.nestedUnkeyedContainer(forKey: .content)
                 for part in parts {
