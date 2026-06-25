@@ -27,11 +27,7 @@ let package = Package(
                 .product(name: "Agents", package: "langtools-cli"),
                 .product(name: "SwiftTUI", package: "SwiftTUI"),
             ],
-            path: "Sources/LangToolsCLI",
-            exclude: [
-                "Main.swift",
-                "ChatCLI.swift"
-            ]
+            path: "Sources/LangToolsCLI"
         ),
         .testTarget(
             name: "CLITests",
