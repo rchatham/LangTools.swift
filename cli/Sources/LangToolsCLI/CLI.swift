@@ -37,8 +37,18 @@ private var ansiColorsEnabled = true
 
 @main
 struct CLI {
-    static func main() async throws {
+    static func main() async {
+        do {
+            try await run()
+        } catch {
+            fputs("Error: \(error.localizedDescription)\n", stderr)
+            exit(1)
+        }
+    }
+
+    static func run() async throws {
         let args = CommandLine.arguments
+        let subcommandArguments = Array(args.dropFirst())
 
         // --version / -v
         if args.contains("--version") || args.contains("-v") {
@@ -50,6 +60,19 @@ struct CLI {
         if args.contains("--help") || args.contains("-h") {
             printUsage()
             return
+        }
+
+        if let subcommand = subcommandArguments.first {
+            switch subcommand {
+            case "auth":
+                try await AuthCLI.run(arguments: Array(subcommandArguments.dropFirst()))
+                return
+            case "openai-chat":
+                try await OpenAIAccountChatCommand.run(arguments: Array(subcommandArguments.dropFirst()))
+                return
+            default:
+                break
+            }
         }
 
         let runMode = CLIRunMode.current
@@ -71,6 +94,8 @@ struct CLI {
 
         USAGE
           langtools [OPTIONS]
+          langtools auth <subcommand>
+          langtools openai-chat --model <model-id> --messages-file <path>
 
         OPTIONS
           --tui         Launch the SwiftTUI interactive interface
@@ -86,6 +111,12 @@ struct CLI {
 
         COMMANDS (in chat)
         \(HelpSystem.commandList())
+
+        AUTH SUBCOMMANDS
+          auth login openai
+          auth export-session openai --format json
+          auth status openai --format json
+          auth logout openai
         """)
     }
 
