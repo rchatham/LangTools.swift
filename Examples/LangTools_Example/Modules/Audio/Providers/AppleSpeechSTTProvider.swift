@@ -10,7 +10,7 @@ import Foundation
 import LangTools
 import Speech
 
-public typealias AppleSpeechSTTProvider = AppleLangTools.AppleSpeechSTTProvider
+public typealias AppleSpeechSTTProvider = AppleLangTools.AppleSpeechRecognitionProvider
 
 extension AppleSpeechSTTProvider: SpeechRecognitionProvider {
     public var providerType: STTProviderType { .appleSpeech }

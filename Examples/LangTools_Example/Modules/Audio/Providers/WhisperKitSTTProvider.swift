@@ -11,7 +11,7 @@ import LangTools
 import WhisperKitLangTools
 
 public typealias WhisperKitLoadingState = WhisperKitLangTools.WhisperKitLoadingState
-public typealias WhisperKitSTTProvider = WhisperKitLangTools.WhisperKitSTTProvider
+public typealias WhisperKitSTTProvider = WhisperKitLangTools.WhisperKitSpeechRecognitionProvider
 
 extension WhisperKitSTTProvider: SpeechRecognitionProvider {
     public var providerType: STTProviderType { .whisperKit }

@@ -46,10 +46,15 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
     private var recognitionSessionID = UUID()
     private var onPartialResultCallback: ((String) -> Void)?
     private var onFinalResultCallback: ((String) -> Void)?
+    private var languageIdentifierProvider: @MainActor () -> String?
 
-    public init(locale: Locale = .current) {
+    public init(
+        locale: Locale = .current,
+        languageIdentifierProvider: @escaping @MainActor () -> String? = { nil }
+    ) {
         currentLocale = locale
         speechRecognizer = SFSpeechRecognizer(locale: locale)
+        self.languageIdentifierProvider = languageIdentifierProvider
     }
 
     public var isAvailable: Bool {
@@ -62,7 +67,13 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
         speechRecognizer = SFSpeechRecognizer(locale: locale)
     }
 
+    public func updateLocaleFromSettings() {
+        guard let languageIdentifier = languageIdentifierProvider() else { return }
+        setLocale(Locale(identifier: languageIdentifier))
+    }
+
     public func configure(languageIdentifier: String) {
+        languageIdentifierProvider = { languageIdentifier }
         setLocale(Locale(identifier: languageIdentifier))
     }
 
@@ -79,6 +90,7 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
     public func prepareAssetsIfNeeded() {}
 
     public func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse {
+        updateLocaleFromSettings()
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("speech_\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: tempURL) }
@@ -110,6 +122,7 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
     }
 
     public func startRecognition() throws {
+        updateLocaleFromSettings()
         try startStreamingTranscription(onPartialResult: { _ in }, onFinalResult: { _ in })
     }
 
@@ -134,6 +147,7 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
         onPartialResult: @escaping (String) -> Void,
         onFinalResult: @escaping (String) -> Void
     ) throws {
+        updateLocaleFromSettings()
         guard let recognizer = speechRecognizer, recognizer.isAvailable else {
             throw AppleLangToolsSpeechError.notAvailable
         }
