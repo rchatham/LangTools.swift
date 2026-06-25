@@ -95,7 +95,7 @@ public extension OpenAI {
                     text += item.outputText
                 case "function_call":
                     calls.append(ToolSelection(
-                        index: 0,
+                        index: calls.count,
                         id: item.call_id ?? item.id ?? "",
                         type: .function,
                         function: .init(name: item.name ?? "", arguments: item.arguments ?? "")))
@@ -103,7 +103,7 @@ public extension OpenAI {
                     break
                 }
             }
-            if output.isEmpty && text.isEmpty && calls.isEmpty { return nil }
+            if text.isEmpty && calls.isEmpty { return nil }
             let content: Content = text.isEmpty ? .null : .string(text)
             return Item(role: .assistant, content: content, tool_calls: calls.isEmpty ? nil : calls)
         }
@@ -247,10 +247,10 @@ extension OpenAI {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             type = try container.decode(String.self, forKey: .type)
             // `delta` is a string for text/argument deltas; ignore non-string deltas.
-            delta = (try? container.decodeIfPresent(String.self, forKey: .delta)) ?? nil
-            item_id = (try? container.decodeIfPresent(String.self, forKey: .item_id)) ?? nil
-            item = (try? container.decodeIfPresent(ResponseResponse.OutputItem.self, forKey: .item)) ?? nil
-            response = (try? container.decodeIfPresent(ResponseResponse.self, forKey: .response)) ?? nil
+            delta = try? container.decode(String.self, forKey: .delta)
+            item_id = try? container.decode(String.self, forKey: .item_id)
+            item = try? container.decode(ResponseResponse.OutputItem.self, forKey: .item)
+            response = try? container.decode(ResponseResponse.self, forKey: .response)
         }
 
         /// Maps this event onto a partial response that can be combined into the running result.

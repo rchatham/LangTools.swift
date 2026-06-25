@@ -112,8 +112,14 @@ public extension OpenAI {
 
         public func encode(to encoder: Encoder) throws {
             if let tool_calls, let first = tool_calls.first {
-                // A single function_call item. Items carrying multiple tool calls are
-                // flattened into multiple items by `ResponseRequest.encode(to:)`.
+                // A single function_call item. Items carrying multiple tool calls must be
+                // flattened into multiple items by `ResponseRequest.encode(to:)`; encoding
+                // such an Item on its own would silently drop calls, so fail loudly instead.
+                guard tool_calls.count == 1 else {
+                    throw EncodingError.invalidValue(tool_calls, EncodingError.Context(
+                        codingPath: encoder.codingPath,
+                        debugDescription: "An Item carrying multiple tool calls cannot be encoded directly; encode it via OpenAI.ResponseRequest, which flattens each call into its own function_call input item."))
+                }
                 var c = encoder.container(keyedBy: FunctionCallKeys.self)
                 try c.encode("function_call", forKey: .type)
                 try c.encodeIfPresent(first.id, forKey: .call_id)
