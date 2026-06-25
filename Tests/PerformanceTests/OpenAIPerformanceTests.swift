@@ -130,12 +130,12 @@ final class OpenAIPerformanceTests: XCTestCase {
     func testStreamingThroughput_SmallStream() {
         let streamData = PerformanceFixtures.openAIStreamChunksData(chunkCount: 10)
         measure {
+            MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+                (.success(streamData), 200)
+            }
             let exp = expectation(description: "stream")
             Task {
                 do {
-                    MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
-                        (.success(streamData), 200)
-                    }
                     var count = 0
                     for try await _ in self.api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt4o, messages: [.init(role: .user, content: "Hi")], stream: true)) {
                         count += 1
@@ -151,12 +151,12 @@ final class OpenAIPerformanceTests: XCTestCase {
     func testStreamingThroughput_MediumStream() {
         let streamData = PerformanceFixtures.openAIStreamChunksData(chunkCount: 50)
         measure {
+            MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+                (.success(streamData), 200)
+            }
             let exp = expectation(description: "stream")
             Task {
                 do {
-                    MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
-                        (.success(streamData), 200)
-                    }
                     var count = 0
                     for try await _ in self.api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt4o, messages: [.init(role: .user, content: "Hi")], stream: true)) {
                         count += 1
