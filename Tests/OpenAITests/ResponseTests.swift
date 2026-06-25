@@ -88,6 +88,36 @@ final class ResponseTests: XCTestCase {
         XCTAssertEqual(input[2]["output"] as? String, "sunny")
     }
 
+    func testInitPreservesTextAndToolCallsFromMixedMessage() throws {
+        let source = try OpenAI.Message(
+            role: .assistant,
+            content: .string("Checking now."),
+            tool_calls: [.init(index: 0, id: "call_7", type: .function, function: .init(name: "lookup", arguments: "{}"))])
+        let item = OpenAI.Item(source)
+        XCTAssertEqual(item.content.string, "Checking now.")
+        XCTAssertEqual(item.tool_calls?.first?.id, "call_7")
+        XCTAssertEqual(item.tool_calls?.first?.name, "lookup")
+    }
+
+    func testAssistantTextAndToolCallsFlattenedToInputItems() throws {
+        let assistant = OpenAI.Item(
+            role: .assistant,
+            content: .string("Let me check the weather."),
+            tool_calls: [.init(index: 0, id: "call_3", type: .function, function: .init(name: "getWeather", arguments: "{}"))])
+        let request = OpenAI.ResponseRequest(
+            model: .gpt4o_mini,
+            messages: [.init(role: .user, content: "weather?"), assistant])
+
+        let json = try JSONSerialization.jsonObject(with: request.data()) as! [String: Any]
+        let input = json["input"] as! [[String: Any]]
+        // user message, assistant text message, function_call
+        XCTAssertEqual(input.count, 3)
+        XCTAssertEqual(input[1]["role"] as? String, "assistant")
+        XCTAssertEqual(input[1]["content"] as? String, "Let me check the weather.")
+        XCTAssertEqual(input[2]["type"] as? String, "function_call")
+        XCTAssertEqual(input[2]["name"] as? String, "getWeather")
+    }
+
     func testStructuredOutputEncoding() throws {
         var request = OpenAI.ResponseRequest(model: .gpt4o_mini, messages: [.init(role: .user, content: "Hi")])
         request.responseSchema = JSONSchema.object(

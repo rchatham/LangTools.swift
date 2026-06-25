@@ -147,6 +147,13 @@ public extension OpenAI {
             var input = container.nestedUnkeyedContainer(forKey: .input)
             for item in messages {
                 if let tool_calls = item.tool_calls, !tool_calls.isEmpty {
+                    // An assistant turn may carry text alongside its tool calls; emit the text
+                    // as its own message item so it is preserved in the conversation.
+                    if let text = item.content.string, !text.isEmpty {
+                        var mc = input.nestedContainer(keyedBy: Item.MessageKeys.self)
+                        try mc.encode(item.role, forKey: .role)
+                        try mc.encode(text, forKey: .content)
+                    }
                     for call in tool_calls {
                         var c = input.nestedContainer(keyedBy: Item.FunctionCallKeys.self)
                         try c.encode("function_call", forKey: .type)
