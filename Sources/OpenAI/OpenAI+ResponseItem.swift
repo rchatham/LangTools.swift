@@ -55,6 +55,19 @@ public extension OpenAI {
             self.tool_calls = role == .assistant ? tool_calls : nil
         }
 
+        /// Converts any message into an `Item`, preserving assistant tool calls (which the
+        /// default `LangToolsMessage.init(_:)` would drop) so that tool-call history survives
+        /// when a `ResponseRequest` is built from a heterogeneous `[any LangToolsMessage]`.
+        public init(_ message: any LangToolsMessage) {
+            if let openAIMessage = message as? OpenAI.Message, let calls = openAIMessage.tool_calls, !calls.isEmpty {
+                self.init(tool_selection: calls)
+            } else if let item = message as? Item, let calls = item.tool_calls, !calls.isEmpty {
+                self.init(tool_selection: calls)
+            } else {
+                self.init(role: Role(message.role), content: Content(message.content))
+            }
+        }
+
         public init(role: Role, content: String) {
             self.init(role: role, content: .string(content))
         }

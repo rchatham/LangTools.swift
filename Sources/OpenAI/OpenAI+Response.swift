@@ -250,7 +250,9 @@ extension OpenAI {
             delta = try? container.decode(String.self, forKey: .delta)
             item_id = try? container.decode(String.self, forKey: .item_id)
             item = try? container.decode(ResponseResponse.OutputItem.self, forKey: .item)
-            response = try? container.decode(ResponseResponse.self, forKey: .response)
+            // decodeIfPresent (not try?) so a malformed terminal `response` payload surfaces
+            // as a stream error rather than silently dropping status/usage/id.
+            response = try container.decodeIfPresent(ResponseResponse.self, forKey: .response)
         }
 
         /// Maps this event onto a partial response that can be combined into the running result.
