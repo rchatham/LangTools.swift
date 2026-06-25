@@ -35,7 +35,7 @@ final public class OpenAI: LangTools {
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
             { ($0 as? ChatCompletionRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
-            { $0 is ResponseRequest },
+            { ($0 as? ResponseRequest).flatMap { $0.model.type == .chat } ?? false },
             { $0 is AudioSpeechRequest },
             { $0 is AudioTranscriptionRequest },
             { $0 is ListModelDataRequest },
@@ -51,8 +51,11 @@ final public class OpenAI: LangTools {
     /// payload yield `nil` and are skipped). All other request types fall back to decoding
     /// the `data:` payload directly as the response type.
     public static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
-        guard buffer.hasPrefix("data:"), !buffer.contains("[DONE]"),
-              let data = buffer.dropFirst(5).data(using: .utf8) else { return nil }
+        guard buffer.hasPrefix("data:") else { return nil }
+        // Match the SSE terminator on the exact payload, not a substring, so a delta whose
+        // JSON happens to contain "[DONE]" isn't dropped.
+        let payload = buffer.dropFirst(5).trimmingCharacters(in: .whitespaces)
+        guard payload != "[DONE]", let data = payload.data(using: .utf8) else { return nil }
         if T.self == ResponseResponse.self {
             let event: ResponseStreamEvent = try decodeResponse(data: data)
             return event.partialResponse as? T

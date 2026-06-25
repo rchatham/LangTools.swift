@@ -290,6 +290,10 @@ public extension OpenAI {
                     return
                 }
                 let container = try decoder.container(keyedBy: CodingKeys.self)
+                let type = try container.decode(String.self, forKey: .type)
+                guard type == "function" else {
+                    throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "Unsupported tool_choice type: \(type)")
+                }
                 let name = try container.decode(String.self, forKey: .name)
                 self = .function(name: name)
             }
