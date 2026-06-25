@@ -129,6 +129,21 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertTrue(output.contains("COMMANDS (in chat)"))
         XCTAssertTrue(output.contains("/help [command]"))
         XCTAssertTrue(output.contains("/ollama <subcommand> [name]"))
+        XCTAssertTrue(output.contains("AUTH SUBCOMMANDS"))
+        XCTAssertTrue(output.contains("langtools openai-chat --model <model-id> --messages-file <path>"))
+    }
+
+    func testAuthStatusSubcommandRuns() throws {
+        let output = try runCLI(arguments: ["auth", "status", "openai", "--format", "json"])
+
+        XCTAssertTrue(output.contains("\"provider\" : \"openai\""))
+        XCTAssertTrue(output.contains("\"authenticated\" : "))
+    }
+
+    func testOpenAIChatSubcommandShowsUsageWithoutRequiredFlags() throws {
+        let output = try runCLI(arguments: ["openai-chat"])
+
+        XCTAssertTrue(output.contains("Error: Usage: LangToolsCLI openai-chat --model <model-id> --messages-file <path>"))
     }
 
     func testNonInteractiveCommandAllowlist() {
