@@ -1,105 +1,60 @@
 <!-- claude-code-review -->
+## Code Review: Add OpenAI Responses API support
 
-## Code Review: `refactor/provider-abstractions` (#34) — Updated
+This PR adds `OpenAI.ResponseRequest` / `ResponseResponse` / `Item` as a first-class LangTools request type, bridging the Responses API input-item / output-item shape onto the existing streaming, tool-calling, and structured-output protocols. The approach is sound and test coverage is good.
 
-The bot commit (`3c4eac9`) addressed the naming and structural issues from the previous round. A full re-read of the current branch confirms the following state.
-
----
-
-### Confirmed Fixed ✅
-
-- **Naming consistency**: `LangToolsTextTranslationRequest/Response`, `LangToolsSpeechSynthesisInput` — correct throughout.
-- **`SpeechAutoDetectWinner.undetected`** — `.none` shadow of `Optional.none` is gone.
-- **`@available(iOS 16, macOS 13, *)`** on `startDualLanguageRecognition` — present.
-- **`eventHandler` threading contract** — documented in `SpeechRecognitionProviding`.
-- **Breaking-change doc comment** on `LangToolsSTTRequest` — present.
-- **Redundant `associatedtype SpeechResponse`** removed; `LangToolsTTSRequest` now correctly constrains `Response: LangToolsAudioResponse`.
-- **New test coverage** — generic boundary tests, state equality, empty path extension edge case — all present.
+> **Update:** The author addressed four of the five original findings in `246576a`. One newly identified bug remains.
 
 ---
 
-### Still Open
+### Bug: `response.failed` events silently discard API errors (high severity)
 
-#### 1 `@retroactive` missing — **high priority**
+**`Sources/OpenAI/OpenAI+Response.swift`, line 30**
 
-`Sources/LangTools/LangTools+Speech.swift` still reads:
-
-```swift
-extension Data: LangToolsAudioResponse { ... }
-extension String: LangToolsTranscriptionResponse { ... }
-```
-
-Neither has `@retroactive`. The bot commit listed this as fixed but the annotation is absent from the current file. Swift 5.7+ warns; Swift 6 strict builds error.
+`ResponseResponse` declares `output` as a non-optional stored property with no default:
 
 ```swift
-// Required fix:
-extension Data: @retroactive LangToolsAudioResponse { ... }
-extension String: @retroactive LangToolsTranscriptionResponse { ... }
+public var output: [OutputItem]
 ```
 
-#### 2 `startRecognition() throws` silently swallows errors — **high priority**
-
-`Sources/WhisperKitLangTools/WhisperKitSpeechRecognitionProvider.swift`:
+Swift synthesized `Decodable` decodes this with `try container.decode([OutputItem].self, forKey: .output)`, which throws `DecodingError.keyNotFound` when the key is absent. Terminal streaming events (`response.failed`, `response.incomplete`, and some `response.completed` shapes) often omit `"output"` from their embedded response object. Because `ResponseStreamEvent.init(from:)` wraps the whole decode in `try?`:
 
 ```swift
-public func startRecognition() throws {
-    Task {
-        try await startStreamingTranscription { ... }   // error silently dropped
-    }
-}
+response = (try? container.decodeIfPresent(ResponseResponse.self, forKey: .response)) ?? nil
 ```
 
-The function signature promises `throws`, but no error can ever reach the caller — it is discarded inside the unstructured `Task {}`. Callers wrap this in `try` expecting failure feedback (e.g. model not loaded, microphone unavailable), but they will never receive it. Either propagate the error via `async throws` and make the protocol method `async throws`, or surface errors through `eventHandler` and remove the misleading `throws`.
-
-#### 3 `stopRecognition` / `finalizeRecognition` write actor-isolated state after `await` — **medium priority**
+...the decode failure is swallowed silently, leaving `response = nil`. Then in `partialResponse`:
 
 ```swift
-public func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {
-    Task {
-        let text = await stopStreamingTranscription()   // suspends here
-        currentTranscript = text                        // @MainActor write after resume
-        eventHandler?(.finalTranscription(text))
-    }
-}
+case "response.completed", "response.incomplete", "response.failed":
+    guard let response else { return nil }   // error never surfaced
 ```
 
-After the `await` suspension, the task resumes on whatever executor `stopStreamingTranscription` returns from. If that function is not `@MainActor`, the writes to `currentTranscript` and the `eventHandler` call are not guaranteed to be on the main actor. Swift 6 strict concurrency will diagnose this. The minimal safe fix is:
+**Result:** a streaming call that fails at the server surfaces no error, no status, and no usage to the caller. The stream silently appears to complete successfully.
+
+**Fix:** Give `output` a default so the synthesized decoder tolerates its absence:
 
 ```swift
-Task { @MainActor in
-    let text = await stopStreamingTranscription()
-    currentTranscript = text
-    eventHandler?(.finalTranscription(text))
-}
+public var output: [OutputItem] = []
 ```
-
-or wrap the mutations in `await MainActor.run { ... }`. Same pattern applies to `finalizeRecognition`.
-
-#### 4 `WhisperKitSTTProvider.configure` still writes to global singleton — **medium priority**
-
-```swift
-public func configure(languageIdentifier: String) {
-    ToolSettings.shared.sttLanguage = .init(rawValue: languageIdentifier) ?? ToolSettings.shared.sttLanguage
-    provider.configure(languageIdentifier: languageIdentifier)
-}
-```
-
-All other providers store language locally; only this one mutates a shared singleton as a side-effect of `configure()`. This couples the example-app adapter to `ToolSettings`, makes the provider non-testable in isolation, and risks cross-provider interference if two providers are configured in the same session.
-
-#### 5 `print` statements — **low priority**
-
-- `AppleSpeechSTTProvider.updateLocaleFromSettings()` — `print("[AppleSpeech] Changed locale to: \(locale.identifier)")` is a development trace, not a user-facing log. Remove before merge.
-- `NetworkClient.playAudio` — the `catch` block calls `print(error.localizedDescription)` and silently discards the error. The error should be rethrown or surfaced to the UI layer; swallowing it means TTS failures are invisible to callers.
 
 ---
 
-### Minor
+### Previously reported - resolved in `246576a`
 
-- `LangToolsSpeechTranscriptionRequest` doc comment says "at least one audio source should be non-nil" but this is advisory only. A `func validate() throws` protocol requirement — or even a simple precondition in the default extension — would catch misconfigured conformances at the abstraction boundary rather than deep inside provider implementations.
-- `AppleSpeechSTTProvider.startRecognition()` passes `onPartialResult: { _ in }` / `onFinalResult: { _ in }` closures. If these callbacks are intentionally ignored in favour of `eventHandler`, a comment at the call site would prevent a future reader from assuming they are wired up.
+| Finding | Status |
+|---|---|
+| Wrong nil-guard in `message` (`output.isEmpty &&` should be dropped) | Fixed |
+| `Item.encode` silently drops tool calls after the first | Fixed (now throws `EncodingError.invalidValue`) |
+| `(try? ...) ?? nil` redundancy in `ResponseStreamEvent.init` | Fixed |
+| Hardcoded `index: 0` for all `ToolSelection` | Fixed |
 
 ---
 
-### Summary
+### Left intentionally: `decodeStream` runtime type check
 
-Items #1–#3 are the blockers before merge. The `@retroactive` fix is a one-liner. Issues #2 and #3 involve the same `WhisperKitSpeechRecognitionProvider` — fixing the actor context (#3) and rethinking the error surface (#2) can likely be done in a single pass on that file.
+The `T.self == ResponseResponse.self` branch in `OpenAI.decodeStream` is architecturally a protocol-dispatch responsibility leaked into the concrete type. The author noted this is best addressed as a framework-wide refactor - agreed. Worth a follow-up issue.
+
+---
+
+*Reviewed by [Claude Code](https://claude.ai/code) - Model: claude-sonnet-4-6*
