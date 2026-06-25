@@ -168,11 +168,11 @@ final class ResponseTests: XCTestCase {
         let request = OpenAI.ResponseRequest(
             model: .gpt4o_mini,
             messages: [OpenAI.Item(role: .user, content: "weather?")],
-            stream: true,
             tools: [.function(.init(
                 name: "getCurrentWeather",
                 description: "Get the current weather",
-                parameters: .init(properties: ["location": .init(type: "string")], required: ["location"])))])
+                parameters: .init(properties: ["location": .init(type: "string")], required: ["location"])))],
+            stream: true)
 
         var combined = OpenAI.ResponseResponse.empty
         for try await response in api.stream(request: request) {
@@ -204,8 +204,8 @@ final class ResponseTests: XCTestCase {
         let request = OpenAI.ResponseRequest(
             model: .gpt4o_mini,
             messages: [OpenAI.Item(role: .user, content: "weather?")],
-            stream: true,
-            tools: tools)
+            tools: tools,
+            stream: true)
 
         var results: [OpenAI.ResponseResponse] = []
         for try await response in api.stream(request: request) {
