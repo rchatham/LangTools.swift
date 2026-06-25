@@ -26,7 +26,8 @@ let package = Package(
                 .product(name: "Ollama", package: "langtools-cli"),
                 .product(name: "Agents", package: "langtools-cli"),
                 .product(name: "SwiftTUI", package: "SwiftTUI"),
-            ]
+            ],
+            path: "Sources/LangToolsCLI"
         ),
         .testTarget(
             name: "CLITests",
