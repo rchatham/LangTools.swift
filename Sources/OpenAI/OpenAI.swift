@@ -35,12 +35,29 @@ final public class OpenAI: LangTools {
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
             { ($0 as? ChatCompletionRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
+            { $0 is ResponseRequest },
             { $0 is AudioSpeechRequest },
             { $0 is AudioTranscriptionRequest },
             { $0 is ListModelDataRequest },
             { $0 is RetrieveModelRequest },
             { $0 is DeleteFineTunedModelRequest }
         ]
+    }
+
+    /// Decodes a single SSE line from the stream.
+    ///
+    /// The Responses API streams *semantic events* rather than full response chunks, so
+    /// each event is mapped onto a partial ``ResponseResponse`` (events with no incremental
+    /// payload yield `nil` and are skipped). All other request types fall back to decoding
+    /// the `data:` payload directly as the response type.
+    public static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
+        guard buffer.hasPrefix("data:"), !buffer.contains("[DONE]"),
+              let data = buffer.dropFirst(5).data(using: .utf8) else { return nil }
+        if T.self == ResponseResponse.self {
+            let event: ResponseStreamEvent = try decodeResponse(data: data)
+            return event.partialResponse as? T
+        }
+        return try decodeResponse(data: data)
     }
 
     public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
