@@ -35,7 +35,7 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
     }
 
     public var assetState: ProviderAssetState { .notRequired }
-    public var isListening: Bool { isStreaming }
+    public private(set) var isListening = false
     public private(set) var currentTranscript = ""
 
     private var speechRecognizer: SFSpeechRecognizer?
@@ -131,6 +131,7 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
     }
 
     public func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {
+        isListening = false
         if finalizePending {
             _ = stopStreamingTranscription()
         } else {
@@ -215,6 +216,7 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
             }
             audioEngine.prepare()
             try audioEngine.start()
+            isListening = true
         } catch {
             cleanupStreaming()
             throw error
@@ -234,10 +236,11 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
     }
 
     public var isStreaming: Bool {
-        audioEngine?.isRunning ?? false
+        isListening
     }
 
     private func cleanupStreaming() {
+        isListening = false
         audioEngine?.stop()
         audioEngine?.inputNode.removeTap(onBus: 0)
         recognitionTask?.cancel()
