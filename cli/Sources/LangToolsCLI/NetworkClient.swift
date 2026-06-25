@@ -18,21 +18,31 @@ import Ollama
 import AVFAudio
 #endif
 
-
 typealias Role = OpenAI.Message.Role
 
 class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     static let shared = NetworkClient()
 
+    private let sessionStore = SessionStore()
     private var userDefaults: UserDefaults { .standard }
 
     override init() {
         super.init()
-        // Register cloud providers that have stored API keys
+        refreshCredentials()
+    }
+
+    func refreshCredentials() {
         APIService.allCases.filter { $0 != .ollama }.forEach { llm in
-            UserDefaults.getApiKey(for: llm).flatMap { register($0, for: llm) }
+            if let apiKey = UserDefaults.getApiKey(for: llm) {
+                register(apiKey, for: llm)
+            }
         }
-        // Ollama runs locally — always register it (no API key required)
+
+        if UserDefaults.getApiKey(for: .openAI) == nil,
+           let session = try? sessionStore.load() {
+            register(session.accessToken, for: .openAI)
+        }
+
         registerOllama()
     }
 
@@ -51,7 +61,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         } else if case .xAI(let model) = model {
             return OpenAI.ChatCompletionRequest(model: OpenAI.Model(customModelID: model.rawValue), messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice, toolEventHandler: toolEventHandler)
         } else if case .gemini(let model) = model {
-            return OpenAI.ChatCompletionRequest(model: OpenAI.Model(customModelID: model.rawValue), messages: messages.toOpenAIMessages(), stream: stream/*, tools: tools, tool_choice: toolChoice*/, toolEventHandler: toolEventHandler)
+            return OpenAI.ChatCompletionRequest(model: OpenAI.Model(customModelID: model.rawValue), messages: messages.toOpenAIMessages(), stream: stream, toolEventHandler: toolEventHandler)
         } else if case .ollama(let model) = model {
             return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), stream: stream, tools: tools, toolEventHandler: toolEventHandler)
         } else {
@@ -60,34 +70,32 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     func updateApiKey(_ apiKey: String, for llm: APIService) throws {
-        guard !apiKey.isEmpty else { throw NetworkError.emptyApiKey }
-        UserDefaults.setApiKey(apiKey, for: llm)
-        register(apiKey, for: llm)
+        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw NetworkError.emptyApiKey }
+        UserDefaults.setApiKey(trimmed, for: llm)
+        register(trimmed, for: llm)
     }
 
     func register(_ apiKey: String, for llm: APIService) {
         langToolchain.register(langTool(for: llm, with: apiKey))
     }
 
-    /// Register Ollama without an API key (local server, no auth needed).
     func registerOllama(baseURL: URL = URL(string: "http://localhost:11434")!) {
         langToolchain.register(Ollama(baseURL: baseURL))
     }
 
-    /// Fetch the locally-available Ollama models and populate `OllamaModel.allCases`.
-    /// Silently does nothing if Ollama is not running.
     func fetchOllamaModels() async {
         guard let ollama = langToolchain.langTool(Ollama.self) else { return }
         do {
             let response = try await ollama.listModels()
             OllamaModel.allCases = response.models.compactMap { OllamaModel(rawValue: $0.name) }
         } catch {
-            // Ollama may not be running — that's fine, just leave allCases empty
+            // Ollama may not be running — that's fine.
         }
     }
 
     func langTool(for llm: APIService, with apiKey: String) -> any LangTools {
-        let baseURL: URL? = nil //URL(string: "http://localhost:8080/v1/")
+        let baseURL: URL? = nil
         switch llm {
         case .anthropic: return if let baseURL { Anthropic(baseURL: baseURL, apiKey: apiKey) } else { Anthropic(apiKey: apiKey) }
         case .openAI: return if let baseURL { OpenAI(baseURL: baseURL, apiKey: apiKey) } else { OpenAI(apiKey: apiKey) }
@@ -97,15 +105,9 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    // MARK: - URLSessionWebSocketDelegate
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {}
 
-    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
-        // No-op implementation to satisfy URLSessionWebSocketDelegate protocol requirements
-    }
-
-    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
-        // No-op implementation to satisfy URLSessionWebSocketDelegate protocol requirements
-    }
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {}
 }
 
 enum APIService: String, CaseIterable {
@@ -117,12 +119,13 @@ extension NetworkClient {
         case missingApiKey
         case emptyApiKey
         case incompatibleRequest
+        case accountProxyTransportFailed(String)
     }
 }
 
 extension String {
     func trimingTrailingNewlines() -> String {
-        return trimingTrailingCharacters(using: .newlines)
+        trimingTrailingCharacters(using: .newlines)
     }
 
     func trimingTrailingCharacters(using characterSet: CharacterSet = .whitespacesAndNewlines) -> String {

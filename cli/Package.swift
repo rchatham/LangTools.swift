@@ -11,7 +11,7 @@ let package = Package(
         .executable(name: "langtools", targets: ["CLI"]),
     ],
     dependencies: [
-        .package(path: ".."),
+        .package(name: "langtools-cli", path: ".."),
         .package(url: "https://github.com/rensbreur/SwiftTUI", branch: "main"),
     ],
     targets: [
@@ -27,7 +27,11 @@ let package = Package(
                 .product(name: "Agents", package: "langtools-cli"),
                 .product(name: "SwiftTUI", package: "SwiftTUI"),
             ],
-            path: "Sources/LangToolsCLI"
+            path: "Sources/LangToolsCLI",
+            exclude: [
+                "Main.swift",
+                "ChatCLI.swift"
+            ]
         ),
         .testTarget(
             name: "CLITests",

@@ -55,7 +55,7 @@ extension View {
 
 // Extension to provide friendly display names and descriptions for APIService
 extension APIService {
-    var displayName: String {
+    public var displayName: String {
         switch self {
         case .anthropic: return "Anthropic"
         case .openAI: return "OpenAI"
@@ -66,7 +66,7 @@ extension APIService {
         }
     }
     
-    var description: String {
+    public var description: String {
         switch self {
         case .serper:
             return "Please enter your Serper API key for web search capabilities."

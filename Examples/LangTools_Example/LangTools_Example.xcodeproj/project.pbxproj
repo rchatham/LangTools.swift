@@ -181,6 +181,7 @@
 				B1D1EBDC2CA2518E00AD7FA6 /* Frameworks */,
 				B1D1EBDD2CA2518E00AD7FA6 /* Resources */,
 				B1FC36C62D625AF000BB049B /* Embed Frameworks */,
+				B1F0A0013BUNDLE0001 /* Bundle LangToolsCLI */,
 			);
 			buildRules = (
 			);
@@ -316,6 +317,40 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		B1F0A0013BUNDLE0001 /* Bundle LangToolsCLI */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../../cli/.build/debug/LangToolsCLI",
+				"$(SRCROOT)/../../cli/.build/arm64-apple-macosx/debug/LangToolsCLI",
+				"/Users/reidchatham/.bun/bin/bun",
+				"/opt/homebrew/lib/node_modules/@openai/codex/bin/codex",
+				"/opt/homebrew/lib/node_modules/@openai/codex/dist/cli.js",
+			);
+			name = "Bundle LangToolsCLI";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/LangToolsCLI",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/LangToolsCLI.cstemp",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/bun",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/bun.cstemp",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/CodexCLI/bin/codex",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/CodexCLI/dist/cli.js",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/CodexCLI/package.json",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\n\nif [ \"$PLATFORM_NAME\" != \"macosx\" ]; then\n  echo \"Skipping LangToolsCLI bundling for platform: $PLATFORM_NAME\"\n  exit 0\nfi\n\nCLI_SOURCE=\"$SRCROOT/../../cli/.build/debug/LangToolsCLI\"\nCLI_DEST_DIR=\"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers\"\nCLI_DEST=\"$CLI_DEST_DIR/LangToolsCLI\"\nBUN_SOURCE=\"/Users/reidchatham/.bun/bin/bun\"\nBUN_DEST=\"$CLI_DEST_DIR/bun\"\nCODEX_SOURCE_DIR=\"/opt/homebrew/lib/node_modules/@openai/codex\"\nCODEX_DEST_DIR=\"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/CodexCLI\"\n\nif [ ! -x \"$CLI_SOURCE\" ]; then\n  echo \"error: Missing prebuilt LangToolsCLI at $CLI_SOURCE\"\n  echo \"Build it first with: cd $SRCROOT/../../cli && swift build --product LangToolsCLI\"\n  exit 1\nfi\n\nmkdir -p \"$CLI_DEST_DIR\"\ncp \"$CLI_SOURCE\" \"$CLI_DEST\"\nchmod +x \"$CLI_DEST\"\n\nif [ -x \"$BUN_SOURCE\" ]; then\n  cp \"$BUN_SOURCE\" \"$BUN_DEST\"\n  chmod +x \"$BUN_DEST\"\n  echo \"Bundled Bun runtime to $BUN_DEST\"\nelse\n  echo \"warning: Bun runtime not found at $BUN_SOURCE\"\nfi\n\nif [ -d \"$CODEX_SOURCE_DIR\" ]; then\n  mkdir -p \"$CODEX_DEST_DIR/bin\" \"$CODEX_DEST_DIR/dist\"\n  cp \"$CODEX_SOURCE_DIR/bin/codex\" \"$CODEX_DEST_DIR/bin/codex\"\n  cp \"$CODEX_SOURCE_DIR/dist/cli.js\" \"$CODEX_DEST_DIR/dist/cli.js\"\n  cp \"$CODEX_SOURCE_DIR/package.json\" \"$CODEX_DEST_DIR/package.json\"\n  echo \"Bundled Codex CLI package to $CODEX_DEST_DIR\"\nelse\n  echo \"warning: Codex CLI package not found at $CODEX_SOURCE_DIR; OpenAI account-backed Codex chat may be unavailable in the sandboxed app\"\nfi\n\nif [ -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ] && [ \"$EXPANDED_CODE_SIGN_IDENTITY\" != \"-\" ]; then\n  if [ -e \"$BUN_DEST\" ]; then\n    /usr/bin/codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none --generate-entitlement-der \"$BUN_DEST\"\n  fi\n  /usr/bin/codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none --generate-entitlement-der \"$CLI_DEST\"\nelse\n  if [ -e \"$BUN_DEST\" ]; then\n    /usr/bin/codesign --force --sign - --timestamp=none \"$BUN_DEST\"\n  fi\n  /usr/bin/codesign --force --sign - --timestamp=none \"$CLI_DEST\"\nfi\n\necho \"Bundled LangToolsCLI to $CLI_DEST\"";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		B1D1EBDB2CA2518E00AD7FA6 /* Sources */ = {
@@ -480,6 +515,8 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Sources/LangTools_Example.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 82W93M4H92;
@@ -507,6 +544,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.reidchatham.LangTools-Example";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
@@ -523,6 +561,8 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Sources/LangTools_Example.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 82W93M4H92;
@@ -550,6 +590,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.reidchatham.LangTools-Example";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
