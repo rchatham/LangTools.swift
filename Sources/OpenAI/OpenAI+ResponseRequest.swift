@@ -202,7 +202,7 @@ public extension OpenAI {
                 self.summary = summary
             }
 
-            public enum Effort: String, Codable { case minimal, low, medium, high }
+            public enum Effort: String, Codable { case minimal, low, medium, high, xhigh }
             public enum Summary: String, Codable { case auto, concise, detailed }
         }
 
