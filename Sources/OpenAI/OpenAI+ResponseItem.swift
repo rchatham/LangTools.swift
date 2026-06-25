@@ -62,8 +62,8 @@ public extension OpenAI {
         public init(_ message: any LangToolsMessage) {
             if let toolMessage = message as? any LangToolsToolMessage,
                let selection = toolMessage.tool_selection, !selection.isEmpty {
-                let calls = selection.map { sel in
-                    ToolSelection(index: 0, id: sel.id ?? "", type: .function, function: .init(name: sel.name ?? "", arguments: sel.arguments))
+                let calls = selection.enumerated().map { index, sel in
+                    ToolSelection(index: index, id: sel.id ?? "", type: .function, function: .init(name: sel.name ?? "", arguments: sel.arguments))
                 }
                 self.init(role: .assistant, content: Content(message.content), tool_calls: calls)
             } else {
@@ -138,13 +138,7 @@ public extension OpenAI {
                 }
                 // Text alongside a tool call also cannot be represented as a single item;
                 // ResponseRequest.encode emits the text as a separate message item.
-                let hasText: Bool
-                switch content {
-                case .null: hasText = false
-                case .string(let s): hasText = !s.isEmpty
-                case .array(let a): hasText = !a.isEmpty
-                }
-                guard !hasText else {
+                guard !Item.hasEncodableContent(content) else {
                     throw EncodingError.invalidValue(content, EncodingError.Context(
                         codingPath: encoder.codingPath,
                         debugDescription: "An Item carrying both text and a tool call cannot be encoded directly; encode it via OpenAI.ResponseRequest, which emits the text as a separate message item."))
@@ -163,6 +157,22 @@ public extension OpenAI {
                 var c = encoder.container(keyedBy: MessageKeys.self)
                 try c.encode(role, forKey: .role)
                 try Item.encodeContent(content, into: &c)
+            }
+        }
+
+        /// Whether `encodeContent` would emit any content for this value — i.e. a non-empty
+        /// string or an array containing at least one text/image part (the only parts
+        /// `encodeContent` serialises). Used to avoid emitting an empty `content` block.
+        static func hasEncodableContent(_ content: Content) -> Bool {
+            switch content {
+            case .null: return false
+            case .string(let str): return !str.isEmpty
+            case .array(let parts):
+                return parts.contains {
+                    if case .text = $0 { return true }
+                    if case .image = $0 { return true }
+                    return false
+                }
             }
         }
 

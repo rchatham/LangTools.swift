@@ -148,13 +148,7 @@ public extension OpenAI {
                 if let tool_calls = item.tool_calls, !tool_calls.isEmpty {
                     // An assistant turn may carry text (string or multipart) alongside its tool
                     // calls; emit it as its own message item so it is preserved in the conversation.
-                    let hasContent: Bool
-                    switch item.content {
-                    case .null: hasContent = false
-                    case .string(let s): hasContent = !s.isEmpty
-                    case .array(let a): hasContent = !a.isEmpty
-                    }
-                    if hasContent {
+                    if Item.hasEncodableContent(item.content) {
                         var mc = input.nestedContainer(keyedBy: Item.MessageKeys.self)
                         try mc.encode(item.role, forKey: .role)
                         try Item.encodeContent(item.content, into: &mc)

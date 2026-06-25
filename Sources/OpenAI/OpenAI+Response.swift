@@ -233,11 +233,26 @@ public extension OpenAI {
             public var type: String
             public var text: String?
             public var refusal: String?
+            /// Citations/references attached to `output_text` (e.g. from web/file search).
+            public var annotations: [Annotation]?
 
-            public init(type: String, text: String? = nil, refusal: String? = nil) {
+            public init(type: String, text: String? = nil, refusal: String? = nil, annotations: [Annotation]? = nil) {
                 self.type = type
                 self.text = text
                 self.refusal = refusal
+                self.annotations = annotations
+            }
+
+            public struct Annotation: Codable {
+                /// `url_citation`, `file_citation`, `file_path`, etc.
+                public let type: String
+                public let text: String?
+                public let start_index: Int?
+                public let end_index: Int?
+                public let url: String?
+                public let title: String?
+                public let file_id: String?
+                public let filename: String?
             }
         }
 
