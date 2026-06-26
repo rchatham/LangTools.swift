@@ -117,9 +117,6 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
     }
 
     public func startRecognition() throws {
-        guard isAvailable else {
-            throw WhisperKitLangToolsSpeechError.providerNotConfigured
-        }
         lastError = nil
         hasEmittedFinalTranscription = false
         Task {

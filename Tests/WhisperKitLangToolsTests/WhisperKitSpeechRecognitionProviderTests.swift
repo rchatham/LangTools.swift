@@ -25,16 +25,12 @@ final class WhisperKitSpeechRecognitionProviderTests: XCTestCase {
     }
 
     @MainActor
-    func testStartRecognitionThrowsWhenProviderIsUnavailable() {
+    func testStartRecognitionAllowsLazyModelInitialization() {
         let provider = WhisperKitSpeechRecognitionProvider()
 
         XCTAssertFalse(provider.isAvailable)
-        XCTAssertThrowsError(try provider.startRecognition()) { error in
-            XCTAssertEqual(
-                error.localizedDescription,
-                WhisperKitLangToolsSpeechError.providerNotConfigured.localizedDescription
-            )
-        }
+        XCTAssertNoThrow(try provider.startRecognition())
+        provider.stopRecognition(finalizePending: false, clearTranscript: true)
     }
 
     @MainActor
