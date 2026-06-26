@@ -33,10 +33,21 @@ struct LangTools_ExampleApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
-            // Each window gets its own ChatContainerView with independent MessageService
+        #if os(macOS)
+        Window("LangTools.swift", id: "main") {
             ChatContainerView(voiceInputHandler: voiceInputHandler)
+                .onOpenURL { url in
+                    AccountLoginCoordinator.shared.handleRedirect(url)
+                }
         }
+        #else
+        WindowGroup {
+            ChatContainerView(voiceInputHandler: voiceInputHandler)
+                .onOpenURL { url in
+                    AccountLoginCoordinator.shared.handleRedirect(url)
+                }
+        }
+        #endif
     }
 
     // @MainActor is required because ToolManager is @MainActor-isolated.
@@ -140,6 +151,7 @@ struct ChatContainerView: View {
                 }
             )
         }
+        .manageAccessPrompts()
     }
 
     private var chatSettingsView: AnyView {
@@ -255,41 +267,82 @@ extension MessageService: @retroactive ChatMessageService {
             }
 
         case is LangToolchainError:
-            let (serviceName, service): (String, APIService) = {
-                switch UserDefaults.model {
-                case .anthropic(_): return ("Anthropic", .anthropic)
-                case .openAI(_): return ("OpenAI", .openAI)
-                case .xAI(_): return ("xAI", .xAI)
-                case .gemini(_): return ("Gemini", .gemini)
-                case .ollama(_): return ("Ollama", .ollama)
-                }
-            }()
-
-            let textBinding = Binding(
-                get: { apiKeyInput },
-                set: { apiKeyInput = $0 }
-            )
-
+            let service = UserDefaults.model.apiService
             return ChatAlertInfo(
-                title: "Enter API Key",
-                textField: TextFieldInfo(
-                    placeholder: "Enter your API key",
-                    label: "API Key",
-                    text: textBinding
-                ),
+                title: "Provider Access Required",
                 button: ButtonInfo(
-                    text: "Save for \(serviceName)",
-                    action: { [weak self] alertInfo in
-                        let apiKey = textBinding.wrappedValue
-                        try self?.networkClient.updateApiKey(apiKey, for: service)
+                    text: "Manage Access",
+                    action: { _ in
+                        AuthPresentationCoordinator.shared.present(preferredService: service)
                     }
                 ),
-                message: "Please enter your \(serviceName) API key."
+                message: "Configure \(service.displayName) access to use this model. You can add an API key or connect an account from Manage Access."
             )
+
+        case let error as NetworkClient.NetworkError:
+            let service = UserDefaults.model.apiService
+            return ChatAlertInfo(
+                title: "Access Configuration",
+                button: ButtonInfo(
+                    text: "Manage Access",
+                    action: { _ in
+                        AuthPresentationCoordinator.shared.present(preferredService: service)
+                    }
+                ),
+                message: error.errorDescription ?? "Update provider access settings."
+            )
+
+        case let error as CLIAccountSessionBridgeError:
+            return handleCLIAccountError(error)
 
         default:
             return nil // ChatAlertInfo( title: "Unknown Error", message: "An unexpected error occurred." )
         }
+    }
+
+    private func handleCLIAccountError(_ error: CLIAccountSessionBridgeError) -> ChatAlertInfo {
+        let message = normalizedCLIErrorMessage(error)
+        let lowercasedMessage = message.lowercased()
+
+        if lowercasedMessage.contains("status 429") || lowercasedMessage.contains("quota") || lowercasedMessage.contains("billing") {
+            return ChatAlertInfo(
+                title: "OpenAI Account Quota Exceeded",
+                button: ButtonInfo(
+                    text: "Manage Access",
+                    action: { _ in
+                        AuthPresentationCoordinator.shared.present(preferredService: .openAI)
+                    }
+                ),
+                message: "Your OpenAI account-backed session could not complete this request because its quota is exhausted. Add an OpenAI API key, switch to another provider, or update your OpenAI billing/quota settings.\n\n\(message)"
+            )
+        }
+
+        if lowercasedMessage.contains("rate limit") {
+            return ChatAlertInfo(
+                title: "OpenAI Rate Limited",
+                button: ButtonInfo(
+                    text: "OK",
+                    role: .cancel
+                ),
+                message: message
+            )
+        }
+
+        return ChatAlertInfo(
+            title: "OpenAI Account Error",
+            button: ButtonInfo(
+                text: "OK",
+                role: .cancel
+            ),
+            message: message
+        )
+    }
+
+    private func normalizedCLIErrorMessage(_ error: CLIAccountSessionBridgeError) -> String {
+        let rawMessage = error.errorDescription ?? "LangToolsCLI request failed."
+        let withoutPrefix = rawMessage.replacingOccurrences(of: "Error: ", with: "")
+        let components = withoutPrefix.components(separatedBy: "\n\nSee ")
+        return components.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? withoutPrefix
     }
 
     func handleApiError(_ error: Error) -> ChatAlertInfo? {
@@ -361,6 +414,3 @@ extension Message: @retroactive ChatMessageInfo {
     public weak var parentMessage: Message? { parent }
     public var childChatMessages: [Message] { childMessages }
 }
-
-// local variable used to store apiKey while passing from ui to app
-private var apiKeyInput: String = ""

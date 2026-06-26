@@ -10,6 +10,7 @@ import FoundationNetworking
 #endif
 import OpenAI
 import Anthropic
+import Ollama
 #if canImport(SwiftUI)
 import SwiftUI
 #endif
@@ -62,9 +63,16 @@ extension Array<Message> {
             OpenAI.Message(role: message.role, content: message.text ?? "")
         }
     }
+
     func toAnthropicMessages() -> [Anthropic.Message] {
         return self.map { message in
             Anthropic.Message(role: message.role.toAnthropicRole(), content: message.text ?? "")
+        }
+    }
+
+    func toOllamaMessages() -> [Ollama.Message] {
+        return self.map { message in
+            Ollama.Message(role: .init(message.role), content: message.text ?? "")
         }
     }
 }

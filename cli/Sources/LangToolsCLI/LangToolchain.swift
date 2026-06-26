@@ -17,6 +17,10 @@ struct LangToolchain {
         self.langTools[String(describing: LangTool.self)] = langTool
     }
 
+    public func langTool<LangTool: LangTools>(_ type: LangTool.Type) -> LangTool? {
+        langTools[String(describing: type)] as? LangTool
+    }
+
     private var langTools: [String: (any LangTools)] = [:]
 
     public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response {
