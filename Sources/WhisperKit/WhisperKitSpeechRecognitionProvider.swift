@@ -59,6 +59,7 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
     private var modelVariantProvider: @MainActor () -> String
     private var languageIdentifierProvider: @MainActor () -> String?
     private var audioStreamTranscriber: AudioStreamTranscriber?
+    private var startupTask: Task<Void, Never>?
     private var finalTranscriptionContinuation: CheckedContinuation<String, Never>?
     private var lastTranscribedText = ""
     private var hasEmittedFinalTranscription = false
@@ -117,11 +118,13 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
     }
 
     public func startRecognition() throws {
+        startupTask?.cancel()
         lastError = nil
         hasEmittedFinalTranscription = false
-        Task {
+        isStreaming = true
+        startupTask = Task { [weak self] in
             do {
-                try await startStreamingTranscription { [weak self] text, isFinal in
+                try await self?.startStreamingTranscription { [weak self] text, isFinal in
                     Task { @MainActor [weak self] in
                         self?.currentTranscript = text
                         if isFinal {
@@ -131,12 +134,18 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
                         }
                     }
                 }
+                self?.startupTask = nil
+            } catch is CancellationError {
+                self?.isStreaming = false
+                self?.startupTask = nil
             } catch let error as WhisperKitLangToolsSpeechError {
-                isStreaming = false
-                lastError = error
+                self?.isStreaming = false
+                self?.lastError = error
+                self?.startupTask = nil
             } catch {
-                isStreaming = false
-                lastError = .transcriptionFailed(error.localizedDescription)
+                self?.isStreaming = false
+                self?.lastError = .transcriptionFailed(error.localizedDescription)
+                self?.startupTask = nil
             }
         }
     }
@@ -146,6 +155,9 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
     }
 
     public func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {
+        startupTask?.cancel()
+        startupTask = nil
+        isStreaming = false
         Task {
             if finalizePending {
                 let text = await stopStreamingTranscription()
@@ -159,6 +171,9 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
     }
 
     public func finalizeRecognition() {
+        startupTask?.cancel()
+        startupTask = nil
+        isStreaming = false
         Task {
             let text = await stopStreamingTranscription()
             currentTranscript = text
@@ -289,6 +304,7 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
         if whisperKit == nil {
             try await initializeWhisperKit()
         }
+        try Task.checkCancellation()
         guard let whisperKit, isAvailable else {
             throw WhisperKitLangToolsSpeechError.providerNotConfigured
         }
@@ -339,7 +355,7 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
     }
 
     public func stopStreamingTranscription() async -> String {
-        guard isStreaming else { return lastTranscribedText }
+        guard audioStreamTranscriber != nil else { return lastTranscribedText }
         guard finalTranscriptionContinuation == nil else { return lastTranscribedText }
         let result = await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
             finalTranscriptionContinuation = continuation

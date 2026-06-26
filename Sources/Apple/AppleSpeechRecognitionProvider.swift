@@ -44,6 +44,7 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
     private var audioEngine: AVAudioEngine?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionSessionID = UUID()
+    private var streamingFinalizeCleanupTask: Task<Void, Never>?
     private var onPartialResultCallback: ((String) -> Void)?
     private var onFinalResultCallback: ((String) -> Void)?
     private var languageIdentifierProvider: @MainActor () -> String?
@@ -141,6 +142,7 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
     }
 
     public func finalizeRecognition() {
+        isListening = false
         _ = stopStreamingTranscription()
     }
 
@@ -227,7 +229,11 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
     /// The final result may still arrive asynchronously through the final-result callback.
     @discardableResult
     public func stopStreamingTranscription() -> String? {
+        guard recognitionRequest != nil else {
+            return currentTranscript.isEmpty ? nil : currentTranscript
+        }
         recognitionRequest?.endAudio()
+        scheduleStreamingFinalizeCleanup(for: recognitionSessionID)
         return currentTranscript.isEmpty ? nil : currentTranscript
     }
 
@@ -239,7 +245,22 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
         isListening
     }
 
+    private func scheduleStreamingFinalizeCleanup(for sessionID: UUID) {
+        streamingFinalizeCleanupTask?.cancel()
+        streamingFinalizeCleanupTask = Task { [weak self] in
+            // Give Speech a short window to deliver a final result after endAudio(),
+            // then release the mic/engine if no callback arrives.
+            try? await Task.sleep(for: .seconds(3))
+            await MainActor.run {
+                guard let self, self.recognitionSessionID == sessionID else { return }
+                self.cleanupStreaming()
+            }
+        }
+    }
+
     private func cleanupStreaming() {
+        streamingFinalizeCleanupTask?.cancel()
+        streamingFinalizeCleanupTask = nil
         isListening = false
         audioEngine?.stop()
         audioEngine?.inputNode.removeTap(onBus: 0)

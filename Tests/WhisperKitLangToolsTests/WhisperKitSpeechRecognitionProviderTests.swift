@@ -29,7 +29,9 @@ final class WhisperKitSpeechRecognitionProviderTests: XCTestCase {
         let provider = WhisperKitSpeechRecognitionProvider()
 
         XCTAssertFalse(provider.isAvailable)
+        XCTAssertFalse(provider.isListening)
         XCTAssertNoThrow(try provider.startRecognition())
+        XCTAssertTrue(provider.isListening)
         provider.stopRecognition(finalizePending: false, clearTranscript: true)
     }
 
