@@ -7,7 +7,7 @@
 
 import XCTest
 import Speech
-@testable import AppleSpeech
+@testable import AppleLangTools
 
 final class AppleSpeechTests: XCTestCase {
 

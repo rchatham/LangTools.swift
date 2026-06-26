@@ -8,6 +8,53 @@
 import Foundation
 import Speech
 import AVFoundation
+import LangTools
+
+private final class AppleSpeechTranscriptionContinuationBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<String, Error>?
+    private var recognitionTask: SFSpeechRecognitionTask?
+
+    init(_ continuation: CheckedContinuation<String, Error>) {
+        self.continuation = continuation
+    }
+
+    func setRecognitionTask(_ task: SFSpeechRecognitionTask) {
+        lock.lock()
+        defer { lock.unlock() }
+        recognitionTask = task
+    }
+
+    func cancelRecognitionTask() {
+        lock.lock()
+        let task = recognitionTask
+        recognitionTask = nil
+        lock.unlock()
+        task?.cancel()
+    }
+
+    @discardableResult
+    func resume(returning value: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let continuation else { return false }
+        self.continuation = nil
+        recognitionTask = nil
+        continuation.resume(returning: value)
+        return true
+    }
+
+    @discardableResult
+    func resume(throwing error: Error) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let continuation else { return false }
+        self.continuation = nil
+        recognitionTask = nil
+        continuation.resume(throwing: error)
+        return true
+    }
+}
 
 extension AppleSpeech {
     /// Request for transcribing audio using Apple's Speech framework
@@ -26,7 +73,8 @@ extension AppleSpeech {
     /// )
     /// let transcript = try await request.execute()
     /// ```
-    public struct TranscriptionRequest {
+    public struct TranscriptionRequest: LangToolsSpeechTranscriptionRequest {
+        public typealias TranscriptionResponse = String
         /// Audio file URL to transcribe
         public let audioURL: URL
 
@@ -39,16 +87,27 @@ extension AppleSpeech {
         /// Task hint for better recognition accuracy
         public let taskHint: SFSpeechRecognitionTaskHint
 
+        /// Maximum wall-clock time to wait for Apple Speech to produce a final result.
+        public let recognitionTimeout: TimeInterval
+
+        public var speechAudioData: Data? { nil }
+        public var speechAudioFileURL: URL? { audioURL }
+        public var speechAudioFormat: String? { audioURL.pathExtension.isEmpty ? nil : audioURL.pathExtension }
+        public var speechLanguageIdentifier: String? { locale.identifier }
+        public var speechPrompt: String? { nil }
+
         public init(
             audioURL: URL,
             locale: Locale = .current,
             reportPartialResults: Bool = true,
-            taskHint: SFSpeechRecognitionTaskHint = .unspecified
+            taskHint: SFSpeechRecognitionTaskHint = .unspecified,
+            recognitionTimeout: TimeInterval? = nil
         ) {
             self.audioURL = audioURL
             self.locale = locale
             self.reportPartialResults = reportPartialResults
             self.taskHint = taskHint
+            self.recognitionTimeout = recognitionTimeout ?? 120
         }
 
         /// Execute the transcription request
@@ -74,38 +133,36 @@ extension AppleSpeech {
             request.taskHint = taskHint
 
             // Perform recognition
-            return try await withCheckedThrowingContinuation { continuation in
-                var hasResumed = false
+            return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
+                let continuationBox = AppleSpeechTranscriptionContinuationBox(continuation)
 
-                recognizer.recognitionTask(with: request) { result, error in
-                    // Prevent multiple resumes
-                    guard !hasResumed else { return }
-
+                let recognitionTask = recognizer.recognitionTask(with: request) { result, error in
                     if let error = error {
-                        hasResumed = true
-                        continuation.resume(throwing: AppleSpeechError.recognitionFailed(error.localizedDescription))
+                        continuationBox.resume(throwing: AppleSpeechError.recognitionFailed(error.localizedDescription))
                         return
                     }
 
-                    guard let result = result else {
-                        hasResumed = true
-                        continuation.resume(throwing: AppleSpeechError.noResult)
-                        return
-                    }
+                    guard let result else { return }
 
                     // Only resume on final result
                     if result.isFinal {
-                        hasResumed = true
                         let text = result.bestTranscription.formattedString
 
                         if text.isEmpty {
-                            continuation.resume(throwing: AppleSpeechError.noSpeechDetected)
+                            continuationBox.resume(throwing: AppleSpeechError.noSpeechDetected)
                         } else {
-                            continuation.resume(returning: text)
+                            continuationBox.resume(returning: text)
                         }
                     }
                     // Partial results are ignored in this non-streaming implementation
                     // For streaming, use the StreamingTranscriptionRequest type
+                }
+
+                continuationBox.setRecognitionTask(recognitionTask)
+                DispatchQueue.global().asyncAfter(deadline: .now() + recognitionTimeout) {
+                    if continuationBox.resume(throwing: AppleSpeechError.recognitionTimedOut) {
+                        continuationBox.cancelRecognitionTask()
+                    }
                 }
             }
         }
@@ -121,6 +178,7 @@ public enum AppleSpeechError: Error, LocalizedError {
     case recognitionFailed(String)
     case noResult
     case noSpeechDetected
+    case recognitionTimedOut
 
     public var errorDescription: String? {
         switch self {
@@ -136,6 +194,8 @@ public enum AppleSpeechError: Error, LocalizedError {
             return "No recognition result returned"
         case .noSpeechDetected:
             return "No speech detected in audio"
+        case .recognitionTimedOut:
+            return "Speech recognition timed out before producing a final result"
         }
     }
 }

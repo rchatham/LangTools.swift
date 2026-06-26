@@ -11,7 +11,7 @@ import SwiftUI
 import Combine
 import AVFoundation
 import Speech
-import Chat
+import class OpenAI.OpenAISTTProvider
 
 /// STT processing status for UI feedback
 public enum STTStatus: Equatable {
@@ -43,6 +43,22 @@ public enum STTStatus: Equatable {
     }
 }
 
+public struct STTServiceConfiguration {
+    public var languageIdentifierProvider: @MainActor () -> String?
+    public var isOpenAISimulatedStreamingEnabled: @MainActor () -> Bool
+    public var openAIStreamingChunkInterval: @MainActor () -> TimeInterval
+
+    public init(
+        languageIdentifierProvider: @escaping @MainActor () -> String? = { nil },
+        isOpenAISimulatedStreamingEnabled: @escaping @MainActor () -> Bool = { false },
+        openAIStreamingChunkInterval: @escaping @MainActor () -> TimeInterval = { 3.0 }
+    ) {
+        self.languageIdentifierProvider = languageIdentifierProvider
+        self.isOpenAISimulatedStreamingEnabled = isOpenAISimulatedStreamingEnabled
+        self.openAIStreamingChunkInterval = openAIStreamingChunkInterval
+    }
+}
+
 /// Multi-provider STT service
 @MainActor
 public class STTService: ObservableObject {
@@ -57,9 +73,10 @@ public class STTService: ObservableObject {
     @Published public private(set) var whisperKitLoadingState: WhisperKitLoadingState = .idle
 
     // Provider registry
-    private var providers: [STTProviderType: STTProviderProtocol] = [:]
+    private var providers: [STTProviderType: any SpeechRecognitionProvider] = [:]
     private var currentProviderType: STTProviderType = .appleSpeech
     private var whisperKitCancellable: AnyCancellable?
+    private var configuration = STTServiceConfiguration()
 
     // Audio capture for Apple Speech real-time streaming
     private var audioEngine: AVAudioEngine?
@@ -85,8 +102,12 @@ public class STTService: ObservableObject {
 
     // MARK: - Provider Registration
 
+    public func configure(_ configuration: STTServiceConfiguration) {
+        self.configuration = configuration
+    }
+
     /// Register a provider for a given type
-    public func registerProvider(_ provider: STTProviderProtocol, for type: STTProviderType) {
+    public func registerProvider(_ provider: any SpeechRecognitionProvider, for type: STTProviderType) {
         providers[type] = provider
 
         // If this is WhisperKit, observe its loading state
@@ -126,7 +147,7 @@ public class STTService: ObservableObject {
     }
 
     /// Get the current provider
-    public var currentProvider: STTProviderProtocol? {
+    public var currentProvider: (any SpeechRecognitionProvider)? {
         providers[currentProviderType]
     }
 
@@ -178,8 +199,7 @@ public class STTService: ObservableObject {
         partialTranscription = ""
 
         // Update recognizer locale from settings
-        let languageSetting = ToolSettings.shared.sttLanguage.rawValue
-        let locale = languageSetting == "auto" ? Locale.current : Locale(identifier: languageSetting)
+        let locale = configuration.languageIdentifierProvider().map(Locale.init(identifier:)) ?? Locale.current
         speechRecognizer = SFSpeechRecognizer(locale: locale)
 
         guard let recognizer = speechRecognizer, recognizer.isAvailable else {
@@ -321,7 +341,7 @@ public class STTService: ObservableObject {
     public func startOpenAIChunkedStreaming() async {
         guard !isRecording && !isProcessing else { return }
 
-        guard ToolSettings.shared.enableOpenAISimulatedStreaming else {
+        guard configuration.isOpenAISimulatedStreamingEnabled() else {
             await startFileBasedRecording()
             return
         }
@@ -339,7 +359,7 @@ public class STTService: ObservableObject {
             isRecording = true
             status = .recording
 
-            let interval = ToolSettings.shared.streamingChunkInterval.rawValue
+            let interval = configuration.openAIStreamingChunkInterval()
             chunkTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     await self?.processOpenAIChunk()
@@ -367,7 +387,8 @@ public class STTService: ObservableObject {
         print("[STTService] Processing OpenAI chunk: \(audioData.count) bytes")
 
         do {
-            let partialText = try await provider.transcribe(audioData: audioData)
+            let partialResponse = try await provider.transcribe(audioData: audioData)
+            let partialText = partialResponse.transcriptText
             if !partialText.isEmpty {
                 partialTranscription = partialText
             }
@@ -508,7 +529,8 @@ public class STTService: ObservableObject {
         status = .transcribing
 
         do {
-            let text = try await provider.transcribe(audioData: audioData)
+            let response = try await provider.transcribe(audioData: audioData)
+            let text = response.transcriptText
             transcribedText = text
             status = .complete(text)
             isProcessing = false
@@ -590,6 +612,7 @@ public class STTService: ObservableObject {
 // MARK: - VoiceInputService Protocol
 
 /// Protocol for injecting voice input into ChatUI
+@MainActor
 public protocol VoiceInputService: AnyObject {
     var isRecording: Bool { get }
     var isProcessing: Bool { get }
