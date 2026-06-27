@@ -289,12 +289,15 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
         }
     }
 
-    private func stripSpecialTokens(_ text: String) -> String {
-        let pattern = "<\\|[^|]+\\|>"
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
-        let range = NSRange(text.startIndex..., in: text)
-        return regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+    func stripSpecialTokens(_ text: String) -> String {
+        let patterns = ["<\\|[^|]+\\|>", "\\[[^\\]]*\\]"]
+        return patterns.reduce(text) { result, pattern in
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return result }
+            let range = NSRange(result.startIndex..., in: result)
+            return regex.stringByReplacingMatches(in: result, range: range, withTemplate: "")
+        }
+        .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     public func startStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws {

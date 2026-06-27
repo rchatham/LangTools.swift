@@ -41,5 +41,15 @@ final class WhisperKitSpeechRecognitionProviderTests: XCTestCase {
 
         XCTAssertEqual(provider.assetState, .unknown)
     }
+
+    @MainActor
+    func testStripSpecialTokensRemovesBracketedAnnotations() {
+        let provider = WhisperKitSpeechRecognitionProvider()
+
+        XCTAssertEqual(
+            provider.stripSpecialTokens("<|startoftranscript|> Hello [Music] there [BLANK_AUDIO] friend"),
+            "Hello there friend"
+        )
+    }
 }
 #endif
