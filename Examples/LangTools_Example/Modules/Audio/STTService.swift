@@ -10,7 +10,6 @@ import Foundation
 import SwiftUI
 import Combine
 import AVFoundation
-import Speech
 import LangTools
 import class OpenAI.OpenAISpeechRecognitionProvider
 
@@ -79,17 +78,8 @@ public class STTService: ObservableObject {
     private var whisperKitCancellable: AnyCancellable?
     private var configuration = STTServiceConfiguration()
 
-    // Audio capture for Apple Speech real-time streaming
-    private var audioEngine: AVAudioEngine?
-    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
-    private var speechRecognizer: SFSpeechRecognizer?
-
     // Audio recording for file-based transcription (OpenAI)
     private var audioRecorder: AVAudioEngineRecorder?
-
-    // Continuation for waiting on streaming results
-    private var streamingContinuation: CheckedContinuation<String?, Never>?
 
     // OpenAI chunked streaming
     private var chunkTimer: Timer?
@@ -98,9 +88,7 @@ public class STTService: ObservableObject {
 
     public static let shared = STTService()
 
-    private init() {
-        speechRecognizer = SFSpeechRecognizer(locale: .current)
-    }
+    private init() {}
 
     // MARK: - Provider Registration
 
@@ -171,175 +159,98 @@ public class STTService: ObservableObject {
 
         guard micStatus else { return false }
 
-        // Request speech recognition permission (for Apple Speech)
-        let speechStatus = await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { status in
-                continuation.resume(returning: status)
-            }
-        }
-
-        // Also request provider-specific permissions
-        if let provider = currentProvider {
-            _ = try await provider.requestPermission()
-        }
-
-        return speechStatus == .authorized
+        guard let provider = currentProvider else { return false }
+        return try await provider.requestPermission()
     }
 
-    // MARK: - Apple Speech Real-Time Streaming
+    // MARK: - Provider Streaming
 
-    /// Start recording with real-time Apple Speech transcription
+    /// Start provider-owned streaming for providers such as Apple Speech and WhisperKit.
     public func startAppleSpeechStreaming() async {
+        guard let provider = providers[.appleSpeech] as? any StreamingSpeechRecognitionProviding else {
+            print("[STTService] Apple Speech provider not available")
+            error = .providerNotConfigured
+            status = .error("Apple Speech not configured")
+            return
+        }
+        await startProviderStreaming(provider, label: "Apple Speech")
+    }
+
+    /// Stop Apple Speech streaming and get final result.
+    @discardableResult
+    public func stopAppleSpeechStreaming() async -> String? {
+        guard let provider = providers[.appleSpeech] as? any StreamingSpeechRecognitionProviding else {
+            print("[STTService] stopAppleSpeechStreaming: no Apple Speech provider")
+            return nil
+        }
+        return await stopProviderStreaming(provider, label: "Apple Speech")
+    }
+
+    private func startProviderStreaming(
+        _ provider: any StreamingSpeechRecognitionProviding,
+        label: String
+    ) async {
         guard !isRecording && !isProcessing else {
             print("[STTService] Already recording or processing")
             return
         }
-
-        // Clear previous state
-        error = nil
-        transcribedText = ""
-        partialTranscription = ""
-
-        // Update recognizer locale from settings
-        let locale = configuration.languageIdentifierProvider().map(Locale.init(identifier:)) ?? Locale.current
-        speechRecognizer = SFSpeechRecognizer(locale: locale)
-
-        guard let recognizer = speechRecognizer, recognizer.isAvailable else {
-            status = .error("Speech recognition not available")
+        guard !provider.supportsExternalAudioStreaming else {
+            error = .providerNotConfigured
+            status = .error("\(label) requires externally captured audio")
             return
         }
 
+        if let languageIdentifier = configuration.languageIdentifierProvider() {
+            provider.configure(languageIdentifier: languageIdentifier)
+        }
+
+        error = nil
+        transcribedText = ""
+        partialTranscription = ""
+        isRecording = true
+        status = .recording
+
         do {
-            recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-            guard let request = recognitionRequest else {
-                status = .error("Failed to create recognition request")
-                return
+            print("[STTService] Starting \(label) streaming...")
+            try await provider.startStreamingRecognition { [weak self] event in
+                self?.handleStreamingRecognitionEvent(event)
             }
-
-            request.shouldReportPartialResults = true
-
-            if #available(iOS 13, macOS 13, *) {
-                request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
-            }
-
-            recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
-                guard let self = self else { return }
-
-                if let error = error {
-                    Task { @MainActor in
-                        let nsError = error as NSError
-                        if nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 216 {
-                            return // Cancellation is normal
-                        }
-                        print("[STTService] Recognition error: \(error.localizedDescription)")
-                    }
-                    return
-                }
-
-                guard let result = result else { return }
-                let text = result.bestTranscription.formattedString
-
-                Task { @MainActor in
-                    self.partialTranscription = text
-
-                    if result.isFinal {
-                        self.transcribedText = text
-                        self.status = text.isEmpty ? .complete("") : .complete(text)
-                        self.isProcessing = false
-
-                        self.streamingContinuation?.resume(returning: text.isEmpty ? nil : text)
-                        self.streamingContinuation = nil
-                    }
-                }
-            }
-
-            try startAudioCapture()
-            isRecording = true
-            status = .recording
-
         } catch {
-            status = .error("Failed to start recording: \(error.localizedDescription)")
-            cleanupAppleSpeech()
+            print("[STTService] \(label) streaming error: \(error)")
+            self.error = error as? STTError ?? .transcriptionFailed(error.localizedDescription)
+            status = .error(error.localizedDescription)
+            isRecording = false
         }
     }
 
-    /// Stop Apple Speech streaming and get final result
     @discardableResult
-    public func stopAppleSpeechStreaming() async -> String? {
+    private func stopProviderStreaming(
+        _ provider: any StreamingSpeechRecognitionProviding,
+        label: String
+    ) async -> String? {
         guard isRecording else { return nil }
 
         isRecording = false
         isProcessing = true
         status = .processing
 
-        stopAudioCapture()
-        recognitionRequest?.endAudio()
-
-        let result = await withCheckedContinuation { continuation in
-            self.streamingContinuation = continuation
-
-            Task {
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
-                if self.streamingContinuation != nil {
-                    self.streamingContinuation?.resume(returning: self.partialTranscription.isEmpty ? nil : self.partialTranscription)
-                    self.streamingContinuation = nil
-
-                    await MainActor.run {
-                        self.transcribedText = self.partialTranscription
-                        self.status = self.partialTranscription.isEmpty ? .complete("") : .complete(self.partialTranscription)
-                        self.isProcessing = false
-                    }
-                }
-            }
+        let result = await provider.stopStreamingRecognition()
+        if let result, !result.isEmpty {
+            print("[STTService] stopProviderStreaming(\(label)): using provider result '\(result)'")
+            transcribedText = result
+        } else if !partialTranscription.isEmpty {
+            print("[STTService] stopProviderStreaming(\(label)): copying partialTranscription to transcribedText")
+            transcribedText = partialTranscription
         }
 
-        cleanupAppleSpeech()
-        return result
-    }
-
-    private func startAudioCapture() throws {
-        #if os(iOS)
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
-        try session.setActive(true)
-        #endif
-
-        audioEngine = AVAudioEngine()
-        guard let audioEngine = audioEngine else {
-            throw NSError(domain: "STT", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to create audio engine"])
-        }
-
-        let inputNode = audioEngine.inputNode
-        let recordingFormat = inputNode.outputFormat(forBus: 0)
-
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
-            guard let self = self else { return }
-            self.recognitionRequest?.append(buffer)
-        }
-
-        audioEngine.prepare()
-        try audioEngine.start()
-    }
-
-    private func stopAudioCapture() {
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine = nil
-
-        #if os(iOS)
-        try? AVAudioSession.sharedInstance().setActive(false)
-        #endif
-    }
-
-    private func cleanupAppleSpeech() {
-        recognitionTask?.cancel()
-        recognitionTask = nil
-        recognitionRequest = nil
+        isProcessing = false
+        status = transcribedText.isEmpty ? .complete("") : .complete(transcribedText)
+        return transcribedText.isEmpty ? nil : transcribedText
     }
 
     // MARK: - OpenAI Chunked Streaming
 
-    /// Start chunked streaming for OpenAI (sends accumulated audio periodically)
+    /// Start chunked streaming for OpenAI (sends bounded recording segments periodically)
     public func startOpenAIChunkedStreaming() async {
         guard !isRecording && !isProcessing else { return }
 
@@ -352,7 +263,6 @@ public class STTService: ObservableObject {
         transcribedText = ""
         partialTranscription = ""
         lastChunkSize = 0
-
         print("[STTService] Starting OpenAI chunked streaming...")
 
         guard let provider = providers[.openAIWhisper] as? any StreamingSpeechRecognitionProviding,
@@ -400,18 +310,26 @@ public class STTService: ObservableObject {
         guard audioData.count > lastChunkSize + 1000 else { return }
         lastChunkSize = audioData.count
 
-        print("[STTService] Processing OpenAI chunk: \(audioData.count) bytes")
+        print("[STTService] Processing OpenAI cumulative chunk: \(audioData.count) bytes")
         isProcessingOpenAIChunk = true
         defer { isProcessingOpenAIChunk = false }
         do {
             try await provider.appendStreamingAudio(audioData)
         } catch {
-            chunkTimer?.invalidate()
-            chunkTimer = nil
-            print("[STTService] OpenAI streaming error: \(error)")
-            self.error = error as? STTError ?? .transcriptionFailed(error.localizedDescription)
-            status = .error(error.localizedDescription)
+            handleOpenAIStreamingError(error)
         }
+    }
+
+    private func handleOpenAIStreamingError(_ error: Error) {
+        chunkTimer?.invalidate()
+        chunkTimer = nil
+        audioRecorder?.cancelRecording()
+        audioRecorder = nil
+        isRecording = false
+        isProcessingOpenAIChunk = false
+        print("[STTService] OpenAI streaming error: \(error)")
+        self.error = error as? STTError ?? .transcriptionFailed(error.localizedDescription)
+        status = .error(error.localizedDescription)
     }
 
     private func handleStreamingRecognitionEvent(_ event: SpeechRecognitionEvent) {
@@ -486,22 +404,7 @@ public class STTService: ObservableObject {
             status = .initializingProvider
         }
 
-        isRecording = true
-        status = .recording
-        partialTranscription = ""
-        error = nil
-
-        do {
-            print("[STTService] Starting WhisperKit streaming...")
-            try await provider.startStreamingRecognition { [weak self] event in
-                self?.handleStreamingRecognitionEvent(event)
-            }
-        } catch {
-            print("[STTService] WhisperKit streaming error: \(error)")
-            self.error = error as? STTError ?? .transcriptionFailed(error.localizedDescription)
-            status = .error(error.localizedDescription)
-            isRecording = false
-        }
+        await startProviderStreaming(provider, label: "WhisperKit")
     }
 
     /// Stop WhisperKit streaming
@@ -510,18 +413,7 @@ public class STTService: ObservableObject {
             print("[STTService] stopWhisperKitStreaming: no WhisperKit provider")
             return
         }
-        let result = await provider.stopStreamingRecognition()
-
-        if let result, !result.isEmpty {
-            print("[STTService] stopWhisperKitStreaming: using provider result '\(result)'")
-            transcribedText = result
-        } else if !partialTranscription.isEmpty {
-            print("[STTService] stopWhisperKitStreaming: copying partialTranscription to transcribedText")
-            transcribedText = partialTranscription
-        }
-
-        isRecording = false
-        status = transcribedText.isEmpty ? .complete("") : .complete(transcribedText)
+        await stopProviderStreaming(provider, label: "WhisperKit")
     }
 
     // MARK: - File-Based Recording (Fallback)
@@ -591,27 +483,34 @@ public class STTService: ObservableObject {
 
     /// Start recording (uses current provider's best method)
     public func startRecording() async {
-        switch currentProviderType {
-        case .appleSpeech:
-            await startAppleSpeechStreaming()
-        case .openAIWhisper:
+        guard let provider = currentProvider else {
+            error = .providerNotConfigured
+            status = .error("Provider not configured")
+            return
+        }
+
+        if currentProviderType == .openAIWhisper {
             await startOpenAIChunkedStreaming()
-        case .whisperKit:
-            await startWhisperKitStreaming()
+        } else if let streamingProvider = provider as? any StreamingSpeechRecognitionProviding,
+                  !streamingProvider.supportsExternalAudioStreaming {
+            await startProviderStreaming(streamingProvider, label: provider.displayName)
+        } else {
+            await startFileBasedRecording()
         }
     }
 
     /// Stop recording (uses current provider's best method)
     @discardableResult
     public func stopRecording() async -> String? {
-        switch currentProviderType {
-        case .appleSpeech:
-            return await stopAppleSpeechStreaming()
-        case .openAIWhisper:
+        guard let provider = currentProvider else { return nil }
+
+        if currentProviderType == .openAIWhisper {
             return await stopOpenAIChunkedStreaming()
-        case .whisperKit:
-            await stopWhisperKitStreaming()
-            return transcribedText.isEmpty ? nil : transcribedText
+        } else if let streamingProvider = provider as? any StreamingSpeechRecognitionProviding,
+                  !streamingProvider.supportsExternalAudioStreaming {
+            return await stopProviderStreaming(streamingProvider, label: provider.displayName)
+        } else {
+            return await stopFileBasedRecording()
         }
     }
 
@@ -620,12 +519,8 @@ public class STTService: ObservableObject {
         chunkTimer?.invalidate()
         chunkTimer = nil
 
-        if let provider = providers[.appleSpeech] as? AppleSpeechSTTProvider, provider.isStreaming {
-            provider.cancelStreamingTranscription()
-        }
+        currentProvider?.stopRecognition(finalizePending: false, clearTranscript: true)
 
-        stopAudioCapture()
-        cleanupAppleSpeech()
         audioRecorder?.cancelRecording()
         audioRecorder = nil
 
