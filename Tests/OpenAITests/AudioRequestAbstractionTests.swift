@@ -96,6 +96,53 @@ final class AudioRequestAbstractionTests: XCTestCase {
     }
 
     @MainActor
+    func testOpenAISpeechRecognitionProviderConformsToStreamingProvider() async throws {
+        let provider = OpenAISpeechRecognitionProvider(openAI: OpenAI(apiKey: "test"))
+        let streamingProvider: any StreamingSpeechRecognitionProviding = provider
+
+        var events: [SpeechRecognitionEvent] = []
+        XCTAssertTrue(streamingProvider.supportsExternalAudioStreaming)
+        try await streamingProvider.startStreamingRecognition { event in
+            events.append(event)
+        }
+        let result = await streamingProvider.stopStreamingRecognition()
+
+        XCTAssertNil(result)
+        XCTAssertTrue(events.isEmpty)
+        XCTAssertFalse(streamingProvider.isStreaming)
+    }
+
+    @MainActor
+    func testOpenAIStreamingAppendRequiresStartedSession() async {
+        let provider = OpenAISpeechRecognitionProvider(openAI: OpenAI(apiKey: "test"))
+        let streamingProvider: any StreamingSpeechRecognitionProviding = provider
+
+        do {
+            try await streamingProvider.appendStreamingAudio(Data([1]))
+            XCTFail("Expected OpenAI streaming audio append to require an active session")
+        } catch let error as StreamingSpeechRecognitionError {
+            XCTAssertEqual(error, .notStreaming)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    @MainActor
+    func testOpenAIStreamingRequiresConfiguredClient() async {
+        let provider = OpenAISpeechRecognitionProvider()
+        let streamingProvider: any StreamingSpeechRecognitionProviding = provider
+
+        do {
+            try await streamingProvider.startStreamingRecognition { _ in }
+            XCTFail("Expected OpenAI streaming to require a configured client")
+        } catch let error as OpenAISpeechProviderError {
+            XCTAssertEqual(error.localizedDescription, OpenAISpeechProviderError.providerNotConfigured.localizedDescription)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    @MainActor
     func testSpeechSynthesisProviderUsesExplicitVoiceOverNeutralVoiceIdentifier() async throws {
         let request = makeSpeechSynthesisProvider().audioSpeechRequest(
             for: LangToolsSpeechSynthesisInput(text: "Hello", languageIdentifier: "en", voiceIdentifier: "nova"),

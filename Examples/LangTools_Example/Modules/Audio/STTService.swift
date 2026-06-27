@@ -11,6 +11,7 @@ import SwiftUI
 import Combine
 import AVFoundation
 import Speech
+import LangTools
 import class OpenAI.OpenAISpeechRecognitionProvider
 
 /// STT processing status for UI feedback
@@ -93,6 +94,7 @@ public class STTService: ObservableObject {
     // OpenAI chunked streaming
     private var chunkTimer: Timer?
     private var lastChunkSize: Int = 0
+    private var isProcessingOpenAIChunk = false
 
     public static let shared = STTService()
 
@@ -353,9 +355,19 @@ public class STTService: ObservableObject {
 
         print("[STTService] Starting OpenAI chunked streaming...")
 
+        guard let provider = providers[.openAIWhisper] as? any StreamingSpeechRecognitionProviding,
+              provider.supportsExternalAudioStreaming else {
+            error = .providerNotConfigured
+            status = .error("OpenAI streaming provider not configured")
+            return
+        }
+
         do {
             audioRecorder = AVAudioEngineRecorder()
             try audioRecorder?.startRecording()
+            try await provider.startStreamingRecognition { [weak self] event in
+                self?.handleStreamingRecognitionEvent(event)
+            }
             isRecording = true
             status = .recording
 
@@ -366,7 +378,9 @@ public class STTService: ObservableObject {
                 }
             }
         } catch {
-            self.error = .recordingFailed(error.localizedDescription)
+            audioRecorder?.cancelRecording()
+            audioRecorder = nil
+            self.error = error as? STTError ?? .recordingFailed(error.localizedDescription)
             status = .error("Recording failed")
         }
     }
@@ -377,25 +391,44 @@ public class STTService: ObservableObject {
             chunkTimer = nil
             return
         }
+        guard !isProcessingOpenAIChunk else { return }
 
-        guard let provider = providers[.openAIWhisper],
+        guard let provider = providers[.openAIWhisper] as? any StreamingSpeechRecognitionProviding,
+              provider.supportsExternalAudioStreaming,
               let audioData = audioRecorder?.getCurrentAudioData() else { return }
 
         guard audioData.count > lastChunkSize + 1000 else { return }
         lastChunkSize = audioData.count
 
         print("[STTService] Processing OpenAI chunk: \(audioData.count) bytes")
-
+        isProcessingOpenAIChunk = true
+        defer { isProcessingOpenAIChunk = false }
         do {
-            let partialResponse = try await provider.transcribe(audioData: audioData)
-            let partialText = partialResponse.transcriptText
-            if !partialText.isEmpty {
-                partialTranscription = partialText
-            }
+            try await provider.appendStreamingAudio(audioData)
         } catch {
-            print("[STTService] Chunk transcription error: \(error)")
+            chunkTimer?.invalidate()
+            chunkTimer = nil
+            print("[STTService] OpenAI streaming error: \(error)")
             self.error = error as? STTError ?? .transcriptionFailed(error.localizedDescription)
             status = .error(error.localizedDescription)
+        }
+    }
+
+    private func handleStreamingRecognitionEvent(_ event: SpeechRecognitionEvent) {
+        switch event {
+        case .partialTranscription(let text):
+            if !text.isEmpty { partialTranscription = text }
+        case .finalTranscription(let text), .dualLanguageFinalTranscription(let text, _):
+            transcribedText = text
+            partialTranscription = ""
+            isRecording = false
+            isProcessing = false
+            status = .complete(text)
+        case .recognitionFailed(let message):
+            error = .transcriptionFailed(message)
+            status = .error(message)
+        case .autoDetectLanguageSwitch:
+            break
         }
     }
 
@@ -405,26 +438,51 @@ public class STTService: ObservableObject {
         chunkTimer?.invalidate()
         chunkTimer = nil
 
-        if !partialTranscription.isEmpty {
+        guard isRecording else { return nil }
+        isRecording = false
+        isProcessing = true
+        status = .processing
+
+        let finalAudioData = audioRecorder?.stopRecording()
+        audioRecorder = nil
+
+        guard let provider = providers[.openAIWhisper] as? any StreamingSpeechRecognitionProviding,
+              provider.supportsExternalAudioStreaming else {
+            error = .providerNotConfigured
+            status = .error("Provider not configured")
+            isProcessing = false
+            return nil
+        }
+
+        if let finalAudioData, finalAudioData.count > lastChunkSize {
+            try? await provider.appendStreamingAudio(finalAudioData)
+        }
+
+        let finalText = await provider.stopStreamingRecognition()
+        if let finalText, !finalText.isEmpty {
+            transcribedText = finalText
+        } else if !partialTranscription.isEmpty {
             transcribedText = partialTranscription
         }
 
-        return await stopFileBasedRecording()
+        isProcessing = false
+        status = transcribedText.isEmpty ? .complete("") : .complete(transcribedText)
+        return transcribedText.isEmpty ? nil : transcribedText
     }
 
     // MARK: - WhisperKit Streaming
 
     /// Start streaming transcription with WhisperKit
     public func startWhisperKitStreaming() async {
-        guard let provider = providers[.whisperKit] as? WhisperKitSTTProvider else {
+        guard let provider = providers[.whisperKit] as? any StreamingSpeechRecognitionProviding else {
             print("[STTService] WhisperKit provider not available")
             error = .providerNotConfigured
             status = .error("WhisperKit not configured")
             return
         }
 
-        // Show initializing if model is loading
-        if provider.loadingState.isLoading {
+        if let whisperProvider = providers[.whisperKit] as? WhisperKitSTTProvider,
+           whisperProvider.loadingState.isLoading {
             status = .initializingProvider
         }
 
@@ -435,21 +493,8 @@ public class STTService: ObservableObject {
 
         do {
             print("[STTService] Starting WhisperKit streaming...")
-            try await provider.startStreamingTranscription { [weak self] text, isFinal in
-                Task { @MainActor in
-                    // Only log when text changes
-                    if self?.partialTranscription != text {
-                        print("[STTService] WhisperKit partial: '\(text)'")
-                    }
-                    self?.partialTranscription = text
-                    if isFinal {
-                        print("[STTService] WhisperKit final: '\(text)'")
-                        self?.transcribedText = text
-                        self?.status = .complete(text)
-                        self?.partialTranscription = ""
-                        self?.isRecording = false
-                    }
-                }
+            try await provider.startStreamingRecognition { [weak self] event in
+                self?.handleStreamingRecognitionEvent(event)
             }
         } catch {
             print("[STTService] WhisperKit streaming error: \(error)")
@@ -461,14 +506,13 @@ public class STTService: ObservableObject {
 
     /// Stop WhisperKit streaming
     public func stopWhisperKitStreaming() async {
-        guard let provider = providers[.whisperKit] as? WhisperKitSTTProvider else {
+        guard let provider = providers[.whisperKit] as? any StreamingSpeechRecognitionProviding else {
             print("[STTService] stopWhisperKitStreaming: no WhisperKit provider")
             return
         }
-        let result = await provider.stopStreamingTranscription()
+        let result = await provider.stopStreamingRecognition()
 
-        // Use the result from provider if available, otherwise fall back to partialTranscription
-        if !result.isEmpty {
+        if let result, !result.isEmpty {
             print("[STTService] stopWhisperKitStreaming: using provider result '\(result)'")
             transcribedText = result
         } else if !partialTranscription.isEmpty {

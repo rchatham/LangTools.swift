@@ -17,7 +17,7 @@ private extension SFSpeechRecognizerAuthorizationStatus {
 
 /// Reusable Apple Speech recognition provider adapter.
 @MainActor
-public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
+public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionProviding {
     public let providerID = LangToolsProviderID(rawValue: "apple.speech")
     public let displayName = "Apple Speech"
     public let capabilities = ProviderCapabilities(
@@ -243,6 +243,21 @@ public final class AppleSpeechRecognitionProvider: SpeechRecognitionProviding {
 
     public var isStreaming: Bool {
         isListening
+    }
+
+    public func startStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws {
+        try startStreamingTranscription(
+            onPartialResult: { text in
+                onEvent(.partialTranscription(text))
+            },
+            onFinalResult: { text in
+                onEvent(.finalTranscription(text))
+            }
+        )
+    }
+
+    public func stopStreamingRecognition() async -> String? {
+        stopStreamingTranscription()
     }
 
     private func scheduleStreamingFinalizeCleanup(for sessionID: UUID) {

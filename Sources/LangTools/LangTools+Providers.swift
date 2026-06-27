@@ -105,6 +105,53 @@ public protocol SpeechRecognitionProviding: AnyObject {
     func finalizeRecognition()
 }
 
+/// Provider-neutral callback used by streaming speech recognizers.
+public typealias SpeechRecognitionStreamingEventHandler = @MainActor @Sendable (SpeechRecognitionEvent) -> Void
+
+/// Streaming recognition errors shared by provider-neutral streaming adapters.
+public enum StreamingSpeechRecognitionError: Error, LocalizedError, Equatable, Sendable {
+    case externalAudioUnsupported
+    case notStreaming
+
+    public var errorDescription: String? {
+        switch self {
+        case .externalAudioUnsupported:
+            return "This speech recognition provider does not accept externally captured streaming audio"
+        case .notStreaming:
+            return "Speech recognition streaming has not started"
+        }
+    }
+}
+
+/// Optional STT provider contract for providers that expose streaming
+/// transcription with partial/final events.
+///
+/// `SpeechRecognitionProviding.startRecognition()` remains the common live
+/// recognition entry point. This protocol is for callers that need direct
+/// streaming control and want to consume events without relying on a mutable
+/// `eventHandler` property. Providers that own microphone capture can implement
+/// only start/stop. Providers that consume externally captured chunks can also
+/// override `appendStreamingAudio(_:)`.
+@MainActor
+public protocol StreamingSpeechRecognitionProviding: SpeechRecognitionProviding {
+    var isStreaming: Bool { get }
+    /// Whether this provider accepts externally captured audio through
+    /// `appendStreamingAudio(_:)` during an active streaming session.
+    var supportsExternalAudioStreaming: Bool { get }
+
+    func startStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws
+    func appendStreamingAudio(_ audioData: Data) async throws
+    func stopStreamingRecognition() async -> String?
+}
+
+public extension StreamingSpeechRecognitionProviding {
+    var supportsExternalAudioStreaming: Bool { false }
+
+    func appendStreamingAudio(_ audioData: Data) async throws {
+        throw StreamingSpeechRecognitionError.externalAudioUnsupported
+    }
+}
+
 /// A text translation request expressed in provider-neutral language IDs.
 public struct LangToolsTextTranslationRequest: Equatable, Sendable {
     public let text: String

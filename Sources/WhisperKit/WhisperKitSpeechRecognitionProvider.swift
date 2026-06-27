@@ -34,7 +34,7 @@ public enum WhisperKitLoadingState: Equatable, Sendable {
 /// Reusable WhisperKit speech-to-text provider adapter.
 @available(macOS 13, iOS 16, *)
 @MainActor
-public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProviding, ObservableObject {
+public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecognitionProviding, ObservableObject {
     public let providerID = LangToolsProviderID(rawValue: "whisperkit.local")
     public let displayName = "WhisperKit"
     public let capabilities = ProviderCapabilities(
@@ -194,7 +194,7 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
         try WhisperKitLangToolsAudioConverter.convertToWAV(audioData: audioData, outputURL: tempURL)
 
         var decodingOptions = DecodingOptions()
-        if let languageIdentifier = languageIdentifierProvider() {
+        if let languageIdentifier = normalizedWhisperLanguageIdentifier() {
             decodingOptions.language = languageIdentifier
         } else {
             decodingOptions.detectLanguage = true
@@ -297,10 +297,20 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    public func startStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws {
+        try await startStreamingTranscription { text, isFinal in
+            onEvent(isFinal ? .finalTranscription(text) : .partialTranscription(text))
+        }
+    }
+
+    public func stopStreamingRecognition() async -> String? {
+        await stopStreamingTranscription()
+    }
+
     public func startStreamingTranscription(
         onPartialResult: @escaping (String, Bool) -> Void
     ) async throws {
-        debugLog("startStreamingTranscription begin state=\(loadingState.description) modelState=\(modelState) available=\(isAvailable) language=\(configuredLanguageIdentifier ?? "auto")")
+        debugLog("startStreamingTranscription begin state=\(loadingState.description) modelState=\(modelState) available=\(isAvailable) language=\(configuredLanguageIdentifier ?? "auto") normalizedLanguage=\(normalizedWhisperLanguageIdentifier() ?? "auto")")
         if whisperKit == nil {
             debugLog("initializing WhisperKit before streaming")
             try await initializeWhisperKit()
@@ -318,7 +328,7 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
         try configureAudioSessionForStreaming()
 
         var decodingOptions = DecodingOptions()
-        if let languageIdentifier = languageIdentifierProvider() {
+        if let languageIdentifier = normalizedWhisperLanguageIdentifier() {
             decodingOptions.language = languageIdentifier
         } else {
             decodingOptions.detectLanguage = true
@@ -345,6 +355,9 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
                 if !fullText.isEmpty { self.lastTranscribedText = fullText }
                 let isFinal = !newState.isRecording && oldState.isRecording
                 let oldFullText = (oldState.confirmedSegments.map { self.stripSpecialTokens($0.text) } + oldState.unconfirmedSegments.map { self.stripSpecialTokens($0.text) }).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                if oldState.isRecording != newState.isRecording || oldState.confirmedSegments.count != newState.confirmedSegments.count || oldState.unconfirmedSegments.count != newState.unconfirmedSegments.count || isFinal {
+                    self.debugLog("stream state recording \(oldState.isRecording)->\(newState.isRecording) confirmed=\(newState.confirmedSegments.count) unconfirmed=\(newState.unconfirmedSegments.count) text=\(fullText.debugDescription) final=\(isFinal)")
+                }
                 if !fullText.isEmpty && (fullText != oldFullText || isFinal) {
                     onPartialResult(fullText, isFinal)
                 }
@@ -391,6 +404,11 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
         return result
     }
 
+    private func normalizedWhisperLanguageIdentifier() -> String? {
+        guard let identifier = languageIdentifierProvider(), !identifier.isEmpty else { return nil }
+        return identifier.split(separator: "-").first.map(String.init)
+    }
+
     private func configureAudioSessionForStreaming() throws {
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
@@ -398,6 +416,8 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
         try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
         try session.setActive(true)
         debugLog("AVAudioSession active sampleRate=\(session.sampleRate) inputChannels=\(session.inputNumberOfChannels) route=\(session.currentRoute.inputs.map { $0.portType.rawValue }.joined(separator: ","))")
+        #else
+        debugLog("AVAudioSession configuration skipped on this platform")
         #endif
     }
 
