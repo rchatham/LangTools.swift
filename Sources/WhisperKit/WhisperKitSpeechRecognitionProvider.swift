@@ -46,6 +46,7 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
         requiresModelDownload: true
     )
     public var eventHandler: (@MainActor @Sendable (SpeechRecognitionEvent) -> Void)?
+    public var isDebugLoggingEnabled = false
     public private(set) var currentTranscript = ""
 
     @Published public private(set) var loadingState: WhisperKitLoadingState = .idle
@@ -431,6 +432,7 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
     }
 
     private func debugLog(_ message: String) {
+        guard isDebugLoggingEnabled else { return }
         print("[WhisperKitSpeechRecognitionProvider] \(message)")
     }
 
