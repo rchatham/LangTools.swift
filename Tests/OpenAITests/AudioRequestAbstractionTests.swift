@@ -52,8 +52,8 @@ final class AudioRequestAbstractionTests: XCTestCase {
     }
 
     @MainActor
-    func testOpenAISTTProviderExposesReusableSpeechRecognitionProvider() {
-        let provider = OpenAISTTProvider(openAI: OpenAI(apiKey: "test"), defaultFileType: .mp3)
+    func testOpenAISpeechRecognitionProviderExposesReusableSpeechRecognitionProvider() {
+        let provider = OpenAISpeechRecognitionProvider(openAI: OpenAI(apiKey: "test"), defaultFileType: .mp3)
 
         XCTAssertTrue(provider.isAvailable)
         XCTAssertEqual(provider.providerID.rawValue, "openai.whisper")
@@ -62,14 +62,37 @@ final class AudioRequestAbstractionTests: XCTestCase {
     }
 
     @MainActor
-    func testOpenAISTTProviderDoesNotRequireAVFoundationConversion() {
-        let provider = OpenAISTTProvider(defaultFileType: .mp3)
+    func testOpenAISpeechRecognitionProviderDoesNotRequireAVFoundationConversion() {
+        let provider = OpenAISpeechRecognitionProvider(defaultFileType: .mp3)
 
         provider.updateDefaultFileType(.m4a)
         provider.configure(languageIdentifier: "auto")
 
         XCTAssertFalse(provider.isAvailable)
         XCTAssertEqual(provider.authorizationState, .unavailable(reason: "Missing OpenAI client"))
+    }
+
+    @MainActor
+    func testOpenAISpeechRecognitionProviderPreservesInjectedClientWhenRefreshing() {
+        let provider = OpenAISpeechRecognitionProvider(openAI: OpenAI(apiKey: "test"))
+
+        provider.refreshApiKey()
+        provider.refreshAuthorizationState()
+
+        XCTAssertTrue(provider.isAvailable)
+        XCTAssertEqual(provider.authorizationState, .authorized)
+    }
+
+    @MainActor
+    func testOpenAISpeechRecognitionProviderPreservesUpdatedClientWhenRefreshing() {
+        let provider = OpenAISpeechRecognitionProvider()
+
+        provider.updateOpenAI(OpenAI(apiKey: "test"))
+        provider.refreshApiKey()
+        provider.refreshAuthorizationState()
+
+        XCTAssertTrue(provider.isAvailable)
+        XCTAssertEqual(provider.authorizationState, .authorized)
     }
 
     @MainActor

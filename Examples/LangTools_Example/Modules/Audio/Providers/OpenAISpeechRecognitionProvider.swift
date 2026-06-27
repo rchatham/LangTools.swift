@@ -1,5 +1,5 @@
 //
-//  OpenAISTTProvider.swift
+//  OpenAISpeechRecognitionProvider.swift
 //  Audio
 //
 //  Example-app OpenAI Whisper speech-to-text adapter
@@ -8,9 +8,9 @@
 import Foundation
 import LangTools
 import OpenAI
-import class OpenAI.OpenAISTTProvider
+import class OpenAI.OpenAISpeechRecognitionProvider
 
-extension OpenAISTTProvider: SpeechRecognitionProvider {
+extension OpenAISpeechRecognitionProvider: SpeechRecognitionProvider {
     public var providerType: STTProviderType { .openAIWhisper }
 
     public func requestPermission() async throws -> Bool {
