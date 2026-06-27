@@ -121,31 +121,30 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
         startupTask?.cancel()
         lastError = nil
         hasEmittedFinalTranscription = false
+        currentTranscript = ""
+        lastTranscribedText = ""
         isStreaming = true
         startupTask = Task { [weak self] in
+            guard let self else { return }
             do {
-                try await self?.startStreamingTranscription { [weak self] text, isFinal in
+                try await self.startStreamingTranscription { [weak self] text, isFinal in
                     Task { @MainActor [weak self] in
-                        self?.currentTranscript = text
+                        guard let self else { return }
+                        self.currentTranscript = text
                         if isFinal {
-                            self?.emitFinalTranscriptionIfNeeded(text)
+                            self.emitFinalTranscriptionIfNeeded(text)
                         } else {
-                            self?.eventHandler?(.partialTranscription(text))
+                            self.eventHandler?(.partialTranscription(text))
                         }
                     }
                 }
-                self?.startupTask = nil
             } catch is CancellationError {
-                self?.isStreaming = false
-                self?.startupTask = nil
-            } catch let error as WhisperKitLangToolsSpeechError {
-                self?.isStreaming = false
-                self?.lastError = error
-                self?.startupTask = nil
+                self.isStreaming = false
             } catch {
-                self?.isStreaming = false
-                self?.lastError = .transcriptionFailed(error.localizedDescription)
-                self?.startupTask = nil
+                self.isStreaming = false
+                let speechError = error as? WhisperKitLangToolsSpeechError ?? .transcriptionFailed(error.localizedDescription)
+                self.lastError = speechError
+                self.eventHandler?(.recognitionFailed(speechError.localizedDescription))
             }
         }
     }
@@ -157,28 +156,28 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
     public func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {
         startupTask?.cancel()
         startupTask = nil
-        isStreaming = false
-        Task {
-            if finalizePending {
-                let text = await stopStreamingTranscription()
-                currentTranscript = text
-                emitFinalTranscriptionIfNeeded(text)
-            } else {
-                _ = await stopStreamingTranscription()
+        guard finalizePending else {
+            Task { [weak self] in
+                guard let self else { return }
+                _ = await self.stopStreamingTranscription()
+                self.isStreaming = false
+                if clearTranscript { self.currentTranscript = "" }
             }
-            if clearTranscript { currentTranscript = "" }
+            return
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            let text = await self.stopStreamingTranscription()
+            if !text.isEmpty {
+                self.currentTranscript = text
+                self.emitFinalTranscriptionIfNeeded(text)
+            }
+            if clearTranscript { self.currentTranscript = "" }
         }
     }
 
     public func finalizeRecognition() {
-        startupTask?.cancel()
-        startupTask = nil
-        isStreaming = false
-        Task {
-            let text = await stopStreamingTranscription()
-            currentTranscript = text
-            emitFinalTranscriptionIfNeeded(text)
-        }
+        stopRecognition(finalizePending: true, clearTranscript: false)
     }
 
     public func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse {
@@ -301,16 +300,22 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
     public func startStreamingTranscription(
         onPartialResult: @escaping (String, Bool) -> Void
     ) async throws {
+        debugLog("startStreamingTranscription begin state=\(loadingState.description) modelState=\(modelState) available=\(isAvailable) language=\(configuredLanguageIdentifier ?? "auto")")
         if whisperKit == nil {
+            debugLog("initializing WhisperKit before streaming")
             try await initializeWhisperKit()
         }
         try Task.checkCancellation()
         guard let whisperKit, isAvailable else {
+            debugLog("provider unavailable after initialization state=\(loadingState.description) modelState=\(modelState)")
             throw WhisperKitLangToolsSpeechError.providerNotConfigured
         }
         guard let tokenizer = whisperKit.tokenizer else {
+            debugLog("missing tokenizer modelState=\(modelState)")
             throw WhisperKitLangToolsSpeechError.providerNotConfigured
         }
+
+        try configureAudioSessionForStreaming()
 
         var decodingOptions = DecodingOptions()
         if let languageIdentifier = languageIdentifierProvider() {
@@ -319,6 +324,7 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
             decodingOptions.detectLanguage = true
         }
 
+        debugLog("creating AudioStreamTranscriber")
         audioStreamTranscriber = AudioStreamTranscriber(
             audioEncoder: whisperKit.audioEncoder,
             featureExtractor: whisperKit.featureExtractor,
@@ -351,10 +357,22 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
 
         hasEmittedFinalTranscription = false
         isStreaming = true
-        try await audioStreamTranscriber?.startStreamTranscription()
+        debugLog("starting AudioStreamTranscriber")
+        do {
+            try await audioStreamTranscriber?.startStreamTranscription()
+            debugLog("AudioStreamTranscriber start returned")
+        } catch {
+            isStreaming = false
+            let speechError = error as? WhisperKitLangToolsSpeechError ?? .transcriptionFailed(error.localizedDescription)
+            lastError = speechError
+            eventHandler?(.recognitionFailed(speechError.localizedDescription))
+            debugLog("AudioStreamTranscriber start threw: \(speechError.localizedDescription)")
+            throw speechError
+        }
     }
 
     public func stopStreamingTranscription() async -> String {
+        debugLog("stopStreamingTranscription begin hasTranscriber=\(audioStreamTranscriber != nil) lastText=\(lastTranscribedText.debugDescription)")
         guard audioStreamTranscriber != nil else { return lastTranscribedText }
         guard finalTranscriptionContinuation == nil else { return lastTranscribedText }
         let result = await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
@@ -368,7 +386,29 @@ public final class WhisperKitSpeechRecognitionProvider: SpeechRecognitionProvidi
         }
         isStreaming = false
         lastTranscribedText = ""
+        deactivateAudioSessionAfterStreaming()
+        debugLog("stopStreamingTranscription end result=\(result.debugDescription)")
         return result
+    }
+
+    private func configureAudioSessionForStreaming() throws {
+        #if os(iOS)
+        let session = AVAudioSession.sharedInstance()
+        debugLog("configuring AVAudioSession category=playAndRecord mode=default options=defaultToSpeaker,allowBluetooth")
+        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+        try session.setActive(true)
+        debugLog("AVAudioSession active sampleRate=\(session.sampleRate) inputChannels=\(session.inputNumberOfChannels) route=\(session.currentRoute.inputs.map { $0.portType.rawValue }.joined(separator: ","))")
+        #endif
+    }
+
+    private func deactivateAudioSessionAfterStreaming() {
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        #endif
+    }
+
+    private func debugLog(_ message: String) {
+        print("[WhisperKitSpeechRecognitionProvider] \(message)")
     }
 
     private func completeFinalTranscription(_ text: String) {

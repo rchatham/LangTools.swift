@@ -72,6 +72,7 @@ public enum SpeechRecognitionEvent: Equatable, Sendable {
     case finalTranscription(String)
     case dualLanguageFinalTranscription(String, winner: SpeechAutoDetectWinner)
     case autoDetectLanguageSwitch
+    case recognitionFailed(String)
 }
 
 /// Shared STT provider contract for live speech recognition.
