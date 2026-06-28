@@ -1,6 +1,15 @@
 {
-  "originHash" : "8f9ed8abb849155c3b51dbbc12bd7f5610b326ae7766430010e3c3ed06ce225d",
+  "originHash" : "5398bff9bbce30f5260e4c189e531af4def46481ba06d2f46b7582e034ceadea",
   "pins" : [
+    {
+      "identity" : "json.swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rchatham/JSON.swift.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "921c97415e5df0ef35e4a7133881498cac9f2650"
+      }
+    },
     {
       "identity" : "keychainaccess",
       "kind" : "remoteSourceControl",
@@ -56,6 +65,15 @@
       }
     },
     {
+      "identity" : "swift-syntax",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-syntax.git",
+      "state" : {
+        "revision" : "2bc86522d115234d1f588efe2bcb4ce4be8f8b82",
+        "version" : "510.0.3"
+      }
+    },
+    {
       "identity" : "swift-transformers",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-transformers.git",
@@ -78,8 +96,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/argmaxinc/WhisperKit.git",
       "state" : {
-        "revision" : "26577ce3017aae8c9edfd9a0dd17851bd248c731",
-        "version" : "0.17.0"
+        "revision" : "e2adabbe7d98dc4d0ab9a5b75424ecc42a9cdbef",
+        "version" : "0.18.0"
       }
     },
     {

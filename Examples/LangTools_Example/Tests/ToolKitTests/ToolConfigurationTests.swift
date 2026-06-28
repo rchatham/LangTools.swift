@@ -171,4 +171,20 @@ final class ToolConfigurationTests: XCTestCase {
         )
         XCTAssertNil(config.callback)
     }
+
+    func testExampleTranslationProviderUsesLangToolsAbstraction() async throws {
+        let provider: any TextTranslationProviding = ExampleTranslationProvider()
+        let request = LangToolsTextTranslationRequest(
+            text: "Hello",
+            sourceLanguageIdentifier: "en",
+            targetLanguageIdentifier: "es"
+        )
+
+        try await provider.prepare(sourceLanguageIdentifier: "en", targetLanguageIdentifier: "es")
+        let response = try await provider.translate(request)
+
+        XCTAssertEqual(provider.providerID.rawValue, "example.echo.translation")
+        XCTAssertEqual(response.translatedText, "[es] Hello")
+        XCTAssertEqual(response.detectedSourceLanguageIdentifier, "en")
+    }
 }

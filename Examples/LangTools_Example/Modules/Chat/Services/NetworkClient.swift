@@ -14,6 +14,17 @@ import Ollama
 
 public typealias Role = OpenAI.Message.Role
 
+public enum NetworkClientError: Error, LocalizedError {
+    case missingLangTool(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .missingLangTool(let name):
+            return "Missing registered LangTool: \(name)"
+        }
+    }
+}
+
 public protocol NetworkClientProtocol {
     static var shared: NetworkClientProtocol { get }
     func performChatCompletionRequest(messages: [Message], model: Model, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message
@@ -71,9 +82,16 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
     }
 
     public func playAudio(for text: String) async throws {
-        let audioReq = OpenAI.AudioSpeechRequest(model: .tts_1_hd, input: text, voice: .alloy, responseFormat: .mp3, speed: 1.2)
-        let audioResponse: Data = try await langToolchain.perform(request: audioReq)
-        do { try AudioPlayer.shared.play(data: audioResponse) }
+        guard let openAI = langToolchain.langTool(OpenAI.self) else {
+            throw NetworkClientError.missingLangTool("OpenAI")
+        }
+
+        let provider = await MainActor.run {
+            OpenAISpeechSynthesisProvider(openAI: openAI, model: .tts_1_hd)
+        }
+        let request = LangToolsSpeechSynthesisInput(text: text, languageIdentifier: "en", voiceIdentifier: "alloy", rate: 1.2)
+        let audioResponse = try await provider.synthesize(request, voice: .alloy)
+        do { try AudioPlayer.shared.play(data: audioResponse.audioData) }
         catch { print(error.localizedDescription) }
     }
 

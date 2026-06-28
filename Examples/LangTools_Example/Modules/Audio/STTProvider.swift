@@ -5,7 +5,9 @@
 //  Protocol for speech-to-text providers
 //
 
+import Combine
 import Foundation
+import LangTools
 
 /// Error types for speech-to-text operations
 public enum STTError: Error, LocalizedError {
@@ -34,24 +36,47 @@ public enum STTError: Error, LocalizedError {
     }
 }
 
-/// Protocol for speech-to-text providers
-public protocol STTProviderProtocol {
-    /// Display name for the provider
-    var name: String { get }
+/// Example-app speech recognition provider that demonstrates LangTools' provider-neutral
+/// live recognition contract plus the example app's file/data transcription flow.
+@MainActor
+public protocol SpeechRecognitionProvider: SpeechRecognitionProviding {
+    /// Example UI provider bucket.
+    var providerType: STTProviderType { get }
 
-    /// Whether this provider is available on the current device
-    var isAvailable: Bool { get }
-
-    /// Request permission for speech recognition (if needed)
+    /// Request permission for speech recognition (if needed).
     func requestPermission() async throws -> Bool
 
-    /// Transcribe audio data to text
-    /// - Parameter audioData: Audio data in a supported format (typically WAV or M4A)
-    /// - Returns: Transcribed text
-    func transcribe(audioData: Data) async throws -> String
 }
 
-/// Types of STT providers available - matches ToolSettings.STTProvider
+public extension SpeechRecognitionProvider {
+    var name: String { displayName }
+
+    func requestPermission() async throws -> Bool {
+        await requestAuthorization() == .authorized
+    }
+
+    func prepareAssetsIfNeeded() {}
+
+    func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {
+        throw STTError.notAvailable
+    }
+}
+
+/// Settings needed by Audio without depending on the Chat module's concrete settings store.
+@MainActor
+public protocol VoiceInputSettingsProviding: AnyObject {
+    var voiceInputEnabled: Bool { get }
+    var sttProviderType: STTProviderType { get }
+    var voiceButtonReplaceSend: Bool { get }
+    var sttLanguageIdentifier: String? { get }
+    var whisperKitModelVariant: String { get }
+    var enableOpenAISimulatedStreaming: Bool { get }
+    var openAIStreamingChunkInterval: TimeInterval { get }
+    var openAIApiKey: String? { get }
+    var settingsDidChange: AnyPublisher<Void, Never> { get }
+}
+
+/// Types of STT providers available to the audio module.
 public enum STTProviderType: String, CaseIterable, Identifiable, Codable {
     case appleSpeech = "Apple Speech"
     case openAIWhisper = "OpenAI Whisper"
