@@ -100,6 +100,7 @@ public class STTService: ObservableObject {
         providers[type] = provider
 
         // If this is WhisperKit, observe its loading state
+        #if canImport(WhisperKitLangTools) && canImport(AVFoundation) && !os(watchOS)
         if type == .whisperKit, let whisperProvider = provider as? WhisperKitSTTProvider {
             whisperKitCancellable = whisperProvider.$loadingState
                 .receive(on: RunLoop.main)
@@ -107,6 +108,7 @@ public class STTService: ObservableObject {
                     self?.whisperKitLoadingState = state
                 }
         }
+        #endif
     }
 
     /// Set the current provider type
@@ -115,11 +117,13 @@ public class STTService: ObservableObject {
         currentProviderType = type
 
         // If switching to WhisperKit and it's not ready, trigger preload
+        #if canImport(WhisperKitLangTools) && canImport(AVFoundation) && !os(watchOS)
         if type == .whisperKit, let whisperProvider = providers[.whisperKit] as? WhisperKitSTTProvider {
             if whisperProvider.loadingState == .idle {
                 whisperProvider.preload()
             }
         }
+        #endif
 
         // If switching to OpenAI, refresh API key from keychain
         if type == .openAIWhisper, let openAIProvider = providers[.openAIWhisper] as? OpenAISTTProvider {
@@ -130,9 +134,11 @@ public class STTService: ObservableObject {
 
     /// Preload WhisperKit model
     public func preloadWhisperKit() {
+        #if canImport(WhisperKitLangTools) && canImport(AVFoundation) && !os(watchOS)
         if let whisperProvider = providers[.whisperKit] as? WhisperKitSTTProvider {
             whisperProvider.preload()
         }
+        #endif
     }
 
     /// Get the current provider
@@ -398,10 +404,12 @@ public class STTService: ObservableObject {
             return
         }
 
+        #if canImport(WhisperKitLangTools) && canImport(AVFoundation) && !os(watchOS)
         if let whisperProvider = providers[.whisperKit] as? WhisperKitSTTProvider,
            whisperProvider.loadingState.isLoading {
             status = .initializingProvider
         }
+        #endif
 
         await startProviderStreaming(provider, label: "WhisperKit")
     }

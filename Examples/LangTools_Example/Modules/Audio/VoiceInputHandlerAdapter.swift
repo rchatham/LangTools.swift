@@ -113,6 +113,7 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
         print("[VoiceInputHandlerAdapter] Registered OpenAI Whisper provider")
 
         // Register WhisperKit (on-device ML)
+        #if canImport(WhisperKitLangTools) && canImport(AVFoundation) && !os(watchOS)
         if #available(macOS 13, iOS 16, *) {
             let whisperKitProvider = WhisperKitSTTProvider(
                 modelVariantProvider: { [weak settings] in settings?.whisperKitModelVariant ?? "base" },
@@ -130,6 +131,7 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
                 }
                 .store(in: &cancellables)
         }
+        #endif
 
         // Set the current provider from settings
         updateProviderFromSettings()
@@ -144,11 +146,13 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
         print("[VoiceInputHandlerAdapter] Set STT provider to: \(providerType.rawValue)")
 
         // If WhisperKit is selected, preload the model
+        #if canImport(WhisperKitLangTools) && canImport(AVFoundation) && !os(watchOS)
         if providerType == .whisperKit, #available(macOS 13, iOS 16, *) {
             if let whisperKitProvider = sttService.currentProvider as? WhisperKitSTTProvider {
                 whisperKitProvider.preload()
             }
         }
+        #endif
     }
 
     // MARK: - WhisperKit Support
