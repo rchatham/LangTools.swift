@@ -10,7 +10,6 @@ import SwiftUI
 import Combine
 import ChatUI
 import OpenAI
-import class OpenAI.OpenAISpeechRecognitionProvider
 
 /// Adapter to bridge STTService to ChatUI's VoiceInputHandler protocol
 @MainActor
@@ -103,7 +102,7 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
         print("[VoiceInputHandlerAdapter] Registered Apple Speech provider")
 
         // Register OpenAI Whisper
-        let openAIProvider = OpenAISpeechRecognitionProvider(
+        let openAIProvider = OpenAISTTProvider(
             apiKeyProvider: { [weak settings] in settings?.openAIApiKey },
             languageIdentifierProvider: { [weak settings] in settings?.sttLanguageIdentifier },
             audioInputNormalizer: { audioData in

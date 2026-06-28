@@ -11,7 +11,6 @@ import SwiftUI
 import Combine
 import AVFoundation
 import LangTools
-import class OpenAI.OpenAISpeechRecognitionProvider
 
 /// STT processing status for UI feedback
 public enum STTStatus: Equatable {
@@ -123,7 +122,7 @@ public class STTService: ObservableObject {
         }
 
         // If switching to OpenAI, refresh API key from keychain
-        if type == .openAIWhisper, let openAIProvider = providers[.openAIWhisper] as? OpenAISpeechRecognitionProvider {
+        if type == .openAIWhisper, let openAIProvider = providers[.openAIWhisper] as? OpenAISTTProvider {
             print("[STTService] Refreshing OpenAI API key...")
             openAIProvider.refreshApiKey()
         }
