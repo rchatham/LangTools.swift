@@ -127,7 +127,7 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public var type: OpenAIModelType {
         id.hasPrefix("text") ? .embedding :
         id.hasPrefix("tts") || id.hasSuffix("-tts") ? .tts :
-        id.hasPrefix("whisper") || id.contains("transcribe") ? .stt :
+        id.contains("whisper") || id.contains("transcribe") ? .stt :
         id.hasPrefix("gpt-image") || id.hasPrefix("dall-e") ? .image :
         id.contains("realtime") ? .realtime :
         id.contains("audio") ? .audio : .chat

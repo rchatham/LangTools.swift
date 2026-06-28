@@ -59,6 +59,7 @@ final class ModelRequestTests: XCTestCase {
         XCTAssertEqual(OpenAI.Model.gptAudio.type, .audio)
         XCTAssertEqual(OpenAI.Model.gpt4o_mini_tts.type, .tts)
         XCTAssertEqual(OpenAI.Model.gpt4o_transcribe.type, .stt)
+        XCTAssertEqual(OpenAI.Model.gptRealtimeWhisper.type, .stt)
         XCTAssertEqual(OpenAI.Model.gptImage1.type, .image)
     }
 
