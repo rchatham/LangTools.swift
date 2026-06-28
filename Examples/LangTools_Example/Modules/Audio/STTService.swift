@@ -350,6 +350,8 @@ public class STTService: ObservableObject {
         case .recognitionFailed(let message):
             error = .transcriptionFailed(message)
             status = .error(message)
+            isRecording = false
+            isProcessing = false
         case .autoDetectLanguageSwitch:
             break
         }
@@ -378,7 +380,15 @@ public class STTService: ObservableObject {
         }
 
         if let finalAudioData, finalAudioData.count > lastChunkSize {
-            try? await provider.appendStreamingAudio(finalAudioData)
+            do {
+                try await provider.appendStreamingAudio(finalAudioData)
+            } catch {
+                print("[STTService] Final audio chunk append failed: \(error)")
+                self.error = error as? STTError ?? .transcriptionFailed(error.localizedDescription)
+                status = .error(error.localizedDescription)
+                isProcessing = false
+                return nil
+            }
         }
 
         let finalText = await provider.stopStreamingRecognition()

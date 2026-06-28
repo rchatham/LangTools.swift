@@ -186,9 +186,10 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
         recognitionSessionID = sessionID
 
         recognitionTask = recognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            if error != nil {
+            if let error {
                 Task { @MainActor [weak self] in
                     guard let self, self.recognitionSessionID == sessionID else { return }
+                    self.eventHandler?(.recognitionFailed(error.localizedDescription))
                     self.cleanupStreaming()
                 }
                 return

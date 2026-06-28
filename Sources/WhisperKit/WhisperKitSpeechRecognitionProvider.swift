@@ -56,6 +56,7 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
 
     private var whisperKit: WhisperKit?
     private var isInitializing = false
+    private var pendingInitializationContinuations: [CheckedContinuation<Void, Error>] = []
     private var currentModelVariant: String?
     private var modelVariantProvider: @MainActor () -> String
     private var languageIdentifierProvider: @MainActor () -> String?
@@ -266,10 +267,20 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
         if whisperKit != nil && currentModelVariant != modelVariant {
             whisperKit = nil
         }
-        guard !isInitializing else { return }
-        isInitializing = true
-        defer { isInitializing = false }
 
+        if whisperKit != nil { return }
+
+        if isInitializing {
+            // Await the in-flight initialization rather than returning silently.
+            // This prevents a spurious providerNotConfigured error when transcribe()
+            // races with a concurrent preload().
+            try await withCheckedThrowingContinuation { continuation in
+                pendingInitializationContinuations.append(continuation)
+            }
+            return
+        }
+
+        isInitializing = true
         loadingState = isModelDownloaded(modelVariant) ? .loading : .downloading
         do {
             let config = WhisperKitConfig(model: modelVariant, verbose: false, prewarm: true, download: true)
@@ -284,9 +295,18 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
             }
             currentModelVariant = modelVariant
             loadingState = .ready
+            isInitializing = false
+            let waiting = pendingInitializationContinuations
+            pendingInitializationContinuations.removeAll()
+            waiting.forEach { $0.resume() }
         } catch {
             loadingState = .failed(error.localizedDescription)
-            throw WhisperKitLangToolsSpeechError.transcriptionFailed("WhisperKit initialization failed: \(error.localizedDescription)")
+            isInitializing = false
+            let speechError = WhisperKitLangToolsSpeechError.transcriptionFailed("WhisperKit initialization failed: \(error.localizedDescription)")
+            let waiting = pendingInitializationContinuations
+            pendingInitializationContinuations.removeAll()
+            waiting.forEach { $0.resume(throwing: speechError) }
+            throw speechError
         }
     }
 
