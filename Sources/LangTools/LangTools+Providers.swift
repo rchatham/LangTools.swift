@@ -140,8 +140,13 @@ public enum StreamingSpeechRecognitionError: Error, LocalizedError, Equatable, S
 /// recognition entry point. This protocol is for callers that need direct
 /// streaming control and want to consume events without relying on a mutable
 /// `eventHandler` property. Providers that own microphone capture can implement
-/// only start/stop. Providers that consume externally captured chunks can also
+/// only start/stop. Providers that consume externally captured audio can also
 /// override `appendStreamingAudio(_:)`.
+///
+/// The shape of data passed to `appendStreamingAudio(_:)` is provider-defined:
+/// low-latency streaming providers may accept incremental chunks, while
+/// request/response providers may require the latest complete/cumulative audio
+/// buffer and replace their current transcript with each response.
 @MainActor
 public protocol StreamingSpeechRecognitionProviding: SpeechRecognitionProviding {
     var isStreaming: Bool { get }
@@ -150,6 +155,11 @@ public protocol StreamingSpeechRecognitionProviding: SpeechRecognitionProviding 
     var supportsExternalAudioStreaming: Bool { get }
 
     func startStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws
+    /// Append externally captured audio during an active streaming session.
+    ///
+    /// Providers define whether `audioData` must be an incremental chunk or the
+    /// latest complete/cumulative buffer. Callers should consult concrete
+    /// provider documentation before assuming incremental append semantics.
     func appendStreamingAudio(_ audioData: Data) async throws
     func stopStreamingRecognition() async -> String?
 }

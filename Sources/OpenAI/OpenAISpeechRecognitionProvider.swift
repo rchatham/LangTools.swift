@@ -6,6 +6,12 @@ import LangTools
 /// This provider intentionally does not perform audio transcoding. Callers must
 /// pass audio bytes in a format supported by OpenAI's transcription endpoint and
 /// either configure `defaultFileType` or call `transcribe(audioData:fileType:...)`.
+///
+/// OpenAI streaming support is simulated over the standard transcription
+/// endpoint. `appendStreamingAudio(_:)` expects the latest complete/cumulative
+/// audio buffer, re-transcribes that buffer, and replaces the current transcript
+/// with the latest response. This avoids owning audio capture in the provider,
+/// but means upload size grows with recording duration.
 @MainActor
 open class OpenAISpeechRecognitionProvider: StreamingSpeechRecognitionProviding {
     public typealias AudioInputNormalizer = @MainActor (Data) throws -> (audioData: Data, fileType: OpenAI.AudioTranscriptionRequest.FileType)
@@ -161,6 +167,11 @@ open class OpenAISpeechRecognitionProvider: StreamingSpeechRecognitionProviding 
         streamingActive = true
     }
 
+    /// Re-transcribe the latest complete/cumulative audio buffer and emit a
+    /// partial event when the best transcript changes.
+    ///
+    /// Do not pass only the newest incremental bytes; this implementation does
+    /// not accumulate audio internally.
     public func appendStreamingAudio(_ audioData: Data) async throws {
         guard streamingActive else { throw StreamingSpeechRecognitionError.notStreaming }
         guard !audioData.isEmpty else { return }
