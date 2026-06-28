@@ -92,7 +92,7 @@ extension AppleSpeech {
 
         public var speechAudioData: Data? { nil }
         public var speechAudioFileURL: URL? { audioURL }
-        public var speechAudioFormat: String? { audioURL.pathExtension.isEmpty ? nil : audioURL.pathExtension }
+        public var speechAudioFormat: String? { audioURL.pathExtension.isEmpty ? nil : audioURL.pathExtension.lowercased() }
         public var speechLanguageIdentifier: String? { locale.identifier }
         public var speechPrompt: String? { nil }
 

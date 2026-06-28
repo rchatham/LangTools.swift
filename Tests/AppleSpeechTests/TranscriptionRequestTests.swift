@@ -78,6 +78,13 @@ final class TranscriptionRequestTests: XCTestCase {
             "speechAudioFormat should be nil when the URL has no path extension")
     }
 
+    func testSpeechAudioFormatIsLowercasedWhenPathExtensionIsUppercase() {
+        let uppercaseExtURL = URL(fileURLWithPath: "/tmp/audio.WAV")
+        let request = AppleSpeech.TranscriptionRequest(audioURL: uppercaseExtURL)
+
+        XCTAssertEqual(request.speechAudioFormat, "wav")
+    }
+
     // MARK: - Task Hint Tests
 
     func testTaskHintVariations() {
