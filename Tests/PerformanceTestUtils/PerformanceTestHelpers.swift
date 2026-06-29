@@ -183,13 +183,11 @@ public enum PerformanceFixtures {
         lines.append("event: content_block_delta")
         lines.append("data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}")
         lines.append("")
-        let chunk1: [String: Any] = ["type": "content_block_delta", "index": 0, "delta": ["type": "input_json_delta", "partial_json": "{\"location\": \"San Francisco\""]]
         lines.append("event: content_block_delta")
-        lines.append("data: \(String(data: try! JSONSerialization.data(withJSONObject: chunk1), encoding: .utf8)!)")
+        lines.append(#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"location\": \"San Francisco\""}}"#)
         lines.append("")
-        let chunk2: [String: Any] = ["type": "content_block_delta", "index": 0, "delta": ["type": "input_json_delta", "partial_json": ", \"unit\": \"fahrenheit\"}"]]
         lines.append("event: content_block_delta")
-        lines.append("data: \(String(data: try! JSONSerialization.data(withJSONObject: chunk2), encoding: .utf8)!)")
+        lines.append(#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"unit\": \"fahrenheit\"}"}}"#)
         lines.append("")
         lines.append("event: content_block_stop")
         lines.append("data: {\"type\":\"content_block_stop\",\"index\":0}")
