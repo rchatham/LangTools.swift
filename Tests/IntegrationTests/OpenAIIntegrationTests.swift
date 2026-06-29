@@ -148,9 +148,9 @@ final class OpenAIIntegrationTests: XCTestCase {
         let toolCallChunks = results.filter { $0.choices.first?.delta?.tool_calls != nil }
         guard !toolCallChunks.isEmpty else { return XCTFail("No tool-call chunks received") }
         // Verify tool name from first tool call chunk
-        XCTAssertEqual(toolCallChunks[0].choices[0].delta?.tool_calls?[0].function.name, "get_weather")
+        XCTAssertEqual(toolCallChunks[0].choices[0].delta?.tool_calls?.first?.function.name, "get_weather")
         // Accumulate and verify argument JSON
-        let arguments = results.reduce("") { $0 + (!$1.choices.isEmpty ? ($1.choices[0].delta?.tool_calls?[0].function.arguments ?? "") : "") }
+        let arguments = results.reduce("") { $0 + ($1.choices.first?.delta?.tool_calls?.first?.function.arguments ?? "") }
         XCTAssertTrue(arguments.contains("City0"), "Arguments should contain location City0")
         // Final chunk should have tool_calls finish reason
         let finishChunk = results.first(where: { $0.choices.first?.finish_reason == .tool_calls })
@@ -196,8 +196,12 @@ final class OpenAIIntegrationTests: XCTestCase {
             results.append(response)
         }
 
-        XCTAssertTrue(toolWasCalled)
-        XCTAssertGreaterThan(results.count, 1)
+        XCTAssertTrue(toolWasCalled, "Tool callback should have been invoked")
+        XCTAssertGreaterThan(results.count, 1, "Stream should yield multiple responses across both requests")
+        // Verify the post-tool round-trip happened by checking accumulated content includes the
+        // text from finalStreamData (openAIStreamChunksData emits "word0 word1 word2 ").
+        let accumulated = results.reduce("") { $0 + ($1.choices.first?.delta?.content ?? "") }
+        XCTAssertTrue(accumulated.contains("word0"), "Post-tool response should be received and its content streamed")
     }
 
     // MARK: - Error Handling

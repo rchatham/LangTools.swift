@@ -209,7 +209,11 @@ final class AnthropicIntegrationTests: XCTestCase {
             results.append(response)
         }
 
-        XCTAssertTrue(toolWasCalled)
+        XCTAssertTrue(toolWasCalled, "Tool callback should have been invoked")
+        // Verify the post-tool round-trip happened by checking the stream produced text deltas
+        // from finalResponseData (anthropicStreamData emits "word0 word1 word2 ").
+        let accumulatedText = results.reduce("") { $0 + ($1.stream?.delta?.text ?? "") }
+        XCTAssertTrue(accumulatedText.contains("word0"), "Post-tool response should be received and its content streamed")
     }
 
     func testMultipleToolCalls() async throws {
