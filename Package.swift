@@ -18,11 +18,13 @@ let package = Package(
         .library(name: "XAI", targets: ["XAI"]),
         .library(name: "Gemini", targets: ["Gemini"]),
         .library(name: "Ollama", targets: ["Ollama"]),
-        .library(name: "AppleSpeech", targets: ["AppleSpeech"]),
+        .library(name: "AppleLangTools", targets: ["AppleLangTools"]),
+        .library(name: "WhisperKitLangTools", targets: ["WhisperKitLangTools"]),
         .executable(name: "ChatCLI", targets: ["ChatCLI"]),
     ],
     dependencies: [
         .package(url: "https://github.com/rchatham/JSON.swift.git", branch: "main"),
+        .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.18.0"),
         // Benchmark comparison deps — only used by BenchmarkTests, not linked into any library product.
         // To run competitor benchmarks: uncomment these and the BenchmarkTests product deps below.
         // .package(url: "https://github.com/jamesrochabrun/SwiftOpenAI.git", from: "4.4.0"),
@@ -37,7 +39,8 @@ let package = Package(
         .target(name: "XAI", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
         .target(name: "Gemini", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
         .target(name: "Ollama", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
-        .target(name: "AppleSpeech", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
+        .target(name: "AppleLangTools", dependencies: [.target(name: "LangTools")], path: "Sources/Apple", resources: [.process("README.md")]),
+        .target(name: "WhisperKitLangTools", dependencies: [.target(name: "LangTools"), .product(name: "WhisperKit", package: "WhisperKit", condition: .when(platforms: [.macOS, .iOS]))], path: "Sources/WhisperKit"),
         .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], path: "Tests/TestUtils", resources: [.process("Resources/")]),
         .target(name: "PerformanceTestUtils", dependencies: [.target(name: "LangTools"), .target(name: "OpenAI"), .target(name: "Anthropic")], path: "Tests/PerformanceTestUtils"),
 
@@ -48,7 +51,8 @@ let package = Package(
         .testTarget(name: "XAITests", dependencies: ["XAI", "OpenAI", "TestUtils"]),
         .testTarget(name: "GeminiTests", dependencies: ["Gemini", "OpenAI", "TestUtils"]),
         .testTarget(name: "OllamaTests", dependencies: ["Ollama", "OpenAI", "TestUtils"]),
-        .testTarget(name: "AppleSpeechTests", dependencies: ["AppleSpeech"]),
+        .testTarget(name: "AppleSpeechTests", dependencies: ["AppleLangTools"]),
+        .testTarget(name: "WhisperKitLangToolsTests", dependencies: ["WhisperKitLangTools"]),
         .testTarget(name: "AgentsTests", dependencies: ["Agents", "LangTools", "OpenAI", "TestUtils"]),
 
         // Performance & integration test targets

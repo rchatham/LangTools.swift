@@ -25,7 +25,7 @@ public struct CardRegistration {
         agentName: String,
         cardType: String,
         as type: Item.Type,
-        @ViewBuilder render: @escaping ([Item]) -> V
+        @ViewBuilder render: @escaping @Sendable ([Item]) -> V
     ) -> CardRegistration {
         CardRegistration(agentName: agentName, cardType: cardType) { registry in
             registry.register(agent: agentName, cardType: cardType, as: type, render: render)
@@ -39,7 +39,7 @@ public struct CardRegistration {
         cardType: String,
         as type: Item.Type,
         decode: @escaping (String) -> (message: String?, items: [Item])?,
-        @ViewBuilder render: @escaping ([Item]) -> V
+        @ViewBuilder render: @escaping @Sendable ([Item]) -> V
     ) -> CardRegistration {
         CardRegistration(agentName: agentName, cardType: cardType) { registry in
             registry.register(agent: agentName, cardType: cardType, as: type, decode: decode, render: render)

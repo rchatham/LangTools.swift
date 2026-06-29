@@ -1,0 +1,60 @@
+<!-- claude-code-review -->
+## Code Review: Add OpenAI Responses API support
+
+This PR adds `OpenAI.ResponseRequest` / `ResponseResponse` / `Item` as a first-class LangTools request type, bridging the Responses API input-item / output-item shape onto the existing streaming, tool-calling, and structured-output protocols. The approach is sound and test coverage is good.
+
+> **Update:** The author addressed four of the five original findings in `246576a`. One newly identified bug remains.
+
+---
+
+### Bug: `response.failed` events silently discard API errors (high severity)
+
+**`Sources/OpenAI/OpenAI+Response.swift`, line 30**
+
+`ResponseResponse` declares `output` as a non-optional stored property with no default:
+
+```swift
+public var output: [OutputItem]
+```
+
+Swift synthesized `Decodable` decodes this with `try container.decode([OutputItem].self, forKey: .output)`, which throws `DecodingError.keyNotFound` when the key is absent. Terminal streaming events (`response.failed`, `response.incomplete`, and some `response.completed` shapes) often omit `"output"` from their embedded response object. Because `ResponseStreamEvent.init(from:)` wraps the whole decode in `try?`:
+
+```swift
+response = (try? container.decodeIfPresent(ResponseResponse.self, forKey: .response)) ?? nil
+```
+
+...the decode failure is swallowed silently, leaving `response = nil`. Then in `partialResponse`:
+
+```swift
+case "response.completed", "response.incomplete", "response.failed":
+    guard let response else { return nil }   // error never surfaced
+```
+
+**Result:** a streaming call that fails at the server surfaces no error, no status, and no usage to the caller. The stream silently appears to complete successfully.
+
+**Fix:** Give `output` a default so the synthesized decoder tolerates its absence:
+
+```swift
+public var output: [OutputItem] = []
+```
+
+---
+
+### Previously reported - resolved in `246576a`
+
+| Finding | Status |
+|---|---|
+| Wrong nil-guard in `message` (`output.isEmpty &&` should be dropped) | Fixed |
+| `Item.encode` silently drops tool calls after the first | Fixed (now throws `EncodingError.invalidValue`) |
+| `(try? ...) ?? nil` redundancy in `ResponseStreamEvent.init` | Fixed |
+| Hardcoded `index: 0` for all `ToolSelection` | Fixed |
+
+---
+
+### Left intentionally: `decodeStream` runtime type check
+
+The `T.self == ResponseResponse.self` branch in `OpenAI.decodeStream` is architecturally a protocol-dispatch responsibility leaked into the concrete type. The author noted this is best addressed as a framework-wide refactor - agreed. Worth a follow-up issue.
+
+---
+
+*Reviewed by [Claude Code](https://claude.ai/code) - Model: claude-sonnet-4-6*
