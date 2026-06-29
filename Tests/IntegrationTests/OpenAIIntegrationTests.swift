@@ -168,7 +168,9 @@ final class OpenAIIntegrationTests: XCTestCase {
             (.success(toolStreamData), 200)
         }
 
-        var toolWasCalled = false
+        // Note: callback intentionally avoids capturing mutable state for Swift 6 strict
+        // concurrency. The post-tool content assertion below proves the callback ran —
+        // without it the second handler would not be registered and "word0" would never appear.
         let tools: [OpenAI.Tool] = [.function(.init(
             name: "get_weather",
             description: "Get weather",
@@ -177,7 +179,6 @@ final class OpenAIIntegrationTests: XCTestCase {
                 required: ["location"]
             ),
             callback: { _, args in
-                toolWasCalled = true
                 MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
                     (.success(finalStreamData), 200)
                 }
@@ -196,12 +197,12 @@ final class OpenAIIntegrationTests: XCTestCase {
             results.append(response)
         }
 
-        XCTAssertTrue(toolWasCalled, "Tool callback should have been invoked")
         XCTAssertGreaterThan(results.count, 1, "Stream should yield multiple responses across both requests")
-        // Verify the post-tool round-trip happened by checking accumulated content includes the
-        // text from finalStreamData (openAIStreamChunksData emits "word0 word1 word2 ").
+        // Verify the callback ran AND the post-tool round-trip happened by checking accumulated
+        // content includes text from finalStreamData. Without the callback running, the second
+        // handler would not be registered and "word0" would never appear in results.
         let accumulated = results.reduce("") { $0 + ($1.choices.first?.delta?.content ?? "") }
-        XCTAssertTrue(accumulated.contains("word0"), "Post-tool response should be received and its content streamed")
+        XCTAssertTrue(accumulated.contains("word0"), "Post-tool response (proves callback ran) should be received and streamed")
     }
 
     // MARK: - Error Handling
@@ -561,7 +562,17 @@ final class OpenAIIntegrationTests: XCTestCase {
             var errorDescription: String? { "Tool execution failed" }
         }
 
-        var errorEventFired = false
+        // Reference-typed flag holder so the Swift 6-friendly @escaping/@Sendable closure
+        // doesn't capture a mutable `var`. NSLock makes the read/write thread-safe in case
+        // the event handler is invoked from any executor.
+        final class EventFlag {
+            private let lock = NSLock()
+            private var _fired = false
+            var fired: Bool { lock.lock(); defer { lock.unlock() }; return _fired }
+            func set() { lock.lock(); _fired = true; lock.unlock() }
+        }
+        let errorEventFlag = EventFlag()
+
         let tools: [OpenAI.Tool] = [.function(.init(
             name: "get_weather",
             description: "Get weather",
@@ -585,7 +596,7 @@ final class OpenAIIntegrationTests: XCTestCase {
                 if case .toolCompleted(let result) = event {
                     XCTAssertNotNil(result, "Tool completion result should not be nil")
                     if result?.is_error == true {
-                        errorEventFired = true
+                        errorEventFlag.set()
                     }
                 }
             }
@@ -594,7 +605,7 @@ final class OpenAIIntegrationTests: XCTestCase {
         for try await response in api.stream(request: request) {
             results.append(response)
         }
-        XCTAssertTrue(errorEventFired, "Tool error event should have fired")
+        XCTAssertTrue(errorEventFlag.fired, "Tool error event should have fired")
     }
 
     // MARK: - Stream Error Paths

@@ -181,7 +181,9 @@ final class AnthropicIntegrationTests: XCTestCase {
             (.success(toolStreamData), 200)
         }
 
-        var toolWasCalled = false
+        // Note: callback intentionally avoids capturing mutable state for Swift 6 strict
+        // concurrency. The post-tool content assertion below proves the callback ran —
+        // without it the second handler would not be registered and "word0" would never appear.
         let tools: [Anthropic.Tool] = [.init(
             name: "get_weather",
             description: "Get weather",
@@ -190,7 +192,6 @@ final class AnthropicIntegrationTests: XCTestCase {
                 required: ["location"]
             ),
             callback: { _ in
-                toolWasCalled = true
                 MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
                     (.success(finalResponseData), 200)
                 }
@@ -209,11 +210,11 @@ final class AnthropicIntegrationTests: XCTestCase {
             results.append(response)
         }
 
-        XCTAssertTrue(toolWasCalled, "Tool callback should have been invoked")
-        // Verify the post-tool round-trip happened by checking the stream produced text deltas
-        // from finalResponseData (anthropicStreamData emits "word0 word1 word2 ").
+        // Verify the callback ran AND the post-tool round-trip happened by checking accumulated
+        // text deltas from finalResponseData. Without the callback running, the second handler
+        // would not be registered and "word0" would never appear in results.
         let accumulatedText = results.reduce("") { $0 + ($1.stream?.delta?.text ?? "") }
-        XCTAssertTrue(accumulatedText.contains("word0"), "Post-tool response should be received and its content streamed")
+        XCTAssertTrue(accumulatedText.contains("word0"), "Post-tool response (proves callback ran) should be received and streamed")
     }
 
     func testMultipleToolCalls() async throws {
