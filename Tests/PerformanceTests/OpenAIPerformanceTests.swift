@@ -134,17 +134,25 @@ final class OpenAIPerformanceTests: XCTestCase {
                 (.success(streamData), 200)
             }
             let exp = expectation(description: "stream")
-            Task {
+            let task = Task {
                 do {
                     var count = 0
                     for try await _ in self.api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt4o, messages: [.init(role: .user, content: "Hi")], stream: true)) {
                         count += 1
                     }
                     XCTAssertGreaterThan(count, 0)
-                } catch { XCTFail("Streaming failed: \(error)") }
+                } catch is CancellationError {
+                    // Task was cancelled (timeout or test teardown); skip assertions for this iteration.
+                } catch {
+                    XCTFail("Streaming failed: \(error)")
+                }
                 exp.fulfill()
             }
-            wait(for: [exp], timeout: 10.0)
+            let result = XCTWaiter.wait(for: [exp], timeout: 2.0)
+            if result != .completed {
+                task.cancel()
+                XCTFail("Stream did not complete within timeout (result: \(result))")
+            }
         }
     }
 
@@ -155,17 +163,25 @@ final class OpenAIPerformanceTests: XCTestCase {
                 (.success(streamData), 200)
             }
             let exp = expectation(description: "stream")
-            Task {
+            let task = Task {
                 do {
                     var count = 0
                     for try await _ in self.api.stream(request: OpenAI.ChatCompletionRequest(model: .gpt4o, messages: [.init(role: .user, content: "Hi")], stream: true)) {
                         count += 1
                     }
                     XCTAssertGreaterThan(count, 0)
-                } catch { XCTFail("Streaming failed: \(error)") }
+                } catch is CancellationError {
+                    // Task was cancelled (timeout or test teardown); skip assertions for this iteration.
+                } catch {
+                    XCTFail("Streaming failed: \(error)")
+                }
                 exp.fulfill()
             }
-            wait(for: [exp], timeout: 10.0)
+            let result = XCTWaiter.wait(for: [exp], timeout: 2.0)
+            if result != .completed {
+                task.cancel()
+                XCTFail("Stream did not complete within timeout (result: \(result))")
+            }
         }
     }
 
