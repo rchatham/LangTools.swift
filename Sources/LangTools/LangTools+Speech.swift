@@ -5,10 +5,13 @@ import Foundation
 /// Provider-neutral response for requests that return synthesized audio.
 public protocol LangToolsAudioResponse {
     var audioData: Data { get }
+    /// Initialize from raw audio bytes returned by the network layer.
+    init(audioData: Data) throws
 }
 
-extension Data: LangToolsAudioResponse {
+extension Data: @retroactive LangToolsAudioResponse {
     public var audioData: Data { self }
+    public init(audioData: Data) throws { self = audioData }
 }
 
 /// Provider-neutral response for requests that return transcribed text.
@@ -17,7 +20,7 @@ public protocol LangToolsTranscriptionResponse {
     var detectedLanguageIdentifier: String? { get }
 }
 
-extension String: LangToolsTranscriptionResponse {
+extension String: @retroactive LangToolsTranscriptionResponse {
     public var transcriptText: String { self }
     public var detectedLanguageIdentifier: String? { nil }
 }
