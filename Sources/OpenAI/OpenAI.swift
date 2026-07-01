@@ -35,12 +35,32 @@ final public class OpenAI: LangTools {
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
             { ($0 as? ChatCompletionRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
+            { ($0 as? ResponseRequest).flatMap { $0.model.type == .chat } ?? false },
             { $0 is AudioSpeechRequest },
             { $0 is AudioTranscriptionRequest },
             { $0 is ListModelDataRequest },
             { $0 is RetrieveModelRequest },
             { $0 is DeleteFineTunedModelRequest }
         ]
+    }
+
+    /// Decodes a single SSE line from the stream.
+    ///
+    /// The Responses API streams *semantic events* rather than full response chunks, so
+    /// each event is mapped onto a partial ``ResponseResponse`` (events with no incremental
+    /// payload yield `nil` and are skipped). All other request types fall back to decoding
+    /// the `data:` payload directly as the response type.
+    public static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
+        guard buffer.hasPrefix("data:") else { return nil }
+        // Match the SSE terminator on the exact payload, not a substring, so a delta whose
+        // JSON happens to contain "[DONE]" isn't dropped.
+        let payload = buffer.dropFirst(5).trimmingCharacters(in: .whitespaces)
+        guard payload != "[DONE]", let data = payload.data(using: .utf8) else { return nil }
+        if T.self == ResponseResponse.self {
+            let event: ResponseStreamEvent = try decodeResponse(data: data)
+            return event.partialResponse as? T
+        }
+        return try decodeResponse(data: data)
     }
 
     public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
@@ -81,6 +101,23 @@ final public class OpenAI: LangTools {
         }
 
         return urlRequest
+    }
+}
+
+extension OpenAI {
+    private static let schemaNameAllowedCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-"))
+
+    /// Sanitises a structured-output schema name to OpenAI's required pattern
+    /// `^[a-zA-Z0-9_-]{1,64}$`: non-conforming characters become `_`, the result is
+    /// truncated to 64 characters, and an empty result falls back to `"structured_response"`.
+    static func sanitizeSchemaName(_ name: String) -> String {
+        let cleaned = name
+            .unicodeScalars
+            .map { schemaNameAllowedCharacters.contains($0) ? Character($0) : "_" }
+            .map(String.init)
+            .joined()
+        let truncated = String(cleaned.prefix(64))
+        return truncated.isEmpty ? "structured_response" : truncated
     }
 }
 
