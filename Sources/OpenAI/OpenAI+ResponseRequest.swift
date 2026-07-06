@@ -270,6 +270,9 @@ public extension OpenAI {
         public enum ToolChoice: Codable {
             case none, auto, required
             case function(name: String)
+            /// Forces a hosted tool by its type, e.g. `.hostedTool("file_search")` or
+            /// `.hostedTool("web_search")` — encoded as `{"type": "<type>"}` with no name.
+            case hostedTool(String)
 
             enum CodingKeys: String, CodingKey { case type, name }
 
@@ -285,11 +288,12 @@ public extension OpenAI {
                 }
                 let container = try decoder.container(keyedBy: CodingKeys.self)
                 let type = try container.decode(String.self, forKey: .type)
-                guard type == "function" else {
-                    throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "Unsupported tool_choice type: \(type)")
+                if type == "function" {
+                    let name = try container.decode(String.self, forKey: .name)
+                    self = .function(name: name)
+                } else {
+                    self = .hostedTool(type)
                 }
-                let name = try container.decode(String.self, forKey: .name)
-                self = .function(name: name)
             }
 
             public func encode(to encoder: Encoder) throws {
@@ -307,6 +311,9 @@ public extension OpenAI {
                     var container = encoder.container(keyedBy: CodingKeys.self)
                     try container.encode("function", forKey: .type)
                     try container.encode(name, forKey: .name)
+                case .hostedTool(let type):
+                    var container = encoder.container(keyedBy: CodingKeys.self)
+                    try container.encode(type, forKey: .type)
                 }
             }
         }

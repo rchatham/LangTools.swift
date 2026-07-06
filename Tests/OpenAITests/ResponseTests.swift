@@ -88,6 +88,20 @@ final class ResponseTests: XCTestCase {
         XCTAssertEqual(input[2]["output"] as? String, "sunny")
     }
 
+    func testHostedToolChoiceEncoding() throws {
+        let choice = OpenAI.ResponseRequest.ToolChoice.hostedTool("file_search")
+        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(choice)) as! [String: Any]
+        XCTAssertEqual(json["type"] as? String, "file_search")
+        XCTAssertNil(json["name"])
+
+        let decoded = try JSONDecoder().decode(OpenAI.ResponseRequest.ToolChoice.self, from: "{\"type\":\"web_search\"}".data(using: .utf8)!)
+        if case .hostedTool(let type) = decoded {
+            XCTAssertEqual(type, "web_search")
+        } else {
+            XCTFail("Expected .hostedTool, got \(decoded)")
+        }
+    }
+
     func testInitPreservesTextAndToolCallsFromMixedMessage() throws {
         let source = try OpenAI.Message(
             role: .assistant,
