@@ -42,6 +42,12 @@ class MockURLProtocol: URLProtocol {
     }
 
     /// Atomically finds and removes the handler matching `path` (consume-on-use).
+    ///
+    /// Note: canInit (hasHandler, a peek) and startLoading (takeHandler, a consume) take the
+    /// lock independently. If two concurrent requests race for the same endpoint, both can pass
+    /// canInit but only one gets the handler — the loser fails fast with resourceUnavailable.
+    /// Sequential await-driven tests are unaffected; concurrent tests against the same endpoint
+    /// must register one handler per expected request.
     private static func takeHandler(forPath path: String) -> MockNetworkHandler? {
         lock.lock(); defer { lock.unlock() }
         guard let key = _handlers.keys.first(where: { path.hasSuffix($0) }) else { return nil }

@@ -2,10 +2,7 @@
   "permissions": {
     "allow": [
       "Bash(python3:*)",
-      "Bash(node:*)",
-      "Bash(gh:*)",
-      "Bash(git:*)",
-      "Write(*)"
+      "Bash(node:*)"
     ]
   }
 }
