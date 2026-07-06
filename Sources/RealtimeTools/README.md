@@ -58,6 +58,35 @@ let elevenLabsPipeline = RealtimePipelineBuilder
 let transcriptionPipeline = RealtimePipelineBuilder.transcriptionOnly().build()
 ```
 
+### On-Device Interruption Detection (Barge-In)
+
+RealtimeTools includes a built-in, dependency-free `EnergyVAD` (adaptive energy + zero-crossing rate) and an `InterruptionDetector` state machine that turns raw VAD frames into debounced turn-taking events:
+
+```swift
+let detector = InterruptionDetector(
+    vad: EnergyVAD(sampleRate: 16000),
+    configuration: InterruptionConfiguration(
+        enabled: true,
+        mode: .immediate,
+        minPlaybackBeforeInterrupt: 0.5,  // grace period after playback starts
+        speechDetectionDebounce: 0.1      // ignore blips shorter than this
+    )
+)
+
+detector.onEvent = { event in
+    switch event {
+    case .speechStarted(let t): print("user speaking at \(t)")
+    case .speechEnded(_, let duration): print("turn ended after \(duration)s")
+    case .interruptionDetected: stopPlaybackAndCancelResponse()
+    }
+}
+
+detector.playbackStarted()            // arm barge-in when assistant audio plays
+await detector.process(audio: frame)  // feed 10-30ms PCM16 mic frames
+```
+
+The pipeline manager wires this up automatically when `audioSettings.vadConfig` uses an on-device mode, and interrupts TTS on barge-in. For higher accuracy in noisy environments, wrap an external model (TEN VAD, Silero VAD via ONNX Runtime, Picovoice Cobra) in the `VoiceActivityDetector` protocol and inject it via `pipeline.setProviders(vad:)`.
+
 ## Provider Configuration
 
 ### STT Providers

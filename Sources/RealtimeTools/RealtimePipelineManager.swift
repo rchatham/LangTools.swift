@@ -21,6 +21,7 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
     private var sttProviderInstance: (any STTProvider)?
     private var ttsProviderInstance: (any TTSProvider)?
     private var vadInstance: (any VoiceActivityDetector)?
+    private var interruptionDetector: InterruptionDetector?
 
     private var processingTask: Task<Void, Never>?
     private var isProcessing: Bool = false
@@ -78,8 +79,12 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
             throw RealtimePipelineError.notRunning
         }
 
-        // Process through VAD if enabled
-        if let vad = vadInstance {
+        // Run on-device VAD and interruption detection when configured.
+        // Speech start/stop and barge-in events are surfaced via the
+        // interruption detector's event handler set up in initializeProviders.
+        if let detector = interruptionDetector {
+            await detector.process(audio: data)
+        } else if let vad = vadInstance {
             let result = await vad.process(audio: data)
 
             if result.isSpeech && !isProcessing {
@@ -129,8 +134,9 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         eventHandler?.onStateChanged?(state)
         eventHandler?.onInterruption?()
 
-        // Cancel TTS
+        // Cancel TTS and mark playback stopped so the detector re-arms cleanly
         try? await ttsProviderInstance?.cancel()
+        interruptionDetector?.playbackStopped()
 
         // Reset state
         state = .running
@@ -141,14 +147,60 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
     // MARK: - Private Methods
 
     private func initializeProviders() async throws {
-        // Initialize VAD if configured
-        if let vadConfig = configuration.audioSettings.vadConfig {
-            // VAD implementation would be injected here
-            // vadInstance = createVADInstance(config: vadConfig)
+        // Initialize on-device VAD + interruption detection if configured.
+        // Server VAD modes (e.g. OpenAI Realtime) handle this remotely, so we
+        // only build the local detector for onDevice/automatic/manual modes.
+        if let vadConfig = configuration.audioSettings.vadConfig, vadConfig.mode != .server {
+            let vad = vadInstance ?? EnergyVAD(
+                configuration: vadConfig,
+                sampleRate: configuration.audioSettings.inputSampleRate
+            )
+            vadInstance = vad
+
+            let detector = InterruptionDetector(vad: vad, configuration: interruptionConfig)
+            detector.onEvent = { [weak self] event in
+                guard let self else { return }
+                switch event {
+                case .speechStarted:
+                    self.isProcessing = true
+                    self.state = .processing
+                    self.eventHandler?.onStateChanged?(self.state)
+                    self.eventHandler?.onSpeechStarted?()
+                case .speechEnded:
+                    self.eventHandler?.onSpeechStopped?()
+                case .interruptionDetected:
+                    Task { try? await self.interrupt() }
+                }
+            }
+            interruptionDetector = detector
         }
 
-        // Note: Actual provider instances would be injected or created
-        // based on the configuration. This is a simplified implementation.
+        // Note: STT/TTS/LLM provider instances are injected via
+        // setProviders(stt:tts:) or created based on the configuration.
+    }
+
+    /// Inject concrete provider implementations. An externally created VAD
+    /// (e.g. TEN VAD or Silero VAD wrapped in `VoiceActivityDetector`) can be
+    /// supplied here before calling `start()` to replace the built-in EnergyVAD.
+    public func setProviders(
+        stt: (any STTProvider)? = nil,
+        tts: (any TTSProvider)? = nil,
+        vad: (any VoiceActivityDetector)? = nil
+    ) {
+        if let stt { sttProviderInstance = stt }
+        if let tts { ttsProviderInstance = tts }
+        if let vad { vadInstance = vad }
+    }
+
+    /// Notify the pipeline that assistant audio playback started, enabling
+    /// barge-in detection for subsequent user speech.
+    public func notifyPlaybackStarted(at timestamp: TimeInterval? = nil) {
+        interruptionDetector?.playbackStarted(at: timestamp)
+    }
+
+    /// Notify the pipeline that assistant audio playback finished or was stopped.
+    public func notifyPlaybackStopped() {
+        interruptionDetector?.playbackStopped()
     }
 
     private func synthesizeAndStream(_ text: String) async throws {
