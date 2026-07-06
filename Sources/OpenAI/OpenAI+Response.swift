@@ -140,6 +140,8 @@ public extension OpenAI {
                     break
                 }
             }
+            // A response whose output holds only reasoning/hosted-tool items has no assistant
+            // content to surface, so `nil` is correct; the raw items remain available via `output`.
             if text.isEmpty && calls.isEmpty { return nil }
             let content: Content = text.isEmpty ? .null : .string(text)
             return Item(role: .assistant, content: content, tool_calls: calls.isEmpty ? nil : calls)
