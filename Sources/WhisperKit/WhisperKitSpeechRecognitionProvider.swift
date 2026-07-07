@@ -41,7 +41,6 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
         runsOnDevice: true,
         supportsStreamingPartials: true,
         supportsContinuousMode: true,
-        supportsDualLanguageAutoDetect: false,
         requiresNetwork: false,
         requiresModelDownload: true
     )
@@ -148,10 +147,6 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
                 self.eventHandler?(.recognitionFailed(speechError.localizedDescription))
             }
         }
-    }
-
-    public func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {
-        throw WhisperKitLangToolsSpeechError.notAvailable
     }
 
     public func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {

@@ -56,10 +56,6 @@ public extension SpeechRecognitionProvider {
     }
 
     func prepareAssetsIfNeeded() {}
-
-    func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {
-        throw STTError.notAvailable
-    }
 }
 
 /// Settings needed by Audio without depending on the Chat module's concrete settings store.
