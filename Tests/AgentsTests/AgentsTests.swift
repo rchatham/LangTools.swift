@@ -113,7 +113,12 @@ final class AgentsTests: XCTestCase {
             _ = try await agent.execute(context: context)
             XCTFail("Should have thrown for empty response")
         } catch {
-            XCTAssertTrue(error is AgentError)
+            // Pin the empty-content path specifically — asserting only `is AgentError` would also
+            // pass on an unrelated failure (e.g. a missing mock handler) that the agent wraps.
+            let agentError = error as? AgentError
+            XCTAssertNotNil(agentError, "Expected AgentError, got \(type(of: error))")
+            XCTAssertTrue(agentError?.message.contains("Failed to return text content") ?? false,
+                          "Empty-response error should identify the empty-content path, got: \(agentError?.message ?? "nil")")
         }
     }
 
@@ -128,7 +133,19 @@ final class AgentsTests: XCTestCase {
             _ = try await agent.execute(context: context)
             XCTFail("Should have thrown for network error")
         } catch {
-            XCTAssertTrue(error is AgentError)
+            // Pin the network path: the wrapped error must surface the underlying connection
+            // failure, and must NOT be the empty-content path (which would mean the wrong branch ran).
+            let agentError = error as? AgentError
+            XCTAssertNotNil(agentError, "Expected AgentError, got \(type(of: error))")
+            let message = agentError?.message ?? ""
+            // Match the stable error identity (URLError.notConnectedToInternet == code -1009) as well
+            // as the friendly localized text, since which description surfaces is environment-dependent.
+            XCTAssertTrue(message.contains("-1009") || message.contains("NSURLError")
+                          || message.contains("Internet") || message.contains("offline")
+                          || message.contains("network") || message.contains("connection"),
+                          "Network error should surface the connection failure, got: \(message)")
+            XCTAssertFalse(message.contains("Failed to return text content"),
+                           "Should have hit the network path, not the empty-content path")
         }
     }
 

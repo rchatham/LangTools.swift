@@ -332,7 +332,9 @@ final class AnthropicIntegrationTests: XCTestCase {
             top_p: 0.9
         )
         let data = try JSONEncoder().encode(request)
-        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        guard let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return XCTFail("Encoded request body was not a JSON object")
+        }
 
         XCTAssertEqual(dict["max_tokens"] as? Int, 2048)
         XCTAssertEqual(dict["temperature"] as? Double, 0.5)
@@ -515,7 +517,9 @@ final class AnthropicIntegrationTests: XCTestCase {
             additionalProperties: .bool(false)
         )
         let data = try JSONEncoder().encode(request)
-        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        guard let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return XCTFail("Encoded request body was not a JSON object")
+        }
 
         let outputConfig = dict["output_config"] as? [String: Any]
         XCTAssertNotNil(outputConfig)
@@ -669,7 +673,7 @@ final class AnthropicIntegrationTests: XCTestCase {
             OpenAI.Message(role: .user, content: "Hello"),
         ]
         let systemPrompt = Anthropic.toAnthropicSystemMessage(messages)
-        XCTAssertNotNil(systemPrompt, "toAnthropicSystemMessage should return a value")
+        // Empty-string assertion already covers non-nil; a separate XCTAssertNotNil would be tautological.
         XCTAssertEqual(systemPrompt, "", "Expected empty string when no system messages present")
     }
 }

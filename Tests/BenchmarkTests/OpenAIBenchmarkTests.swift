@@ -36,6 +36,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
     // MARK: - Decode: Foundation Baseline
 
     func testBaseline_DecodeResponse() {
+        XCTAssertNoThrow(try JSONSerialization.jsonObject(with: Self.chatCompletionJSON), "Fixture validation")
         measure {
             for _ in 0..<500 {
                 _ = try! JSONSerialization.jsonObject(with: Self.chatCompletionJSON)
@@ -201,6 +202,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
             model: .gpt4o,
             messages: [.init(role: .user, content: "Round-trip benchmark")]
         )
+        XCTAssertNoThrow(try decoder.decode(OpenAI.ChatCompletionRequest.self, from: encoder.encode(request)), "Fixture validation")
         measure {
             for _ in 0..<200 {
                 let data = try! encoder.encode(request)

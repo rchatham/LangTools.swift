@@ -32,6 +32,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
     // MARK: - Decode: Foundation Baseline
 
     func testBaseline_DecodeResponse() {
+        XCTAssertNoThrow(try JSONSerialization.jsonObject(with: Self.messageResponseJSON), "Fixture validation")
         measure {
             for _ in 0..<500 {
                 _ = try! JSONSerialization.jsonObject(with: Self.messageResponseJSON)
@@ -180,6 +181,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
         let lines: [String] = (0..<100).map { i in
             "data: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"word\(i) \"}}"
         }
+        XCTAssertNoThrow(try Anthropic.decodeStream(lines[0]) as Anthropic.MessageResponse?, "Fixture validation")
         measure {
             for line in lines {
                 for _ in 0..<50 {
@@ -198,6 +200,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
             model: .claude46Sonnet,
             messages: [.init(role: .user, content: "Round-trip benchmark")]
         )
+        XCTAssertNoThrow(try decoder.decode(Anthropic.MessageRequest.self, from: encoder.encode(request)), "Fixture validation")
         measure {
             for _ in 0..<200 {
                 let data = try! encoder.encode(request)

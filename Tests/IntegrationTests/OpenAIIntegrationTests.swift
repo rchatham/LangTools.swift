@@ -298,7 +298,9 @@ final class OpenAIIntegrationTests: XCTestCase {
             seed: 42
         )
         let data = try JSONEncoder().encode(request)
-        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        guard let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return XCTFail("Encoded request body was not a JSON object")
+        }
 
         XCTAssertEqual(dict["temperature"] as? Double, 0.7)
         XCTAssertEqual(dict["top_p"] as? Double, 0.9)
@@ -469,7 +471,9 @@ final class OpenAIIntegrationTests: XCTestCase {
             additionalProperties: .bool(false)
         )
         let data = try JSONEncoder().encode(request)
-        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        guard let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return XCTFail("Encoded request body was not a JSON object")
+        }
 
         let responseFormat = dict["response_format"] as? [String: Any]
         XCTAssertNotNil(responseFormat)

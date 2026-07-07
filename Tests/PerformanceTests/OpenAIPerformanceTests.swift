@@ -206,14 +206,18 @@ final class OpenAIPerformanceTests: XCTestCase {
             return XCTFail("Fixture validation failed to decode")
         }
 
+        var sink: OpenAI.ChatCompletionResponse?
         measure {
             for _ in 0..<500 {
                 var combined = OpenAI.ChatCompletionResponse.empty
                 for _ in 0..<50 {
                     combined = combined.combining(with: response)
                 }
+                sink = combined
             }
         }
+        // Observable use so an optimized build can't dead-code-eliminate the combine loop.
+        XCTAssertFalse(sink?.choices.isEmpty ?? true)
     }
 
     // MARK: - Request Preparation Performance

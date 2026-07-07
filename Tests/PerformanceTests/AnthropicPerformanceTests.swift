@@ -206,14 +206,18 @@ final class AnthropicPerformanceTests: XCTestCase {
             return XCTFail("Fixture validation failed to decode")
         }
 
+        var sink: Anthropic.MessageResponse?
         measure {
             for _ in 0..<500 {
                 var combined = Anthropic.MessageResponse.empty
                 for _ in 0..<50 {
                     combined = combined.combining(with: response)
                 }
+                sink = combined
             }
         }
+        // Observable use so an optimized build can't dead-code-eliminate the combine loop.
+        XCTAssertNotNil(sink)
     }
 
     // MARK: - Request Preparation Performance
