@@ -233,6 +233,8 @@ final class OpenAIIntegrationTests: XCTestCase {
             default:
                 XCTFail("Expected responseUnsuccessful or apiError, got \(error)")
             }
+        } catch {
+            XCTFail("Expected LangToolsError, got \(type(of: error)): \(error)")
         }
     }
 

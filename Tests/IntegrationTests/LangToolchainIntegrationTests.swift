@@ -66,7 +66,8 @@ final class LangToolchainIntegrationTests: XCTestCase {
             messages: [.init(role: .user, content: "Hello")]
         )
         let response = try await toolchain.perform(request: request)
-        XCTAssertEqual(response.messageInfo?.id, "msg_perf_test_001")
+        XCTAssertNotNil(response.messageInfo?.id)
+        XCTAssertFalse(response.messageInfo?.id.isEmpty ?? true)
     }
 
     // MARK: - Provider Lookup

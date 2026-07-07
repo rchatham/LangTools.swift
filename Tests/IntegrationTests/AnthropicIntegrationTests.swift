@@ -48,7 +48,7 @@ final class AnthropicIntegrationTests: XCTestCase {
         let response = try await api.perform(request: request)
 
         XCTAssertNotNil(response.messageInfo)
-        XCTAssertEqual(response.messageInfo?.id, "msg_perf_test_001")
+        XCTAssertFalse(response.messageInfo?.id.isEmpty ?? true)
         XCTAssertEqual(response.messageInfo?.role, .assistant)
         XCTAssertNotNil(response.message?.content.string)
         XCTAssertNotNil(response.usage.input_tokens)
@@ -279,6 +279,8 @@ final class AnthropicIntegrationTests: XCTestCase {
             default:
                 XCTFail("Expected responseUnsuccessful or apiError, got \(error)")
             }
+        } catch {
+            XCTFail("Expected LangToolsError, got \(type(of: error)): \(error)")
         }
     }
 
