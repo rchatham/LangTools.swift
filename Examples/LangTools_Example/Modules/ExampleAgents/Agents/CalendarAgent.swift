@@ -7,7 +7,71 @@
 
 import EventKit
 import LangTools
+import JSONWithMacros
 import Agents
+
+// MARK: - CalendarAgentResponse (StructuredOutput)
+
+/// The structured JSON response that CalendarAgent asks the LLM to produce.
+/// Contains an array of event cards plus an optional human-readable summary.
+@JSONSchema
+public struct CalendarAgentResponse: Codable {
+    /// List of calendar events
+    public let events: [CalendarEventData]
+    /// Optional summary message to display to the user
+    public let message: String?
+
+    public init(events: [CalendarEventData], message: String? = nil) {
+        self.events = events
+        self.message = message
+    }
+}
+
+extension CalendarAgentResponse: StructuredOutput {}
+
+/// Data-only event type used inside CalendarAgentResponse.
+/// The app target adds `ContentCard` conformance for SwiftUI rendering.
+@JSONSchema
+public struct CalendarEventData: Codable, Equatable {
+    /// Event title
+    public let title: String
+    /// Event start in ISO 8601 format
+    public let startDate: String
+    /// Event end in ISO 8601 format
+    public let endDate: String
+    /// Event location (optional)
+    public let location: String?
+    /// Event notes (optional)
+    public let notes: String?
+    /// True when the event spans the full day
+    public let isAllDay: Bool
+    /// Calendar name (optional)
+    public let calendarName: String?
+    /// System identifier for edits/deletes (optional)
+    public let eventIdentifier: String?
+
+    public init(
+        title: String,
+        startDate: String,
+        endDate: String,
+        location: String? = nil,
+        notes: String? = nil,
+        isAllDay: Bool = false,
+        calendarName: String? = nil,
+        eventIdentifier: String? = nil
+    ) {
+        self.title = title
+        self.startDate = startDate
+        self.endDate = endDate
+        self.location = location
+        self.notes = notes
+        self.isAllDay = isAllDay
+        self.calendarName = calendarName
+        self.eventIdentifier = eventIdentifier
+    }
+}
+
+extension CalendarEventData: StructuredOutput {}
 
 // MARK: - Calendar Permission Agent
 struct CalendarPermissionAgent: Agent {
@@ -91,7 +155,7 @@ struct CalendarReadAgent: Agent {
                 }
 
                 do {
-                    let events = try CalendarService().fetchEvents(from: startDate, to: endDate)
+                    let events = try await CalendarService().fetchEvents(from: startDate, to: endDate)
                     return events.isEmpty ? "No events returned from calendar." : events.map { $0.formattedDetails }.joined(separator: "\n\n")
                 } catch {
                     throw AgentError("Failed to fetch events: \(error.localizedDescription)")
@@ -114,7 +178,7 @@ struct CalendarReadAgent: Agent {
                 let limit = (args["limit"]?.intValue) ?? 10
 
                 do {
-                    let events = try CalendarService().upcomingEvents(limit: limit)
+                    let events = try await CalendarService().upcomingEvents(limit: limit)
                     return events.isEmpty ? "No events returned from calendar." : events.map { $0.formattedDetails }.joined(separator: "\n\n")
                 } catch {
                     throw AgentError("Failed to fetch upcoming events: \(error.localizedDescription)")
@@ -139,7 +203,7 @@ struct CalendarReadAgent: Agent {
                 }
                 // TODO: - This does not work, this function needs to return a more structured search instead of natural language query.
                 do {
-                    let events = try CalendarService().searchEvents(matching: query)
+                    let events = try await CalendarService().searchEvents(matching: query)
                     return events.isEmpty ? "No events returned from calendar." : events.map { $0.formattedDetails }.joined(separator: "\n\n")
                 } catch {
                     throw AgentError("Failed to search events: \(error.localizedDescription)")
@@ -213,7 +277,7 @@ struct CalendarWriteAgent: Agent {
                 let isAllDay = args["is_all_day"]?.boolValue ?? false
 
                 do {
-                    let event = try CalendarService().createEvent(
+                    let event = try await CalendarService().createEvent(
                         title: title,
                         startDate: startDate,
                         endDate: endDate,
@@ -250,12 +314,12 @@ struct CalendarWriteAgent: Agent {
 
                 do {
                     let calendarStore = CalendarService()
-                    let events = try calendarStore.fetchEvents(from: now, to: oneYear)
+                    let events = try await calendarStore.fetchEvents(from: now, to: oneYear)
                     guard let event = events.first(where: { $0.eventIdentifier == eventIdentifier }) else {
                         throw AgentError("Event not found")
                     }
 
-                    try calendarStore.deleteEvent(event)
+                    try await calendarStore.deleteEvent(event)
                     return "Event deleted successfully"
                 } catch {
                     throw AgentError("Failed to delete event: \(error.localizedDescription)")
@@ -307,7 +371,7 @@ struct CalendarWriteAgent: Agent {
                     let calendarStore = CalendarService()
                     let now = Date()
                     let oneYear = Calendar.current.date(byAdding: .year, value: 1, to: now)!
-                    let events = try calendarStore.fetchEvents(from: now, to: oneYear)
+                    let events = try await calendarStore.fetchEvents(from: now, to: oneYear)
 
                     guard let event = events.first(where: { $0.eventIdentifier == eventIdentifier }) else {
                         throw AgentError("Event not found")
@@ -320,7 +384,7 @@ struct CalendarWriteAgent: Agent {
                     let notes = args["notes"]?.stringValue
                     let isAllDay = args["is_all_day"]?.boolValue
 
-                    let updatedEvent = try calendarStore.updateEvent(
+                    let updatedEvent = try await calendarStore.updateEvent(
                         event: event,
                         title: title,
                         startDate: startDate,
@@ -364,12 +428,21 @@ public struct CalendarAgent: Agent {
         Always verify calendar permissions before performing operations.
         When creating or modifying events, ensure all required information is provided.
         Use delegate agents for specialized tasks and provide clear, concise responses.
+
+        IMPORTANT: Your final response MUST be a JSON object matching the CalendarAgentResponse schema.
+        - Populate the "events" array with every calendar event relevant to the user's request.
+        - Set "message" to a short human-readable summary (e.g. "Found 3 upcoming events").
+        - If no events match, return an empty "events" array and explain in "message".
+        - Do NOT include any text outside the JSON object.
         """
 
     public var delegateAgents: [any Agent]
 
     // Main agent uses delegate agents' tools
     public var tools: [any LangToolsTool]? = nil
+
+    /// Structured output schema — tells the LLM to return CalendarAgentResponse JSON.
+    public var responseSchema: JSONSchema? { CalendarAgentResponse.jsonSchema }
 }
 
 // MARK: - Helpers

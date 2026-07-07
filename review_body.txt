@@ -1,0 +1,72 @@
+<!-- claude-code-review -->
+
+## Code Review: PR #32 — Comprehensive Integration, Performance, and Benchmark Tests
+
+This PR adds ~2,900 lines of new tests across `AgentsTests`, `IntegrationTests`, `PerformanceTests`, `BenchmarkTests`, and a shared `PerformanceTestUtils` fixture library. The coverage is broad — streaming, tool calling, structured output, error paths, multi-provider routing, cross-provider message conversion, and performance benchmarks — and the `MockURLProtocol` infrastructure is well applied throughout. Three findings worth addressing before merge; several initially suspicious patterns verified as correct.
+
+---
+
+### Finding 1 — `try!` crashes the test runner instead of failing gracefully (widespread)
+
+`try!` is used pervasively inside `measure {}` closures and static setup paths across all four new test files:
+
+- `BenchmarkTests/OpenAIBenchmarkTests.swift` — 10+ instances in measure blocks (`try! decoder.decode`, `try! encoder.encode`)
+- `BenchmarkTests/AnthropicBenchmarkTests.swift` — 10+ instances (`try! decoder.decode`, `try! Anthropic.decodeStream`, etc.)
+- `PerformanceTests/OpenAIPerformanceTests.swift` — `try! self.api.prepare(request:)` and encode/decode inside measure
+- `PerformanceTests/AnthropicPerformanceTests.swift` — same pattern
+
+In Swift, `try!` on a throwing expression raises a `fatalError`-level trap that terminates the test runner process. This is categorically worse than a test failure: the crash stops all subsequent tests from running and produces no legible failure message. The static fixture data makes this unlikely today, but any future codec change or schema mismatch would manifest as a mysterious process exit rather than a red test.
+
+**Fix:** Replace `try!` with `do { ... } catch { XCTFail("..."); return }`, or use `XCTAssertNoThrow` with a local variable for the measured value.
+
+---
+
+### Finding 2 — `testToolCallWithCallbackCompletesFullFlow` validates the callback but not the second round-trip (both providers)
+
+In `AnthropicIntegrationTests.swift` (~line 854) and `OpenAIIntegrationTests.swift` (~line 1743), the tool-callback flow test registers a second mock handler inside the callback and asserts only that the callback was invoked:
+
+```swift
+XCTAssertTrue(toolWasCalled)
+```
+
+The full flow the PR describes — "tool completion loop is sequential: callback completes before next request" — includes a second API call that returns `finalResponseData`. But there is no assertion verifying that the post-tool response was actually received. If the framework exits the stream loop after the tool call without issuing the follow-up request, the test passes silently while covering only half the described flow.
+
+**Fix:** Add an assertion on `results` that confirms responses from the second (post-tool) request were received, e.g. by checking a count threshold or asserting on the last response type.
+
+---
+
+### Finding 3 — `tool_calls?[0]` subscripts an optionally-chained array that could be empty
+
+In `OpenAIIntegrationTests.swift` (~line 1734):
+
+```swift
+let toolCallChunks = results.filter { $0.choices.first?.delta?.tool_calls != nil }
+guard !toolCallChunks.isEmpty else { return XCTFail("No tool-call chunks received") }
+XCTAssertEqual(toolCallChunks[0].choices[0].delta?.tool_calls?[0].function.name, "get_weather")
+```
+
+The filter guarantees `choices` is non-empty (because `choices.first` is nil for empty arrays, so `!= nil` excludes those). However, `tool_calls?[0]` subscripts an array whose element count is not guarded — `tool_calls?` resolves the optional, but subscript `[0]` on an empty `Array` crashes regardless of optional chaining. If a chunk arrives with `tool_calls: []`, the filter includes it and the subsequent `[0]` traps.
+
+With the controlled fixture this will not crash in practice, but it is a latent fragility if fixture data changes or a real provider is plumbed in. Prefer `tool_calls?.first?.function.name` or guard the count.
+
+---
+
+### Verified correct (initially suspicious, now confirmed safe)
+
+- **`testAgentExecuteNetworkErrorThrows` — `error is AgentError`**: `Agents.swift:176` wraps every thrown error (including `URLError`) in a new `AgentError` in its outer catch block. The assertion is correct.
+- **`results[0].choices[0]` in `testStreamChatCompletion`**: `openAIStreamChunksData` always emits the role-bearing chunk first with exactly one choice element; the stream parser yields responses one-per-`data:` line with no reordering or injected empty-choices entries. Safe.
+- **`PerformanceTestUtils` as `.target`**: SPM only compiles this target during test builds because nothing in the `products` array references it. A plain `swift build` does not compile it. The same pattern is used for the existing `TestUtils` target.
+- **Repeated `expectation(description: "stream")` inside `measure {}`**: Each call to `expectation(description:)` allocates a distinct `XCTestExpectation` object. XCTest uses object identity, not description strings — 10 iterations with the same description string create 10 independent, non-conflicting expectation objects.
+
+---
+
+### Minor notes
+
+- **setUp/tearDown boilerplate** is copy-pasted verbatim across 6 test classes (AgentsTests, OpenAIIntegrationTests, AnthropicIntegrationTests, LangToolchainIntegrationTests, OpenAIPerformanceTests, AnthropicPerformanceTests). A shared `MockNetworkTestCase: XCTestCase` base class in `TestUtils` would reduce this to a single authoritative definition.
+- **Streaming throughput body** is copy-pasted 4 times across the two provider performance test files (small/medium stream x OpenAI/Anthropic). A generic helper in `PerformanceTestUtils` would consolidate this.
+- **`testResponseWithLogprobs`** creates a request with `logprobs: true` but the mock ignores the request body and always returns a fixture with logprobs. The test cannot detect a regression where the `logprobs` flag is dropped during serialization.
+- **Benchmark opt-in pattern** (commented-out SwiftOpenAI/SwiftAnthropic dependencies with clear instructions) is clean and well-documented.
+
+---
+
+Generated with [Claude Code](https://claude.ai/claude-code)

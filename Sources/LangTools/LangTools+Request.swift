@@ -231,9 +231,6 @@ public enum LangToolsRequestError: Error {
     }
 }
 
-// MARK: - LangToolsTTSRequest
-public protocol LangToolsTTSRequest: LangToolsRequest where Response == Data {}
-
 public enum HTTPMethod: String {
     case get = "GET"
     case post = "POST"

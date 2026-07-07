@@ -14,7 +14,7 @@ import SwiftUI
 
 extension UserDefaults {
     static var model: Model {
-        get { standard.string(forKey: "model").flatMap(Model.init) ?? .anthropic(.claude35Sonnet_20241022) }
+        get { standard.string(forKey: "model").flatMap(Model.init) ?? .anthropic(.claude46Sonnet) }
         set { standard.set(newValue.rawValue, forKey: "model") }
     }
     

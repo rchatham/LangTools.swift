@@ -56,7 +56,7 @@ final class AnthropicToolCallEmptyInputTests: XCTestCase {
         ]
         
         let request = Anthropic.MessageRequest(
-            model: .claude35Sonnet_latest,
+            model: .claude46Sonnet,
             messages: messages,
             tools: [answerTool]
         )

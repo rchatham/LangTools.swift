@@ -7,28 +7,44 @@
 import Agents
 import Foundation
 import LangTools
+import ToolKit
 
-var useMultiAgent: Bool = false
 
 @Observable
 public class MessageService: Sendable {
     public let networkClient: NetworkClientProtocol
-    public var messages: [Message] = []
+    public var messages: [Message] = [] {
+        didSet {
+            if let last = messages.last {
+                messageUpdatedCallback?(last)
+            }
+        }
+    }
     var tools: [Tool]?
 
     /// Callback fired when a message is added or modified (for persistence)
     public var messageUpdatedCallback: ((Message) -> Void)?
 
-    /// Returns a filtered list of tools based on tool settings
-    var filteredTools: [Tool]? {
-        // Return nil if master tool switch is disabled
-        guard ToolSettings.shared.toolsEnabled else { return nil }
+    /// Optional hook called when an agent completes with a non-error result.
+    /// Receives the raw result string and the agent name; return a `Message` to
+    /// display it as structured content, or `nil` to fall through to the default
+    /// agent-completion event rendering.
+    /// Register this from the app target to keep `Chat` agnostic of specific agents.
+    public var agentResultParser: ((_ result: String, _ agentName: String) -> Message?)?
 
-        // If tools exist, filter them based on individual tool settings
-        return tools?.filter { ToolSettings.shared.isToolEnabled(name: $0.name) }
+    /// Snapshot of tools filtered by the current ToolManager state.
+    /// Delegates to `ToolManager.filteredTools()` for the enabled-id set, then
+    /// intersects with `self.tools` so future changes to ToolManager filtering
+    /// logic are automatically picked up here.
+    /// Hops to the main actor because ToolManager is @MainActor-isolated.
+    @MainActor
+    var filteredTools: [Tool]? {
+        guard let enabledTools = ToolManager.shared.filteredTools() else { return nil }
+        let enabledNames = Set(enabledTools.map { $0.name })
+        return tools?.filter { enabledNames.contains($0.name) }
     }
 
-    public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [Agent]? = nil, tools: [Tool]? = nil) {
+    public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [any Agent]? = nil, tools: [Tool]? = nil) {
         self.networkClient = networkClient
         self.tools = agents?.map { .init(agent: $0, eventHandler: handleAgentEvent) } + tools
     }
@@ -37,28 +53,32 @@ public class MessageService: Sendable {
         let userMessage = Message(text: message, role: .user)
         await MainActor.run {
             messages.append(userMessage)
-            messageUpdatedCallback?(userMessage)
         }
 
         do {
             var currentMessages = messages
             currentMessages.insert(Message(text: systemMessage(), role: .system), at: 0)
 
+            // Snapshot filtered tools on the main actor before entering the async stream.
+            let activeTools = await filteredTools
+
             var content: String = ""
-            for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: filteredTools) {
+            for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: activeTools) {
                 content += chunk
-                guard let last = messages.last else { continue }
-                if !last.isAssistant {
+                // Only treat the last message as a continuation target when it is
+                // a plain assistant text message.  Content-card and agent-event
+                // messages must not be overwritten by streamed text.
+                let lastIsStreamable = messages.last.map { $0.isAssistant && $0.isStringContent } ?? false
+                if !lastIsStreamable {
                     if chunk.isEmpty { continue }
                     content = chunk.trimingLeadingNewlines()
                 }
-                let messageUuid = last.isAssistant ? last.uuid : UUID()
+                let messageUuid = if lastIsStreamable, let last = messages.last { last.uuid } else { UUID() }
                 let message = Message(uuid: messageUuid, role: .assistant, contentType: .string(content.trimingTrailingNewlines()))
 
                 await MainActor.run {
-                    if last.uuid == message.uuid { messages[messages.count - 1] = message }
+                    if let last = messages.last, last.uuid == message.uuid { messages[messages.count - 1] = message }
                     else { messages.append(message) }
-                    messageUpdatedCallback?(message)
                 }
             }
         } catch {
@@ -75,7 +95,7 @@ public class MessageService: Sendable {
     }
 
     func systemMessage() -> String {
-        UserDefaults.systemMessage + "\n\nWhen using agent tools, you should relay all the critical details from the agent's response, the user will not have access to the agent's response. Your answer should be specific and comprehensive, but provide only the relevant information to the user or parent agent."
+        UserDefaults.systemMessage + "\n\nWhen agent tools return results, those results are displayed visually to the user as content cards. Do not repeat or summarize information already shown in the cards. You may add a brief natural-language acknowledgment but should not list out details the user can already see. Answer follow-up questions about the content if asked. If an agent tool returns an error, explain the error to the user."
     }
 
     public func deleteMessage(id: UUID) { Task { @MainActor in messages.removeAll(where: { $0.uuid == id }) } }
@@ -120,12 +140,20 @@ extension MessageService {
                 messages.append(message, for: agent)
 
             case .completed(let agent, let result, let is_error):
-                let message = Message.createAgentCompletionEvent(
-                    agentName: agent,
-                    result: result,
-                    is_error: is_error
-                )
-                messages.append(message, for: agent)
+                // Give the app-level parser first crack at structured results.
+                // Append at the top level so content cards appear in the main conversation.
+                // agentResultParser is the injection point for structured agent results.
+                // ContentCardRegistry.shared.agentResultParser provides the default implementation.
+                if !is_error, let cardMessage = agentResultParser?(result, agent) {
+                    messages.append(cardMessage)
+                } else {
+                    let message = Message.createAgentCompletionEvent(
+                        agentName: agent,
+                        result: result,
+                        is_error: is_error
+                    )
+                    messages.append(message, for: agent)
+                }
 
             case .error(let agent, let error):
                 let message = Message.createAgentErrorEvent(
@@ -136,11 +164,9 @@ extension MessageService {
 
             default: fatalError("we are not testing this right now")
             }
-
-            // Notify about message change for persistence
-            if let message = messages.last { messageUpdatedCallback?(message) }
         }
     }
+
 }
 
 extension Array<Message> {

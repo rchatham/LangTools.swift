@@ -4,8 +4,12 @@
 <dict>
 	<key>NSLocationDefaultAccuracyReduced</key>
 	<false/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app uses the microphone for speech-to-text transcription.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>Uses access to update, read and write reminders.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>This app uses speech recognition to transcribe your voice into text.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

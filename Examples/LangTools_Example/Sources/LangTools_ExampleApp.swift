@@ -5,8 +5,10 @@
 //  Created by Reid Chatham on 9/23/24.
 //
 
+import Combine
 import SwiftUI
 import Chat
+import Audio
 import ExampleAgents
 
 import LangTools
@@ -17,27 +19,82 @@ import Gemini
 import XAI
 import Ollama
 import ChatUI
+import ToolKit
 
 @main
 struct LangTools_ExampleApp: App {
+    // Use @StateObject so SwiftUI observes voiceInputHandler.objectWillChange
+    // This enables instant UI updates when settings change
+    @StateObject private var voiceInputHandler = VoiceInputHandlerAdapter(settings: ToolSettings.shared)
 
     init() {
-        // Initialize Ollama on app startup
+        registerToolConfigurations()
+        registerCardTypes()
         initializeOllama()
     }
 
     var body: some Scene {
         WindowGroup {
-            let messageService = MessageService(agents: customAgents)
-            NavigationStack {
-                ChatView<MessageService, ChatSettingsView/*, EmptyView*/>(title: "LangTools.swift", messageService: messageService, settingsView: { chatSettingsView(messageService: messageService) })
-            }
+            // Each window gets its own ChatContainerView with independent MessageService
+            ChatContainerView(voiceInputHandler: voiceInputHandler)
         }
     }
 
-    @ViewBuilder
-    func chatSettingsView(messageService: MessageService) -> ChatSettingsView {
-        ChatSettingsView(viewModel: ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages))
+    // @MainActor is required because ToolManager is @MainActor-isolated.
+    // This is safe to call from App.init() since SwiftUI runs @main struct
+    // initializers on the main actor.
+    @MainActor
+    func registerToolConfigurations() {
+        ToolManager.shared.register([
+            ToolConfiguration(
+                id: "calendarAgent",
+                displayName: "Calendar",
+                description: "Read and manage calendar events",
+                iconName: "calendar",
+                isAgent: true
+            ),
+            ToolConfiguration(
+                id: "reminderAgent",
+                displayName: "Reminders",
+                description: "Read and manage reminders",
+                iconName: "checklist",
+                isAgent: true
+            ),
+            ToolConfiguration(
+                id: "researchAgent",
+                displayName: "Research",
+                description: "Search the web and scrape pages",
+                iconName: "magnifyingglass",
+                isAgent: true
+            ),
+        ])
+    }
+
+    // MARK: - Content Card Registry
+
+    /// Binds each agent's structured output type to its decode logic and SwiftUI view.
+    /// Called once at startup before any messages are sent or rendered.
+    @MainActor
+    func registerCardTypes() {
+        let registry = ContentCardRegistry.shared
+
+        // Calendar — wrapper response: { "events": [...], "message": "..." }
+        registry.register(
+            agent: "calendarAgent",
+            cardType: "calendarEvent",
+            as: CalendarEventData.self,
+            decode: { json in
+                guard let response = try? CalendarAgentResponse(jsonString: json) else { return nil }
+                let count = response.events.count
+                let message = response.message ?? (count == 0
+                    ? "No events found"
+                    : "Found \(count) event\(count == 1 ? "" : "s")")
+                return (message, response.events)
+            },
+            render: { events in
+                ForEach(events, id: \.id) { $0.cardView() }
+            }
+        )
     }
 
     func initializeOllama() {
@@ -49,13 +106,61 @@ struct LangTools_ExampleApp: App {
             }
         }
     }
+}
 
-    var customAgents: [Agent] {
-        return [
+/// Per-window container that holds the MessageService @StateObject
+/// Each window creates a new instance, giving each window independent chat state
+struct ChatContainerView: View {
+    @StateObject private var messageService: MessageService
+    @ObservedObject var voiceInputHandler: VoiceInputHandlerAdapter
+
+    init(voiceInputHandler: VoiceInputHandlerAdapter) {
+        let agents: [Agent] = [
             CalendarAgent(),
             ReminderAgent(),
             ResearchAgent()
         ]
+        let service = MessageService(agents: agents)
+        service.agentResultParser = ContentCardRegistry.shared.agentResultParser
+        _messageService = StateObject(wrappedValue: service)
+        self.voiceInputHandler = voiceInputHandler
+    }
+
+    var body: some View {
+        NavigationStack {
+            ChatView<MessageService>(
+                title: "LangTools.swift",
+                messageService: messageService,
+                settingsView: { chatSettingsView },
+                voiceInputHandler: voiceInputHandler,
+                supplementaryContent: { message in
+                    guard ToolSettings.shared.richContentEnabled,
+                          case .contentCards(let content) = message.contentType
+                    else { return nil }
+                    return AnyView(ContentCardRegistry.shared.view(for: content))
+                }
+            )
+        }
+    }
+
+    private var chatSettingsView: AnyView {
+        let viewModel = ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages)
+
+        // Wire up WhisperKit state from voice input handler
+        viewModel.onPreloadWhisperKit = { [weak voiceInputHandler] in
+            voiceInputHandler?.preloadWhisperKit()
+        }
+        viewModel.getWhisperKitState = { [weak voiceInputHandler] in
+            guard let handler = voiceInputHandler else {
+                return (isLoading: false, description: "Not available")
+            }
+            return (
+                isLoading: handler.whisperKitLoadingState.isLoading,
+                description: handler.whisperKitLoadingState.description
+            )
+        }
+
+        return AnyView(ChatSettingsView(viewModel: viewModel))
     }
 }
 
@@ -256,6 +361,39 @@ extension MessageService: @retroactive ChatMessageService {
 extension Message: @retroactive ChatMessageInfo {
     public weak var parentMessage: Message? { parent }
     public var childChatMessages: [Message] { childMessages }
+}
+
+extension ToolSettings: @retroactive VoiceInputSettingsProviding {
+    public var sttProviderType: STTProviderType {
+        switch sttProvider {
+        case .appleSpeech:
+            return .appleSpeech
+        case .openAIWhisper:
+            return .openAIWhisper
+        case .whisperKit:
+            return .whisperKit
+        }
+    }
+
+    public var sttLanguageIdentifier: String? {
+        sttLanguage == .auto ? nil : sttLanguage.rawValue
+    }
+
+    public var whisperKitModelVariant: String {
+        whisperKitModelSize.rawValue
+    }
+
+    public var openAIStreamingChunkInterval: TimeInterval {
+        streamingChunkInterval.rawValue
+    }
+
+    public var openAIApiKey: String? {
+        KeychainService.shared.getApiKey(for: .openAI)
+    }
+
+    public var settingsDidChange: AnyPublisher<Void, Never> {
+        objectWillChange.map { _ in () }.eraseToAnyPublisher()
+    }
 }
 
 // local variable used to store apiKey while passing from ui to app
