@@ -114,11 +114,14 @@ extension URL {
 }
 
 extension URLRequest {
-    var path: String { url!.path }
+    // canInit(with:) now runs for every request while this protocol is registered (it also
+    // checks shouldIntercept), so a request with no URL must not crash here — fall through
+    // to "no match" instead.
+    var path: String { url?.path ?? "" }
 }
 
 extension URLSessionTask {
-    var path: String { currentRequest!.path }
+    var path: String { currentRequest?.path ?? "" }
 }
 
 extension MockURLProtocol {

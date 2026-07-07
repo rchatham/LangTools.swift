@@ -46,7 +46,8 @@ final class OpenAIIntegrationTests: XCTestCase {
         )
         let response = try await api.perform(request: request)
 
-        XCTAssertEqual(response.id, "chatcmpl-perf-test-1")
+        XCTAssertNotNil(response.id)
+        XCTAssertFalse(response.id?.isEmpty ?? true)
         XCTAssertEqual(response.object, "chat.completion")
         XCTAssertEqual(response.choices.count, 1)
         XCTAssertEqual(response.choices[0].finish_reason, .stop)

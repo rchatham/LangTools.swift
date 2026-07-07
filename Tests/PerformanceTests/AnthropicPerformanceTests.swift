@@ -38,6 +38,7 @@ final class AnthropicPerformanceTests: XCTestCase {
     func testRequestEncodingPerformance_SmallMessage() {
         let request = PerformanceFixtures.anthropicMessageRequest(messageCount: 2)
         let encoder = JSONEncoder()
+        XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
         measure {
             for _ in 0..<100 {
                 _ = try! encoder.encode(request)
@@ -48,6 +49,7 @@ final class AnthropicPerformanceTests: XCTestCase {
     func testRequestEncodingPerformance_MediumConversation() {
         let request = PerformanceFixtures.anthropicMessageRequest(messageCount: 20)
         let encoder = JSONEncoder()
+        XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
         measure {
             for _ in 0..<100 {
                 _ = try! encoder.encode(request)
@@ -58,6 +60,7 @@ final class AnthropicPerformanceTests: XCTestCase {
     func testRequestEncodingPerformance_LargeConversation() {
         let request = PerformanceFixtures.anthropicMessageRequest(messageCount: 100)
         let encoder = JSONEncoder()
+        XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
         measure {
             for _ in 0..<50 {
                 _ = try! encoder.encode(request)
@@ -86,6 +89,7 @@ final class AnthropicPerformanceTests: XCTestCase {
             tools: tools
         )
         let encoder = JSONEncoder()
+        XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
         measure {
             for _ in 0..<100 {
                 _ = try! encoder.encode(request)
@@ -98,6 +102,7 @@ final class AnthropicPerformanceTests: XCTestCase {
     func testResponseDecodingPerformance_SimpleMessage() {
         let data = PerformanceFixtures.anthropicMessageResponseJSON()
         let decoder = JSONDecoder()
+        XCTAssertNoThrow(try decoder.decode(Anthropic.MessageResponse.self, from: data), "Fixture validation")
         measure {
             for _ in 0..<500 {
                 _ = try! decoder.decode(Anthropic.MessageResponse.self, from: data)
@@ -108,6 +113,7 @@ final class AnthropicPerformanceTests: XCTestCase {
     func testResponseDecodingPerformance_WithToolCalls() {
         let data = PerformanceFixtures.anthropicMessageResponseWithToolsJSON(toolCount: 3)
         let decoder = JSONDecoder()
+        XCTAssertNoThrow(try decoder.decode(Anthropic.MessageResponse.self, from: data), "Fixture validation")
         measure {
             for _ in 0..<200 {
                 _ = try! decoder.decode(Anthropic.MessageResponse.self, from: data)
@@ -118,6 +124,7 @@ final class AnthropicPerformanceTests: XCTestCase {
     func testResponseDecodingPerformance_ManyToolCalls() {
         let data = PerformanceFixtures.anthropicMessageResponseWithToolsJSON(toolCount: 10)
         let decoder = JSONDecoder()
+        XCTAssertNoThrow(try decoder.decode(Anthropic.MessageResponse.self, from: data), "Fixture validation")
         measure {
             for _ in 0..<100 {
                 _ = try! decoder.decode(Anthropic.MessageResponse.self, from: data)
@@ -126,6 +133,11 @@ final class AnthropicPerformanceTests: XCTestCase {
     }
 
     // MARK: - Streaming Performance
+    //
+    // These measure end-to-end stream handling (Task scheduling + XCTWaiter + SSE parsing of
+    // an in-memory mock payload), not pure parser throughput — Task dispatch and run-loop wait
+    // dominate the timing for small payloads. Useful as a regression gate for the streaming
+    // pipeline as a whole; don't read the absolute numbers as parser-only cost.
 
     func testStreamingThroughput_SmallStream() {
         let streamData = PerformanceFixtures.anthropicStreamData(chunkCount: 10)
@@ -190,7 +202,9 @@ final class AnthropicPerformanceTests: XCTestCase {
     func testResponseCombiningPerformance() {
         let decoder = JSONDecoder()
         let data = PerformanceFixtures.anthropicMessageResponseJSON()
-        let response = try! decoder.decode(Anthropic.MessageResponse.self, from: data)
+        guard let response = try? decoder.decode(Anthropic.MessageResponse.self, from: data) else {
+            return XCTFail("Fixture validation failed to decode")
+        }
 
         measure {
             for _ in 0..<500 {
@@ -206,6 +220,7 @@ final class AnthropicPerformanceTests: XCTestCase {
 
     func testRequestPreparationPerformance() throws {
         let request = PerformanceFixtures.anthropicMessageRequest(messageCount: 10)
+        XCTAssertNoThrow(try self.api.prepare(request: request), "Fixture validation")
         measure {
             for _ in 0..<500 {
                 _ = try! self.api.prepare(request: request)
@@ -259,6 +274,7 @@ final class AnthropicPerformanceTests: XCTestCase {
 
     func testStreamDecodeFunctionPerformance() {
         let line = "data: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"Hello world this is a test\"}}"
+        XCTAssertNoThrow(try Anthropic.decodeStream(line) as Anthropic.MessageResponse?, "Fixture validation")
         measure {
             for _ in 0..<1000 {
                 let _: Anthropic.MessageResponse? = try! Anthropic.decodeStream(line)
@@ -272,6 +288,7 @@ final class AnthropicPerformanceTests: XCTestCase {
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
         let request = PerformanceFixtures.anthropicMessageRequest(messageCount: 10)
+        XCTAssertNoThrow(try decoder.decode(Anthropic.MessageRequest.self, from: encoder.encode(request)), "Fixture validation")
         measure {
             for _ in 0..<100 {
                 let data = try! encoder.encode(request)

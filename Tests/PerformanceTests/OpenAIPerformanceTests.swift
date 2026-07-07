@@ -38,6 +38,7 @@ final class OpenAIPerformanceTests: XCTestCase {
     func testRequestEncodingPerformance_SmallMessage() {
         let request = PerformanceFixtures.openAIChatCompletionRequest(messageCount: 2)
         let encoder = JSONEncoder()
+        XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
         measure {
             for _ in 0..<100 {
                 _ = try! encoder.encode(request)
@@ -48,6 +49,7 @@ final class OpenAIPerformanceTests: XCTestCase {
     func testRequestEncodingPerformance_MediumConversation() {
         let request = PerformanceFixtures.openAIChatCompletionRequest(messageCount: 20)
         let encoder = JSONEncoder()
+        XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
         measure {
             for _ in 0..<100 {
                 _ = try! encoder.encode(request)
@@ -58,6 +60,7 @@ final class OpenAIPerformanceTests: XCTestCase {
     func testRequestEncodingPerformance_LargeConversation() {
         let request = PerformanceFixtures.openAIChatCompletionRequest(messageCount: 100)
         let encoder = JSONEncoder()
+        XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
         measure {
             for _ in 0..<50 {
                 _ = try! encoder.encode(request)
@@ -86,6 +89,7 @@ final class OpenAIPerformanceTests: XCTestCase {
             tools: tools
         )
         let encoder = JSONEncoder()
+        XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
         measure {
             for _ in 0..<100 {
                 _ = try! encoder.encode(request)
@@ -98,6 +102,7 @@ final class OpenAIPerformanceTests: XCTestCase {
     func testResponseDecodingPerformance_SingleChoice() {
         let data = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 1)
         let decoder = JSONDecoder()
+        XCTAssertNoThrow(try decoder.decode(OpenAI.ChatCompletionResponse.self, from: data), "Fixture validation")
         measure {
             for _ in 0..<500 {
                 _ = try! decoder.decode(OpenAI.ChatCompletionResponse.self, from: data)
@@ -108,6 +113,7 @@ final class OpenAIPerformanceTests: XCTestCase {
     func testResponseDecodingPerformance_MultipleChoices() {
         let data = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 5)
         let decoder = JSONDecoder()
+        XCTAssertNoThrow(try decoder.decode(OpenAI.ChatCompletionResponse.self, from: data), "Fixture validation")
         measure {
             for _ in 0..<200 {
                 _ = try! decoder.decode(OpenAI.ChatCompletionResponse.self, from: data)
@@ -118,6 +124,7 @@ final class OpenAIPerformanceTests: XCTestCase {
     func testResponseDecodingPerformance_ManyChoices() {
         let data = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 20)
         let decoder = JSONDecoder()
+        XCTAssertNoThrow(try decoder.decode(OpenAI.ChatCompletionResponse.self, from: data), "Fixture validation")
         measure {
             for _ in 0..<100 {
                 _ = try! decoder.decode(OpenAI.ChatCompletionResponse.self, from: data)
@@ -126,6 +133,11 @@ final class OpenAIPerformanceTests: XCTestCase {
     }
 
     // MARK: - Streaming Performance
+    //
+    // These measure end-to-end stream handling (Task scheduling + XCTWaiter + SSE parsing of
+    // an in-memory mock payload), not pure parser throughput — Task dispatch and run-loop wait
+    // dominate the timing for small payloads. Useful as a regression gate for the streaming
+    // pipeline as a whole; don't read the absolute numbers as parser-only cost.
 
     func testStreamingThroughput_SmallStream() {
         let streamData = PerformanceFixtures.openAIStreamChunksData(chunkCount: 10)
@@ -190,7 +202,9 @@ final class OpenAIPerformanceTests: XCTestCase {
     func testResponseCombiningPerformance() {
         let decoder = JSONDecoder()
         let singleData = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 1)
-        let response = try! decoder.decode(OpenAI.ChatCompletionResponse.self, from: singleData)
+        guard let response = try? decoder.decode(OpenAI.ChatCompletionResponse.self, from: singleData) else {
+            return XCTFail("Fixture validation failed to decode")
+        }
 
         measure {
             for _ in 0..<500 {
@@ -206,6 +220,7 @@ final class OpenAIPerformanceTests: XCTestCase {
 
     func testRequestPreparationPerformance() throws {
         let request = PerformanceFixtures.openAIChatCompletionRequest(messageCount: 10)
+        XCTAssertNoThrow(try self.api.prepare(request: request), "Fixture validation")
         measure {
             for _ in 0..<500 {
                 _ = try! self.api.prepare(request: request)
@@ -257,6 +272,7 @@ final class OpenAIPerformanceTests: XCTestCase {
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
         let request = PerformanceFixtures.openAIChatCompletionRequest(messageCount: 10)
+        XCTAssertNoThrow(try decoder.decode(OpenAI.ChatCompletionRequest.self, from: encoder.encode(request)), "Fixture validation")
         measure {
             for _ in 0..<100 {
                 let data = try! encoder.encode(request)
