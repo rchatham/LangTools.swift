@@ -182,8 +182,8 @@ The toolchain throws `LangToolchainError` when no registered provider can handle
 ```swift
 do {
     let response = try await langToolchain.perform(request: request)
-} catch LangToolchainError.toolchainCannotHandleRequest {
-    print("No provider registered can handle this request")
+} catch LangToolchainError.toolchainCannotHandleRequest(let requestType) {
+    print("No provider registered can handle requests of type '\(requestType)'")
 } catch {
     print("Error: \(error)")
 }

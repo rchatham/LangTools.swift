@@ -39,7 +39,7 @@ public struct LangToolchain {
 
         guard let langTool = langTools.values.first(where: { $0.canHandleRequest(request) }) else {
             print("   ⚠️ NO PROVIDER CAN HANDLE THIS REQUEST!")
-            throw LangToolchainError.toolchainCannotHandleRequest
+            throw LangToolchainError.toolchainCannotHandleRequest(requestType: String(describing: Request.self))
         }
 
         print("   ✅ Using provider: \(type(of: langTool))")
@@ -48,7 +48,7 @@ public struct LangToolchain {
 
     public func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {
         guard let langTool = langTools.values.first(where: { $0.canHandleRequest(request) }) else {
-            return AsyncSingleErrorStream(error: LangToolchainError.toolchainCannotHandleRequest) }
+            return AsyncSingleErrorStream(error: LangToolchainError.toolchainCannotHandleRequest(requestType: String(describing: Request.self))) }
         return langTool.stream(request: request)
     }
 
@@ -66,7 +66,7 @@ public struct LangToolchain {
         guard let langTool = langTools.values.first(where: { $0.canHandleRequest(request) }) else {
             print("   ⚠️ NO PROVIDER CAN HANDLE THIS REQUEST!")
             print("   This means no API key is configured or provider not registered")
-            throw LangToolchainError.toolchainCannotHandleRequest
+            throw LangToolchainError.toolchainCannotHandleRequest(requestType: String(describing: Request.self))
         }
 
         print("   ✅ Using provider: \(type(of: langTool))")
@@ -74,6 +74,13 @@ public struct LangToolchain {
     }
 }
 
-public enum LangToolchainError: String, Error {
-    case toolchainCannotHandleRequest
+public enum LangToolchainError: Error, LocalizedError {
+    case toolchainCannotHandleRequest(requestType: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .toolchainCannotHandleRequest(let requestType):
+            return "No registered LangTool provider can handle request of type '\(requestType)'"
+        }
+    }
 }
