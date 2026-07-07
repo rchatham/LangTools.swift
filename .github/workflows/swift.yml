@@ -19,4 +19,12 @@ jobs:
     - name: Build
       run: swift build -v
     - name: Run tests
-      run: swift test -v
+      # BenchmarkTests and PerformanceRatioGateTests are excluded from the merge-gating run:
+      # BenchmarkTests is expensive (~20 methods x 2 suites x 10 measure iterations) with no
+      # assertions to justify blocking merges, and PerformanceRatioGateTests asserts real
+      # wall-clock ratios that can flake on a shared/noisy runner even with the ratio
+      # normalization and headroom in ratios.json. Run them explicitly (locally or in a
+      # separate non-blocking job) via:
+      #   swift test --filter BenchmarkTests -v
+      #   swift test --filter PerformanceRatioGateTests -v
+      run: swift test -v --skip BenchmarkTests --skip PerformanceRatioGateTests
