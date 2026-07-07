@@ -118,6 +118,28 @@ extension URLRequest {
     // checks shouldIntercept), so a request with no URL must not crash here — fall through
     // to "no match" instead.
     var path: String { url?.path ?? "" }
+
+    /// The request body as `Data`, whether URLSession left it in `httpBody` or moved it into
+    /// `httpBodyStream`. URLSession converts an `httpBody` into an `httpBodyStream` before the
+    /// request reaches a `URLProtocol`, so `httpBody` is typically nil inside a mock handler and
+    /// the body must be drained from the stream instead. Returns nil when there is no body.
+    var bodyData: Data? {
+        if let httpBody { return httpBody }
+        guard let stream = httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        let bufferSize = 4096
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        defer { buffer.deallocate() }
+        while stream.hasBytesAvailable {
+            let read = stream.read(buffer, maxLength: bufferSize)
+            if read < 0 { return nil } // stream read error
+            if read == 0 { break }
+            data.append(buffer, count: read)
+        }
+        return data
+    }
 }
 
 extension URLSessionTask {
