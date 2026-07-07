@@ -459,17 +459,18 @@ extension OpenAI {
 
             func combining(_ message: Message?, with delta: Message.Delta?) -> Message? {
                 guard let delta = delta else { return message }
-                return try! Message(role: message?.role ?? delta.role ?? .assistant, content: .string(message?.content.string ?? "" + (delta.content ?? "")), name: message?.name, tool_calls: combining(message?.tool_calls, with: delta.tool_calls))
+                return try! Message(role: message?.role ?? delta.role ?? .assistant, content: .string((message?.content.string ?? "") + (delta.content ?? "")), name: message?.name, tool_calls: combining(message?.tool_calls, with: delta.tool_calls))
             }
 
             func combining(_ delta: Message.Delta?, with next: Message.Delta?) -> Message.Delta? {
                 guard let delta = delta, let next = next else { return delta ?? next }
-                return Message.Delta(role: delta.role ?? next.role, content: delta.content ?? "" + (next.content ?? ""), tool_calls: combining(delta.tool_calls, with: next.tool_calls),/**/ audio: delta.audio ?? next.audio, /**/ refusal: next.refusal)
+                return Message.Delta(role: delta.role ?? next.role, content: (delta.content ?? "") + (next.content ?? ""), tool_calls: combining(delta.tool_calls, with: next.tool_calls),/**/ audio: delta.audio ?? next.audio, /**/ refusal: next.refusal)
             }
 
             func combining(_ toolCalls: [Message.ToolCall]?, with next: [Message.ToolCall]?) -> [Message.ToolCall]? {
                 guard let toolCalls = toolCalls, let next = next else { return toolCalls ?? next }
-                return next.sorted().reduce(into: toolCalls.sorted()) { partialResult, next in
+                let orderedNext = next.isSortedByIndex ? next : next.sorted()
+                return orderedNext.reduce(into: toolCalls.isSortedByIndex ? toolCalls : toolCalls.sorted()) { partialResult, next in
                     if let index = partialResult.firstIndex(where: { $0.index == next.index })  {
                         partialResult[index] = combining(partialResult[index], with: next)
                     } else {
@@ -537,7 +538,9 @@ extension OpenAI {
 
         func combining(_ choices: [Choice], with next: [Choice]) -> [Choice] {
             if choices.isEmpty { return next }
-            return next.sorted().reduce(into: choices.sorted()) { partialResult, next in
+            if next.isEmpty { return choices }
+            let orderedNext = next.isSortedByIndex ? next : next.sorted()
+            return orderedNext.reduce(into: choices.isSortedByIndex ? choices : choices.sorted()) { partialResult, next in
                 if let index = partialResult.firstIndex(where: { $0.index == next.index }) {
                     partialResult[index] = partialResult[index].combining(with: next)
                 } else {
@@ -559,12 +562,32 @@ extension Array where Element == OpenAI.ChatCompletionResponse.Choice {
     func sorted() -> [Element] {
         return self.sorted(by: { $0.index < $1.index })
     }
+
+    /// True when elements are already in non-decreasing `index` order. Providers stream choices
+    /// in index order and the accumulator is kept ordered, so this lets the hot combining path
+    /// skip the allocating `sorted()` call (O(n) check vs O(n log n) + a fresh array per merge).
+    var isSortedByIndex: Bool {
+        guard count > 1 else { return true }
+        for i in 1..<count where self[i].index < self[i - 1].index { return false }
+        return true
+    }
 }
 
 extension Array where Element == OpenAI.Message.ToolCall {
     func sorted() -> [Element] {
         guard first?.index != nil else { return self }
         return self.sorted(by: { $0.index! < $1.index! }) // assume that if an index exists it exists for all tool calls
+    }
+
+    /// True when `sorted()` would be a no-op (already index-ordered, or indices absent). Mirrors
+    /// the "if an index exists it exists for all" assumption of `sorted()`; falls back to sorting
+    /// on any nil/out-of-order case so semantics are unchanged.
+    var isSortedByIndex: Bool {
+        guard count > 1, first?.index != nil else { return true }
+        for i in 1..<count {
+            guard let a = self[i - 1].index, let b = self[i].index, a <= b else { return false }
+        }
+        return true
     }
 }
 

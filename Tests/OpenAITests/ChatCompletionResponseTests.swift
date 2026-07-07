@@ -71,4 +71,46 @@ final class ChatCompletionResponseTests: XCTestCase {
         let testData = try getData(filename: "chat_completion_response")!
         XCTAssert(data.dictionary == testData.dictionary, "failed to correctly encode the data")
     }
+
+    // MARK: - Streaming Response Combining
+
+    /// Builds a single streaming chunk carrying one content delta, mirroring what the SSE
+    /// decoder produces per line.
+    private func streamChunk(_ content: String, role: OpenAI.Message.Role? = nil) -> OpenAI.ChatCompletionResponse {
+        OpenAI.ChatCompletionResponse(
+            id: "chunk",
+            object: "chat.completion.chunk",
+            created: 0,
+            model: "gpt-4",
+            system_fingerprint: nil,
+            choices: [.init(
+                index: 0,
+                message: nil,
+                finish_reason: nil,
+                delta: .init(role: role, content: content, tool_calls: nil, audio: nil, refusal: nil),
+                logprobs: nil)],
+            usage: nil,
+            service_tier: nil,
+            choose: { _ in 0 })
+    }
+
+    /// Regression test for the operator-precedence bug in `combining(_:with:)` where
+    /// `a ?? "" + (b ?? "")` parsed as `a ?? ("" + (b ?? ""))`, silently dropping every content
+    /// delta after `message` became non-nil. This folds chunks exactly as `LangTools.stream`
+    /// does (`combinedResponse = combinedResponse.combining(with:)`) and asserts the *combined*
+    /// `message.content` — the field consumers never read per-chunk, which is why the bug hid.
+    func testStreamingContentAccumulation() throws {
+        let parts = ["Hello", ", ", "world", "!"]
+        var combined = OpenAI.ChatCompletionResponse.empty
+        for (i, part) in parts.enumerated() {
+            combined = combined.combining(with: streamChunk(part, role: i == 0 ? .assistant : nil))
+        }
+
+        let choice = try XCTUnwrap(combined.choices.first)
+        XCTAssertEqual(choice.message?.content.string, "Hello, world!",
+                       "combined message.content must be the full concatenation of every delta")
+        XCTAssertEqual(choice.delta?.content, "Hello, world!",
+                       "accumulated delta.content must also be the full concatenation")
+        XCTAssertEqual(choice.message?.role, .assistant)
+    }
 }
