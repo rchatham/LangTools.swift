@@ -7,7 +7,6 @@ final class ProviderAbstractionsTests: XCTestCase {
             runsOnDevice: true,
             supportsStreamingPartials: false,
             supportsContinuousMode: false,
-            supportsDualLanguageAutoDetect: false,
             requiresNetwork: false,
             requiresModelDownload: true
         )
@@ -15,7 +14,6 @@ final class ProviderAbstractionsTests: XCTestCase {
         XCTAssertTrue(capabilities.runsOnDevice)
         XCTAssertFalse(capabilities.supportsStreamingPartials)
         XCTAssertFalse(capabilities.supportsContinuousMode)
-        XCTAssertFalse(capabilities.supportsDualLanguageAutoDetect)
         XCTAssertFalse(capabilities.requiresNetwork)
         XCTAssertTrue(capabilities.requiresModelDownload)
     }
@@ -72,13 +70,6 @@ final class ProviderAbstractionsTests: XCTestCase {
         XCTAssertNotEqual(ProviderAssetState.failed(reason: "a"), .failed(reason: "b"))
     }
 
-    func testSpeechAutoDetectWinnerUndetectedNotNilAmbiguous() {
-        let winner = SpeechAutoDetectWinner.undetected
-        XCTAssertNotEqual(winner, .primary)
-        XCTAssertNotEqual(winner, .secondary)
-        XCTAssertEqual(winner, .undetected)
-    }
-
     // MARK: - Generic abstraction boundary
 
     func testGenericTTSBoundaryAcceptsAnyLangToolsSpeechSynthesisRequest() {
@@ -132,7 +123,6 @@ final class ProviderAbstractionsTests: XCTestCase {
             func refreshAuthorizationState() {}
             func prepareAssetsIfNeeded() {}
             func startRecognition() throws {}
-            func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {}
             func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {}
             func finalizeRecognition() {}
 
@@ -187,7 +177,6 @@ final class ProviderAbstractionsTests: XCTestCase {
             func refreshAuthorizationState() {}
             func prepareAssetsIfNeeded() {}
             func startRecognition() throws {}
-            func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {}
             func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {}
             func finalizeRecognition() {}
 
@@ -254,7 +243,6 @@ final class ProviderAbstractionsTests: XCTestCase {
             func refreshAuthorizationState() {}
             func prepareAssetsIfNeeded() {}
             func startRecognition() throws {}
-            func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {}
             func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {}
             func finalizeRecognition() {}
 
@@ -301,7 +289,6 @@ final class ProviderAbstractionsTests: XCTestCase {
             func refreshAuthorizationState() {}
             func prepareAssetsIfNeeded() {}
             func startRecognition() throws {}
-            func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {}
             func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {}
             func finalizeRecognition() {}
 

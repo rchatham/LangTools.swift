@@ -27,7 +27,6 @@ public struct ProviderCapabilities: Equatable, Sendable {
     public let runsOnDevice: Bool
     public let supportsStreamingPartials: Bool
     public let supportsContinuousMode: Bool
-    public let supportsDualLanguageAutoDetect: Bool
     public let requiresNetwork: Bool
     public let requiresModelDownload: Bool
 
@@ -35,14 +34,12 @@ public struct ProviderCapabilities: Equatable, Sendable {
         runsOnDevice: Bool,
         supportsStreamingPartials: Bool = false,
         supportsContinuousMode: Bool = false,
-        supportsDualLanguageAutoDetect: Bool = false,
         requiresNetwork: Bool = false,
         requiresModelDownload: Bool = false
     ) {
         self.runsOnDevice = runsOnDevice
         self.supportsStreamingPartials = supportsStreamingPartials
         self.supportsContinuousMode = supportsContinuousMode
-        self.supportsDualLanguageAutoDetect = supportsDualLanguageAutoDetect
         self.requiresNetwork = requiresNetwork
         self.requiresModelDownload = requiresModelDownload
     }
@@ -67,21 +64,10 @@ public enum ProviderAssetState: Equatable, Sendable {
     case failed(reason: String)
 }
 
-/// Language selected during dual-language speech recognition.
-public enum SpeechAutoDetectWinner: Equatable, Sendable {
-    case primary
-    case secondary
-    /// No winner was determined (e.g. inconclusive detection). Named `undetected`
-    /// rather than `none` to avoid shadowing `Optional.none` in generic contexts.
-    case undetected
-}
-
 /// Speech recognition events emitted by an STT provider.
 public enum SpeechRecognitionEvent: Equatable, Sendable {
     case partialTranscription(String)
     case finalTranscription(String)
-    case dualLanguageFinalTranscription(String, winner: SpeechAutoDetectWinner)
-    case autoDetectLanguageSwitch
     case recognitionFailed(String)
 }
 
@@ -109,8 +95,6 @@ public protocol SpeechRecognitionProviding: AnyObject {
     /// Transcribe already-captured audio data in a provider-supported format.
     func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse
     func startRecognition() throws
-    @available(iOS 16, macOS 13, *)
-    func startDualLanguageRecognition(otherLanguageIdentifier: String) throws
     func stopRecognition(finalizePending: Bool, clearTranscript: Bool)
     func finalizeRecognition()
 }
