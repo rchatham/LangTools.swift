@@ -141,8 +141,14 @@ final class OpenAIRealtimeSessionTests: XCTestCase {
         // property pattern this event was dropped.
         mock.push(sessionCreatedJSON)
 
-        // Give the receive loop a chance to ingest the message
-        try await Task.sleep(nanoseconds: 100_000_000)
+        // Wait for a deterministic signal that the receive loop ingested the
+        // event: handleServerEvent sets sessionId before yielding to the
+        // stream, so once it's visible the yield has already happened.
+        let deadline = Date().addingTimeInterval(5)
+        while session.sessionId.isEmpty && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(session.sessionId, "sess_abc", "Receive loop did not ingest the pushed event in time")
 
         var iterator = session.events.makeAsyncIterator()
         let event = try await iterator.next()
