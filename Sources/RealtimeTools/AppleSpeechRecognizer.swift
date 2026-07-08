@@ -295,7 +295,8 @@ public enum AppleSpeechError: Error, LocalizedError {
 
 // MARK: - Interruption Handling
 
-@available(macOS 14.0, iOS 17.0, *)
+#if os(iOS)
+@available(iOS 17.0, *)
 extension AppleSpeechRecognizer {
     /// Handle audio session interruption (e.g., phone call)
     public func handleInterruption(type: AVAudioSession.InterruptionType) async {
@@ -314,5 +315,6 @@ extension AppleSpeechRecognizer {
         }
     }
 }
+#endif
 
 #endif
