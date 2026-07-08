@@ -386,7 +386,6 @@ public enum ElevenLabsWebSocketError: Error, LocalizedError {
     case invalidURL
     case notConnected
     case encodingError
-    case decodingError
     case connectionFailed(Error)
 
     public var errorDescription: String? {
@@ -397,8 +396,6 @@ public enum ElevenLabsWebSocketError: Error, LocalizedError {
             return "Not connected to the WebSocket"
         case .encodingError:
             return "Failed to encode message"
-        case .decodingError:
-            return "Failed to decode response"
         case .connectionFailed(let error):
             return "Connection failed: \(error.localizedDescription)"
         }

@@ -374,7 +374,6 @@ public enum ElevenLabsSTTError: Error, LocalizedError {
     case invalidURL
     case notConnected
     case encodingError
-    case decodingError
     case connectionFailed(Error)
     case serverError(String)
 
@@ -386,8 +385,6 @@ public enum ElevenLabsSTTError: Error, LocalizedError {
             return "Not connected to the WebSocket"
         case .encodingError:
             return "Failed to encode message"
-        case .decodingError:
-            return "Failed to decode response"
         case .connectionFailed(let error):
             return "Connection failed: \(error.localizedDescription)"
         case .serverError(let message):
