@@ -48,6 +48,15 @@ public final class RealtimeSessionViewModel: ObservableObject {
     private var session: OpenAIRealtimeSession?
     private var eventTask: Task<Void, Never>?
 
+    /// Chain of pending audio-chunk sends, so each `append(audio:)` call
+    /// waits for the previous one to finish before starting. Without this,
+    /// each ~100ms mic chunk spawns its own unstructured Task, and nothing
+    /// stops two of them from calling into the WebSocket's `send` at once —
+    /// `URLSessionWebSocketTask.send` isn't documented as safe to call
+    /// concurrently, so overlapping sends could interleave or corrupt the
+    /// audio stream the API receives.
+    private var audioSendChain: Task<Void, Never> = Task {}
+
     /// Tracks the current assistant audio item for truncation on barge-in
     private var currentAssistantItemId: String?
     private var assistantAudioMs: Int = 0
@@ -101,8 +110,12 @@ public final class RealtimeSessionViewModel: ObservableObject {
             consumeEvents(from: session)
 
             try player.start()
-            mic.onAudioChunk = { [weak session] data in
-                Task { try? await session?.append(audio: data) }
+            mic.onAudioChunk = { [weak self] data in
+                // Fires on the audio engine's real-time thread — hop to the
+                // main actor (where audioSendChain lives) before chaining.
+                Task { @MainActor [weak self] in
+                    self?.enqueueAudioSend(data)
+                }
             }
             try mic.start()
 
@@ -124,12 +137,26 @@ public final class RealtimeSessionViewModel: ObservableObject {
         player.stop()
         eventTask?.cancel()
         eventTask = nil
+        audioSendChain.cancel()
         if let session {
             await session.disconnect()
         }
         session = nil
         isModelSpeaking = false
         isUserSpeaking = false
+    }
+
+    /// Append `data` to the current session's audio buffer after any
+    /// already-queued chunk finishes sending, so chunks reach the socket in
+    /// order and never overlap. Must run on the main actor (see
+    /// `audioSendChain`'s doc comment).
+    private func enqueueAudioSend(_ data: Data) {
+        guard let session else { return }
+        let previous = audioSendChain
+        audioSendChain = Task {
+            _ = await previous.value
+            try? await session.append(audio: data)
+        }
     }
 
     // MARK: - Actions

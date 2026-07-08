@@ -51,6 +51,10 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
     /// Factory for the underlying WebSocket transport. Overridable in tests.
     internal var webSocketTaskFactory: ((URLRequest) -> any LangToolsWebSocketTask)?
 
+    /// Called when a server message fails to decode. The stream keeps
+    /// running — a single malformed message isn't fatal.
+    public var onDecodeError: (@Sendable (Error) -> Void)?
+
     public var isConnected: Bool {
         lock.lock(); defer { lock.unlock() }
         return _isConnected
@@ -211,16 +215,18 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
                     switch message {
                     case .string(let text):
                         if let data = text.data(using: .utf8) {
-                            try self.handleResponse(data)
+                            self.handleResponse(data)
                         }
 
                     case .data(let data):
-                        try self.handleResponse(data)
+                        self.handleResponse(data)
 
                     @unknown default:
                         break
                     }
                 } catch {
+                    // A genuine transport-level error (socket closed, etc.) —
+                    // this is fatal, unlike a single malformed message below.
                     if !Task.isCancelled {
                         self.transcriptionContinuation.finish(throwing: error)
                     }
@@ -233,8 +239,16 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
         lock.unlock()
     }
 
-    private func handleResponse(_ data: Data) throws {
-        let response = try decoder.decode(STTResponse.self, from: data)
+    private func handleResponse(_ data: Data) {
+        let response: STTResponse
+        do {
+            response = try decoder.decode(STTResponse.self, from: data)
+        } catch {
+            // A single malformed/unrecognized message should not kill the
+            // whole session — surface it for observability and keep going.
+            onDecodeError?(error)
+            return
+        }
 
         switch response.type {
         case "transcript":
