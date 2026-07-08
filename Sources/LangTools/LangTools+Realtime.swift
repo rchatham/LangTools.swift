@@ -346,6 +346,8 @@ public final class RealtimeEventHandler: @unchecked Sendable {
     public var onInterruption: InterruptionHandler?
     public var onSpeechStarted: InterruptionHandler?
     public var onSpeechStopped: InterruptionHandler?
+    public var onResponseStarted: InterruptionHandler?
+    public var onResponseCompleted: InterruptionHandler?
 
     public init() {}
 }

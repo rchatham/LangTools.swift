@@ -14,7 +14,13 @@ extension ElevenLabs {
     /// Standard text-to-speech request (non-streaming)
     public struct TextToSpeechRequest: Codable, LangToolsRequest, LangToolsTTSRequest {
         public typealias LangTool = ElevenLabs
+        public typealias Response = Data
         public static var endpoint: String { "text-to-speech" }
+
+        public var speechText: String { text }
+        public var speechVoiceIdentifier: String? { voiceId }
+        public var speechSpeed: Double? { nil }
+        public var speechResponseFormat: String? { nil }
 
         public let text: String
         public let modelId: String

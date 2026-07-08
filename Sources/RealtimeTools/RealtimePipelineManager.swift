@@ -138,6 +138,8 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
                 setState(.processing)
             } else if !result.isSpeech && isProcessing {
                 eventHandler?.onSpeechStopped?()
+                isProcessing = false
+                setState(.running)
             }
         }
 
