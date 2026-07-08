@@ -221,6 +221,8 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
                     self.eventHandler?.onSpeechStarted?()
                 case .speechEnded:
                     self.eventHandler?.onSpeechStopped?()
+                    self.isProcessing = false
+                    self.setState(.running)
                 case .interruptionDetected:
                     Task { try? await self.interrupt() }
                 }
@@ -230,8 +232,39 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
             lock.unlock()
         }
 
-        // Note: STT/TTS/LLM provider instances are injected via
-        // setProviders(stt:tts:) or created based on the configuration.
+        // Consume STT transcriptions: surface every result via
+        // onTranscriptReceived, and in .modular mode drive the LLM/TTS steps
+        // once a final transcription arrives. Stored in `processingTask` so
+        // `stop()` cancels it alongside the rest of the pipeline. Requires
+        // setProviders(stt:) to have been called before start() — an STT
+        // provider attached afterward won't be picked up until the next
+        // start() (matching the existing vadInstance/interruptionDetector
+        // setup-time-only pattern above).
+        lock.lock()
+        let stt = sttProviderInstance
+        lock.unlock()
+
+        if let stt {
+            let mode = configuration.mode
+            let task = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    for try await result in stt.transcriptions {
+                        guard !Task.isCancelled else { return }
+                        self.eventHandler?.onTranscriptReceived?(result.text, result.isFinal)
+                        if mode == .modular, result.isFinal, !result.text.isEmpty {
+                            try? await self.sendText(result.text)
+                        }
+                    }
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    self.eventHandler?.onError?(error)
+                }
+            }
+            lock.lock()
+            processingTask = task
+            lock.unlock()
+        }
     }
 
     /// Inject concrete provider implementations. An externally created VAD

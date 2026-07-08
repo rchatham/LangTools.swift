@@ -84,11 +84,15 @@ public final class EnergyVAD: VoiceActivityDetector, @unchecked Sendable {
         // Signal-to-noise ratio relative to the adaptive floor
         let snr = energy / max(noiseFloor, 1e-6)
 
-        // Energy score: ramps from 0 at the noise floor to 1 at ~8x the floor
+        // Energy score: ramps from 0 at the noise floor to 1 at ~8x the floor.
+        // 7.0 (not e.g. 3x or 15x) is an empirically-tuned divisor, not derived
+        // from a spec — adjust if false negatives/positives show up in practice.
         let energyScore = min(max((snr - 1.0) / 7.0, 0), 1)
 
         // Voiced speech typically has a moderate zero-crossing rate; very high
         // ZCR indicates fricative noise or static, very low indicates silence/hum.
+        // 0.02/0.35 and the 0.4 partial-credit floor are empirically-tuned
+        // heuristic thresholds, not derived from a spec.
         let zcrScore: Double = zcr > 0.02 && zcr < 0.35 ? 1.0 : 0.4
 
         let rawProbability = energyScore * zcrScore

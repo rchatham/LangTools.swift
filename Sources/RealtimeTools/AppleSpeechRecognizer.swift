@@ -19,12 +19,22 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
     // MARK: - Properties
 
     private let speechRecognizer: SFSpeechRecognizer?
+
+    // recognitionRequest/recognitionTask/isRecognizing are written from both
+    // caller-invoked methods (startTranscription/stopTranscription/transcribe)
+    // and the Speech framework's recognition callback queue — guarded by `lock`.
+    private let lock = NSLock()
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
+    private var _isRecognizing: Bool = false
+
+    public var isRecognizing: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _isRecognizing
+    }
 
     private let transcriptionContinuation: AsyncThrowingStream<TranscriptionResult, Error>.Continuation
 
-    public private(set) var isRecognizing: Bool = false
     private let requiresOnDevice: Bool
     private let language: Locale
 
@@ -36,19 +46,26 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
         public var shouldReportPartialResults: Bool
         public var contextualStrings: [String]?
         public var taskHint: SFSpeechRecognitionTaskHint
+        /// Sample rate of the PCM16 mono audio passed to `transcribe(audio:)`.
+        /// Must match whatever produces the audio (e.g. a pipeline's
+        /// `AudioProcessingSettings.inputSampleRate`) — mismatched rates are
+        /// interpreted at the wrong speed rather than failing loudly.
+        public var sampleRate: Double
 
         public init(
             language: Locale = .current,
             requiresOnDevice: Bool = true,
             shouldReportPartialResults: Bool = true,
             contextualStrings: [String]? = nil,
-            taskHint: SFSpeechRecognitionTaskHint = .dictation
+            taskHint: SFSpeechRecognitionTaskHint = .dictation,
+            sampleRate: Double = 16000
         ) {
             self.language = language
             self.requiresOnDevice = requiresOnDevice
             self.shouldReportPartialResults = shouldReportPartialResults
             self.contextualStrings = contextualStrings
             self.taskHint = taskHint
+            self.sampleRate = sampleRate
         }
     }
 
@@ -109,11 +126,7 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
         }
 
         // Create recognition request
-        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-
-        guard let recognitionRequest = recognitionRequest else {
-            throw AppleSpeechError.requestCreationFailed
-        }
+        let recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
 
         // Configure request
         recognitionRequest.shouldReportPartialResults = config.shouldReportPartialResults
@@ -125,30 +138,42 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
         }
 
         // Start recognition task
-        recognitionTask = speechRecognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
+        let recognitionTask = speechRecognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
             self?.handleRecognitionResult(result, error: error)
         }
 
-        isRecognizing = true
+        lock.lock()
+        self.recognitionRequest = recognitionRequest
+        self.recognitionTask = recognitionTask
+        _isRecognizing = true
+        lock.unlock()
     }
 
     public func stopTranscription() async throws {
-        guard isRecognizing else { return }
-
-        recognitionRequest?.endAudio()
-        recognitionTask?.cancel()
-
+        lock.lock()
+        guard _isRecognizing else { lock.unlock(); return }
+        let request = recognitionRequest
+        let task = recognitionTask
         recognitionRequest = nil
         recognitionTask = nil
-        isRecognizing = false
+        _isRecognizing = false
+        lock.unlock()
+
+        request?.endAudio()
+        task?.cancel()
     }
 
     public func transcribe(audio: Data) async throws {
-        guard isRecognizing else {
+        lock.lock()
+        let recognizing = _isRecognizing
+        let request = recognitionRequest
+        lock.unlock()
+
+        guard recognizing else {
             throw AppleSpeechError.notRecognizing
         }
 
-        guard let recognitionRequest = recognitionRequest else {
+        guard let request else {
             throw AppleSpeechError.requestNotInitialized
         }
 
@@ -157,7 +182,7 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
             throw AppleSpeechError.audioConversionFailed
         }
 
-        recognitionRequest.append(buffer)
+        request.append(buffer)
     }
 
     // MARK: - Private Methods
@@ -194,8 +219,8 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
     }
 
     private func createAudioBuffer(from data: Data) -> AVAudioPCMBuffer? {
-        // Assuming PCM 16-bit mono at 16kHz (common for speech recognition)
-        let sampleRate: Double = 16000
+        // PCM 16-bit mono at the configured sample rate (see Configuration.sampleRate)
+        let sampleRate: Double = config.sampleRate
         let channels: AVAudioChannelCount = 1
 
         guard let format = AVAudioFormat(

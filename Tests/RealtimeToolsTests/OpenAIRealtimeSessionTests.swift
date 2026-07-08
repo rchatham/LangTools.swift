@@ -336,4 +336,143 @@ final class RealtimePipelineModeTests: XCTestCase {
 
         XCTAssertEqual(tts.synthesized, ["read this"])
     }
+
+    // MARK: - STT Wiring
+
+    /// STT stub whose transcription stream can be pushed to on demand
+    private final class StubSTT: RealtimeTools.STTProvider, @unchecked Sendable {
+        let transcriptions: AsyncThrowingStream<TranscriptionResult, Error>
+        private let continuation: AsyncThrowingStream<TranscriptionResult, Error>.Continuation
+
+        init() {
+            (transcriptions, continuation) = AsyncThrowingStream.makeStream(of: TranscriptionResult.self)
+        }
+
+        func startTranscription() async throws {}
+        func stopTranscription() async throws {}
+        func transcribe(audio: Data) async throws {}
+
+        func push(_ result: TranscriptionResult) {
+            continuation.yield(result)
+        }
+    }
+
+    func testModularModeDrivesTextProcessorFromFinalSTTTranscription() async throws {
+        let stt = StubSTT()
+        let tts = StubTTS()
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.modular)
+            .build()
+        pipeline.setProviders(stt: stt, tts: tts)
+        pipeline.textProcessor = { text in "LLM(\(text))" }
+        try await pipeline.start()
+
+        // Partial transcriptions must not trigger the LLM/TTS steps
+        stt.push(TranscriptionResult(text: "hel", isFinal: false))
+        stt.push(TranscriptionResult(text: "hello", isFinal: true))
+
+        let deadline = Date().addingTimeInterval(5)
+        while tts.synthesized.isEmpty && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertEqual(tts.synthesized, ["LLM(hello)"], "Final STT transcription should drive textProcessor then TTS")
+    }
+
+    func testTranscriptionOnlyModeSurfacesResultsWithoutTTS() async throws {
+        let stt = StubSTT()
+        let pipeline = RealtimePipelineBuilder.transcriptionOnly().build()
+        pipeline.setProviders(stt: stt)
+
+        let lock = NSLock()
+        var received: [(String, Bool)] = []
+        let handler = RealtimeEventHandler()
+        handler.onTranscriptReceived = { text, isFinal in
+            lock.lock(); received.append((text, isFinal)); lock.unlock()
+        }
+        pipeline.eventHandler = handler
+        try await pipeline.start()
+
+        stt.push(TranscriptionResult(text: "hi", isFinal: true))
+
+        func isEmpty() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            return received.isEmpty
+        }
+
+        let deadline = Date().addingTimeInterval(5)
+        while isEmpty() && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        lock.lock()
+        let result = received
+        lock.unlock()
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result.first?.0, "hi")
+        XCTAssertEqual(result.first?.1, true)
+    }
+}
+
+// MARK: - Pipeline State Machine Regression Tests
+
+final class RealtimePipelineStateMachineTests: XCTestCase {
+
+    /// VAD test double whose results are pre-scripted, driving the
+    /// InterruptionDetector deterministically without real audio analysis.
+    private final class ControllableVAD: RealtimeTools.VoiceActivityDetector, @unchecked Sendable {
+        var configuration: VADConfiguration
+        private let lock = NSLock()
+        private var queue: [VADResult] = []
+
+        init(configuration: VADConfiguration) {
+            self.configuration = configuration
+        }
+
+        func enqueue(_ result: VADResult) {
+            lock.lock(); queue.append(result); lock.unlock()
+        }
+
+        func process(audio: Data) async -> VADResult {
+            lock.lock()
+            defer { lock.unlock() }
+            return queue.isEmpty ? VADResult(isSpeech: false, probability: 0, timestamp: 0) : queue.removeFirst()
+        }
+
+        func reset() async {}
+    }
+
+    /// Regression test for a bug where a normal (non-interrupting) end of
+    /// utterance left the pipeline stuck in `.processing` forever, since
+    /// `.speechEnded` only forwarded the event to `onSpeechStopped` without
+    /// resetting `isProcessing`/state back to `.running`.
+    func testSpeechEndedResetsStateToRunning() async throws {
+        let vadConfig = VADConfiguration(mode: .onDevice, minSpeechDuration: 0, silenceTimeout: 0)
+        let vad = ControllableVAD(configuration: vadConfig)
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.modular)
+            .withAudioSettings(AudioProcessingSettings(vadConfig: vadConfig))
+            .build()
+        pipeline.setProviders(vad: vad)
+        try await pipeline.start()
+        XCTAssertEqual(pipeline.state, .running)
+
+        // Debounce/min-speech-duration requires >= 0.1s of continuous speech
+        // (InterruptionConfiguration.speechDetectionDebounce default) before
+        // speechStarted commits.
+        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.00))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+
+        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.15))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+        XCTAssertEqual(pipeline.state, .processing, "Speech should have committed and moved the pipeline to .processing")
+
+        vad.enqueue(VADResult(isSpeech: false, probability: 0.1, timestamp: 0.20))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+
+        vad.enqueue(VADResult(isSpeech: false, probability: 0.1, timestamp: 0.21))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+
+        XCTAssertEqual(pipeline.state, .running, "Normal end-of-utterance must return the pipeline to .running, not leave it stuck in .processing")
+    }
 }

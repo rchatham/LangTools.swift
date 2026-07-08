@@ -69,6 +69,12 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
     /// to inject a scripted transport instead of a live connection.
     internal var webSocketTaskFactory: ((URLRequest) -> any LangToolsWebSocketTask)?
 
+    /// Called when a server message fails to decode (e.g. an unrecognized
+    /// event type). The stream keeps running — a single malformed message
+    /// isn't fatal — but this makes the failure observable instead of only
+    /// reaching stdout.
+    public var onDecodeError: (@Sendable (Error) -> Void)?
+
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
@@ -99,8 +105,15 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
     }
 
     deinit {
-        receiveTask?.cancel()
-        webSocketTask?.cancel(with: .goingAway, reason: nil)
+        lock.lock()
+        let task = receiveTask
+        let socket = webSocketTask
+        let session = urlSession
+        lock.unlock()
+
+        task?.cancel()
+        socket?.cancel(with: .goingAway, reason: nil)
+        session?.invalidateAndCancel()
         eventContinuation.finish()
     }
 
@@ -151,12 +164,15 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
         _state = .disconnected
         let task = receiveTask
         let socket = webSocketTask
+        let session = urlSession
         receiveTask = nil
         webSocketTask = nil
+        urlSession = nil
         lock.unlock()
 
         task?.cancel()
         socket?.cancel(with: .normalClosure, reason: nil)
+        session?.invalidateAndCancel()
         eventContinuation.finish()
     }
 
@@ -285,8 +301,9 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
             eventContinuation.yield(event)
         } catch {
             // A single malformed or unrecognized event (e.g. a newly added
-            // server event type) should not kill the stream — log and continue.
-            print("OpenAI Realtime: failed to decode server event: \(error)")
+            // server event type) should not kill the stream — surface it for
+            // observability and continue.
+            onDecodeError?(error)
         }
     }
 

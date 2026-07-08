@@ -130,7 +130,10 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
 
         task.resume()
 
-        // Send initial message with voice settings
+        // Send initial message with voice settings. chunkLengthSchedule is
+        // ElevenLabs' own suggested progressive-flush schedule (characters
+        // per chunk, increasing) from their WebSocket TTS docs/examples —
+        // not an arbitrary choice, but also not required to match exactly.
         let initialMessage = InitialMessage(
             text: " ", // Required initial space
             voiceSettings: voiceSettings,
@@ -150,12 +153,15 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
         _isConnected = false
         let task = receiveTask
         let socket = webSocketTask
+        let session = urlSession
         receiveTask = nil
         webSocketTask = nil
+        urlSession = nil
         lock.unlock()
 
         task?.cancel()
         socket?.cancel(with: .normalClosure, reason: nil)
+        session?.invalidateAndCancel()
         audioContinuation.finish()
     }
 

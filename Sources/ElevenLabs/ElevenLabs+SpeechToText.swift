@@ -147,12 +147,15 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
         _isConnected = false
         let task = receiveTask
         let socket = webSocketTask
+        let session = urlSession
         receiveTask = nil
         webSocketTask = nil
+        urlSession = nil
         lock.unlock()
 
         task?.cancel()
         socket?.cancel(with: .normalClosure, reason: nil)
+        session?.invalidateAndCancel()
         transcriptionContinuation.finish()
     }
 
