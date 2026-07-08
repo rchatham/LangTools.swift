@@ -21,7 +21,7 @@ extension ElevenLabs {
         enablePartials: Bool = true
     ) -> ElevenLabsSTTSession {
         return ElevenLabsSTTSession(
-            apiKey: configuration.apiKey,
+            apiKey: apiKey,
             modelId: modelId,
             language: language,
             enablePartials: enablePartials
@@ -40,25 +40,31 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
     private let language: String?
     private let enablePartials: Bool
 
-    private var webSocketTask: URLSessionWebSocketTask?
+    // Written from both caller methods and the background receive loop —
+    // guarded by `lock`.
+    private let lock = NSLock()
+    private var webSocketTask: (any LangToolsWebSocketTask)?
     private var urlSession: URLSession?
     private var receiveTask: Task<Void, Never>?
+    private var _isConnected: Bool = false
 
-    private var transcriptionContinuation: AsyncThrowingStream<STTTranscription, Error>.Continuation?
+    /// Factory for the underlying WebSocket transport. Overridable in tests.
+    internal var webSocketTaskFactory: ((URLRequest) -> any LangToolsWebSocketTask)?
 
-    public private(set) var isConnected: Bool = false
+    public var isConnected: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _isConnected
+    }
 
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
     // MARK: - Transcription Stream
 
-    /// Stream of transcription results
-    public var transcriptions: AsyncThrowingStream<STTTranscription, Error> {
-        AsyncThrowingStream { continuation in
-            self.transcriptionContinuation = continuation
-        }
-    }
+    /// Stream of transcription results. Created once at init so results
+    /// received before the first consumer attaches are buffered, not dropped.
+    public let transcriptions: AsyncThrowingStream<STTTranscription, Error>
+    private let transcriptionContinuation: AsyncThrowingStream<STTTranscription, Error>.Continuation
 
     // MARK: - Initialization
 
@@ -72,6 +78,7 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
         self.modelId = modelId
         self.language = language
         self.enablePartials = enablePartials
+        (self.transcriptions, self.transcriptionContinuation) = AsyncThrowingStream.makeStream(of: STTTranscription.self)
     }
 
     deinit {
@@ -82,7 +89,10 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
 
     /// Connect to the ElevenLabs STT WebSocket API
     public func connect() async throws {
-        guard !isConnected else { return }
+        lock.lock()
+        guard !_isConnected else { lock.unlock(); return }
+        let factory = webSocketTaskFactory
+        lock.unlock()
 
         var urlComponents = URLComponents()
         urlComponents.scheme = "wss"
@@ -103,11 +113,20 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
         var request = URLRequest(url: url)
         request.addValue(apiKey, forHTTPHeaderField: "xi-api-key")
 
-        let configuration = URLSessionConfiguration.default
-        urlSession = URLSession(configuration: configuration)
-        webSocketTask = urlSession?.webSocketTask(with: request)
+        let task: any LangToolsWebSocketTask
+        if let factory {
+            task = factory(request)
+        } else {
+            let session = URLSession(configuration: .default)
+            lock.lock(); urlSession = session; lock.unlock()
+            task = session.webSocketTask(with: request)
+        }
 
-        webSocketTask?.resume()
+        lock.lock()
+        webSocketTask = task
+        lock.unlock()
+
+        task.resume()
 
         // Send initial configuration
         let config = STTConfig(
@@ -116,16 +135,25 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
         )
         try await sendMessage(config)
 
-        isConnected = true
+        lock.lock()
+        _isConnected = true
+        lock.unlock()
         startReceiving()
     }
 
     /// Disconnect from the WebSocket
     public func disconnect() {
-        isConnected = false
-        receiveTask?.cancel()
-        webSocketTask?.cancel(with: .normalClosure, reason: nil)
-        transcriptionContinuation?.finish()
+        lock.lock()
+        _isConnected = false
+        let task = receiveTask
+        let socket = webSocketTask
+        receiveTask = nil
+        webSocketTask = nil
+        lock.unlock()
+
+        task?.cancel()
+        socket?.cancel(with: .normalClosure, reason: nil)
+        transcriptionContinuation.finish()
     }
 
     // MARK: - Sending Audio
@@ -153,24 +181,29 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
     // MARK: - Private Methods
 
     private func sendMessage<T: Encodable>(_ message: T) async throws {
+        lock.lock()
+        let socket = webSocketTask
+        lock.unlock()
+
         let data = try encoder.encode(message)
         guard let jsonString = String(data: data, encoding: .utf8) else {
             throw ElevenLabsSTTError.encodingError
         }
 
-        let wsMessage = URLSessionWebSocketTask.Message.string(jsonString)
-        try await webSocketTask?.send(wsMessage)
+        try await socket?.send(.string(jsonString))
     }
 
     private func startReceiving() {
-        receiveTask = Task { [weak self] in
-            guard let self = self else { return }
+        let task = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.isConnected else { return }
+                self.lock.lock()
+                let socket = self.webSocketTask
+                self.lock.unlock()
+                guard let socket else { return }
 
-            while !Task.isCancelled && self.isConnected {
                 do {
-                    guard let message = try await self.webSocketTask?.receive() else {
-                        continue
-                    }
+                    let message = try await socket.receive()
 
                     switch message {
                     case .string(let text):
@@ -186,12 +219,15 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
                     }
                 } catch {
                     if !Task.isCancelled {
-                        self.transcriptionContinuation?.finish(throwing: error)
+                        self.transcriptionContinuation.finish(throwing: error)
                     }
                     break
                 }
             }
         }
+        lock.lock()
+        receiveTask = task
+        lock.unlock()
     }
 
     private func handleResponse(_ data: Data) throws {
@@ -214,16 +250,16 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
                     },
                     language: transcript.language
                 )
-                transcriptionContinuation?.yield(result)
+                transcriptionContinuation.yield(result)
             }
 
         case "error":
             if let error = response.error {
-                transcriptionContinuation?.finish(throwing: ElevenLabsSTTError.serverError(error.message))
+                transcriptionContinuation.finish(throwing: ElevenLabsSTTError.serverError(error.message))
             }
 
         case "done":
-            transcriptionContinuation?.finish()
+            transcriptionContinuation.finish()
 
         default:
             break

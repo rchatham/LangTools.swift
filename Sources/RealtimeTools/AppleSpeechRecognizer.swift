@@ -22,7 +22,7 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
 
-    private var transcriptionContinuation: AsyncThrowingStream<TranscriptionResult, Error>.Continuation?
+    private let transcriptionContinuation: AsyncThrowingStream<TranscriptionResult, Error>.Continuation
 
     public private(set) var isRecognizing: Bool = false
     private let requiresOnDevice: Bool
@@ -56,11 +56,12 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
 
     // MARK: - Transcription Stream
 
-    public var transcriptions: AsyncThrowingStream<TranscriptionResult, Error> {
-        AsyncThrowingStream { continuation in
-            self.transcriptionContinuation = continuation
-        }
-    }
+    /// Stream of transcription results. Created once at init so results
+    /// emitted before the first consumer attaches are buffered, not dropped.
+    /// The stream stays open across multiple utterances — check
+    /// `TranscriptionResult.isFinal` for end-of-utterance; the stream only
+    /// finishes on error.
+    public let transcriptions: AsyncThrowingStream<TranscriptionResult, Error>
 
     // MARK: - Initialization
 
@@ -69,6 +70,7 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
         self.language = configuration.language
         self.requiresOnDevice = configuration.requiresOnDevice
         self.speechRecognizer = SFSpeechRecognizer(locale: configuration.language)
+        (self.transcriptions, self.transcriptionContinuation) = AsyncThrowingStream.makeStream(of: TranscriptionResult.self)
     }
 
     // MARK: - Authorization
@@ -162,7 +164,7 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
 
     private func handleRecognitionResult(_ result: SFSpeechRecognitionResult?, error: Error?) {
         if let error = error {
-            transcriptionContinuation?.finish(throwing: AppleSpeechError.recognitionFailed(error))
+            transcriptionContinuation.finish(throwing: AppleSpeechError.recognitionFailed(error))
             return
         }
 
@@ -183,11 +185,12 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
             language: language.identifier
         )
 
-        transcriptionContinuation?.yield(transcription)
+        transcriptionContinuation.yield(transcription)
 
-        if result.isFinal {
-            transcriptionContinuation?.finish()
-        }
+        // Intentionally do not finish the stream on `result.isFinal` — a final
+        // result ends the current utterance, not the recognizer. The caller can
+        // start a new recognition task and keep consuming the same stream;
+        // `TranscriptionResult.isFinal` signals end-of-utterance.
     }
 
     private func createAudioBuffer(from data: Data) -> AVAudioPCMBuffer? {

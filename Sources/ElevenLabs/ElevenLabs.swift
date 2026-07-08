@@ -19,7 +19,7 @@ public final class ElevenLabs: LangTools {
     public typealias ErrorResponse = ElevenLabsErrorResponse
 
     private var configuration: ElevenLabsConfiguration
-    private var apiKey: String { configuration.apiKey }
+    internal var apiKey: String { configuration.apiKey }
     public var session: URLSession { configuration.session }
 
     public struct ElevenLabsConfiguration {

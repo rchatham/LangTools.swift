@@ -22,7 +22,7 @@ extension ElevenLabs {
         voiceSettings: VoiceSettings? = nil
     ) -> ElevenLabsWebSocketSession {
         return ElevenLabsWebSocketSession(
-            apiKey: configuration.apiKey,
+            apiKey: apiKey,
             voiceId: voiceId,
             modelId: modelId,
             outputFormat: outputFormat,
@@ -43,25 +43,31 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
     private let outputFormat: ElevenLabsOutputFormat
     private let voiceSettings: VoiceSettings?
 
-    private var webSocketTask: URLSessionWebSocketTask?
+    // Written from both caller methods and the background receive loop —
+    // guarded by `lock`.
+    private let lock = NSLock()
+    private var webSocketTask: (any LangToolsWebSocketTask)?
     private var urlSession: URLSession?
     private var receiveTask: Task<Void, Never>?
+    private var _isConnected: Bool = false
 
-    private var audioContinuation: AsyncThrowingStream<AudioChunk, Error>.Continuation?
+    /// Factory for the underlying WebSocket transport. Overridable in tests.
+    internal var webSocketTaskFactory: ((URLRequest) -> any LangToolsWebSocketTask)?
 
-    public private(set) var isConnected: Bool = false
+    public var isConnected: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _isConnected
+    }
 
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
     // MARK: - Audio Stream
 
-    /// Stream of audio chunks from TTS
-    public var audioStream: AsyncThrowingStream<AudioChunk, Error> {
-        AsyncThrowingStream { continuation in
-            self.audioContinuation = continuation
-        }
-    }
+    /// Stream of audio chunks from TTS. Created once at init so chunks
+    /// received before the first consumer attaches are buffered, not dropped.
+    public let audioStream: AsyncThrowingStream<AudioChunk, Error>
+    private let audioContinuation: AsyncThrowingStream<AudioChunk, Error>.Continuation
 
     // MARK: - Initialization
 
@@ -77,6 +83,7 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
         self.modelId = modelId
         self.outputFormat = outputFormat
         self.voiceSettings = voiceSettings
+        (self.audioStream, self.audioContinuation) = AsyncThrowingStream.makeStream(of: AudioChunk.self)
     }
 
     deinit {
@@ -87,7 +94,10 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
 
     /// Connect to the ElevenLabs WebSocket API
     public func connect() async throws {
-        guard !isConnected else { return }
+        lock.lock()
+        guard !_isConnected else { lock.unlock(); return }
+        let factory = webSocketTaskFactory
+        lock.unlock()
 
         var urlComponents = URLComponents()
         urlComponents.scheme = "wss"
@@ -105,11 +115,20 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
         var request = URLRequest(url: url)
         request.addValue(apiKey, forHTTPHeaderField: "xi-api-key")
 
-        let configuration = URLSessionConfiguration.default
-        urlSession = URLSession(configuration: configuration)
-        webSocketTask = urlSession?.webSocketTask(with: request)
+        let task: any LangToolsWebSocketTask
+        if let factory {
+            task = factory(request)
+        } else {
+            let session = URLSession(configuration: .default)
+            lock.lock(); urlSession = session; lock.unlock()
+            task = session.webSocketTask(with: request)
+        }
 
-        webSocketTask?.resume()
+        lock.lock()
+        webSocketTask = task
+        lock.unlock()
+
+        task.resume()
 
         // Send initial message with voice settings
         let initialMessage = InitialMessage(
@@ -119,16 +138,25 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
         )
         try await sendMessage(initialMessage)
 
-        isConnected = true
+        lock.lock()
+        _isConnected = true
+        lock.unlock()
         startReceiving()
     }
 
     /// Disconnect from the WebSocket
     public func disconnect() {
-        isConnected = false
-        receiveTask?.cancel()
-        webSocketTask?.cancel(with: .normalClosure, reason: nil)
-        audioContinuation?.finish()
+        lock.lock()
+        _isConnected = false
+        let task = receiveTask
+        let socket = webSocketTask
+        receiveTask = nil
+        webSocketTask = nil
+        lock.unlock()
+
+        task?.cancel()
+        socket?.cancel(with: .normalClosure, reason: nil)
+        audioContinuation.finish()
     }
 
     // MARK: - Sending Text
@@ -161,24 +189,29 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
     // MARK: - Private Methods
 
     private func sendMessage<T: Encodable>(_ message: T) async throws {
+        lock.lock()
+        let socket = webSocketTask
+        lock.unlock()
+
         let data = try encoder.encode(message)
         guard let jsonString = String(data: data, encoding: .utf8) else {
             throw ElevenLabsWebSocketError.encodingError
         }
 
-        let wsMessage = URLSessionWebSocketTask.Message.string(jsonString)
-        try await webSocketTask?.send(wsMessage)
+        try await socket?.send(.string(jsonString))
     }
 
     private func startReceiving() {
-        receiveTask = Task { [weak self] in
-            guard let self = self else { return }
+        let task = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.isConnected else { return }
+                self.lock.lock()
+                let socket = self.webSocketTask
+                self.lock.unlock()
+                guard let socket else { return }
 
-            while !Task.isCancelled && self.isConnected {
                 do {
-                    guard let message = try await self.webSocketTask?.receive() else {
-                        continue
-                    }
+                    let message = try await socket.receive()
 
                     switch message {
                     case .string(let text):
@@ -194,12 +227,15 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
                     }
                 } catch {
                     if !Task.isCancelled {
-                        self.audioContinuation?.finish(throwing: error)
+                        self.audioContinuation.finish(throwing: error)
                     }
                     break
                 }
             }
         }
+        lock.lock()
+        receiveTask = task
+        lock.unlock()
     }
 
     private func handleResponse(_ data: Data) throws {
@@ -212,11 +248,11 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
                 normalizedAlignment: response.normalizedAlignment,
                 alignment: response.alignment
             )
-            audioContinuation?.yield(chunk)
+            audioContinuation.yield(chunk)
         }
 
         if response.isFinal == true {
-            audioContinuation?.finish()
+            audioContinuation.finish()
         }
     }
 }
@@ -308,7 +344,7 @@ public struct AudioAlignment: Sendable {
     public let charDurationsMs: [Int]?
     public let chars: [String]?
 
-    init(from response: WebSocketResponse.Alignment?) {
+    fileprivate init(from response: WebSocketResponse.Alignment?) {
         self.charStartTimesMs = response?.charStartTimesMs
         self.charDurationsMs = response?.charDurationsMs
         self.chars = response?.chars
@@ -316,7 +352,7 @@ public struct AudioAlignment: Sendable {
 }
 
 extension AudioChunk {
-    init(audio: Data, isFinal: Bool, normalizedAlignment: WebSocketResponse.Alignment?, alignment: WebSocketResponse.Alignment?) {
+    fileprivate init(audio: Data, isFinal: Bool, normalizedAlignment: WebSocketResponse.Alignment?, alignment: WebSocketResponse.Alignment?) {
         self.audio = audio
         self.isFinal = isFinal
         self.normalizedAlignment = normalizedAlignment.map { AudioAlignment(from: $0) }

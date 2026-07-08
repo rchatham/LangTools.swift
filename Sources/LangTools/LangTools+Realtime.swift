@@ -310,6 +310,20 @@ public protocol LangToolsInterruptible: AnyObject {
     var isGenerating: Bool { get }
 }
 
+// MARK: - WebSocket Transport
+
+/// Abstraction over a WebSocket connection so realtime sessions can be
+/// driven by a scripted transport in tests instead of a live network
+/// connection. `URLSessionWebSocketTask` conforms as-is.
+public protocol LangToolsWebSocketTask: AnyObject {
+    func resume()
+    func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?)
+    func send(_ message: URLSessionWebSocketTask.Message) async throws
+    func receive() async throws -> URLSessionWebSocketTask.Message
+}
+
+extension URLSessionWebSocketTask: LangToolsWebSocketTask {}
+
 // MARK: - Realtime Event Handler
 
 /// Handler for realtime events with type-erased callbacks

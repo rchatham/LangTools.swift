@@ -14,17 +14,40 @@ import LangTools
 public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendable {
     // MARK: - Properties
 
-    public private(set) var state: RealtimePipelineState = .idle
     public let configuration: RealtimePipelineConfiguration
     public var eventHandler: RealtimeEventHandler?
 
+    // Mutable state is written from caller methods, the interruption
+    // detector's callback, and background tasks — guarded by `lock`.
+    private let lock = NSLock()
+    private var _state: RealtimePipelineState = .idle
+    private var _isProcessing: Bool = false
     private var sttProviderInstance: (any STTProvider)?
     private var ttsProviderInstance: (any TTSProvider)?
     private var vadInstance: (any VoiceActivityDetector)?
     private var interruptionDetector: InterruptionDetector?
-
     private var processingTask: Task<Void, Never>?
-    private var isProcessing: Bool = false
+
+    public var state: RealtimePipelineState {
+        lock.lock(); defer { lock.unlock() }
+        return _state
+    }
+
+    private var isProcessing: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _isProcessing }
+        set { lock.lock(); _isProcessing = newValue; lock.unlock() }
+    }
+
+    /// The LLM step for `.modular` mode: receives the user's text (or final
+    /// transcription) and returns the response text to synthesize. Wire this
+    /// to any LangTools provider, e.g.:
+    /// ```swift
+    /// pipeline.textProcessor = { text in
+    ///     let request = try openAI.chatRequest(model: OpenAIModel.gpt4o, messages: [...])
+    ///     return try await openAI.perform(request: request).message?.content.text ?? ""
+    /// }
+    /// ```
+    public var textProcessor: (@Sendable (String) async throws -> String)?
 
     // Interruption handling
     public var interruptionConfig: InterruptionConfiguration
@@ -42,25 +65,28 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
     // MARK: - Lifecycle
 
     public func start() async throws {
-        guard state == .idle || state == .stopped else { return }
+        let current = state
+        guard current == .idle || current == .stopped else { return }
 
-        state = .starting
-        eventHandler?.onStateChanged?(state)
+        setState(.starting)
 
         // Initialize providers based on configuration
         try await initializeProviders()
 
-        state = .running
-        eventHandler?.onStateChanged?(state)
+        setState(.running)
     }
 
     public func stop() async {
-        guard state == .running || state == .processing else { return }
+        let current = state
+        guard current == .running || current == .processing else { return }
 
-        state = .stopping
-        eventHandler?.onStateChanged?(state)
+        setState(.stopping)
 
-        processingTask?.cancel()
+        lock.lock()
+        let task = processingTask
+        processingTask = nil
+        lock.unlock()
+        task?.cancel()
 
         // Stop STT if running
         try? await sttProviderInstance?.stopTranscription()
@@ -68,30 +94,48 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         // Cancel TTS if synthesizing
         try? await ttsProviderInstance?.cancel()
 
-        state = .stopped
-        eventHandler?.onStateChanged?(state)
+        setState(.stopped)
+    }
+
+    private func setState(_ newState: RealtimePipelineState) {
+        lock.lock()
+        _state = newState
+        lock.unlock()
+        eventHandler?.onStateChanged?(newState)
     }
 
     // MARK: - Audio Input
 
     public func sendAudio(_ data: Data) async throws {
-        guard state == .running || state == .processing else {
+        let current = state
+        guard current == .running || current == .processing else {
             throw RealtimePipelineError.notRunning
+        }
+
+        // Native speech-to-speech (e.g. OpenAI Realtime) is not proxied by
+        // this manager yet — use the provider session directly
+        // (`OpenAI.createRealtimeSession`) for that mode.
+        guard configuration.mode != .speechToSpeech else {
+            throw RealtimePipelineError.notImplemented("speechToSpeech mode is handled natively by the provider session (e.g. OpenAI.createRealtimeSession); RealtimePipelineManager does not proxy it yet")
         }
 
         // Run on-device VAD and interruption detection when configured.
         // Speech start/stop and barge-in events are surfaced via the
         // interruption detector's event handler set up in initializeProviders.
-        if let detector = interruptionDetector {
+        lock.lock()
+        let detector = interruptionDetector
+        let vad = vadInstance
+        lock.unlock()
+
+        if let detector {
             await detector.process(audio: data)
-        } else if let vad = vadInstance {
+        } else if let vad {
             let result = await vad.process(audio: data)
 
             if result.isSpeech && !isProcessing {
                 eventHandler?.onSpeechStarted?()
                 isProcessing = true
-                state = .processing
-                eventHandler?.onStateChanged?(state)
+                setState(.processing)
             } else if !result.isSpeech && isProcessing {
                 eventHandler?.onSpeechStopped?()
             }
@@ -104,7 +148,8 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
     // MARK: - Text Input
 
     public func sendText(_ text: String) async throws {
-        guard state == .running || state == .processing else {
+        let current = state
+        guard current == .running || current == .processing else {
             throw RealtimePipelineError.notRunning
         }
 
@@ -114,12 +159,19 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
             try await synthesizeAndStream(text)
 
         case .modular:
-            // Process through LLM first, then TTS
-            // For now, just send to TTS directly
-            // In a full implementation, this would go through the LLM
-            try await synthesizeAndStream(text)
+            // Run the LLM step, then synthesize the response. Throw rather
+            // than silently degrading to TTS-only when no LLM step is wired.
+            guard let textProcessor else {
+                throw RealtimePipelineError.providerNotConfigured("LLM (set `textProcessor` to wire an LLM into the modular pipeline)")
+            }
+            let response = try await textProcessor(text)
+            eventHandler?.onTextReceived?(response)
+            try await synthesizeAndStream(response)
 
-        default:
+        case .speechToSpeech:
+            throw RealtimePipelineError.notImplemented("speechToSpeech mode is handled natively by the provider session (e.g. OpenAI.createRealtimeSession); RealtimePipelineManager does not proxy it yet")
+
+        case .transcriptionOnly:
             throw RealtimePipelineError.invalidModeForOperation
         }
     }
@@ -130,8 +182,7 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         guard interruptionConfig.enabled else { return }
         guard state == .processing else { return }
 
-        state = .interrupted
-        eventHandler?.onStateChanged?(state)
+        setState(.interrupted)
         eventHandler?.onInterruption?()
 
         // Cancel TTS and mark playback stopped so the detector re-arms cleanly
@@ -139,8 +190,7 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         interruptionDetector?.playbackStopped()
 
         // Reset state
-        state = .running
-        eventHandler?.onStateChanged?(state)
+        setState(.running)
         isProcessing = false
     }
 
@@ -151,11 +201,13 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         // Server VAD modes (e.g. OpenAI Realtime) handle this remotely, so we
         // only build the local detector for onDevice/automatic/manual modes.
         if let vadConfig = configuration.audioSettings.vadConfig, vadConfig.mode != .server {
+            lock.lock()
             let vad = vadInstance ?? EnergyVAD(
                 configuration: vadConfig,
                 sampleRate: configuration.audioSettings.inputSampleRate
             )
             vadInstance = vad
+            lock.unlock()
 
             let detector = InterruptionDetector(vad: vad, configuration: interruptionConfig)
             detector.onEvent = { [weak self] event in
@@ -163,8 +215,7 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
                 switch event {
                 case .speechStarted:
                     self.isProcessing = true
-                    self.state = .processing
-                    self.eventHandler?.onStateChanged?(self.state)
+                    self.setState(.processing)
                     self.eventHandler?.onSpeechStarted?()
                 case .speechEnded:
                     self.eventHandler?.onSpeechStopped?()
@@ -172,7 +223,9 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
                     Task { try? await self.interrupt() }
                 }
             }
+            lock.lock()
             interruptionDetector = detector
+            lock.unlock()
         }
 
         // Note: STT/TTS/LLM provider instances are injected via
@@ -187,9 +240,11 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         tts: (any TTSProvider)? = nil,
         vad: (any VoiceActivityDetector)? = nil
     ) {
+        lock.lock()
         if let stt { sttProviderInstance = stt }
         if let tts { ttsProviderInstance = tts }
         if let vad { vadInstance = vad }
+        lock.unlock()
     }
 
     /// Notify the pipeline that assistant audio playback started, enabling
@@ -228,6 +283,7 @@ public enum RealtimePipelineError: Error, LocalizedError {
     case providerNotConfigured(String)
     case invalidModeForOperation
     case initializationFailed(String)
+    case notImplemented(String)
 
     public var errorDescription: String? {
         switch self {
@@ -241,6 +297,8 @@ public enum RealtimePipelineError: Error, LocalizedError {
             return "Operation not supported in current pipeline mode"
         case .initializationFailed(let reason):
             return "Failed to initialize pipeline: \(reason)"
+        case .notImplemented(let detail):
+            return "Not implemented: \(detail)"
         }
     }
 }

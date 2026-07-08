@@ -16,30 +16,29 @@ import FoundationNetworking
 extension OpenAI: LangToolsRealtime {
     public typealias RealtimeSession = OpenAIRealtimeSession
 
-    /// Creates a new OpenAI Realtime session
-    /// - Parameter configuration: Session configuration
+    /// Creates a new OpenAI Realtime session using the default realtime model.
+    /// - Parameter configuration: Session configuration, applied via
+    ///   `session.update` once the socket is connected.
     /// - Returns: A connected realtime session
     public func createRealtimeSession(configuration: RealtimeSessionConfiguration) async throws -> OpenAIRealtimeSession {
+        try await createRealtimeSession(model: .gpt4o_realtimePreview, configuration: configuration)
+    }
+
+    /// Creates a new OpenAI Realtime session for a specific realtime model.
+    /// - Parameters:
+    ///   - model: The realtime-capable model to connect to (e.g. `.gpt4o_realtimePreview`)
+    ///   - configuration: Session configuration, applied via `session.update`
+    ///     once the socket is connected.
+    /// - Returns: A connected realtime session
+    public func createRealtimeSession(model: Model, configuration: RealtimeSessionConfiguration = RealtimeSessionConfiguration()) async throws -> OpenAIRealtimeSession {
         let session = OpenAIRealtimeSession(
-            apiKey: configuration.apiKey,
-            model: configuration.model ?? "gpt-4o-realtime-preview",
+            apiKey: apiKey,
+            model: model.rawValue,
             sessionConfiguration: configuration
         )
         try await session.connect()
+        try await session.updateSession(configuration: configuration)
         return session
-    }
-}
-
-// MARK: - Realtime Session Configuration Extension
-
-extension RealtimeSessionConfiguration {
-    var apiKey: String? {
-        // This would be set externally
-        nil
-    }
-
-    var model: String? {
-        nil
     }
 }
 
@@ -52,29 +51,43 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
 
     // MARK: - Properties
 
-    public private(set) var sessionId: String = ""
-    public private(set) var state: RealtimeSessionState = .disconnected
-
     private let apiKey: String
     private let model: String
     private var sessionConfiguration: RealtimeSessionConfiguration
 
-    private var webSocketTask: URLSessionWebSocketTask?
+    // Shared mutable state below is written from both caller-invoked methods
+    // and the background receive loop, so all access goes through `lock`.
+    private let lock = NSLock()
+    private var _sessionId: String = ""
+    private var _state: RealtimeSessionState = .disconnected
+    private var _isGenerating: Bool = false
+    private var webSocketTask: (any LangToolsWebSocketTask)?
     private var urlSession: URLSession?
-
-    private var eventContinuation: AsyncThrowingStream<ServerEvent, Error>.Continuation?
     private var receiveTask: Task<Void, Never>?
+
+    /// Factory for the underlying WebSocket transport. Overridable in tests
+    /// to inject a scripted transport instead of a live connection.
+    internal var webSocketTaskFactory: ((URLRequest) -> any LangToolsWebSocketTask)?
 
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
+    public var sessionId: String {
+        lock.lock(); defer { lock.unlock() }
+        return _sessionId
+    }
+
+    public var state: RealtimeSessionState {
+        lock.lock(); defer { lock.unlock() }
+        return _state
+    }
+
     // MARK: - Events Stream
 
-    public var events: AsyncThrowingStream<ServerEvent, Error> {
-        AsyncThrowingStream { continuation in
-            self.eventContinuation = continuation
-        }
-    }
+    /// Stream of server events. Created once at init so events received
+    /// before the first consumer attaches are buffered, not dropped.
+    public let events: AsyncThrowingStream<ServerEvent, Error>
+    private let eventContinuation: AsyncThrowingStream<ServerEvent, Error>.Continuation
 
     // MARK: - Initialization
 
@@ -82,23 +95,28 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
         self.apiKey = apiKey
         self.model = model
         self.sessionConfiguration = sessionConfiguration
+        (self.events, self.eventContinuation) = AsyncThrowingStream.makeStream(of: ServerEvent.self)
     }
 
     deinit {
         receiveTask?.cancel()
         webSocketTask?.cancel(with: .goingAway, reason: nil)
+        eventContinuation.finish()
     }
 
     // MARK: - Connection
 
     /// Connect to the OpenAI Realtime API
     public func connect() async throws {
-        guard state == .disconnected else { return }
-
-        state = .connecting
+        lock.lock()
+        guard _state == .disconnected else { lock.unlock(); return }
+        _state = .connecting
+        let factory = webSocketTaskFactory
+        lock.unlock()
 
         let urlString = "wss://api.openai.com/v1/realtime?model=\(model)"
         guard let url = URL(string: urlString) else {
+            setState(.error)
             throw OpenAIRealtimeError.invalidURL
         }
 
@@ -106,46 +124,66 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
         request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.addValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
 
-        let configuration = URLSessionConfiguration.default
-        urlSession = URLSession(configuration: configuration)
-        webSocketTask = urlSession?.webSocketTask(with: request)
+        let task: any LangToolsWebSocketTask
+        if let factory {
+            task = factory(request)
+        } else {
+            let session = URLSession(configuration: .default)
+            lock.lock(); urlSession = session; lock.unlock()
+            task = session.webSocketTask(with: request)
+        }
 
-        webSocketTask?.resume()
+        lock.lock()
+        webSocketTask = task
+        lock.unlock()
+
+        task.resume()
 
         // Start receiving messages
         startReceiving()
 
-        state = .connected
+        setState(.connected)
     }
 
     /// Disconnect from the session
     public func disconnect() async {
-        state = .disconnected
-        receiveTask?.cancel()
-        webSocketTask?.cancel(with: .normalClosure, reason: nil)
-        eventContinuation?.finish()
+        lock.lock()
+        _state = .disconnected
+        let task = receiveTask
+        let socket = webSocketTask
+        receiveTask = nil
+        webSocketTask = nil
+        lock.unlock()
+
+        task?.cancel()
+        socket?.cancel(with: .normalClosure, reason: nil)
+        eventContinuation.finish()
     }
 
     // MARK: - Sending Events
 
     public func send(event: ClientEvent) async throws {
-        guard state == .connected else {
+        lock.lock()
+        guard _state == .connected, let socket = webSocketTask else {
+            lock.unlock()
             throw OpenAIRealtimeError.notConnected
         }
+        lock.unlock()
 
         let data = try encoder.encode(event)
         guard let jsonString = String(data: data, encoding: .utf8) else {
             throw OpenAIRealtimeError.encodingError
         }
 
-        let message = URLSessionWebSocketTask.Message.string(jsonString)
-        try await webSocketTask?.send(message)
+        try await socket.send(.string(jsonString))
     }
 
     // MARK: - Session Update
 
     public func updateSession(configuration: RealtimeSessionConfiguration) async throws {
+        lock.lock()
         self.sessionConfiguration = configuration
+        lock.unlock()
 
         let event = SessionUpdateEvent(session: SessionUpdateEvent.Session(
             modalities: configuration.modalities?.map { $0.rawValue },
@@ -196,54 +234,76 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
 
     // MARK: - Receiving Events
 
-    private func startReceiving() {
-        receiveTask = Task { [weak self] in
-            guard let self = self else { return }
+    private func setState(_ newState: RealtimeSessionState) {
+        lock.lock()
+        _state = newState
+        lock.unlock()
+    }
 
+    private func startReceiving() {
+        let task = Task { [weak self] in
             while !Task.isCancelled {
+                guard let self else { return }
+                let socket: (any LangToolsWebSocketTask)?
+                self.lock.lock()
+                socket = self.webSocketTask
+                self.lock.unlock()
+                guard let socket else { return }
+
                 do {
-                    guard let message = try await self.webSocketTask?.receive() else {
-                        continue
-                    }
+                    let message = try await socket.receive()
 
                     switch message {
                     case .string(let text):
                         if let data = text.data(using: .utf8) {
-                            do {
-                                let event = try self.decoder.decode(OpenAIRealtimeServerEvent.self, from: data)
-                                self.handleServerEvent(event)
-                                self.eventContinuation?.yield(event)
-                            } catch {
-                                print("Failed to decode event: \(error)")
-                            }
+                            self.handleIncoming(data)
                         }
 
                     case .data(let data):
-                        do {
-                            let event = try self.decoder.decode(OpenAIRealtimeServerEvent.self, from: data)
-                            self.handleServerEvent(event)
-                            self.eventContinuation?.yield(event)
-                        } catch {
-                            print("Failed to decode event: \(error)")
-                        }
+                        self.handleIncoming(data)
 
                     @unknown default:
                         break
                     }
                 } catch {
                     if !Task.isCancelled {
-                        self.eventContinuation?.finish(throwing: error)
+                        self.eventContinuation.finish(throwing: error)
                     }
                     break
                 }
             }
+        }
+        lock.lock()
+        receiveTask = task
+        lock.unlock()
+    }
+
+    private func handleIncoming(_ data: Data) {
+        do {
+            let event = try decoder.decode(OpenAIRealtimeServerEvent.self, from: data)
+            handleServerEvent(event)
+            eventContinuation.yield(event)
+        } catch {
+            // A single malformed or unrecognized event (e.g. a newly added
+            // server event type) should not kill the stream — log and continue.
+            print("OpenAI Realtime: failed to decode server event: \(error)")
         }
     }
 
     private func handleServerEvent(_ event: OpenAIRealtimeServerEvent) {
         switch event {
         case .sessionCreated(let sessionEvent):
-            self.sessionId = sessionEvent.session.id
+            lock.lock()
+            _sessionId = sessionEvent.session.id
+            lock.unlock()
+        case .responseCreated:
+            lock.lock()
+            _isGenerating = true
+            lock.unlock()
+        case .responseDone:
+            lock.lock()
+            _isGenerating = false
+            lock.unlock()
         case .error(let errorEvent):
             print("OpenAI Realtime Error: \(errorEvent.error.message)")
         default:
@@ -278,9 +338,11 @@ extension OpenAIRealtimeSession: LangToolsAudioBuffer {
 // MARK: - Interruptible Extension
 
 extension OpenAIRealtimeSession: LangToolsInterruptible {
+    /// Whether the model is currently generating a response, tracked from
+    /// `response.created` / `response.done` server events.
     public var isGenerating: Bool {
-        // Track this based on response.created/response.done events
-        false
+        lock.lock(); defer { lock.unlock() }
+        return _isGenerating
     }
 
     public func cancelResponse() async throws {
