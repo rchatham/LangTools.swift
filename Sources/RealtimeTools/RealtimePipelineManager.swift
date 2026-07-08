@@ -49,6 +49,14 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
     /// ```
     public var textProcessor: (@Sendable (String) async throws -> String)?
 
+    /// Called whenever the pipeline's own state changes. `RealtimeEventHandler
+    /// .onStateChanged` is typed for `RealtimeSessionState` (the WebSocket
+    /// session enum from the `LangTools` module) and can't carry
+    /// `RealtimePipelineState` (defined in this module, one layer up) without
+    /// a circular module dependency — this is the pipeline-specific
+    /// equivalent.
+    public var onPipelineStateChanged: (@Sendable (RealtimePipelineState) -> Void)?
+
     // Interruption handling
     public var interruptionConfig: InterruptionConfiguration
 
@@ -101,7 +109,7 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         lock.lock()
         _state = newState
         lock.unlock()
-        eventHandler?.onStateChanged?(newState)
+        onPipelineStateChanged?(newState)
     }
 
     // MARK: - Audio Input

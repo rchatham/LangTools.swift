@@ -12,7 +12,7 @@ import LangTools
 
 extension ElevenLabs {
     /// Standard text-to-speech request (non-streaming)
-    public struct TextToSpeechRequest: Codable, LangToolsRequest, LangToolsTTSRequest {
+    public struct TextToSpeechRequest: Encodable, LangToolsRequest, LangToolsTTSRequest {
         public typealias LangTool = ElevenLabs
         public typealias Response = Data
         public static var endpoint: String { "text-to-speech" }
@@ -88,7 +88,7 @@ extension ElevenLabs {
     }
 
     /// Streaming text-to-speech request
-    public struct TextToSpeechStreamRequest: Codable, LangToolsRequest {
+    public struct TextToSpeechStreamRequest: Encodable, LangToolsRequest {
         public typealias Response = Data
         public typealias LangTool = ElevenLabs
         public static var endpoint: String { "text-to-speech" }
