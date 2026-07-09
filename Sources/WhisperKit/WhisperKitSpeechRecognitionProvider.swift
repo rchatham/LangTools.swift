@@ -238,12 +238,13 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
     }
 
     public func isModelDownloaded(_ modelName: String) -> Bool {
+        let modelFolderName = modelName.contains("_") ? modelName : "openai_whisper-\(modelName)"
         let modelFolder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("huggingface")
             .appendingPathComponent("models")
             .appendingPathComponent("argmaxinc")
             .appendingPathComponent("whisperkit-coreml")
-            .appendingPathComponent("openai_whisper-\(modelName)")
+            .appendingPathComponent(modelFolderName)
         guard let modelFolder else { return false }
         return FileManager.default.fileExists(atPath: modelFolder.path)
     }
