@@ -341,7 +341,7 @@ public class STTService: ObservableObject {
         switch event {
         case .partialTranscription(let text):
             if !text.isEmpty { partialTranscription = text }
-        case .finalTranscription(let text), .dualLanguageFinalTranscription(let text, _):
+        case .finalTranscription(let text):
             transcribedText = text
             partialTranscription = ""
             isRecording = false

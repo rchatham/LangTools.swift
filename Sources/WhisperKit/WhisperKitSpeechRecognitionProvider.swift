@@ -41,7 +41,6 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
         runsOnDevice: true,
         supportsStreamingPartials: true,
         supportsContinuousMode: true,
-        supportsDualLanguageAutoDetect: false,
         requiresNetwork: false,
         requiresModelDownload: true
     )
@@ -62,6 +61,7 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
     private var languageIdentifierProvider: @MainActor () -> String?
     private var audioStreamTranscriber: AudioStreamTranscriber?
     private var startupTask: Task<Void, Never>?
+    private var initializationTask: Task<Void, Never>?
     private var finalTranscriptionContinuation: CheckedContinuation<String, Never>?
     private var lastTranscribedText = ""
     private var hasEmittedFinalTranscription = false
@@ -151,10 +151,6 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
         }
     }
 
-    public func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {
-        throw WhisperKitLangToolsSpeechError.notAvailable
-    }
-
     public func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {
         startupTask?.cancel()
         startupTask = nil
@@ -223,9 +219,33 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
 
     public func preload() {
         guard whisperKit == nil && !isInitializing else { return }
-        Task.detached(priority: .userInitiated) { [weak self] in
-            try? await self?.initializeWhisperKit()
+        initializationTask?.cancel()
+        initializationTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.initializeWhisperKit()
+            } catch is CancellationError {
+                // Explicit resets cancel in-flight initialization and restore state.
+            } catch {
+                // `initializeWhisperKit()` publishes the failure state for UI.
+            }
         }
+    }
+
+    public func reset() {
+        initializationTask?.cancel()
+        initializationTask = nil
+        startupTask?.cancel()
+        startupTask = nil
+        whisperKit = nil
+        isInitializing = false
+        currentModelVariant = nil
+        audioStreamTranscriber = nil
+        finalTranscriptionContinuation?.resume(returning: currentTranscript)
+        finalTranscriptionContinuation = nil
+        isStreaming = false
+        lastError = nil
+        loadingState = .idle
     }
 
     public func reloadIfNeeded() async throws {
@@ -244,12 +264,13 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
     }
 
     public func isModelDownloaded(_ modelName: String) -> Bool {
+        let modelFolderName = modelName.contains("_") ? modelName : "openai_whisper-\(modelName)"
         let modelFolder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("huggingface")
             .appendingPathComponent("models")
             .appendingPathComponent("argmaxinc")
             .appendingPathComponent("whisperkit-coreml")
-            .appendingPathComponent("openai_whisper-\(modelName)")
+            .appendingPathComponent(modelFolderName)
         guard let modelFolder else { return false }
         return FileManager.default.fileExists(atPath: modelFolder.path)
     }
@@ -283,23 +304,27 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
         isInitializing = true
         loadingState = isModelDownloaded(modelVariant) ? .loading : .downloading
         do {
-            let config = WhisperKitConfig(model: modelVariant, verbose: false, prewarm: true, download: true)
-            do {
-                whisperKit = try await WhisperKit(config)
-            } catch {
-                let configNoPrewarm = WhisperKitConfig(model: modelVariant, verbose: false, prewarm: false, download: true)
-                whisperKit = try await WhisperKit(configNoPrewarm)
-            }
-            if whisperKit?.modelState == .prewarmed {
-                try await whisperKit?.loadModels()
-            }
+            let config = WhisperKitConfig(model: modelVariant, verbose: false, prewarm: false, load: false, download: true)
+            let initializedWhisperKit = try await WhisperKit(config)
+            try Task.checkCancellation()
+            whisperKit = initializedWhisperKit
+            loadingState = .loading
+            try await whisperKit?.loadModels()
+            try Task.checkCancellation()
             currentModelVariant = modelVariant
             loadingState = .ready
             isInitializing = false
             let waiting = pendingInitializationContinuations
             pendingInitializationContinuations.removeAll()
             waiting.forEach { $0.resume() }
+        } catch is CancellationError {
+            whisperKit = nil
+            currentModelVariant = nil
+            loadingState = .idle
+            throw CancellationError()
         } catch {
+            whisperKit = nil
+            currentModelVariant = nil
             loadingState = .failed(error.localizedDescription)
             isInitializing = false
             let speechError = WhisperKitLangToolsSpeechError.transcriptionFailed("WhisperKit initialization failed: \(error.localizedDescription)")

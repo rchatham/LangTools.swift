@@ -24,7 +24,6 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
         runsOnDevice: true,
         supportsStreamingPartials: true,
         supportsContinuousMode: true,
-        supportsDualLanguageAutoDetect: false,
         requiresNetwork: false,
         requiresModelDownload: false
     )
@@ -125,10 +124,6 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
     public func startRecognition() throws {
         updateLocaleFromSettings()
         try startStreamingTranscription(onPartialResult: { _ in }, onFinalResult: { _ in })
-    }
-
-    public func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {
-        throw AppleLangToolsSpeechError.notAvailable
     }
 
     public func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {
