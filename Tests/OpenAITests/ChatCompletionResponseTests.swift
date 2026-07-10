@@ -161,7 +161,7 @@ final class ChatCompletionResponseTests: XCTestCase {
 
         XCTAssertEqual(combined.choices.map(\.index), [0, 1],
                        "choices must be sorted by index after combining, even through the empty-choices terminal chunk")
-        XCTAssertEqual(combined.choices.first(where: { $0.index == 0 })?.message?.content.string, "A")
-        XCTAssertEqual(combined.choices.first(where: { $0.index == 1 })?.message?.content.string, "B")
+        XCTAssertEqual(combined.choices.first(where: { $0.index == 0 })?.delta?.content, "A")
+        XCTAssertEqual(combined.choices.first(where: { $0.index == 1 })?.delta?.content, "B")
     }
 }
