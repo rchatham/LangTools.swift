@@ -113,4 +113,55 @@ final class ChatCompletionResponseTests: XCTestCase {
                        "accumulated delta.content must also be the full concatenation")
         XCTAssertEqual(choice.message?.role, .assistant)
     }
+
+    private func streamChunk(index: Int, content: String) -> OpenAI.ChatCompletionResponse {
+        OpenAI.ChatCompletionResponse(
+            id: "chunk",
+            object: "chat.completion.chunk",
+            created: 0,
+            model: "gpt-4",
+            system_fingerprint: nil,
+            choices: [.init(
+                index: index,
+                message: nil,
+                finish_reason: nil,
+                delta: .init(role: .assistant, content: content, tool_calls: nil, audio: nil, refusal: nil),
+                logprobs: nil)],
+            usage: nil,
+            service_tier: nil,
+            choose: { _ in 0 })
+    }
+
+    private func terminalUsageChunk() -> OpenAI.ChatCompletionResponse {
+        // Real OpenAI streams end with a choices:[] chunk carrying only usage — this is the
+        // `next.isEmpty` path in `combining(_ choices:with:)`.
+        OpenAI.ChatCompletionResponse(
+            id: "chunk-final",
+            object: "chat.completion.chunk",
+            created: 0,
+            model: "gpt-4",
+            system_fingerprint: nil,
+            choices: [],
+            usage: .init(prompt_tokens: 1, completion_tokens: 1, total_tokens: 2),
+            service_tier: nil,
+            choose: { _ in 0 })
+    }
+
+    /// Regression test for the `isSortedByIndex` fast path in `combining(_ choices:with:)`.
+    /// Choice index 1 arriving before index 0 across chunks makes the accumulator's internal
+    /// order `[1, 0]` (the merge appends unmatched indices to the end); the old
+    /// `if next.isEmpty { return choices }` shipped that unsorted array unchanged on the
+    /// terminal usage-only chunk (`next.isEmpty`, which is the common case for real streams).
+    /// The fix re-checks `isSortedByIndex` on that path so the accumulator still self-heals.
+    func testStreamingMultiChoiceRemainsSortedThroughTerminalUsageChunk() throws {
+        var combined = OpenAI.ChatCompletionResponse.empty
+        combined = combined.combining(with: streamChunk(index: 1, content: "B"))
+        combined = combined.combining(with: streamChunk(index: 0, content: "A"))
+        combined = combined.combining(with: terminalUsageChunk())
+
+        XCTAssertEqual(combined.choices.map(\.index), [0, 1],
+                       "choices must be sorted by index after combining, even through the empty-choices terminal chunk")
+        XCTAssertEqual(combined.choices.first(where: { $0.index == 0 })?.message?.content.string, "A")
+        XCTAssertEqual(combined.choices.first(where: { $0.index == 1 })?.message?.content.string, "B")
+    }
 }
