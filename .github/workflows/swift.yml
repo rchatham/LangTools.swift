@@ -19,6 +19,10 @@ jobs:
     - name: Build
       run: swift build -v
     - name: Run tests
+      # Run merge-gating tests serially because the integration and agent suites use
+      # process-global MockURLProtocol registration and shared handler state; parallel
+      # XCTest execution can clobber handlers across tests and hang on shared runners.
+      #
       # PerformanceTests, BenchmarkTests, and PerformanceRatioGateTests are excluded
       # from the merge-gating run: PerformanceTests and BenchmarkTests are XCTest
       # measure/reporting suites rather than functional correctness checks, and they
@@ -29,4 +33,4 @@ jobs:
       #   swift test --filter PerformanceTests -v
       #   swift test --filter BenchmarkTests -v
       #   swift test --filter PerformanceRatioGateTests -v
-      run: swift test -v --skip BenchmarkTests --skip PerformanceRatioGateTests --skip PerformanceTests
+      run: swift test -v --no-parallel --skip BenchmarkTests --skip PerformanceRatioGateTests --skip PerformanceTests
