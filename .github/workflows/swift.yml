@@ -19,24 +19,17 @@ jobs:
     - name: Build
       run: swift build -v
     - name: Run tests
-      # Run merge-gating tests serially because several suites use process-global
-      # MockURLProtocol registration and shared handler state; parallel XCTest execution
-      # can clobber handlers across tests and hang on shared runners.
+      # Run merge-gating tests serially because some suites use process-global
+      # MockURLProtocol registration and shared handler state.
       #
-      # IntegrationTests and AgentsTests are also excluded until MockURLProtocol is
-      # hardened for deterministic CI use with process-global URLProtocol state.
-      # See https://github.com/rchatham/LangTools.swift/issues/41.
-      #
-      # PerformanceTests, BenchmarkTests, and PerformanceRatioGateTests are excluded
-      # from the merge-gating run: PerformanceTests and BenchmarkTests are XCTest
-      # measure/reporting suites rather than functional correctness checks, and they
-      # can be noisy/verbose on shared runners. PerformanceRatioGateTests asserts
-      # real wall-clock ratios that can flake on a shared/noisy runner even with the
-      # ratio normalization and headroom in ratios.json. Run them explicitly
-      # (locally or in a separate non-blocking job) via:
-      #   swift test --filter AgentsTests -v
-      #   swift test --filter IntegrationTests -v
-      #   swift test --filter PerformanceTests -v
-      #   swift test --filter BenchmarkTests -v
-      #   swift test --filter PerformanceRatioGateTests -v
-      run: swift test -v --no-parallel --skip AgentsTests --skip IntegrationTests --skip BenchmarkTests --skip PerformanceRatioGateTests --skip PerformanceTests
+      # Extended suites (AgentsTests, IntegrationTests, PerformanceTests,
+      # BenchmarkTests, and PerformanceRatioGateTests) are opt-in at Package.swift
+      # manifest load time so default CI does not build/link expensive or
+      # mock-state-sensitive tests. Enable them explicitly via:
+      #   LANGTOOLS_ENABLE_EXTENDED_TESTS=1 swift test --filter AgentsTests -v
+      #   LANGTOOLS_ENABLE_EXTENDED_TESTS=1 swift test --filter IntegrationTests -v
+      #   LANGTOOLS_ENABLE_EXTENDED_TESTS=1 swift test --filter PerformanceTests -v
+      #   LANGTOOLS_ENABLE_EXTENDED_TESTS=1 swift test --filter BenchmarkTests -v
+      #   LANGTOOLS_ENABLE_EXTENDED_TESTS=1 swift test --filter PerformanceRatioGateTests -v
+      # Follow-up for MockURLProtocol hardening: https://github.com/rchatham/LangTools.swift/issues/41
+      run: swift test -v --no-parallel

@@ -1,7 +1,10 @@
 // swift-tools-version: 5.9
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
+import Foundation
 import PackageDescription
+
+let extendedTestsEnabled = ProcessInfo.processInfo.environment["LANGTOOLS_ENABLE_EXTENDED_TESTS"] == "1"
 
 let package = Package(
     name: "LangTools",
@@ -42,9 +45,6 @@ let package = Package(
         .target(name: "AppleLangTools", dependencies: [.target(name: "LangTools")], path: "Sources/Apple", resources: [.process("README.md")]),
         .target(name: "WhisperKitLangTools", dependencies: [.target(name: "LangTools"), .product(name: "WhisperKit", package: "WhisperKit", condition: .when(platforms: [.macOS, .iOS]))], path: "Sources/WhisperKit"),
         .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], path: "Tests/TestUtils", resources: [.process("Resources/")]),
-        // ratios.json is read/written via a #filePath-relative path (see PerformanceRatioGate.swift),
-        // not Bundle.module, so it's excluded from the target rather than processed as a resource.
-        .target(name: "PerformanceTestUtils", dependencies: [.target(name: "LangTools"), .target(name: "OpenAI"), .target(name: "Anthropic")], path: "Tests/PerformanceTestUtils", exclude: ["ratios.json"]),
 
         // Test targets
         .testTarget(name: "LangToolsTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils"]),
@@ -55,9 +55,13 @@ let package = Package(
         .testTarget(name: "OllamaTests", dependencies: ["Ollama", "OpenAI", "TestUtils"]),
         .testTarget(name: "AppleSpeechTests", dependencies: ["AppleLangTools"]),
         .testTarget(name: "WhisperKitLangToolsTests", dependencies: ["WhisperKitLangTools"]),
+    ] + (extendedTestsEnabled ? [
         .testTarget(name: "AgentsTests", dependencies: ["Agents", "LangTools", "OpenAI", "TestUtils"]),
 
         // Performance & integration test targets
+        // ratios.json is read/written via a #filePath-relative path (see PerformanceRatioGate.swift),
+        // not Bundle.module, so it's excluded from the target rather than processed as a resource.
+        .target(name: "PerformanceTestUtils", dependencies: [.target(name: "LangTools"), .target(name: "OpenAI"), .target(name: "Anthropic")], path: "Tests/PerformanceTestUtils", exclude: ["ratios.json"]),
         .testTarget(name: "PerformanceTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils", "PerformanceTestUtils"]),
         .testTarget(name: "IntegrationTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils", "PerformanceTestUtils"]),
         .testTarget(name: "BenchmarkTests", dependencies: [
@@ -66,7 +70,7 @@ let package = Package(
             // .product(name: "SwiftOpenAI", package: "SwiftOpenAI"),
             // .product(name: "SwiftAnthropic", package: "SwiftAnthropic"),
         ]),
-
+    ] : []) + [
         // Executable target
         .executableTarget(name: "ChatCLI", dependencies: ["LangTools", "OpenAI", "Anthropic", "XAI", "Gemini", "Ollama"]),
     ]
