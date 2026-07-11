@@ -22,6 +22,9 @@ jobs:
       # Run merge-gating tests serially because some suites use process-global
       # MockURLProtocol registration and shared handler state.
       #
+      # Platform speech suites are skipped on headless macOS runners because they can
+      # wait on unavailable speech/model services or leave provider tasks running.
+      #
       # Extended suites (AgentsTests, IntegrationTests, PerformanceTests,
       # BenchmarkTests, and PerformanceRatioGateTests) are opt-in at Package.swift
       # manifest load time so default CI does not build/link expensive or
@@ -32,4 +35,4 @@ jobs:
       #   LANGTOOLS_ENABLE_EXTENDED_TESTS=1 swift test --filter BenchmarkTests -v
       #   LANGTOOLS_ENABLE_EXTENDED_TESTS=1 swift test --filter PerformanceRatioGateTests -v
       # Follow-up for MockURLProtocol hardening: https://github.com/rchatham/LangTools.swift/issues/41
-      run: swift test -v --no-parallel
+      run: swift test -v --no-parallel --skip AppleSpeechTests --skip WhisperKitLangToolsTests
