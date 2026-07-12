@@ -59,8 +59,8 @@ let package = Package(
         .testTarget(name: "AgentsTests", dependencies: ["Agents", "LangTools", "OpenAI", "TestUtils"]),
 
         // Performance & integration test targets
-        // ratios.json is read/written via a #filePath-relative path (see PerformanceRatioGate.swift),
-        // not Bundle.module, so it's excluded from the target rather than processed as a resource.
+        // ratios.json is read/written via a #filePath-relative path from PerformanceTests,
+        // not Bundle.module, so it's excluded from the helper target rather than processed as a resource.
         .target(name: "PerformanceTestUtils", dependencies: [.target(name: "LangTools"), .target(name: "OpenAI"), .target(name: "Anthropic")], path: "Tests/PerformanceTestUtils", exclude: ["ratios.json"]),
         .testTarget(name: "PerformanceTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils", "PerformanceTestUtils"]),
         .testTarget(name: "IntegrationTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils", "PerformanceTestUtils"]),

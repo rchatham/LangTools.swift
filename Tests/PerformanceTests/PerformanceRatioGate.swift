@@ -13,9 +13,9 @@
 //  A regression shows up as "combining went from 3× to 6× raw-parse cost", which is a
 //  statement about the change, not the machine it ran on.
 //
-//  Per-path ceilings live in the committed `ratios.json` next to this file. Run once with
-//  `RECORD_PERF_RATIOS=1` to (re)record ceilings from observed ratios (plus headroom); a
-//  normal run reads them and asserts.
+//  Per-path ceilings live in the committed `ratios.json` under Tests/PerformanceTestUtils.
+//  Run once with `RECORD_PERF_RATIOS=1` to (re)record ceilings from observed ratios
+//  (plus headroom); a normal run reads them and asserts.
 //
 
 import XCTest
@@ -57,8 +57,12 @@ public extension XCTestCase {
                      key, custom * 1000, foundation * 1000, ratio))
 
         if ProcessInfo.processInfo.environment["RECORD_PERF_RATIOS"] == "1" {
-            PerformanceRatios.record(key: key, observedRatio: ratio)
-            print("   📝 recorded ceiling for \(key)")
+            do {
+                try PerformanceRatios.record(key: key, observedRatio: ratio)
+                print("   📝 recorded ceiling for \(key)")
+            } catch {
+                XCTFail("Failed to record performance ratio for \(key): \(error)", file: file, line: line)
+            }
             return
         }
 
@@ -89,14 +93,15 @@ public extension XCTestCase {
 
 /// Loads and records the committed per-path ratio ceilings.
 ///
-/// `ratios.json` is stored beside this source file (located via `#filePath`) rather than as a
-/// `Bundle.module` resource: record mode must write back to the *committed* file, but bundled
-/// resources are read-only copies in the build directory. `#filePath` resolves to the source tree,
-/// which is present for `swift test` locally and in CI.
+/// `ratios.json` is stored in `Tests/PerformanceTestUtils` and located via a `#filePath`-relative
+/// source-tree path rather than as a `Bundle.module` resource: record mode must write back to the
+/// *committed* file, but bundled resources are read-only copies in the build directory.
 public enum PerformanceRatios {
 
     static let fileURL: URL = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appendingPathComponent("PerformanceTestUtils")
         .appendingPathComponent("ratios.json")
 
     /// Headroom applied to an observed ratio when recording, so ordinary run-to-run noise doesn't
@@ -115,12 +120,12 @@ public enum PerformanceRatios {
         load()[key]
     }
 
-    public static func record(key: String, observedRatio: Double) {
+    public static func record(key: String, observedRatio: Double) throws {
         var map = load()
         map[key] = ((observedRatio * recordHeadroom) * 100).rounded() / 100 // 2-decimal ceiling
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(map) else { return }
-        try? data.write(to: fileURL)
+        let data = try encoder.encode(map)
+        try data.write(to: fileURL)
     }
 }
