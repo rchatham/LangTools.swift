@@ -53,6 +53,17 @@ final class WhisperKitSpeechRecognitionProviderTests: XCTestCase {
     }
 
     @MainActor
+    func testResetStreamingTranscriptStateClearsPriorSessionText() {
+        let provider = WhisperKitSpeechRecognitionProvider()
+
+        provider.setStreamingTranscriptForTesting("previous session")
+        provider.resetStreamingTranscriptState()
+
+        XCTAssertEqual(provider.currentTranscript, "")
+        XCTAssertEqual(provider.lastTranscribedText, "")
+    }
+
+    @MainActor
     func testStreamingFailureRoutesToSessionCallbackAndEventHandler() {
         let provider = WhisperKitSpeechRecognitionProvider()
         let error = WhisperKitLangToolsSpeechError.transcriptionFailed("boom")

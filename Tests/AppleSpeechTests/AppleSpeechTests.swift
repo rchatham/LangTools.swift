@@ -11,6 +11,16 @@ import Speech
 
 final class AppleSpeechTests: XCTestCase {
 
+    @MainActor
+    func testResetStreamingTranscriptStateClearsPriorSessionText() {
+        let provider = AppleSpeechRecognitionProvider(locale: Locale(identifier: "en-US"))
+
+        provider.setStreamingTranscriptForTesting("previous session")
+        provider.resetStreamingTranscriptState()
+
+        XCTAssertEqual(provider.currentTranscript, "")
+    }
+
     // MARK: - Locale Support Tests
 
     func testSupportedLocalesNotEmpty() {

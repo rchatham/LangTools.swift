@@ -64,8 +64,9 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
     private var initializationTask: Task<Void, Never>?
     private var streamTranscriptionTask: Task<Void, Never>?
     private var finalTranscriptionContinuation: CheckedContinuation<String, Never>?
-    private var lastTranscribedText = ""
+    var lastTranscribedText = ""
     private var hasEmittedFinalTranscription = false
+    private var isStoppingStreaming = false
 
     public init(
         modelVariant: String = "base",
@@ -235,6 +236,7 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
         whisperKit = nil
         isInitializing = false
         currentModelVariant = nil
+        isStoppingStreaming = false
         lastError = nil
         loadingState = .idle
     }
@@ -355,7 +357,7 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
                 onEvent(isFinal ? .finalTranscription(text) : .partialTranscription(text))
             }
 
-            hasEmittedFinalTranscription = false
+            resetStreamingTranscriptState()
             isStreaming = true
             debugLog("running AudioStreamTranscriber until stopped")
             do {
@@ -387,7 +389,7 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
     ) async throws {
         try await prepareStreamingTranscriber(onPartialResult: onPartialResult)
 
-        hasEmittedFinalTranscription = false
+        resetStreamingTranscriptState()
         isStreaming = true
         debugLog("starting AudioStreamTranscriber")
         let transcriber = audioStreamTranscriber
@@ -501,10 +503,24 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
     }
 
     private func stopStreamingCapture(clearLastTranscribedText: Bool, resetTranscriber: Bool) async {
+        guard !isStoppingStreaming else { return }
+        isStoppingStreaming = true
+        defer { isStoppingStreaming = false }
         let transcriber = audioStreamTranscriber
         await transcriber?.stopStreamTranscription()
         completePendingFinalTranscriptionWithCurrentText()
         finishStreamingSession(clearLastTranscribedText: clearLastTranscribedText, resetTranscriber: resetTranscriber)
+    }
+
+    func setStreamingTranscriptForTesting(_ text: String) {
+        currentTranscript = text
+        lastTranscribedText = text
+    }
+
+    func resetStreamingTranscriptState() {
+        currentTranscript = ""
+        lastTranscribedText = ""
+        hasEmittedFinalTranscription = false
     }
 
     private func finishStreamingSession(

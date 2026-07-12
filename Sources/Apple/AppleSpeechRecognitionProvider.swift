@@ -154,6 +154,7 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
             throw AppleLangToolsSpeechError.permissionDenied
         }
 
+        resetStreamingTranscriptState()
         onPartialResultCallback = onPartialResult
         onFinalResultCallback = onFinalResult
 
@@ -295,6 +296,14 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
                 self.cleanupStreaming()
             }
         }
+    }
+
+    func setStreamingTranscriptForTesting(_ text: String) {
+        currentTranscript = text
+    }
+
+    func resetStreamingTranscriptState() {
+        currentTranscript = ""
     }
 
     private func cleanupStreaming() {
