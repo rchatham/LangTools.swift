@@ -138,6 +138,9 @@ public protocol StreamingSpeechRecognitionProviding: SpeechRecognitionProviding 
     /// `appendStreamingAudio(_:)` during an active streaming session.
     var supportsExternalAudioStreaming: Bool { get }
 
+    /// Starts provider-owned streaming and returns once capture startup has been requested.
+    /// Events continue asynchronously through `onEvent`; call `stopStreamingRecognition()`
+    /// to end the stream and collect the best final transcript.
     func startStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws
     /// Append externally captured audio during an active streaming session.
     ///
