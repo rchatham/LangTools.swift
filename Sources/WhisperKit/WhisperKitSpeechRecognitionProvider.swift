@@ -35,7 +35,7 @@ public enum WhisperKitLoadingState: Equatable, Sendable {
 /// Reusable WhisperKit speech-to-text provider adapter.
 @available(macOS 13, iOS 16, *)
 @MainActor
-public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecognitionProviding, ObservableObject {
+public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechRecognitionProviding, ObservableObject {
     public let providerID = LangToolsProviderID(rawValue: "whisperkit.local")
     public let displayName = "WhisperKit"
     public let capabilities = ProviderCapabilities(
@@ -345,6 +345,32 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
 
     public func stopStreamingRecognition() async -> String? {
         await stopStreamingTranscription()
+    }
+
+    @discardableResult
+    public func runStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws -> String? {
+        try await prepareStreamingTranscriber { text, isFinal in
+            onEvent(isFinal ? .finalTranscription(text) : .partialTranscription(text))
+        }
+
+        hasEmittedFinalTranscription = false
+        isStreaming = true
+        debugLog("running AudioStreamTranscriber until stopped")
+        do {
+            try await audioStreamTranscriber?.startStreamTranscription()
+            isStreaming = false
+            return currentTranscript.isEmpty ? nil : currentTranscript
+        } catch is CancellationError {
+            isStreaming = false
+            throw CancellationError()
+        } catch {
+            isStreaming = false
+            let speechError = error as? WhisperKitLangToolsSpeechError ?? .transcriptionFailed(error.localizedDescription)
+            lastError = speechError
+            eventHandler?(.recognitionFailed(speechError.localizedDescription))
+            debugLog("AudioStreamTranscriber run threw: \(speechError.localizedDescription)")
+            throw speechError
+        }
     }
 
     public func startStreamingTranscription(

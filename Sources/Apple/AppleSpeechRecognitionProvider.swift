@@ -17,7 +17,7 @@ private extension SFSpeechRecognizerAuthorizationStatus {
 
 /// Reusable Apple Speech recognition provider adapter.
 @MainActor
-public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionProviding {
+public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecognitionProviding {
     public let providerID = LangToolsProviderID(rawValue: "apple.speech")
     public let displayName = "Apple Speech"
     public let capabilities = ProviderCapabilities(
@@ -44,6 +44,7 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionSessionID = UUID()
     private var streamingFinalizeCleanupTask: Task<Void, Never>?
+    private var blockingStreamingContinuation: CheckedContinuation<String?, Error>?
     private var onPartialResultCallback: ((String) -> Void)?
     private var onFinalResultCallback: ((String) -> Void)?
     private var languageIdentifierProvider: @MainActor () -> String?
@@ -255,6 +256,34 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
         stopStreamingTranscription()
     }
 
+    @discardableResult
+    public func runStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws -> String? {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                blockingStreamingContinuation = continuation
+                do {
+                    try startStreamingTranscription(
+                        onPartialResult: { text in
+                            onEvent(.partialTranscription(text))
+                        },
+                        onFinalResult: { [weak self] text in
+                            onEvent(.finalTranscription(text))
+                            self?.completeBlockingStreaming(returning: text.isEmpty ? nil : text)
+                        }
+                    )
+                } catch {
+                    blockingStreamingContinuation = nil
+                    continuation.resume(throwing: error)
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.completeBlockingStreaming(throwing: CancellationError())
+                self?.cancelStreamingTranscription()
+            }
+        }
+    }
+
     private func scheduleStreamingFinalizeCleanup(for sessionID: UUID) {
         streamingFinalizeCleanupTask?.cancel()
         streamingFinalizeCleanupTask = Task { [weak self] in
@@ -269,6 +298,7 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
     }
 
     private func cleanupStreaming() {
+        completeBlockingStreaming(returning: currentTranscript.isEmpty ? nil : currentTranscript)
         streamingFinalizeCleanupTask?.cancel()
         streamingFinalizeCleanupTask = nil
         isListening = false
@@ -281,6 +311,18 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
         recognitionSessionID = UUID()
         onPartialResultCallback = nil
         onFinalResultCallback = nil
+    }
+
+    private func completeBlockingStreaming(returning text: String?) {
+        guard let continuation = blockingStreamingContinuation else { return }
+        blockingStreamingContinuation = nil
+        continuation.resume(returning: text)
+    }
+
+    private func completeBlockingStreaming(throwing error: Error) {
+        guard let continuation = blockingStreamingContinuation else { return }
+        blockingStreamingContinuation = nil
+        continuation.resume(throwing: error)
     }
 }
 

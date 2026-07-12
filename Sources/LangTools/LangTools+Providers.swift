@@ -159,6 +159,19 @@ public extension StreamingSpeechRecognitionProviding {
     }
 }
 
+/// Optional STT provider contract for callers that want structured-concurrency
+/// streaming semantics: start capture, suspend while recognition runs, and return
+/// the best final transcript once the stream ends, is cancelled, or fails.
+///
+/// This is complementary to `StreamingSpeechRecognitionProviding`, whose
+/// `startStreamingRecognition(...)` method returns after startup and delivers
+/// events asynchronously.
+@MainActor
+public protocol BlockingStreamingSpeechRecognitionProviding: StreamingSpeechRecognitionProviding {
+    @discardableResult
+    func runStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws -> String?
+}
+
 /// A text translation request expressed in provider-neutral language IDs.
 public struct LangToolsTextTranslationRequest: Equatable, Sendable {
     public let text: String
