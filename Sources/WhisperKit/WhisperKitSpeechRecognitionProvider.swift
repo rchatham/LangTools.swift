@@ -230,15 +230,11 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
         initializationTask = nil
         startupTask?.cancel()
         startupTask = nil
-        streamTranscriptionTask?.cancel()
-        streamTranscriptionTask = nil
+        completePendingFinalTranscriptionWithCurrentText()
+        finishStreamingSession(clearLastTranscribedText: true, resetTranscriber: true)
         whisperKit = nil
         isInitializing = false
         currentModelVariant = nil
-        audioStreamTranscriber = nil
-        finalTranscriptionContinuation?.resume(returning: currentTranscript)
-        finalTranscriptionContinuation = nil
-        isStreaming = false
         lastError = nil
         loadingState = .idle
     }
@@ -338,9 +334,14 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
     }
 
     public func startStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws {
-        try await startStreamingTranscription { text, isFinal in
-            onEvent(isFinal ? .finalTranscription(text) : .partialTranscription(text))
-        }
+        try await startStreamingTranscription(
+            onPartialResult: { text, isFinal in
+                onEvent(isFinal ? .finalTranscription(text) : .partialTranscription(text))
+            },
+            onError: { error in
+                onEvent(.recognitionFailed(error.localizedDescription))
+            }
+        )
     }
 
     public func stopStreamingRecognition() async -> String? {
@@ -349,32 +350,40 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
 
     @discardableResult
     public func runStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws -> String? {
-        try await prepareStreamingTranscriber { text, isFinal in
-            onEvent(isFinal ? .finalTranscription(text) : .partialTranscription(text))
-        }
+        try await withTaskCancellationHandler {
+            try await prepareStreamingTranscriber { text, isFinal in
+                onEvent(isFinal ? .finalTranscription(text) : .partialTranscription(text))
+            }
 
-        hasEmittedFinalTranscription = false
-        isStreaming = true
-        debugLog("running AudioStreamTranscriber until stopped")
-        do {
-            try await audioStreamTranscriber?.startStreamTranscription()
-            isStreaming = false
-            return currentTranscript.isEmpty ? nil : currentTranscript
-        } catch is CancellationError {
-            isStreaming = false
-            throw CancellationError()
-        } catch {
-            isStreaming = false
-            let speechError = error as? WhisperKitLangToolsSpeechError ?? .transcriptionFailed(error.localizedDescription)
-            lastError = speechError
-            eventHandler?(.recognitionFailed(speechError.localizedDescription))
-            debugLog("AudioStreamTranscriber run threw: \(speechError.localizedDescription)")
-            throw speechError
+            hasEmittedFinalTranscription = false
+            isStreaming = true
+            debugLog("running AudioStreamTranscriber until stopped")
+            do {
+                try await audioStreamTranscriber?.startStreamTranscription()
+                finishStreamingSession(clearLastTranscribedText: false, resetTranscriber: false)
+                return currentTranscript.isEmpty ? nil : currentTranscript
+            } catch is CancellationError {
+                await stopStreamingCapture(clearLastTranscribedText: false, resetTranscriber: false)
+                throw CancellationError()
+            } catch {
+                await stopStreamingCapture(clearLastTranscribedText: false, resetTranscriber: false)
+                let speechError = error as? WhisperKitLangToolsSpeechError ?? .transcriptionFailed(error.localizedDescription)
+                handleStreamingFailure(speechError, onError: { error in
+                    onEvent(.recognitionFailed(error.localizedDescription))
+                })
+                debugLog("AudioStreamTranscriber run threw: \(speechError.localizedDescription)")
+                throw speechError
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                await self?.stopStreamingCapture(clearLastTranscribedText: false, resetTranscriber: false)
+            }
         }
     }
 
     public func startStreamingTranscription(
-        onPartialResult: @escaping (String, Bool) -> Void
+        onPartialResult: @escaping (String, Bool) -> Void,
+        onError: (@MainActor @Sendable (WhisperKitLangToolsSpeechError) -> Void)? = nil
     ) async throws {
         try await prepareStreamingTranscriber(onPartialResult: onPartialResult)
 
@@ -393,15 +402,14 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
                 }
             } catch is CancellationError {
                 await MainActor.run { [weak self] in
-                    self?.isStreaming = false
+                    self?.finishStreamingSession(clearLastTranscribedText: false, resetTranscriber: false, cancelTask: false)
                 }
             } catch {
                 await MainActor.run { [weak self] in
                     guard let self else { return }
-                    self.isStreaming = false
+                    self.finishStreamingSession(clearLastTranscribedText: false, resetTranscriber: false, cancelTask: false)
                     let speechError = error as? WhisperKitLangToolsSpeechError ?? .transcriptionFailed(error.localizedDescription)
-                    self.lastError = speechError
-                    self.eventHandler?(.recognitionFailed(speechError.localizedDescription))
+                    self.handleStreamingFailure(speechError, onError: onError)
                     self.debugLog("AudioStreamTranscriber start threw: \(speechError.localizedDescription)")
                 }
             }
@@ -487,13 +495,50 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
                 self.completeFinalTranscription(self.lastTranscribedText)
             }
         }
-        streamTranscriptionTask?.cancel()
-        streamTranscriptionTask = nil
-        isStreaming = false
-        lastTranscribedText = ""
-        deactivateAudioSessionAfterStreaming()
+        finishStreamingSession(clearLastTranscribedText: true, resetTranscriber: false)
         debugLog("stopStreamingTranscription end result=\(result.debugDescription)")
         return result
+    }
+
+    private func stopStreamingCapture(clearLastTranscribedText: Bool, resetTranscriber: Bool) async {
+        let transcriber = audioStreamTranscriber
+        await transcriber?.stopStreamTranscription()
+        completePendingFinalTranscriptionWithCurrentText()
+        finishStreamingSession(clearLastTranscribedText: clearLastTranscribedText, resetTranscriber: resetTranscriber)
+    }
+
+    private func finishStreamingSession(
+        clearLastTranscribedText: Bool,
+        resetTranscriber: Bool,
+        cancelTask: Bool = true
+    ) {
+        if cancelTask {
+            streamTranscriptionTask?.cancel()
+        }
+        streamTranscriptionTask = nil
+        isStreaming = false
+        if clearLastTranscribedText {
+            lastTranscribedText = ""
+        }
+        if resetTranscriber {
+            audioStreamTranscriber = nil
+        }
+        deactivateAudioSessionAfterStreaming()
+    }
+
+    func handleStreamingFailure(
+        _ speechError: WhisperKitLangToolsSpeechError,
+        onError: (@MainActor @Sendable (WhisperKitLangToolsSpeechError) -> Void)?
+    ) {
+        lastError = speechError
+        eventHandler?(.recognitionFailed(speechError.localizedDescription))
+        onError?(speechError)
+    }
+
+    private func completePendingFinalTranscriptionWithCurrentText() {
+        guard let continuation = finalTranscriptionContinuation else { return }
+        finalTranscriptionContinuation = nil
+        continuation.resume(returning: currentTranscript.isEmpty ? lastTranscribedText : currentTranscript)
     }
 
     private func normalizedWhisperLanguageIdentifier() -> String? {
