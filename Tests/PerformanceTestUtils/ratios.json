@@ -1,5 +1,5 @@
 {
   "OpenAI.largeConversationEncode" : 4.88,
   "OpenAI.manyChoicesDecode" : 6.22,
-  "OpenAI.responseCombining" : 0.23
+  "OpenAI.responseCombining" : 0.5
 }
