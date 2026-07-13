@@ -175,7 +175,7 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
         let inputNode = audioEngine.inputNode
         let hwFormat = inputNode.inputFormat(forBus: 0)
         guard hwFormat.sampleRate > 0 && hwFormat.channelCount > 0 else {
-            cleanupStreaming()
+            cleanupStreaming(completeBlockingContinuation: false)
             throw AppleLangToolsSpeechError.recordingFailed("No valid audio input device available")
         }
 
@@ -217,7 +217,7 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
             try audioEngine.start()
             isListening = true
         } catch {
-            cleanupStreaming()
+            cleanupStreaming(completeBlockingContinuation: false)
             throw error
         }
     }
@@ -273,8 +273,7 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
                         }
                     )
                 } catch {
-                    blockingStreamingContinuation = nil
-                    continuation.resume(throwing: error)
+                    completeBlockingStreaming(throwing: error)
                 }
             }
         } onCancel: {
@@ -306,8 +305,10 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
         currentTranscript = ""
     }
 
-    private func cleanupStreaming() {
-        completeBlockingStreaming(returning: currentTranscript.isEmpty ? nil : currentTranscript)
+    private func cleanupStreaming(completeBlockingContinuation: Bool = true) {
+        if completeBlockingContinuation {
+            completeBlockingStreaming(returning: currentTranscript.isEmpty ? nil : currentTranscript)
+        }
         streamingFinalizeCleanupTask?.cancel()
         streamingFinalizeCleanupTask = nil
         isListening = false

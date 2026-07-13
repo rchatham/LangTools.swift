@@ -226,6 +226,12 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
         }
     }
 
+    /// Resets cached model/loading state.
+    ///
+    /// Callers should stop an active streaming session before calling `reset()`. This method
+    /// cancels outstanding initialization/startup tasks and clears provider state synchronously;
+    /// it does not wait for microphone capture teardown beyond the provider's cooperative
+    /// streaming-session cleanup.
     public func reset() {
         initializationTask?.cancel()
         initializationTask = nil
