@@ -239,6 +239,7 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
         startupTask = nil
         whisperKit = nil
         isInitializing = false
+        completePendingInitializationContinuations(throwing: CancellationError())
         currentModelVariant = nil
         audioStreamTranscriber = nil
         finalTranscriptionContinuation?.resume(returning: currentTranscript)
@@ -314,24 +315,52 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
             currentModelVariant = modelVariant
             loadingState = .ready
             isInitializing = false
-            let waiting = pendingInitializationContinuations
-            pendingInitializationContinuations.removeAll()
-            waiting.forEach { $0.resume() }
+            completePendingInitializationContinuations()
         } catch is CancellationError {
             whisperKit = nil
             currentModelVariant = nil
             loadingState = .idle
-            throw CancellationError()
+            isInitializing = false
+            let cancellation = CancellationError()
+            completePendingInitializationContinuations(throwing: cancellation)
+            throw cancellation
         } catch {
             whisperKit = nil
             currentModelVariant = nil
             loadingState = .failed(error.localizedDescription)
             isInitializing = false
             let speechError = WhisperKitLangToolsSpeechError.transcriptionFailed("WhisperKit initialization failed: \(error.localizedDescription)")
-            let waiting = pendingInitializationContinuations
-            pendingInitializationContinuations.removeAll()
-            waiting.forEach { $0.resume(throwing: speechError) }
+            completePendingInitializationContinuations(throwing: speechError)
             throw speechError
+        }
+    }
+
+    func test_enqueuePendingInitializationContinuation() async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            pendingInitializationContinuations.append(continuation)
+        }
+    }
+
+    func test_beginInitialization() {
+        isInitializing = true
+    }
+
+    func test_cancelInitializationForTesting() {
+        isInitializing = false
+        completePendingInitializationContinuations(throwing: CancellationError())
+    }
+
+    var test_isInitializing: Bool {
+        isInitializing
+    }
+
+    private func completePendingInitializationContinuations(throwing error: Error? = nil) {
+        let waiting = pendingInitializationContinuations
+        pendingInitializationContinuations.removeAll()
+        if let error {
+            waiting.forEach { $0.resume(throwing: error) }
+        } else {
+            waiting.forEach { $0.resume() }
         }
     }
 
