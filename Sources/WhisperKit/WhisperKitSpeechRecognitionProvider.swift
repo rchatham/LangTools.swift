@@ -316,6 +316,7 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
     }
 
     private func makeWhisperKitConfig(modelVariant: String) -> WhisperKitConfig {
+        // Keep the audio encoder off ANE to avoid observed AudioEncoder.mlmodelc load failures.
         let computeOptions = ModelComputeOptions(
             audioEncoderCompute: .cpuAndGPU,
             textDecoderCompute: .cpuAndNeuralEngine
@@ -359,11 +360,11 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
     @discardableResult
     public func runStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws -> String? {
         try await withTaskCancellationHandler {
+            resetStreamingTranscriptState()
             try await prepareStreamingTranscriber { text, isFinal in
                 onEvent(isFinal ? .finalTranscription(text) : .partialTranscription(text))
             }
 
-            resetStreamingTranscriptState()
             isStreaming = true
             debugLog("running AudioStreamTranscriber until stopped")
             do {
@@ -393,9 +394,9 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
         onPartialResult: @escaping (String, Bool) -> Void,
         onError: (@MainActor @Sendable (WhisperKitLangToolsSpeechError) -> Void)? = nil
     ) async throws {
+        resetStreamingTranscriptState()
         try await prepareStreamingTranscriber(onPartialResult: onPartialResult)
 
-        resetStreamingTranscriptState()
         isStreaming = true
         debugLog("starting AudioStreamTranscriber")
         let transcriber = audioStreamTranscriber
@@ -553,7 +554,6 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
         onError: (@MainActor @Sendable (WhisperKitLangToolsSpeechError) -> Void)?
     ) {
         lastError = speechError
-        eventHandler?(.recognitionFailed(speechError.localizedDescription))
         onError?(speechError)
     }
 

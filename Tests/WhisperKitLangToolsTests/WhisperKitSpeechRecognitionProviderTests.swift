@@ -64,22 +64,20 @@ final class WhisperKitSpeechRecognitionProviderTests: XCTestCase {
     }
 
     @MainActor
-    func testStreamingFailureRoutesToSessionCallbackAndEventHandler() {
+    func testStreamingFailureRoutesToSingleSessionCallback() {
         let provider = WhisperKitSpeechRecognitionProvider()
         let error = WhisperKitLangToolsSpeechError.transcriptionFailed("boom")
-        var eventHandlerEvents: [SpeechRecognitionEvent] = []
-        var sessionEvents: [SpeechRecognitionEvent] = []
+        var events: [SpeechRecognitionEvent] = []
         provider.eventHandler = { event in
-            eventHandlerEvents.append(event)
+            events.append(event)
         }
 
         provider.handleStreamingFailure(error, onError: { error in
-            sessionEvents.append(.recognitionFailed(error.localizedDescription))
+            provider.eventHandler?(.recognitionFailed(error.localizedDescription))
         })
 
         XCTAssertEqual(provider.lastError?.localizedDescription, error.localizedDescription)
-        XCTAssertEqual(eventHandlerEvents, [.recognitionFailed(error.localizedDescription)])
-        XCTAssertEqual(sessionEvents, [.recognitionFailed(error.localizedDescription)])
+        XCTAssertEqual(events, [.recognitionFailed(error.localizedDescription)])
     }
 
     @MainActor
