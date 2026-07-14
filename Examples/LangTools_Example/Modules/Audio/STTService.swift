@@ -383,6 +383,7 @@ public class STTService: ObservableObject {
             do {
                 try await provider.appendStreamingAudio(finalAudioData)
             } catch {
+                _ = await provider.stopStreamingRecognition()
                 print("[STTService] Final audio chunk append failed: \(error)")
                 self.error = error as? STTError ?? .transcriptionFailed(error.localizedDescription)
                 status = .error(error.localizedDescription)

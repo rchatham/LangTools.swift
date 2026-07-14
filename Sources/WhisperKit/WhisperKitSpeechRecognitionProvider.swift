@@ -55,7 +55,7 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
 
     private var whisperKit: WhisperKit?
     private var isInitializing = false
-    private var pendingInitializationContinuations: [CheckedContinuation<Void, Error>] = []
+    private var pendingInitializationContinuations: [UUID: CheckedContinuation<Void, Error>] = [:]
     private var currentModelVariant: String?
     private var modelVariantProvider: @MainActor () -> String
     private var languageIdentifierProvider: @MainActor () -> String?
@@ -296,9 +296,9 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
             // Await the in-flight initialization rather than returning silently.
             // This prevents a spurious providerNotConfigured error when transcribe()
             // races with a concurrent preload().
-            try await withCheckedThrowingContinuation { continuation in
-                pendingInitializationContinuations.append(continuation)
-            }
+            try Task.checkCancellation()
+            try await awaitPendingInitialization()
+            try Task.checkCancellation()
             return
         }
 
@@ -336,9 +336,7 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
     }
 
     func test_enqueuePendingInitializationContinuation() async throws {
-        try await withCheckedThrowingContinuation { continuation in
-            pendingInitializationContinuations.append(continuation)
-        }
+        try await awaitPendingInitialization()
     }
 
     func test_beginInitialization() {
@@ -354,14 +352,35 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
         isInitializing
     }
 
-    private func completePendingInitializationContinuations(throwing error: Error? = nil) {
-        let waiting = pendingInitializationContinuations
-        pendingInitializationContinuations.removeAll()
-        if let error {
-            waiting.forEach { $0.resume(throwing: error) }
-        } else {
-            waiting.forEach { $0.resume() }
+    var test_hasPendingInitializationContinuations: Bool {
+        !pendingInitializationContinuations.isEmpty
+    }
+
+    private func awaitPendingInitialization() async throws {
+        let continuationID = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                pendingInitializationContinuations[continuationID] = continuation
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.completePendingInitializationContinuation(continuationID, throwing: CancellationError())
+            }
         }
+    }
+
+    private func completePendingInitializationContinuation(_ id: UUID, throwing error: Error? = nil) {
+        guard let continuation = pendingInitializationContinuations.removeValue(forKey: id) else { return }
+        if let error {
+            continuation.resume(throwing: error)
+        } else {
+            continuation.resume()
+        }
+    }
+
+    private func completePendingInitializationContinuations(throwing error: Error? = nil) {
+        let continuationIDs = Array(pendingInitializationContinuations.keys)
+        continuationIDs.forEach { completePendingInitializationContinuation($0, throwing: error) }
     }
 
     func stripSpecialTokens(_ text: String) -> String {

@@ -9,7 +9,7 @@ public protocol LangToolsAudioResponse {
     init(audioData: Data) throws
 }
 
-extension Data: @retroactive LangToolsAudioResponse {
+extension Data: LangToolsAudioResponse {
     public var audioData: Data { self }
     public init(audioData: Data) throws { self = audioData }
 }
@@ -20,7 +20,7 @@ public protocol LangToolsTranscriptionResponse {
     var detectedLanguageIdentifier: String? { get }
 }
 
-extension String: @retroactive LangToolsTranscriptionResponse {
+extension String: LangToolsTranscriptionResponse {
     public var transcriptText: String { self }
     public var detectedLanguageIdentifier: String? { nil }
 }
