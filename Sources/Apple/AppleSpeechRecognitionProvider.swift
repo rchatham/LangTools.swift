@@ -183,10 +183,10 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
         recognitionSessionID = sessionID
 
         recognitionTask = recognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            if error != nil {
+            if let error {
                 Task { @MainActor [weak self] in
                     guard let self, self.recognitionSessionID == sessionID else { return }
-                    self.cleanupStreaming()
+                    self.handleStreamingFailure(error)
                 }
                 return
             }
@@ -303,6 +303,19 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
 
     func resetStreamingTranscriptState() {
         currentTranscript = ""
+    }
+
+    func test_failStreamingForTesting(_ error: Error) async throws -> String? {
+        try await withCheckedThrowingContinuation { continuation in
+            blockingStreamingContinuation = continuation
+            handleStreamingFailure(error)
+        }
+    }
+
+    private func handleStreamingFailure(_ error: Error) {
+        eventHandler?(.recognitionFailed(error.localizedDescription))
+        completeBlockingStreaming(throwing: error)
+        cleanupStreaming(completeBlockingContinuation: false)
     }
 
     private func cleanupStreaming(completeBlockingContinuation: Bool = true) {
