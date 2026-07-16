@@ -285,53 +285,57 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
     }
 
     private func initializeWhisperKit() async throws {
-        let modelVariant = modelVariantProvider()
-        if whisperKit != nil && currentModelVariant != modelVariant {
-            whisperKit = nil
-        }
+        while true {
+            let modelVariant = modelVariantProvider()
+            if whisperKit != nil && currentModelVariant != modelVariant {
+                whisperKit = nil
+            }
 
-        if whisperKit != nil { return }
+            if whisperKit != nil { return }
 
-        if isInitializing {
-            // Await the in-flight initialization rather than returning silently.
-            // This prevents a spurious providerNotConfigured error when transcribe()
-            // races with a concurrent preload().
-            try Task.checkCancellation()
-            try await awaitPendingInitialization()
-            try Task.checkCancellation()
-            return
-        }
+            if isInitializing {
+                // Await the in-flight initialization rather than returning silently.
+                // This prevents a spurious providerNotConfigured error when transcribe()
+                // races with a concurrent preload(). Re-check the requested model after
+                // the wait so a model-selection change does not reuse the wrong variant.
+                try Task.checkCancellation()
+                try await awaitPendingInitialization()
+                try Task.checkCancellation()
+                continue
+            }
 
-        isInitializing = true
-        loadingState = isModelDownloaded(modelVariant) ? .loading : .downloading
-        do {
-            let config = WhisperKitConfig(model: modelVariant, verbose: false, prewarm: false, load: false, download: true)
-            let initializedWhisperKit = try await WhisperKit(config)
-            try Task.checkCancellation()
-            whisperKit = initializedWhisperKit
-            loadingState = .loading
-            try await whisperKit?.loadModels()
-            try Task.checkCancellation()
-            currentModelVariant = modelVariant
-            loadingState = .ready
-            isInitializing = false
-            completePendingInitializationContinuations()
-        } catch is CancellationError {
-            whisperKit = nil
-            currentModelVariant = nil
-            loadingState = .idle
-            isInitializing = false
-            let cancellation = CancellationError()
-            completePendingInitializationContinuations(throwing: cancellation)
-            throw cancellation
-        } catch {
-            whisperKit = nil
-            currentModelVariant = nil
-            loadingState = .failed(error.localizedDescription)
-            isInitializing = false
-            let speechError = WhisperKitLangToolsSpeechError.transcriptionFailed("WhisperKit initialization failed: \(error.localizedDescription)")
-            completePendingInitializationContinuations(throwing: speechError)
-            throw speechError
+            isInitializing = true
+            loadingState = isModelDownloaded(modelVariant) ? .loading : .downloading
+            do {
+                let config = WhisperKitConfig(model: modelVariant, verbose: false, prewarm: false, load: false, download: true)
+                let initializedWhisperKit = try await WhisperKit(config)
+                try Task.checkCancellation()
+                whisperKit = initializedWhisperKit
+                loadingState = .loading
+                try await whisperKit?.loadModels()
+                try Task.checkCancellation()
+                currentModelVariant = modelVariant
+                loadingState = .ready
+                isInitializing = false
+                completePendingInitializationContinuations()
+                return
+            } catch is CancellationError {
+                whisperKit = nil
+                currentModelVariant = nil
+                loadingState = .idle
+                isInitializing = false
+                let cancellation = CancellationError()
+                completePendingInitializationContinuations(throwing: cancellation)
+                throw cancellation
+            } catch {
+                whisperKit = nil
+                currentModelVariant = nil
+                loadingState = .failed(error.localizedDescription)
+                isInitializing = false
+                let speechError = WhisperKitLangToolsSpeechError.transcriptionFailed("WhisperKit initialization failed: \(error.localizedDescription)")
+                completePendingInitializationContinuations(throwing: speechError)
+                throw speechError
+            }
         }
     }
 

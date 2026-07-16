@@ -352,8 +352,6 @@ public class STTService: ObservableObject {
             status = .error(message)
             isRecording = false
             isProcessing = false
-        case .autoDetectLanguageSwitch:
-            break
         }
     }
 
