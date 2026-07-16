@@ -43,6 +43,25 @@ final class AppleSpeechTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testStreamingFailureEmitsSessionFailureCallback() async {
+        let provider = AppleSpeechRecognitionProvider(locale: Locale(identifier: "en-US"))
+        let expectedError = NSError(domain: "AppleSpeechTests", code: 42, userInfo: [NSLocalizedDescriptionKey: "recognition failed"])
+        var failedMessage: String?
+
+        do {
+            _ = try await provider.test_failStreamingForTesting(expectedError) { error in
+                failedMessage = error.localizedDescription
+            }
+            XCTFail("Expected blocking streaming continuation to throw")
+        } catch {
+            XCTAssertEqual((error as NSError).domain, expectedError.domain)
+            XCTAssertEqual((error as NSError).code, expectedError.code)
+            XCTAssertEqual(failedMessage, "recognition failed")
+            XCTAssertFalse(provider.isStreaming)
+        }
+    }
+
     // MARK: - Locale Support Tests
 
     func testSupportedLocalesNotEmpty() {

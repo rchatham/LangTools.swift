@@ -47,6 +47,7 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
     private var blockingStreamingContinuation: CheckedContinuation<String?, Error>?
     private var onPartialResultCallback: ((String) -> Void)?
     private var onFinalResultCallback: ((String) -> Void)?
+    private var onFailureCallback: ((Error) -> Void)?
     private var languageIdentifierProvider: @MainActor () -> String?
 
     public init(
@@ -144,7 +145,8 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
 
     public func startStreamingTranscription(
         onPartialResult: @escaping (String) -> Void,
-        onFinalResult: @escaping (String) -> Void
+        onFinalResult: @escaping (String) -> Void,
+        onFailure: ((Error) -> Void)? = nil
     ) throws {
         updateLocaleFromSettings()
         guard let recognizer = speechRecognizer, recognizer.isAvailable else {
@@ -157,6 +159,7 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
         resetStreamingTranscriptState()
         onPartialResultCallback = onPartialResult
         onFinalResultCallback = onFinalResult
+        onFailureCallback = onFailure
 
         #if os(iOS)
         let audioSession = AVAudioSession.sharedInstance()
@@ -249,6 +252,9 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
             },
             onFinalResult: { text in
                 onEvent(.finalTranscription(text))
+            },
+            onFailure: { error in
+                onEvent(.recognitionFailed(error.localizedDescription))
             }
         )
     }
@@ -270,6 +276,9 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
                         onFinalResult: { [weak self] text in
                             onEvent(.finalTranscription(text))
                             self?.completeBlockingStreaming(returning: text.isEmpty ? nil : text)
+                        },
+                        onFailure: { error in
+                            onEvent(.recognitionFailed(error.localizedDescription))
                         }
                     )
                 } catch {
@@ -305,8 +314,12 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
         currentTranscript = ""
     }
 
-    func test_failStreamingForTesting(_ error: Error) async throws -> String? {
-        try await withCheckedThrowingContinuation { continuation in
+    func test_failStreamingForTesting(
+        _ error: Error,
+        onFailure: ((Error) -> Void)? = nil
+    ) async throws -> String? {
+        self.onFailureCallback = onFailure
+        return try await withCheckedThrowingContinuation { continuation in
             blockingStreamingContinuation = continuation
             handleStreamingFailure(error)
         }
@@ -314,6 +327,7 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
 
     private func handleStreamingFailure(_ error: Error) {
         eventHandler?(.recognitionFailed(error.localizedDescription))
+        onFailureCallback?(error)
         completeBlockingStreaming(throwing: error)
         cleanupStreaming(completeBlockingContinuation: false)
     }
@@ -334,6 +348,7 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
         recognitionSessionID = UUID()
         onPartialResultCallback = nil
         onFinalResultCallback = nil
+        onFailureCallback = nil
     }
 
     private func completeBlockingStreaming(returning text: String?) {
