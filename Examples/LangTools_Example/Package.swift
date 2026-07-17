@@ -68,7 +68,6 @@ let package = Package(
             name: "ExampleAgents",
             dependencies: [
                 .product(name: "Agents", package: "langtools.swift"),
-                .product(name: "Anthropic", package: "langtools.swift"),
                 .product(name: "JSONWithMacros", package: "json.swift"),
                 "ToolKit",
                 "KeychainAccess",
@@ -84,5 +83,14 @@ let package = Package(
                 .product(name: "OpenAI", package: "langtools.swift"),
             ],
             path: "Tests/ToolKitTests"),
+        .testTarget(
+            name: "ChatTests",
+            dependencies: [
+                "Chat",
+                .product(name: "OpenAI", package: "langtools.swift"),
+                .product(name: "Anthropic", package: "langtools.swift"),
+                "KeychainAccess",
+            ],
+            path: "Tests/ChatTests"),
     ]
 )

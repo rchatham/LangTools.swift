@@ -10,6 +10,7 @@ import FoundationNetworking
 #endif
 import OpenAI
 import Anthropic
+import Ollama
 #if canImport(SwiftUI)
 import SwiftUI
 #endif
@@ -19,6 +20,7 @@ class Message: Codable, ObservableObject {
     var text: String?
     var role: Role
     var contentType: ContentType?
+    var contentKind: String?
     var imageDetail: ImageDetail?
 
     init(uuid: UUID = UUID(), text: String, role: Role) {
@@ -34,6 +36,7 @@ extension Message: Equatable, Hashable {
         hasher.combine(text)
         hasher.combine(role)
         hasher.combine(contentType)
+        hasher.combine(contentKind)
         hasher.combine(imageDetail)
     }
     static func == (lhs: Message, rhs: Message) -> Bool {
@@ -41,6 +44,7 @@ extension Message: Equatable, Hashable {
         lhs.text == rhs.text &&
         lhs.role == rhs.role &&
         lhs.contentType == rhs.contentType &&
+        lhs.contentKind == rhs.contentKind &&
         lhs.imageDetail == rhs.imageDetail
     }
 }
@@ -62,9 +66,16 @@ extension Array<Message> {
             OpenAI.Message(role: message.role, content: message.text ?? "")
         }
     }
+
     func toAnthropicMessages() -> [Anthropic.Message] {
         return self.map { message in
             Anthropic.Message(role: message.role.toAnthropicRole(), content: message.text ?? "")
+        }
+    }
+
+    func toOllamaMessages() -> [Ollama.Message] {
+        return self.map { message in
+            Ollama.Message(role: .init(message.role), content: message.text ?? "")
         }
     }
 }

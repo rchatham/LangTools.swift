@@ -78,7 +78,7 @@ public enum AgentEvent: Equatable {
     case agentHandoff(from: String, to: String, reason: String)
     case toolCalled(agent: String, tool: String, arguments: String)
     case toolCompleted(agent: String, result: String?)
-    case completed(agent: String, result: String, is_error: Bool = false)
+    case completed(agent: String, result: String, structuredResult: Data?, is_error: Bool = false)
     case error(agent: String, message: String)
 
     public var description: String {
@@ -94,7 +94,7 @@ public enum AgentEvent: Equatable {
             return "🛠️ Agent '\(agent)' using tool: \(tool), arguments: \(args)"
         case .toolCompleted(let agent, let tool):
             return "✅ Agent '\(agent)' completed tool: \(tool)"
-        case .completed(let agent, let result, let is_error):
+        case .completed(let agent, let result, let structuredResult, let is_error):
             return "\(is_error ? "⚠️" :"🏁") Agent '\(agent)' \(is_error ? "encountered an error" :"completed with result"): \(result)"
         case .error(let agent, let message):
             return "‼️ Agent '\(agent)' error: \(message)"
@@ -166,13 +166,13 @@ extension Agent {
                 context.eventHandler(.error(agent: name, message: "Empty result received"))
                 throw AgentError("agent: \(name) - error: Failed to return text content")
             }
-            context.eventHandler(.completed(agent: name, result: result))
+            context.eventHandler(.completed(agent: name, result: result, structuredResult: nil))
             return result
         } catch {
             #if DEBUG
             print("❌ Agent '\(name)' failed: \(type(of: error)) — \(error)")
             #endif
-            context.eventHandler(.completed(agent: name, result: error.localizedDescription, is_error: true))
+            context.eventHandler(.completed(agent: name, result: error.localizedDescription, structuredResult: nil, is_error: true))
             throw AgentError("agent: \(name) - error: " + error.localizedDescription)
         }
     }

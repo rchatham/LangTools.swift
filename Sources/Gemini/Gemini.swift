@@ -23,11 +23,12 @@ public final class Gemini: LangTools {
     }
 
     public var session: URLSession { openAI.session }
+    public var logger: LangToolsLogger? { openAI.logger }
 
     let openAI: OpenAI
 
-    public init(baseURL: URL = URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
-        openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey, session: session))
+    public init(baseURL: URL = URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil) {
+        openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey, session: session, logger: logger))
     }
 
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
