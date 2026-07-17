@@ -273,6 +273,41 @@ final class ResponsesRequestTests: XCTestCase {
         XCTAssertTrue(argumentDeltas.allSatisfy { $0.name == "get_weather" })
     }
 
+    func testResponsesStreamFunctionCallAddedDeltaUsesStableFallbackID() throws {
+        let line = "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"name\":\"get_weather\",\"arguments\":\"\"}}"
+        let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
+        let toolCall = try XCTUnwrap(response?.delta?.tool_calls?.first)
+
+        XCTAssertEqual(toolCall.id, "response_function_call_0")
+        XCTAssertEqual(toolCall.name, "get_weather")
+    }
+
+    func testResponsesStreamStateResetsWhenRequestIsReusedForNewStream() throws {
+        let request = OpenAI.ResponsesRequest(
+            model: OpenAI.Model.gpt4o_mini,
+            messages: [OpenAI.Message(role: .user, content: "Use a tool")],
+            stream: nil
+        )
+        let firstStreamLines = [
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_old\",\"name\":\"old_tool\",\"arguments\":\"\"}}"
+        ]
+        let secondStreamLines = [
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"delta\":\"{}\"}"
+        ]
+
+        for line in firstStreamLines + secondStreamLines {
+            let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
+            if let response {
+                let updated = try XCTUnwrap(request.updated(response: response) as? OpenAI.ResponsesResponse)
+                if updated.delta?.tool_calls?.first?.arguments == "{}" {
+                    XCTAssertEqual(updated.delta?.tool_calls?.first?.id, "")
+                    XCTAssertEqual(updated.delta?.tool_calls?.first?.name, "")
+                }
+            }
+        }
+    }
+
     func testResponsesCompletedStreamEventReplacesAccumulatedResponse() throws {
         let completedLine = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_done\",\"status\":\"completed\",\"output\":[]}}"
         let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(completedLine)

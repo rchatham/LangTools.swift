@@ -321,6 +321,8 @@ extension OpenAI {
                         switch part {
                         case .text(let text): return ContentItem(type: textType, text: text.text, image_url: nil)
                         case .image(let image): return ContentItem(type: "input_image", text: nil, image_url: image.image_url)
+                        // Audio/refusal/tool-result parts are not valid Responses input
+                        // content items in this request encoder and are intentionally omitted.
                         case .toolResult, .audio, .refusal: return nil
                         }
                     }
@@ -359,6 +361,8 @@ extension OpenAI {
             let toolCalls = output.enumerated().compactMap { index, item -> OpenAI.Message.ToolCall? in
                 guard item.type == "function_call", !item.isEmptyFunctionCallPlaceholder else { return nil }
                 return OpenAI.Message.ToolCall(
+                    // Responses stream deltas are keyed by output_index, so preserve
+                    // the output-array index rather than renumbering tool calls.
                     index: index,
                     id: item.stableToolCallID(outputIndex: index),
                     type: .function,
@@ -383,7 +387,7 @@ extension OpenAI {
                     content: nil,
                     tool_calls: [OpenAI.Message.ToolCall(
                         index: index,
-                        id: item.call_id ?? item.id ?? "",
+                        id: item.stableToolCallID(outputIndex: index),
                         type: .function,
                         function: .init(name: item.name ?? "", arguments: item.arguments ?? "")
                     )],
@@ -668,6 +672,10 @@ extension OpenAI {
             streamType == "response.completed" && (id != nil || object != nil || created_at != nil || status != nil || model != nil || !output.isEmpty || usage != nil)
         }
 
+        fileprivate var startsNewOutputStream: Bool {
+            streamType == "response.output_item.added" && outputIndex == 0
+        }
+
         fileprivate var streamFunctionCallMetadata: (Int, OutputItem)? {
             guard streamType == "response.output_item.added",
                   let outputIndex,
@@ -700,6 +708,9 @@ extension OpenAI {
 
         func updating(_ response: ResponsesResponse) -> ResponsesResponse {
             var response = response
+            if response.startsNewOutputStream {
+                functionCallsByOutputIndex.removeAll()
+            }
             if let (outputIndex, item) = response.streamFunctionCallMetadata {
                 functionCallsByOutputIndex[outputIndex] = item
             }
