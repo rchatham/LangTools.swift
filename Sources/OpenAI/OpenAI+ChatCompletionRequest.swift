@@ -468,7 +468,14 @@ extension OpenAI {
             }
 
             func combining(_ toolCalls: [Message.ToolCall]?, with next: [Message.ToolCall]?) -> [Message.ToolCall]? {
-                guard let toolCalls = toolCalls, let next = next else { return toolCalls ?? next }
+                guard let toolCalls = toolCalls, let next = next else {
+                    // A nil side is the common case (deltas after the tool-call chunks carry no
+                    // tool_calls, decoded as nil rather than []), so the surviving array must
+                    // still self-heal here like the merge below — otherwise an out-of-order
+                    // accumulator ships unsorted through the terminal delta.
+                    guard let survivor = toolCalls ?? next else { return nil }
+                    return survivor.isSortedByIndex ? survivor : survivor.sorted()
+                }
                 let orderedNext = next.isSortedByIndex ? next : next.sorted()
                 return orderedNext.reduce(into: toolCalls.isSortedByIndex ? toolCalls : toolCalls.sorted()) { partialResult, next in
                     if let index = partialResult.firstIndex(where: { $0.index == next.index })  {

@@ -153,6 +153,66 @@ final class ChatCompletionResponseTests: XCTestCase {
     /// `if next.isEmpty { return choices }` shipped that unsorted array unchanged on the
     /// terminal usage-only chunk (`next.isEmpty`, which is the common case for real streams).
     /// The fix re-checks `isSortedByIndex` on that path so the accumulator still self-heals.
+    private func toolCallChunk(toolIndex: Int, id: String, name: String) -> OpenAI.ChatCompletionResponse {
+        OpenAI.ChatCompletionResponse(
+            id: "chunk",
+            object: "chat.completion.chunk",
+            created: 0,
+            model: "gpt-4",
+            system_fingerprint: nil,
+            choices: [.init(
+                index: 0,
+                message: nil,
+                finish_reason: nil,
+                delta: .init(role: .assistant, content: nil,
+                             tool_calls: [.init(index: toolIndex, id: id, type: .function,
+                                                function: .init(name: name, arguments: "{}"))],
+                             audio: nil, refusal: nil),
+                logprobs: nil)],
+            usage: nil,
+            service_tier: nil,
+            choose: { _ in 0 })
+    }
+
+    private func finishChunk(reason: OpenAI.ChatCompletionResponse.Choice.FinishReason) -> OpenAI.ChatCompletionResponse {
+        // Terminal delta chunk: same choice index, but `tool_calls` is absent (decodes as nil,
+        // not []) — the nil path of `combining(_ toolCalls:with:)`.
+        OpenAI.ChatCompletionResponse(
+            id: "chunk-finish",
+            object: "chat.completion.chunk",
+            created: 0,
+            model: "gpt-4",
+            system_fingerprint: nil,
+            choices: [.init(
+                index: 0,
+                message: nil,
+                finish_reason: reason,
+                delta: .init(role: nil, content: nil, tool_calls: nil, audio: nil, refusal: nil),
+                logprobs: nil)],
+            usage: nil,
+            service_tier: nil,
+            choose: { _ in 0 })
+    }
+
+    /// Mirror of `testStreamingMultiChoiceRemainsSortedThroughTerminalUsageChunk` for the
+    /// `[Message.ToolCall]` combiner: tool-call index 1 arriving before index 0 leaves the
+    /// accumulator internally ordered `[1, 0]`, and the terminal finish chunk carries
+    /// `tool_calls: nil` — the combiner's nil path, which previously returned the surviving
+    /// array unchanged instead of self-healing like the merge path does.
+    func testStreamingToolCallsRemainSortedThroughTerminalDelta() throws {
+        var combined = OpenAI.ChatCompletionResponse.empty
+        combined = combined.combining(with: toolCallChunk(toolIndex: 1, id: "call_b", name: "tool_b"))
+        combined = combined.combining(with: toolCallChunk(toolIndex: 0, id: "call_a", name: "tool_a"))
+        combined = combined.combining(with: finishChunk(reason: .tool_calls))
+
+        let choice = try XCTUnwrap(combined.choices.first)
+        XCTAssertEqual(choice.delta?.tool_calls?.map(\.index), [0, 1],
+                       "accumulated tool_calls must be sorted by index after the nil-tool_calls terminal delta")
+        XCTAssertEqual(choice.delta?.tool_calls?.map(\.id), ["call_a", "call_b"])
+        XCTAssertEqual(choice.message?.tool_calls?.map(\.index), [0, 1],
+                       "combined message.tool_calls must also come back sorted")
+    }
+
     func testStreamingMultiChoiceRemainsSortedThroughTerminalUsageChunk() throws {
         var combined = OpenAI.ChatCompletionResponse.empty
         combined = combined.combining(with: streamChunk(index: 1, content: "B"))
