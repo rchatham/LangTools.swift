@@ -538,12 +538,10 @@ extension OpenAI {
 
         func combining(_ choices: [Choice], with next: [Choice]) -> [Choice] {
             if choices.isEmpty { return next }
-            // `next.isEmpty` is the common case (the terminal usage-only chunk of a real stream
-            // has no choices), so this path runs on nearly every stream — it must still self-heal
-            // via isSortedByIndex rather than trust `choices` unconditionally, matching the
-            // ternary the reduce below applies on every other path.
-            if next.isEmpty { return choices.isSortedByIndex ? choices : choices.sorted() }
             let orderedNext = next.isSortedByIndex ? next : next.sorted()
+            // An empty `next` (the terminal usage-only chunk of a real stream) falls through to
+            // the reduce as a no-op over the self-healed initial value — no early return needed,
+            // and the accumulator still comes back sorted.
             return orderedNext.reduce(into: choices.isSortedByIndex ? choices : choices.sorted()) { partialResult, next in
                 if let index = partialResult.firstIndex(where: { $0.index == next.index }) {
                     partialResult[index] = partialResult[index].combining(with: next)
