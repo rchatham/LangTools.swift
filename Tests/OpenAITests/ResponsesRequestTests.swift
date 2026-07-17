@@ -132,6 +132,30 @@ final class ResponsesRequestTests: XCTestCase {
         XCTAssertEqual(response.usage?.total_tokens, 12)
     }
 
+    func testResponsesResponseDecodesRefusalContent() throws {
+        let data = Data("""
+        {
+          "id": "resp_refusal",
+          "object": "response",
+          "status": "completed",
+          "model": "gpt-4o-mini",
+          "output": [
+            {
+              "id": "msg_refusal",
+              "type": "message",
+              "role": "assistant",
+              "content": [{"type":"refusal","refusal":"I can’t help with that."}]
+            }
+          ]
+        }
+        """.utf8)
+
+        let response = try JSONDecoder().decode(OpenAI.ResponsesResponse.self, from: data)
+
+        XCTAssertEqual(response.message?.refusal, "I can’t help with that.")
+        XCTAssertNil(response.message?.content.string)
+    }
+
     func testResponsesStreamAccumulation() throws {
         let lines = [
             "event: response.output_item.added",
@@ -160,5 +184,47 @@ final class ResponsesRequestTests: XCTestCase {
         XCTAssertEqual(combined.message?.content.string, "Hello")
         XCTAssertEqual(combined.message?.tool_selection?.first?.id, "call_123")
         XCTAssertEqual(combined.message?.tool_selection?.first?.arguments, "{\"location\":\"Bangkok\"}")
+    }
+
+    func testResponsesStreamRefusalDeltaPreservesRefusal() throws {
+        let lines = [
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}",
+            "data: {\"type\":\"response.refusal.delta\",\"output_index\":0,\"content_index\":0,\"delta\":\"I can’t\"}",
+            "data: {\"type\":\"response.refusal.delta\",\"output_index\":0,\"content_index\":0,\"delta\":\" help.\"}"
+        ]
+
+        var combined = OpenAI.ResponsesResponse.empty
+        var deltas: [OpenAI.Message.Delta] = []
+        for line in lines {
+            let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
+            if let response {
+                if let delta = response.delta { deltas.append(delta) }
+                combined = combined.combining(with: response)
+            }
+        }
+
+        XCTAssertEqual(deltas.compactMap(\.refusal).joined(), "I can’t help.")
+        XCTAssertEqual(combined.message?.refusal, "I can’t help.")
+        XCTAssertNil(combined.message?.content.string)
+    }
+
+    func testResponsesStreamIgnoresOutOfRangeIndexes() throws {
+        let lines = [
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":999999,\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}",
+            "data: {\"type\":\"response.output_text.delta\",\"output_index\":999999,\"content_index\":0,\"delta\":\"ignored\"}",
+            "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"content_index\":999999,\"delta\":\"ignored\"}",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":999999,\"delta\":\"ignored\"}"
+        ]
+
+        var combined = OpenAI.ResponsesResponse.empty
+        for line in lines {
+            let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
+            if let response {
+                combined = combined.combining(with: response)
+            }
+        }
+
+        XCTAssertNil(combined.message)
+        XCTAssertTrue(combined.output.isEmpty)
     }
 }

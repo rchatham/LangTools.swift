@@ -324,12 +324,17 @@ extension OpenAI {
         private var streamType: String?
         private var outputIndex: Int?
         private var contentIndex: Int?
+        private static let maxStreamOutputItems = 4096
+        private static let maxStreamContentItems = 4096
+
         private var item: OutputItem?
         private var textDelta: String?
+        private var refusalDelta: String?
         private var argumentsDelta: String?
 
         public var message: OpenAI.Message? {
             let text = output.compactMap { $0.messageText }.joined()
+            let refusal = output.compactMap { $0.messageRefusal }.joined()
             let toolCalls = output.enumerated().compactMap { index, item -> OpenAI.Message.ToolCall? in
                 guard item.type == "function_call" else { return nil }
                 return OpenAI.Message.ToolCall(
@@ -339,15 +344,17 @@ extension OpenAI {
                     function: .init(name: item.name ?? "", arguments: item.arguments ?? "")
                 )
             }
+            let messageRefusal = refusal.isEmpty ? nil : refusal
             if !toolCalls.isEmpty {
-                return try? OpenAI.Message(role: .assistant, content: text.isEmpty ? .null : .string(text), name: nil, tool_calls: toolCalls, audio: nil, refusal: nil)
+                return try? OpenAI.Message(role: .assistant, content: text.isEmpty ? .null : .string(text), name: nil, tool_calls: toolCalls, audio: nil, refusal: messageRefusal)
             }
-            guard !text.isEmpty else { return nil }
-            return OpenAI.Message(role: .assistant, content: text)
+            guard !text.isEmpty || messageRefusal != nil else { return nil }
+            return try? OpenAI.Message(role: .assistant, content: text.isEmpty ? .null : .string(text), name: nil, tool_calls: nil, audio: nil, refusal: messageRefusal)
         }
 
         public var delta: OpenAI.Message.Delta? {
             if let textDelta { return .init(role: .assistant, content: textDelta, tool_calls: nil, audio: nil, refusal: nil) }
+            if let refusalDelta { return .init(role: .assistant, content: nil, tool_calls: nil, audio: nil, refusal: refusalDelta) }
             if let argumentsDelta {
                 let index = outputIndex ?? 0
                 let existing = item
@@ -386,10 +393,11 @@ extension OpenAI {
             self.contentIndex = nil
             self.item = nil
             self.textDelta = nil
+            self.refusalDelta = nil
             self.argumentsDelta = nil
         }
 
-        private init(streamType: String, outputIndex: Int?, contentIndex: Int?, item: OutputItem?, textDelta: String?, argumentsDelta: String?, response: ResponsesResponse?) {
+        private init(streamType: String, outputIndex: Int?, contentIndex: Int?, item: OutputItem?, textDelta: String?, refusalDelta: String?, argumentsDelta: String?, response: ResponsesResponse?) {
             self.id = response?.id
             self.object = response?.object
             self.created_at = response?.created_at
@@ -402,6 +410,7 @@ extension OpenAI {
             self.contentIndex = contentIndex
             self.item = item
             self.textDelta = textDelta
+            self.refusalDelta = refusalDelta
             self.argumentsDelta = argumentsDelta
         }
 
@@ -409,12 +418,14 @@ extension OpenAI {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             let type = try container.decodeIfPresent(String.self, forKey: .type)
             if type == "response.output_text.delta" || type == "response.refusal.delta" {
+                let delta = try container.decodeIfPresent(String.self, forKey: .delta)
                 self.init(
                     streamType: type ?? "",
                     outputIndex: try container.decodeIfPresent(Int.self, forKey: .output_index),
                     contentIndex: try container.decodeIfPresent(Int.self, forKey: .content_index),
                     item: nil,
-                    textDelta: try container.decodeIfPresent(String.self, forKey: .delta),
+                    textDelta: type == "response.output_text.delta" ? delta : nil,
+                    refusalDelta: type == "response.refusal.delta" ? delta : nil,
                     argumentsDelta: nil,
                     response: nil
                 )
@@ -427,6 +438,7 @@ extension OpenAI {
                     contentIndex: nil,
                     item: nil,
                     textDelta: nil,
+                    refusalDelta: nil,
                     argumentsDelta: try container.decodeIfPresent(String.self, forKey: .delta),
                     response: nil
                 )
@@ -439,6 +451,7 @@ extension OpenAI {
                     contentIndex: nil,
                     item: try container.decodeIfPresent(OutputItem.self, forKey: .item),
                     textDelta: nil,
+                    refusalDelta: nil,
                     argumentsDelta: nil,
                     response: nil
                 )
@@ -451,6 +464,7 @@ extension OpenAI {
                     contentIndex: nil,
                     item: nil,
                     textDelta: nil,
+                    refusalDelta: nil,
                     argumentsDelta: nil,
                     response: try container.decodeIfPresent(ResponsesResponse.self, forKey: .response)
                 )
@@ -470,7 +484,8 @@ extension OpenAI {
             outputIndex = try container.decodeIfPresent(Int.self, forKey: .output_index)
             contentIndex = try container.decodeIfPresent(Int.self, forKey: .content_index)
             item = try container.decodeIfPresent(OutputItem.self, forKey: .item)
-            textDelta = try container.decodeIfPresent(String.self, forKey: .delta)
+            textDelta = type == "response.output_text.delta" ? try container.decodeIfPresent(String.self, forKey: .delta) : nil
+            refusalDelta = type == "response.refusal.delta" ? try container.decodeIfPresent(String.self, forKey: .delta) : nil
             argumentsDelta = nil
         }
 
@@ -495,6 +510,10 @@ extension OpenAI {
                 let outputIndex = next.outputIndex ?? 0
                 let contentIndex = next.contentIndex ?? 0
                 combined.appendText(delta, outputIndex: outputIndex, contentIndex: contentIndex)
+            } else if let delta = next.refusalDelta {
+                let outputIndex = next.outputIndex ?? 0
+                let contentIndex = next.contentIndex ?? 0
+                combined.appendRefusal(delta, outputIndex: outputIndex, contentIndex: contentIndex)
             } else if let delta = next.argumentsDelta {
                 let outputIndex = next.outputIndex ?? 0
                 combined.appendArguments(delta, outputIndex: outputIndex)
@@ -503,18 +522,35 @@ extension OpenAI {
         }
 
         private mutating func setOutputItem(_ item: OutputItem, at index: Int) {
+            guard Self.isValidOutputIndex(index) else { return }
             while output.count <= index { output.append(.emptyMessage) }
             output[index] = item
         }
 
         private mutating func appendText(_ text: String, outputIndex: Int, contentIndex: Int) {
+            guard Self.isValidOutputIndex(outputIndex), Self.isValidContentIndex(contentIndex) else { return }
             while output.count <= outputIndex { output.append(.emptyMessage) }
             output[outputIndex].appendText(text, contentIndex: contentIndex)
         }
 
+        private mutating func appendRefusal(_ refusal: String, outputIndex: Int, contentIndex: Int) {
+            guard Self.isValidOutputIndex(outputIndex), Self.isValidContentIndex(contentIndex) else { return }
+            while output.count <= outputIndex { output.append(.emptyMessage) }
+            output[outputIndex].appendRefusal(refusal, contentIndex: contentIndex)
+        }
+
         private mutating func appendArguments(_ arguments: String, outputIndex: Int) {
+            guard Self.isValidOutputIndex(outputIndex) else { return }
             while output.count <= outputIndex { output.append(.emptyFunctionCall) }
             output[outputIndex].appendArguments(arguments)
+        }
+
+        private static func isValidOutputIndex(_ index: Int) -> Bool {
+            index >= 0 && index < maxStreamOutputItems
+        }
+
+        private static func isValidContentIndex(_ index: Int) -> Bool {
+            index >= 0 && index < maxStreamContentItems
         }
 
         public struct Usage: Codable {
@@ -547,10 +583,21 @@ extension OpenAI {
                 return content?.compactMap(\.text).joined()
             }
 
+            var messageRefusal: String? {
+                guard type == "message" else { return nil }
+                return content?.compactMap(\.refusal).joined()
+            }
+
             mutating func appendText(_ text: String, contentIndex: Int) {
                 if content == nil { content = [] }
                 while content!.count <= contentIndex { content!.append(.outputText("")) }
                 content![contentIndex].text = (content![contentIndex].text ?? "") + text
+            }
+
+            mutating func appendRefusal(_ refusal: String, contentIndex: Int) {
+                if content == nil { content = [] }
+                while content!.count <= contentIndex { content!.append(.refusal("")) }
+                content![contentIndex].refusal = (content![contentIndex].refusal ?? "") + refusal
             }
 
             mutating func appendArguments(_ delta: String) {
@@ -562,9 +609,14 @@ extension OpenAI {
         public struct ContentItem: Decodable {
             public var type: String
             public var text: String?
+            public var refusal: String?
 
             static func outputText(_ text: String) -> ContentItem {
-                ContentItem(type: "output_text", text: text)
+                ContentItem(type: "output_text", text: text, refusal: nil)
+            }
+
+            static func refusal(_ refusal: String) -> ContentItem {
+                ContentItem(type: "refusal", text: nil, refusal: refusal)
             }
         }
 
