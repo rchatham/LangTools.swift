@@ -49,11 +49,7 @@ extension LangTools {
         let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { throw LangToolsError.requestFailed }
         guard httpResponse.statusCode == 200 else { throw LangToolsError.responseUnsuccessful(statusCode: httpResponse.statusCode, Self.decodeError(data: data)) }
-        if let audioType = Response.self as? any LangToolsAudioResponse.Type,
-           let result = try audioType.init(audioData: data) as? Response {
-            return result
-        }
-        return try Self.decodeResponse(data: data)
+        return Response.self == Data.self ? data as! Response : try Self.decodeResponse(data: data)
     }
 
     public func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {
