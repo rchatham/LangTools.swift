@@ -1,3 +1,7 @@
+import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import XCTest
 @testable import LangTools
 
@@ -51,6 +55,19 @@ final class ProviderAbstractionsTests: XCTestCase {
         let response: any LangToolsAudioResponse = data
 
         XCTAssertEqual(response.audioData, data)
+    }
+
+    func testPerformUsesAudioResponseInitializerForRawAudioBytes() async throws {
+        let audioData = Data([0x00, 0x01, 0x02, 0x03])
+        RawAudioResponseURLProtocol.responseData = audioData
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RawAudioResponseURLProtocol.self]
+        let langTool = RawAudioLangTool(session: URLSession(configuration: configuration))
+
+        let response = try await langTool.perform(request: RawAudioRequest())
+
+        XCTAssertEqual(response.audioData, audioData)
+        XCTAssertTrue(response.initializedFromAudioData)
     }
 
     // MARK: - State equality
@@ -302,4 +319,76 @@ final class ProviderAbstractionsTests: XCTestCase {
 
         XCTAssertEqual(response.transcriptText, "bytes: 3")
     }
+}
+
+private struct RawAudioResponse: Decodable, LangToolsAudioResponse {
+    let audioData: Data
+    let initializedFromAudioData: Bool
+
+    init(audioData: Data) throws {
+        self.audioData = audioData
+        initializedFromAudioData = true
+    }
+
+    init(from decoder: Decoder) throws {
+        throw DecodingError.dataCorrupted(
+            .init(codingPath: decoder.codingPath, debugDescription: "Raw audio bytes are not JSON-decodable")
+        )
+    }
+}
+
+private struct RawAudioRequest: LangToolsRequest {
+    typealias LangTool = RawAudioLangTool
+    typealias Response = RawAudioResponse
+
+    static let endpoint = "audio"
+}
+
+private enum RawAudioModel: String {
+    case mock
+}
+
+private struct RawAudioErrorResponse: Codable, Error {}
+
+private struct RawAudioLangTool: LangTools {
+    typealias Model = RawAudioModel
+    typealias ErrorResponse = RawAudioErrorResponse
+
+    static let requestValidators: [(any LangToolsRequest) -> Bool] = [{ $0 is RawAudioRequest }]
+    let session: URLSession
+
+    static func chatRequest(
+        model: any RawRepresentable,
+        messages: [any LangToolsMessage],
+        tools: [any LangToolsTool]?,
+        responseSchema: JSONSchema?,
+        toolEventHandler: @escaping (LangToolsToolEvent) -> Void
+    ) throws -> any LangToolsChatRequest {
+        throw LangToolsError.invalidArgument("RawAudioLangTool does not support chat requests")
+    }
+
+    func prepare(request: some LangToolsRequest) throws -> URLRequest {
+        URLRequest(url: URL(string: "https://example.com/audio")!)
+    }
+}
+
+private final class RawAudioResponseURLProtocol: URLProtocol {
+    static var responseData = Data()
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Self.responseData)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
