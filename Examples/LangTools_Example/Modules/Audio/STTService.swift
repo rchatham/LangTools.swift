@@ -380,9 +380,9 @@ public class STTService: ObservableObject {
         if let finalAudioData, finalAudioData.count > lastChunkSize {
             do {
                 try await provider.appendStreamingAudio(finalAudioData)
-            } catch {
-                _ = await provider.stopStreamingRecognition()
-                print("[STTService] Final audio chunk append failed: \(error)")
+} catch {
+    provider.stopRecognition(finalizePending: false, clearTranscript: false)
+    print("[STTService] Final audio chunk append failed: \(error)")
                 self.error = error as? STTError ?? .transcriptionFailed(error.localizedDescription)
                 status = .error(error.localizedDescription)
                 isProcessing = false

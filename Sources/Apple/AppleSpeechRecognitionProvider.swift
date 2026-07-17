@@ -189,9 +189,11 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
             if let error {
                 Task { @MainActor [weak self] in
                     guard let self, self.recognitionSessionID == sessionID else { return }
+                    let transcript = result?.bestTranscription.formattedString ?? self.currentTranscript
+                    self.currentTranscript = transcript
                     if isBenignAppleSpeechTerminalError(error) {
-                        self.eventHandler?(.finalTranscription(self.currentTranscript))
-                        self.onFinalResultCallback?(self.currentTranscript)
+                        self.eventHandler?(.finalTranscription(transcript))
+                        self.onFinalResultCallback?(transcript)
                     } else {
                         self.eventHandler?(.recognitionFailed(error.localizedDescription))
                     }
