@@ -17,7 +17,7 @@ private extension SFSpeechRecognizerAuthorizationStatus {
 
 /// Reusable Apple Speech recognition provider adapter.
 @MainActor
-public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecognitionProviding {
+public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionProviding {
     public let providerID = LangToolsProviderID(rawValue: "apple.speech")
     public let displayName = "Apple Speech"
     public let capabilities = ProviderCapabilities(

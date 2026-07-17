@@ -106,6 +106,7 @@ public typealias SpeechRecognitionStreamingEventHandler = @MainActor @Sendable (
 public enum StreamingSpeechRecognitionError: Error, LocalizedError, Equatable, Sendable {
     case externalAudioUnsupported
     case notStreaming
+    case recognitionFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -113,6 +114,8 @@ public enum StreamingSpeechRecognitionError: Error, LocalizedError, Equatable, S
             return "This speech recognition provider does not accept externally captured streaming audio"
         case .notStreaming:
             return "Speech recognition streaming has not started"
+        case .recognitionFailed(let message):
+            return message
         }
     }
 }
@@ -142,6 +145,11 @@ public protocol StreamingSpeechRecognitionProviding: SpeechRecognitionProviding 
     /// Events continue asynchronously through `onEvent`; call `stopStreamingRecognition()`
     /// to end the stream and collect the best final transcript.
     func startStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws
+
+    /// Starts streaming recognition, suspends while recognition runs, and returns the
+    /// best final transcript once the stream ends, is cancelled, or fails.
+    @discardableResult
+    func runStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws -> String?
     /// Append externally captured audio during an active streaming session.
     ///
     /// Providers define whether `audioData` must be an incremental chunk or the
@@ -157,19 +165,62 @@ public extension StreamingSpeechRecognitionProviding {
     func appendStreamingAudio(_ audioData: Data) async throws {
         throw StreamingSpeechRecognitionError.externalAudioUnsupported
     }
+
+    @discardableResult
+    func runStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws -> String? {
+        let runState = DefaultStreamingRecognitionRunState()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                runState.store(continuation)
+                Task { @MainActor in
+                    do {
+                        try await startStreamingRecognition { event in
+                            onEvent(event)
+                            switch event {
+                            case .partialTranscription:
+                                break
+                            case .finalTranscription(let text):
+                                Task { @MainActor in
+                                    let finalText = await self.stopStreamingRecognition()
+                                    runState.complete(returning: finalText ?? (text.isEmpty ? nil : text))
+                                }
+                            case .recognitionFailed(let message):
+                                runState.complete(throwing: StreamingSpeechRecognitionError.recognitionFailed(message))
+                            }
+                        }
+                    } catch {
+                        runState.complete(throwing: error)
+                    }
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in
+                _ = await self.stopStreamingRecognition()
+                runState.complete(throwing: CancellationError())
+            }
+        }
+    }
 }
 
-/// Optional STT provider contract for callers that want structured-concurrency
-/// streaming semantics: start capture, suspend while recognition runs, and return
-/// the best final transcript once the stream ends, is cancelled, or fails.
-///
-/// This is complementary to `StreamingSpeechRecognitionProviding`, whose
-/// `startStreamingRecognition(...)` method returns after startup and delivers
-/// events asynchronously.
 @MainActor
-public protocol BlockingStreamingSpeechRecognitionProviding: StreamingSpeechRecognitionProviding {
-    @discardableResult
-    func runStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws -> String?
+private final class DefaultStreamingRecognitionRunState {
+    private var continuation: CheckedContinuation<String?, Error>?
+
+    func store(_ continuation: CheckedContinuation<String?, Error>) {
+        self.continuation = continuation
+    }
+
+    func complete(returning text: String?) {
+        guard let continuation else { return }
+        self.continuation = nil
+        continuation.resume(returning: text)
+    }
+
+    func complete(throwing error: Error) {
+        guard let continuation else { return }
+        self.continuation = nil
+        continuation.resume(throwing: error)
+    }
 }
 
 /// A text translation request expressed in provider-neutral language IDs.
