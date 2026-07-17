@@ -253,6 +253,68 @@ final class AccountLoginServiceTests: XCTestCase {
         XCTAssertNil(backendClient.lastCodeChallenge)
     }
 
+    @MainActor
+    func testHandleRedirectFailsWhenNoLoginIsInProgress() async {
+        let service = BrowserAccountLoginService(
+            coordinator: TestAccountLoginCoordinator(),
+            backendClient: TestAccountLoginBackendClient(
+                exchangeSession: AccountSession(provider: .claudeCode, accountIdentifier: "unused", accessToken: "unused")
+            ),
+            sessionStore: AuthSessionStore(keychain: .init(service: "AccountLoginServiceTests.\(UUID().uuidString)")),
+            configuration: AccountBackendConfiguration(baseURL: URL(string: "http://localhost:8080")!)
+        )
+
+        await XCTAssertThrowsErrorAsync(
+            try await service.handleRedirect(URL(string: "langtools-example-auth://auth/callback/claudeCode?code=test-code&state=test-state")!)
+        ) { error in
+            XCTAssertEqual(error as? AccountLoginError, .noLoginInProgress)
+        }
+    }
+
+    @MainActor
+    func testBeginLoginRejectsConcurrentLoginAttempts() async throws {
+        let coordinator = BlockingAccountLoginCoordinator()
+        let backendClient = TestAccountLoginBackendClient(
+            exchangeSession: AccountSession(provider: .claudeCode, accountIdentifier: "claude-user", accessToken: "access-token")
+        )
+        let service = BrowserAccountLoginService(
+            coordinator: coordinator,
+            backendClient: backendClient,
+            sessionStore: AuthSessionStore(keychain: .init(service: "AccountLoginServiceTests.\(UUID().uuidString)")),
+            configuration: AccountBackendConfiguration(baseURL: URL(string: "http://localhost:8080")!)
+        )
+
+        let firstLogin = Task { @MainActor in
+            try await service.beginLogin(for: .claudeCode)
+        }
+        await coordinator.waitUntilStarted()
+
+        await XCTAssertThrowsErrorAsync(
+            try await service.beginLogin(for: .claudeCode)
+        ) { error in
+            XCTAssertEqual(error as? AccountLoginError, .loginAlreadyInProgress)
+        }
+
+        coordinator.resume()
+        _ = try await firstLogin.value
+    }
+
+    func testLocalhostOAuthCallbackListenerWaitsUntilReady() async throws {
+        let listener = LocalhostOAuthCallbackListener(preferredPorts: [1465])
+        let callbackURL = try await listener.start(timeout: 5)
+        defer { listener.stop() }
+
+        let task = Task {
+            try await URLSession.shared.data(from: callbackURL)
+        }
+
+        let callback = try await listener.waitForCallback()
+        let (_, response) = try await task.value
+
+        XCTAssertEqual(callback.path, "/auth/callback")
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 400)
+    }
+
     private func makeURLSession(handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)) -> URLSession {
         MockURLProtocol.requestHandler = handler
         let configuration = URLSessionConfiguration.ephemeral
@@ -283,6 +345,59 @@ private final class TestAccountLoginCoordinator: AccountLoginCoordinating {
 
     func handleRedirect(_ url: URL) {
         _ = url
+    }
+}
+
+private actor BlockingSignal {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var alreadyResumed = false
+
+    func wait() async {
+        if alreadyResumed {
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func resume() {
+        alreadyResumed = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+@MainActor
+private final class BlockingAccountLoginCoordinator: AccountLoginCoordinating {
+    private let startedSignal = BlockingSignal()
+    private let resumeSignal = BlockingSignal()
+
+    func startLogin(at url: URL, callbackScheme: String, provider: AccountLoginProvider) async throws -> URL {
+        _ = callbackScheme
+        let state = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first(where: { $0.name == "state" })?
+            .value ?? ""
+
+        await startedSignal.resume()
+        await resumeSignal.wait()
+        return URL(string: "langtools-example-auth://auth/callback/\(provider.rawValue)?code=test-code&state=\(state)")!
+    }
+
+    func handleRedirect(_ url: URL) {
+        _ = url
+    }
+
+    func waitUntilStarted() async {
+        await startedSignal.wait()
+    }
+
+    func resume() {
+        Task {
+            await resumeSignal.resume()
+        }
     }
 }
 
@@ -327,6 +442,20 @@ private final class TestAccountLoginBackendClient: AccountLoginBackendClientProt
         _ = provider
         _ = session
         return exchangeSession.accessibleModelIDs
+    }
+}
+
+private func XCTAssertThrowsErrorAsync<T>(
+    _ expression: @autoclosure () async throws -> T,
+    _ errorHandler: (Error) -> Void = { _ in },
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
+    do {
+        _ = try await expression()
+        XCTFail("Expected error to be thrown", file: file, line: line)
+    } catch {
+        errorHandler(error)
     }
 }
 

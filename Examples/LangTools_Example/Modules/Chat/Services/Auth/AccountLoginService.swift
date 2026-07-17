@@ -22,6 +22,7 @@ public enum AccountLoginError: LocalizedError, Equatable {
     case unsupportedProviderInCallback
     case callbackError(String)
     case loginAlreadyInProgress
+    case noLoginInProgress
     case missingStoredSession(AccountLoginProvider)
     case sessionExchangeFailed(String)
 
@@ -47,6 +48,8 @@ public enum AccountLoginError: LocalizedError, Equatable {
             return message
         case .loginAlreadyInProgress:
             return "Another account login is already in progress."
+        case .noLoginInProgress:
+            return "No account login is currently in progress."
         case .missingStoredSession(let provider):
             return "No stored \(provider.displayName) account session was found."
         case .sessionExchangeFailed(let message):
@@ -61,6 +64,7 @@ public struct AuthRedirectPayload: Equatable {
     public let state: String
 }
 
+@MainActor
 public protocol AccountLoginService {
     func beginLogin(for provider: AccountLoginProvider) async throws -> AccountSession
     func handleRedirect(_ url: URL) async throws -> AccountSession
@@ -77,6 +81,7 @@ public protocol AccountLoginBackendClientProtocol {
     func fetchAccessibleModels(for provider: AccountLoginProvider, session: AccountSession?) async throws -> [String]
 }
 
+@MainActor
 public final class BrowserAccountLoginService: AccountLoginService {
     public static let shared = BrowserAccountLoginService()
 
@@ -118,16 +123,15 @@ public final class BrowserAccountLoginService: AccountLoginService {
             return try await cliBridge.loginOpenAI()
         }
 
-        let pkce = provider == .openAI ? PKCEChallenge() : nil
         let state = Self.randomState()
 
-        pendingLogin = PendingLogin(provider: provider, state: state, codeVerifier: pkce?.codeVerifier, redirectURI: nil)
+        pendingLogin = PendingLogin(provider: provider, state: state, codeVerifier: nil, redirectURI: nil)
 
         defer {
             pendingLogin = nil
         }
 
-        let loginURL = backendClient.loginStartURL(for: provider, state: state, codeChallenge: pkce?.codeChallenge, redirectURI: nil)
+        let loginURL = backendClient.loginStartURL(for: provider, state: state, codeChallenge: nil, redirectURI: nil)
         let callbackURL = try await coordinator.startLogin(
             at: loginURL,
             callbackScheme: AccountBackendConfiguration.callbackScheme,
@@ -138,7 +142,7 @@ public final class BrowserAccountLoginService: AccountLoginService {
 
     public func handleRedirect(_ url: URL) async throws -> AccountSession {
         guard let pendingLogin else {
-            throw AccountLoginError.loginAlreadyInProgress
+            throw AccountLoginError.noLoginInProgress
         }
 
         let payload = try Self.parseRedirect(url, expectedProvider: pendingLogin.provider, expectedState: pendingLogin.state)
@@ -583,6 +587,7 @@ private struct AccessibleModelsResponse: Codable {
     let models: [String]
 }
 
+@MainActor
 public final class StubAccountLoginService: AccountLoginService {
     public init() {}
 

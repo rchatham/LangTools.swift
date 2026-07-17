@@ -44,7 +44,7 @@ public final class LocalhostOAuthCallbackListener {
     }
 
     public func start(timeout: TimeInterval = 180) async throws -> URL {
-        let port = try startListener()
+        let port = try await startListener()
         let callbackURL = URL(string: "http://\(host):\(port)\(path)")!
         scheduleTimeout(after: timeout)
         return callbackURL
@@ -76,7 +76,7 @@ public final class LocalhostOAuthCallbackListener {
         }
     }
 
-    private func startListener() throws -> UInt16 {
+    private func startListener() async throws -> UInt16 {
         for preferredPort in preferredPorts {
             do {
                 let listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: preferredPort)!)
@@ -84,14 +84,51 @@ public final class LocalhostOAuthCallbackListener {
                 listener.newConnectionHandler = { [weak self] connection in
                     self?.handle(connection: connection)
                 }
-                listener.start(queue: queue)
+                try await waitUntilReady(listener)
                 return preferredPort
             } catch {
+                listener?.cancel()
+                if self.listener === listener {
+                    self.listener = nil
+                }
                 continue
             }
         }
 
         throw LocalhostOAuthCallbackListenerError.listenerStartupFailed
+    }
+
+    private func waitUntilReady(_ listener: NWListener) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            var resumed = false
+
+            func resume(with result: Result<Void, Error>) {
+                guard resumed == false else { return }
+                resumed = true
+                listener.stateUpdateHandler = nil
+                switch result {
+                case .success:
+                    continuation.resume()
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    resume(with: .success(()))
+                case .failed(let error):
+                    resume(with: .failure(error))
+                case .cancelled:
+                    resume(with: .failure(LocalhostOAuthCallbackListenerError.listenerStartupFailed))
+                default:
+                    break
+                }
+            }
+
+            listener.start(queue: queue)
+        }
     }
 
     private func handle(connection: NWConnection) {
