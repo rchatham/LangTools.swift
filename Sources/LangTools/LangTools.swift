@@ -101,6 +101,15 @@ extension LangTools {
                     print("   ✅ Status 200 - Processing stream...")
 
                     var combinedResponse = Request.Response.empty
+                    let updateResponse: (Request.Response) throws -> Request.Response = {
+                        if let responseUpdatingRequest = request as? any LangToolsResponseUpdatingRequest {
+                            let responseUpdater = responseUpdatingRequest.responseUpdater()
+                            return { response in
+                                try responseUpdater(response) as? Request.Response ?? response
+                            }
+                        }
+                        return { try request.update(response: $0) }
+                    }()
                     // buffer used for responses that need multiple lines to decode
                     var errorBuffer: Error?
                     var buffer = ""
@@ -124,7 +133,7 @@ extension LangTools {
                         }
                         if let response {
                             // If we were able to create a response object we update the decoded response with information from the request and return it before adding it to the combined response used to handle tool completions.
-                            let updatedResponse = try request.update(response: response)
+                            let updatedResponse = try updateResponse(response)
                             continuation.yield(updatedResponse)
                             combinedResponse = combinedResponse.combining(with: updatedResponse)
                         }
@@ -139,7 +148,7 @@ extension LangTools {
                     if let completionRequest = try await completionRequest(request: request, response: combinedResponse) {
                         print("   🔄 Tool calling - making completion request...")
                         for try await response in stream(request: completionRequest) {
-                            continuation.yield(try request.update(response: response))
+                            continuation.yield(response)
                         }
                     }
 

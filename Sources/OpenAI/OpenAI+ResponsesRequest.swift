@@ -1,3 +1,10 @@
+//
+//  OpenAI+ResponsesRequest.swift
+//  OpenAI
+//
+//  Created by Reid Chatham on 6/24/26.
+//
+
 import Foundation
 import LangTools
 
@@ -58,9 +65,6 @@ extension OpenAI {
         @CodableIgnored
         public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
 
-        @CodableIgnored
-        private var streamState: ResponsesStreamState?
-
         public var responseSchema: JSONSchema? {
             get { text?.format.schema }
             set { text = newValue.map { TextConfig(schema: $0) } }
@@ -102,7 +106,6 @@ extension OpenAI {
             self.text = text
             self.metadata = metadata
             self.toolEventHandler = toolEventHandler
-            self.streamState = ResponsesStreamState()
         }
 
         public init(from decoder: Decoder) throws {
@@ -124,12 +127,18 @@ extension OpenAI {
             // The Responses API input/tools wire format is intentionally not inflated
             // back into OpenAI.Message/OpenAI.Tool models here.
             toolEventHandler = nil
-            streamState = ResponsesStreamState()
         }
 
         public func updated(response: Decodable) throws -> Decodable {
-            guard let response = response as? ResponsesResponse else { return response }
-            return streamState?.updating(response) ?? response
+            response
+        }
+
+        public func responseUpdater() -> (Decodable) throws -> Decodable {
+            let streamState = ResponsesStreamState()
+            return { response in
+                guard let response = response as? ResponsesResponse else { return response }
+                return streamState.updating(response)
+            }
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -262,8 +271,10 @@ extension OpenAI {
                     return []
                 case .user, .assistant:
                     var items: [InputItem] = []
-                    if let content = ContentItem.items(for: message.content, role: message.role), !content.isEmpty {
-                        items.append(.message(role: message.role, content: content))
+                    let messageContent = (ContentItem.items(for: message.content, role: message.role) ?? [])
+                        + ContentItem.refusalItems(for: message.refusal, role: message.role)
+                    if !messageContent.isEmpty {
+                        items.append(.message(role: message.role, content: messageContent))
                     }
                     items.append(contentsOf: (message.tool_calls ?? []).enumerated().map { offset, toolCall in
                         .functionCall(
@@ -309,6 +320,12 @@ extension OpenAI {
             public let type: String
             public let text: String?
             public let image_url: Message.Content.ImageContent.ImageURL?
+            public let refusal: String?
+
+            static func refusalItems(for refusal: String?, role: Message.Role) -> [ContentItem] {
+                guard role == .assistant, let refusal, !refusal.isEmpty else { return [] }
+                return [ContentItem(type: "refusal", text: nil, image_url: nil, refusal: refusal)]
+            }
 
             static func items(for content: Message.Content, role: Message.Role) -> [ContentItem]? {
                 let textType = role == .assistant ? "output_text" : "input_text"
@@ -316,15 +333,16 @@ extension OpenAI {
                 case .null:
                     return nil
                 case .string(let text):
-                    return [ContentItem(type: textType, text: text, image_url: nil)]
+                    return [ContentItem(type: textType, text: text, image_url: nil, refusal: nil)]
                 case .array(let parts):
                     return parts.compactMap { part in
                         switch part {
-                        case .text(let text): return ContentItem(type: textType, text: text.text, image_url: nil)
-                        case .image(let image): return ContentItem(type: "input_image", text: nil, image_url: image.image_url)
-                        // Audio/refusal/tool-result parts are not valid Responses input
+                        case .text(let text): return ContentItem(type: textType, text: text.text, image_url: nil, refusal: nil)
+                        case .image(let image): return ContentItem(type: "input_image", text: nil, image_url: image.image_url, refusal: nil)
+                        case .refusal(let refusal): return ContentItem(type: "refusal", text: nil, image_url: nil, refusal: refusal.refusal)
+                        // Audio/tool-result parts are not valid Responses input
                         // content items in this request encoder and are intentionally omitted.
-                        case .toolResult, .audio, .refusal: return nil
+                        case .toolResult, .audio: return nil
                         }
                     }
                 }
@@ -620,6 +638,10 @@ extension OpenAI {
             }
 
             var messageText: String? {
+                // Initial Responses support surfaces assistant message text/refusals and
+                // function calls. Other output item types (reasoning, web/file search,
+                // etc.) are decoded for forward compatibility but intentionally ignored
+                // by the LangTools chat-message projection until first-class models exist.
                 guard type == "message" else { return nil }
                 return content?.compactMap(\.text).joined()
             }
@@ -677,6 +699,10 @@ extension OpenAI {
             streamType == "response.output_item.added" && outputIndex == 0
         }
 
+        fileprivate var endsOutputStream: Bool {
+            streamType == "response.completed"
+        }
+
         fileprivate var streamFunctionCallMetadata: (Int, OutputItem)? {
             guard streamType == "response.output_item.added",
                   let outputIndex,
@@ -702,14 +728,14 @@ extension OpenAI {
     }
 
     private final class ResponsesStreamState {
-        // Streaming updates are consumed sequentially by a single request stream;
-        // this mutable cache only carries function-call metadata between events
-        // in that ordered stream.
+        // One ResponsesStreamState is created per stream invocation by
+        // ResponsesRequest.responseUpdater(), so function-call metadata is scoped to
+        // that stream instead of being shared by copied/reused request values.
         private var functionCallsByOutputIndex: [Int: ResponsesResponse.OutputItem] = [:]
 
         func updating(_ response: ResponsesResponse) -> ResponsesResponse {
             var response = response
-            if response.startsNewOutputStream {
+            if response.startsNewOutputStream || response.endsOutputStream {
                 functionCallsByOutputIndex.removeAll()
             }
             if let (outputIndex, item) = response.streamFunctionCallMetadata {
@@ -727,6 +753,8 @@ extension OpenAI {
 public extension OpenAI {
     // This parser intentionally applies to every OpenAI streaming endpoint so
     // shared SSE framing lines are handled consistently across request types.
+    // It lives with Responses because Responses adds event-prefixed SSE frames;
+    // existing chat-completion streams continue through the same parser.
     static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
         if buffer.hasPrefix("event:") { return nil }
         return if buffer.hasPrefix("data:"),

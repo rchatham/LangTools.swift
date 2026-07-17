@@ -1,3 +1,10 @@
+//
+//  ResponsesRequestTests.swift
+//  OpenAITests
+//
+//  Created by Reid Chatham on 6/24/26.
+//
+
 import XCTest
 @testable import LangTools
 @testable import OpenAI
@@ -145,6 +152,33 @@ final class ResponsesRequestTests: XCTestCase {
         XCTAssertEqual(response.usage?.total_tokens, 12)
     }
 
+    func testResponsesRequestReencodesAssistantRefusalContent() throws {
+        let refusedMessage = try OpenAI.Message(
+            role: .assistant,
+            content: .null,
+            name: nil,
+            tool_calls: nil,
+            audio: nil,
+            refusal: "I can’t help with that."
+        )
+        let request = OpenAI.ResponsesRequest(
+            model: OpenAI.Model.gpt4o_mini,
+            messages: [refusedMessage] as [OpenAI.Message]
+        )
+
+        let data = try JSONEncoder().encode(request)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let input = try XCTUnwrap(json["input"] as? [[String: Any]])
+        let inputMessage: [String: Any] = try XCTUnwrap(input.first)
+        let content = try XCTUnwrap(inputMessage["content"] as? [[String: Any]])
+        let refusalContent: [String: Any] = try XCTUnwrap(content.first)
+
+        XCTAssertEqual(inputMessage["type"] as? String, "message")
+        XCTAssertEqual(inputMessage["role"] as? String, "assistant")
+        XCTAssertEqual(refusalContent["type"] as? String, "refusal")
+        XCTAssertEqual(refusalContent["refusal"] as? String, "I can’t help with that.")
+    }
+
     func testResponsesResponseDecodesRefusalContent() throws {
         let data = Data("""
         {
@@ -274,10 +308,11 @@ final class ResponsesRequestTests: XCTestCase {
             "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"}\"}"
         ]
 
+        let responseUpdater = request.responseUpdater()
         let argumentDeltas = try lines.compactMap { line -> OpenAI.Message.ToolCall? in
             let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
             guard let response else { return nil }
-            let updated = try XCTUnwrap(request.updated(response: response) as? OpenAI.ResponsesResponse)
+            let updated = try XCTUnwrap(responseUpdater(response) as? OpenAI.ResponsesResponse)
             return updated.delta?.tool_calls?.first.flatMap { $0.arguments.isEmpty ? nil : $0 }
         }
 
@@ -295,6 +330,27 @@ final class ResponsesRequestTests: XCTestCase {
         XCTAssertEqual(toolCall.name, "get_weather")
     }
 
+    func testResponsesStreamUpdatersDoNotShareMetadataBetweenRequestCopies() throws {
+        let request = OpenAI.ResponsesRequest(
+            model: OpenAI.Model.gpt4o_mini,
+            messages: [OpenAI.Message(role: .user, content: "Use a tool")],
+            stream: nil
+        )
+        let firstUpdater = request.responseUpdater()
+        let secondUpdater = request.responseUpdater()
+        let metadataLine = "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_old\",\"name\":\"old_tool\",\"arguments\":\"\"}}"
+        let argumentsLine = "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"delta\":\"{}\"}"
+
+        let metadataResponse: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(metadataLine)
+        _ = try XCTUnwrap(firstUpdater(try XCTUnwrap(metadataResponse)) as? OpenAI.ResponsesResponse)
+
+        let argumentsResponse: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(argumentsLine)
+        let updated = try XCTUnwrap(secondUpdater(try XCTUnwrap(argumentsResponse)) as? OpenAI.ResponsesResponse)
+
+        XCTAssertEqual(updated.delta?.tool_calls?.first?.id, "")
+        XCTAssertEqual(updated.delta?.tool_calls?.first?.name, "")
+    }
+
     func testResponsesStreamStateResetsWhenRequestIsReusedForNewStream() throws {
         let request = OpenAI.ResponsesRequest(
             model: OpenAI.Model.gpt4o_mini,
@@ -309,10 +365,11 @@ final class ResponsesRequestTests: XCTestCase {
             "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"delta\":\"{}\"}"
         ]
 
+        let responseUpdater = request.responseUpdater()
         for line in firstStreamLines + secondStreamLines {
             let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
             if let response {
-                let updated = try XCTUnwrap(request.updated(response: response) as? OpenAI.ResponsesResponse)
+                let updated = try XCTUnwrap(responseUpdater(response) as? OpenAI.ResponsesResponse)
                 if updated.delta?.tool_calls?.first?.arguments == "{}" {
                     XCTAssertEqual(updated.delta?.tool_calls?.first?.id, "")
                     XCTAssertEqual(updated.delta?.tool_calls?.first?.name, "")
