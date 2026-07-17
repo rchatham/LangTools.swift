@@ -140,6 +140,23 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertTrue(output.contains("\"authenticated\" : "))
     }
 
+    func testAuthStatusSubcommandReturnsValidJSONWithoutSession() throws {
+        let tempHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempHome, withIntermediateDirectories: true)
+
+        let output = try runCLI(
+            arguments: ["auth", "status", "openai", "--format", "json"],
+            environment: ["HOME": tempHome.path]
+        )
+        let data = try XCTUnwrap(output.data(using: .utf8))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(object["provider"] as? String, "openai")
+        XCTAssertEqual(object["authenticated"] as? Bool, false)
+        XCTAssertNil(object["accountIdentifier"])
+        XCTAssertNil(object["expiresAt"])
+    }
+
     func testOpenAIChatSubcommandShowsUsageWithoutRequiredFlags() throws {
         let output = try runCLI(arguments: ["openai-chat"])
 
@@ -592,11 +609,14 @@ final class ChatFlowTests: XCTestCase {
         try runCLI(arguments: [], input: input)
     }
 
-    private func runCLI(arguments: [String], input: String = "") throws -> String {
+    private func runCLI(arguments: [String], input: String = "", environment: [String: String] = [:]) throws -> String {
         let process = Process()
         process.currentDirectoryURL = URL(fileURLWithPath: packageDirectory())
         process.executableURL = URL(fileURLWithPath: executablePath())
         process.arguments = arguments
+        if environment.isEmpty == false {
+            process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+        }
 
         let stdout = Pipe()
         let stdin = Pipe()

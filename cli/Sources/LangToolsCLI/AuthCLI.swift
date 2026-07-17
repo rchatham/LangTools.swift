@@ -155,13 +155,15 @@ private struct AuthCommands {
         let session = try? store.load()
         switch format {
         case .json:
-            let payload: [String: Any] = [
-                "provider": provider.rawValue,
-                "authenticated": session != nil,
-                "accountIdentifier": session?.accountIdentifier as Any,
-                "expiresAt": session?.expiresAt?.ISO8601Format() as Any
-            ]
-            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+            let payload = AuthStatusPayload(
+                provider: provider.rawValue,
+                authenticated: session != nil,
+                accountIdentifier: session?.accountIdentifier,
+                expiresAt: session?.expiresAt?.ISO8601Format()
+            )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(payload)
             FileHandle.standardOutput.write(data)
             FileHandle.standardOutput.write(Data("\n".utf8))
         }
@@ -172,6 +174,13 @@ private struct AuthCommands {
         try store.remove()
         print("Logged out of OpenAI")
     }
+}
+
+private struct AuthStatusPayload: Codable {
+    let provider: String
+    let authenticated: Bool
+    let accountIdentifier: String?
+    let expiresAt: String?
 }
 
 struct SessionStore {
