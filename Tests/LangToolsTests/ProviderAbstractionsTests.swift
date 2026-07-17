@@ -225,7 +225,7 @@ final class ProviderAbstractionsTests: XCTestCase {
     }
 
     @MainActor
-    func testStreamingSpeechRecognitionProviderOverrideRunsUntilStopped() async throws {
+    func testStreamingSpeechRecognitionProviderUsesProviderOverride() async throws {
         final class StubBlockingStreamingProvider: StreamingSpeechRecognitionProviding {
             let providerID = LangToolsProviderID(rawValue: "stub.blocking")
             let displayName = "Stub Blocking"

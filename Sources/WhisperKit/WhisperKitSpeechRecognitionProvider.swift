@@ -64,7 +64,7 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
     private var initializationTask: Task<Void, Never>?
     private var streamTranscriptionTask: Task<Void, Never>?
     private var finalTranscriptionContinuation: CheckedContinuation<String, Never>?
-    var lastTranscribedText = ""
+    private(set) var lastTranscribedText = ""
     private var hasEmittedFinalTranscription = false
     private var isStoppingStreaming = false
 
@@ -407,7 +407,7 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.debugLog("AudioStreamTranscriber start returned")
-                    self.isStreaming = false
+                    self.finishStreamingSession(clearLastTranscribedText: false, resetTranscriber: false, cancelTask: false)
                 }
             } catch is CancellationError {
                 await MainActor.run { [weak self] in
