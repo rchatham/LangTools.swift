@@ -544,7 +544,9 @@ extension OpenAI {
         }
 
         func combining(_ choices: [Choice], with next: [Choice]) -> [Choice] {
-            if choices.isEmpty { return next }
+            // The first chunk must establish the sorted-accumulator invariant too — if it carries
+            // multiple out-of-order choices and is also the last combine, nothing downstream heals it.
+            if choices.isEmpty { return next.isSortedByIndex ? next : next.sorted() }
             let orderedNext = next.isSortedByIndex ? next : next.sorted()
             // An empty `next` (the terminal usage-only chunk of a real stream) falls through to
             // the reduce as a no-op over the self-healed initial value — no early return needed,

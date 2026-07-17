@@ -153,6 +153,36 @@ final class ChatCompletionResponseTests: XCTestCase {
     /// `if next.isEmpty { return choices }` shipped that unsorted array unchanged on the
     /// terminal usage-only chunk (`next.isEmpty`, which is the common case for real streams).
     /// The fix re-checks `isSortedByIndex` on that path so the accumulator still self-heals.
+    /// The first-chunk counterpart of the terminal-chunk regression test below: a single chunk
+    /// carrying multiple out-of-order choices, combined into `.empty` with no further chunks.
+    /// The `choices.isEmpty` early return must establish the sorted invariant itself — there is
+    /// no subsequent combine to self-heal it.
+    func testFirstChunkMultiChoiceArrivesSorted() throws {
+        let chunk = OpenAI.ChatCompletionResponse(
+            id: "chunk",
+            object: "chat.completion.chunk",
+            created: 0,
+            model: "gpt-4",
+            system_fingerprint: nil,
+            choices: [
+                .init(index: 1, message: nil, finish_reason: nil,
+                      delta: .init(role: .assistant, content: "B", tool_calls: nil, audio: nil, refusal: nil),
+                      logprobs: nil),
+                .init(index: 0, message: nil, finish_reason: nil,
+                      delta: .init(role: .assistant, content: "A", tool_calls: nil, audio: nil, refusal: nil),
+                      logprobs: nil),
+            ],
+            usage: nil,
+            service_tier: nil,
+            choose: { _ in 0 })
+
+        let combined = OpenAI.ChatCompletionResponse.empty.combining(with: chunk)
+        XCTAssertEqual(combined.choices.map(\.index), [0, 1],
+                       "a first chunk with out-of-order choices must come back sorted even when it is the only chunk")
+        XCTAssertEqual(combined.choices.first(where: { $0.index == 0 })?.delta?.content, "A")
+        XCTAssertEqual(combined.choices.first(where: { $0.index == 1 })?.delta?.content, "B")
+    }
+
     private func toolCallChunk(toolIndex: Int, id: String, name: String) -> OpenAI.ChatCompletionResponse {
         OpenAI.ChatCompletionResponse(
             id: "chunk",
