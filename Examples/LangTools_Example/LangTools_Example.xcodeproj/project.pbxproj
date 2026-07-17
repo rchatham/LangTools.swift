@@ -8,10 +8,10 @@
 
 /* Begin PBXBuildFile section */
 		B19B31A92F2C997800645F8A /* ChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31A82F2C997800645F8A /* ChatUI */; };
-		B19B31AB2F2C99C300645F8A /* AppleSpeech in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31AA2F2C99C300645F8A /* AppleSpeech */; };
+		B19B31AB2F2C99C300645F8A /* AppleLangTools in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31AA2F2C99C300645F8A /* AppleLangTools */; };
 		B19B31AD2F2C99C300645F8A /* LangTools in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31AC2F2C99C300645F8A /* LangTools */; };
 		B19B31AF2F2C99C300645F8A /* Ollama in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31AE2F2C99C300645F8A /* Ollama */; };
-		B19B31B22F2C9A0600645F8A /* AppleSpeech in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31B12F2C9A0600645F8A /* AppleSpeech */; };
+		B19B31B22F2C9A0600645F8A /* AppleLangTools in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31B12F2C9A0600645F8A /* AppleLangTools */; };
 		B19B31B42F2C9A0600645F8A /* LangTools in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31B32F2C9A0600645F8A /* LangTools */; };
 		B19B31B62F2C9A0600645F8A /* Ollama in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31B52F2C9A0600645F8A /* Ollama */; };
 		B19B31B92F2D205700645F8A /* Audio in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31B82F2D205700645F8A /* Audio */; };
@@ -113,11 +113,11 @@
 				B19B31B62F2C9A0600645F8A /* Ollama in Frameworks */,
 				B19B31AF2F2C99C300645F8A /* Ollama in Frameworks */,
 				B1E4E5152F314EF400AE11AA /* Chat in Frameworks */,
-				B19B31B22F2C9A0600645F8A /* AppleSpeech in Frameworks */,
+				B19B31B22F2C9A0600645F8A /* AppleLangTools in Frameworks */,
 				B1E4E5172F314EF400AE11AA /* ExampleAgents in Frameworks */,
 				B19B31AD2F2C99C300645F8A /* LangTools in Frameworks */,
 				B19B31A92F2C997800645F8A /* ChatUI in Frameworks */,
-				B19B31AB2F2C99C300645F8A /* AppleSpeech in Frameworks */,
+				B19B31AB2F2C99C300645F8A /* AppleLangTools in Frameworks */,
 				B19B31BD2F2D205700645F8A /* ExampleAgents in Frameworks */,
 				B19B31BB2F2D205700645F8A /* Chat in Frameworks */,
 				B19B31B92F2D205700645F8A /* Audio in Frameworks */,
@@ -189,10 +189,10 @@
 			name = LangTools_Example;
 			packageProductDependencies = (
 				B19B31A82F2C997800645F8A /* ChatUI */,
-				B19B31AA2F2C99C300645F8A /* AppleSpeech */,
+				B19B31AA2F2C99C300645F8A /* AppleLangTools */,
 				B19B31AC2F2C99C300645F8A /* LangTools */,
 				B19B31AE2F2C99C300645F8A /* Ollama */,
-				B19B31B12F2C9A0600645F8A /* AppleSpeech */,
+				B19B31B12F2C9A0600645F8A /* AppleLangTools */,
 				B19B31B32F2C9A0600645F8A /* LangTools */,
 				B19B31B52F2C9A0600645F8A /* Ollama */,
 				B19B31B82F2D205700645F8A /* Audio */,
@@ -685,9 +685,9 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = ChatUI;
 		};
-		B19B31AA2F2C99C300645F8A /* AppleSpeech */ = {
+		B19B31AA2F2C99C300645F8A /* AppleLangTools */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = AppleSpeech;
+			productName = AppleLangTools;
 		};
 		B19B31AC2F2C99C300645F8A /* LangTools */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -697,9 +697,9 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = Ollama;
 		};
-		B19B31B12F2C9A0600645F8A /* AppleSpeech */ = {
+		B19B31B12F2C9A0600645F8A /* AppleLangTools */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = AppleSpeech;
+			productName = AppleLangTools;
 		};
 		B19B31B32F2C9A0600645F8A /* LangTools */ = {
 			isa = XCSwiftPackageProductDependency;

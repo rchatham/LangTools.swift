@@ -1,105 +1,72 @@
 <!-- claude-code-review -->
 
-## Code Review: `refactor/provider-abstractions` (#34) — Updated
+## Code Review: PR #32 — Comprehensive Integration, Performance, and Benchmark Tests
 
-The bot commit (`3c4eac9`) addressed the naming and structural issues from the previous round. A full re-read of the current branch confirms the following state.
-
----
-
-### Confirmed Fixed ✅
-
-- **Naming consistency**: `LangToolsTextTranslationRequest/Response`, `LangToolsSpeechSynthesisInput` — correct throughout.
-- **`SpeechAutoDetectWinner.undetected`** — `.none` shadow of `Optional.none` is gone.
-- **`@available(iOS 16, macOS 13, *)`** on `startDualLanguageRecognition` — present.
-- **`eventHandler` threading contract** — documented in `SpeechRecognitionProviding`.
-- **Breaking-change doc comment** on `LangToolsSTTRequest` — present.
-- **Redundant `associatedtype SpeechResponse`** removed; `LangToolsTTSRequest` now correctly constrains `Response: LangToolsAudioResponse`.
-- **New test coverage** — generic boundary tests, state equality, empty path extension edge case — all present.
+This PR adds ~2,900 lines of new tests across `AgentsTests`, `IntegrationTests`, `PerformanceTests`, `BenchmarkTests`, and a shared `PerformanceTestUtils` fixture library. The coverage is broad — streaming, tool calling, structured output, error paths, multi-provider routing, cross-provider message conversion, and performance benchmarks — and the `MockURLProtocol` infrastructure is well applied throughout. Three findings worth addressing before merge; several initially suspicious patterns verified as correct.
 
 ---
 
-### Still Open
+### Finding 1 — `try!` crashes the test runner instead of failing gracefully (widespread)
 
-#### 1 `@retroactive` missing — **high priority**
+`try!` is used pervasively inside `measure {}` closures and static setup paths across all four new test files:
 
-`Sources/LangTools/LangTools+Speech.swift` still reads:
+- `BenchmarkTests/OpenAIBenchmarkTests.swift` — 10+ instances in measure blocks (`try! decoder.decode`, `try! encoder.encode`)
+- `BenchmarkTests/AnthropicBenchmarkTests.swift` — 10+ instances (`try! decoder.decode`, `try! Anthropic.decodeStream`, etc.)
+- `PerformanceTests/OpenAIPerformanceTests.swift` — `try! self.api.prepare(request:)` and encode/decode inside measure
+- `PerformanceTests/AnthropicPerformanceTests.swift` — same pattern
 
-```swift
-extension Data: LangToolsAudioResponse { ... }
-extension String: LangToolsTranscriptionResponse { ... }
-```
+In Swift, `try!` on a throwing expression raises a `fatalError`-level trap that terminates the test runner process. This is categorically worse than a test failure: the crash stops all subsequent tests from running and produces no legible failure message. The static fixture data makes this unlikely today, but any future codec change or schema mismatch would manifest as a mysterious process exit rather than a red test.
 
-Neither has `@retroactive`. The bot commit listed this as fixed but the annotation is absent from the current file. Swift 5.7+ warns; Swift 6 strict builds error.
-
-```swift
-// Required fix:
-extension Data: @retroactive LangToolsAudioResponse { ... }
-extension String: @retroactive LangToolsTranscriptionResponse { ... }
-```
-
-#### 2 `startRecognition() throws` silently swallows errors — **high priority**
-
-`Sources/WhisperKitLangTools/WhisperKitSpeechRecognitionProvider.swift`:
-
-```swift
-public func startRecognition() throws {
-    Task {
-        try await startStreamingTranscription { ... }   // error silently dropped
-    }
-}
-```
-
-The function signature promises `throws`, but no error can ever reach the caller — it is discarded inside the unstructured `Task {}`. Callers wrap this in `try` expecting failure feedback (e.g. model not loaded, microphone unavailable), but they will never receive it. Either propagate the error via `async throws` and make the protocol method `async throws`, or surface errors through `eventHandler` and remove the misleading `throws`.
-
-#### 3 `stopRecognition` / `finalizeRecognition` write actor-isolated state after `await` — **medium priority**
-
-```swift
-public func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {
-    Task {
-        let text = await stopStreamingTranscription()   // suspends here
-        currentTranscript = text                        // @MainActor write after resume
-        eventHandler?(.finalTranscription(text))
-    }
-}
-```
-
-After the `await` suspension, the task resumes on whatever executor `stopStreamingTranscription` returns from. If that function is not `@MainActor`, the writes to `currentTranscript` and the `eventHandler` call are not guaranteed to be on the main actor. Swift 6 strict concurrency will diagnose this. The minimal safe fix is:
-
-```swift
-Task { @MainActor in
-    let text = await stopStreamingTranscription()
-    currentTranscript = text
-    eventHandler?(.finalTranscription(text))
-}
-```
-
-or wrap the mutations in `await MainActor.run { ... }`. Same pattern applies to `finalizeRecognition`.
-
-#### 4 `WhisperKitSTTProvider.configure` still writes to global singleton — **medium priority**
-
-```swift
-public func configure(languageIdentifier: String) {
-    ToolSettings.shared.sttLanguage = .init(rawValue: languageIdentifier) ?? ToolSettings.shared.sttLanguage
-    provider.configure(languageIdentifier: languageIdentifier)
-}
-```
-
-All other providers store language locally; only this one mutates a shared singleton as a side-effect of `configure()`. This couples the example-app adapter to `ToolSettings`, makes the provider non-testable in isolation, and risks cross-provider interference if two providers are configured in the same session.
-
-#### 5 `print` statements — **low priority**
-
-- `AppleSpeechSTTProvider.updateLocaleFromSettings()` — `print("[AppleSpeech] Changed locale to: \(locale.identifier)")` is a development trace, not a user-facing log. Remove before merge.
-- `NetworkClient.playAudio` — the `catch` block calls `print(error.localizedDescription)` and silently discards the error. The error should be rethrown or surfaced to the UI layer; swallowing it means TTS failures are invisible to callers.
+**Fix:** Replace `try!` with `do { ... } catch { XCTFail("..."); return }`, or use `XCTAssertNoThrow` with a local variable for the measured value.
 
 ---
 
-### Minor
+### Finding 2 — `testToolCallWithCallbackCompletesFullFlow` validates the callback but not the second round-trip (both providers)
 
-- `LangToolsSpeechTranscriptionRequest` doc comment says "at least one audio source should be non-nil" but this is advisory only. A `func validate() throws` protocol requirement — or even a simple precondition in the default extension — would catch misconfigured conformances at the abstraction boundary rather than deep inside provider implementations.
-- `AppleSpeechSTTProvider.startRecognition()` passes `onPartialResult: { _ in }` / `onFinalResult: { _ in }` closures. If these callbacks are intentionally ignored in favour of `eventHandler`, a comment at the call site would prevent a future reader from assuming they are wired up.
+In `AnthropicIntegrationTests.swift` (~line 854) and `OpenAIIntegrationTests.swift` (~line 1743), the tool-callback flow test registers a second mock handler inside the callback and asserts only that the callback was invoked:
+
+```swift
+XCTAssertTrue(toolWasCalled)
+```
+
+The full flow the PR describes — "tool completion loop is sequential: callback completes before next request" — includes a second API call that returns `finalResponseData`. But there is no assertion verifying that the post-tool response was actually received. If the framework exits the stream loop after the tool call without issuing the follow-up request, the test passes silently while covering only half the described flow.
+
+**Fix:** Add an assertion on `results` that confirms responses from the second (post-tool) request were received, e.g. by checking a count threshold or asserting on the last response type.
 
 ---
 
-### Summary
+### Finding 3 — `tool_calls?[0]` subscripts an optionally-chained array that could be empty
 
-Items #1–#3 are the blockers before merge. The `@retroactive` fix is a one-liner. Issues #2 and #3 involve the same `WhisperKitSpeechRecognitionProvider` — fixing the actor context (#3) and rethinking the error surface (#2) can likely be done in a single pass on that file.
+In `OpenAIIntegrationTests.swift` (~line 1734):
+
+```swift
+let toolCallChunks = results.filter { $0.choices.first?.delta?.tool_calls != nil }
+guard !toolCallChunks.isEmpty else { return XCTFail("No tool-call chunks received") }
+XCTAssertEqual(toolCallChunks[0].choices[0].delta?.tool_calls?[0].function.name, "get_weather")
+```
+
+The filter guarantees `choices` is non-empty (because `choices.first` is nil for empty arrays, so `!= nil` excludes those). However, `tool_calls?[0]` subscripts an array whose element count is not guarded — `tool_calls?` resolves the optional, but subscript `[0]` on an empty `Array` crashes regardless of optional chaining. If a chunk arrives with `tool_calls: []`, the filter includes it and the subsequent `[0]` traps.
+
+With the controlled fixture this will not crash in practice, but it is a latent fragility if fixture data changes or a real provider is plumbed in. Prefer `tool_calls?.first?.function.name` or guard the count.
+
+---
+
+### Verified correct (initially suspicious, now confirmed safe)
+
+- **`testAgentExecuteNetworkErrorThrows` — `error is AgentError`**: `Agents.swift:176` wraps every thrown error (including `URLError`) in a new `AgentError` in its outer catch block. The assertion is correct.
+- **`results[0].choices[0]` in `testStreamChatCompletion`**: `openAIStreamChunksData` always emits the role-bearing chunk first with exactly one choice element; the stream parser yields responses one-per-`data:` line with no reordering or injected empty-choices entries. Safe.
+- **`PerformanceTestUtils` as `.target`**: SPM only compiles this target during test builds because nothing in the `products` array references it. A plain `swift build` does not compile it. The same pattern is used for the existing `TestUtils` target.
+- **Repeated `expectation(description: "stream")` inside `measure {}`**: Each call to `expectation(description:)` allocates a distinct `XCTestExpectation` object. XCTest uses object identity, not description strings — 10 iterations with the same description string create 10 independent, non-conflicting expectation objects.
+
+---
+
+### Minor notes
+
+- **setUp/tearDown boilerplate** is copy-pasted verbatim across 6 test classes (AgentsTests, OpenAIIntegrationTests, AnthropicIntegrationTests, LangToolchainIntegrationTests, OpenAIPerformanceTests, AnthropicPerformanceTests). A shared `MockNetworkTestCase: XCTestCase` base class in `TestUtils` would reduce this to a single authoritative definition.
+- **Streaming throughput body** is copy-pasted 4 times across the two provider performance test files (small/medium stream x OpenAI/Anthropic). A generic helper in `PerformanceTestUtils` would consolidate this.
+- **`testResponseWithLogprobs`** creates a request with `logprobs: true` but the mock ignores the request body and always returns a fixture with logprobs. The test cannot detect a regression where the `logprobs` flag is dropped during serialization.
+- **Benchmark opt-in pattern** (commented-out SwiftOpenAI/SwiftAnthropic dependencies with clear instructions) is clean and well-documented.
+
+---
+
+Generated with [Claude Code](https://claude.ai/claude-code)
