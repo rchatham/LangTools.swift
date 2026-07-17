@@ -336,7 +336,7 @@ extension OpenAI {
             let text = output.compactMap { $0.messageText }.joined()
             let refusal = output.compactMap { $0.messageRefusal }.joined()
             let toolCalls = output.enumerated().compactMap { index, item -> OpenAI.Message.ToolCall? in
-                guard item.type == "function_call" else { return nil }
+                guard item.type == "function_call", !item.isEmptyFunctionCallPlaceholder else { return nil }
                 return OpenAI.Message.ToolCall(
                     index: index,
                     id: item.call_id ?? item.id ?? UUID().uuidString,
@@ -355,6 +355,21 @@ extension OpenAI {
         public var delta: OpenAI.Message.Delta? {
             if let textDelta { return .init(role: .assistant, content: textDelta, tool_calls: nil, audio: nil, refusal: nil) }
             if let refusalDelta { return .init(role: .assistant, content: nil, tool_calls: nil, audio: nil, refusal: refusalDelta) }
+            if streamType == "response.output_item.added", let item, item.type == "function_call" {
+                let index = outputIndex ?? 0
+                return .init(
+                    role: .assistant,
+                    content: nil,
+                    tool_calls: [OpenAI.Message.ToolCall(
+                        index: index,
+                        id: item.call_id ?? item.id ?? "",
+                        type: .function,
+                        function: .init(name: item.name ?? "", arguments: item.arguments ?? "")
+                    )],
+                    audio: nil,
+                    refusal: nil
+                )
+            }
             if let argumentsDelta {
                 let index = outputIndex ?? 0
                 let existing = item
@@ -586,6 +601,10 @@ extension OpenAI {
             var messageRefusal: String? {
                 guard type == "message" else { return nil }
                 return content?.compactMap(\.refusal).joined()
+            }
+
+            var isEmptyFunctionCallPlaceholder: Bool {
+                type == "function_call" && id == nil && call_id == nil && (name ?? "").isEmpty && (arguments ?? "").isEmpty
             }
 
             mutating func appendText(_ text: String, contentIndex: Int) {

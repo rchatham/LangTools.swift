@@ -172,15 +172,18 @@ final class ResponsesRequestTests: XCTestCase {
 
         var combined = OpenAI.ResponsesResponse.empty
         var decodedCount = 0
+        var deltas: [OpenAI.Message.Delta] = []
         for line in lines {
             let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
             if let response {
                 decodedCount += 1
+                if let delta = response.delta { deltas.append(delta) }
                 combined = combined.combining(with: response)
             }
         }
 
         XCTAssertEqual(decodedCount, 6)
+        XCTAssertEqual(deltas.first(where: { $0.tool_calls?.first?.id == "call_123" })?.tool_calls?.first?.name, "get_weather")
         XCTAssertEqual(combined.message?.content.string, "Hello")
         XCTAssertEqual(combined.message?.tool_selection?.first?.id, "call_123")
         XCTAssertEqual(combined.message?.tool_selection?.first?.arguments, "{\"location\":\"Bangkok\"}")
@@ -226,5 +229,26 @@ final class ResponsesRequestTests: XCTestCase {
 
         XCTAssertNil(combined.message)
         XCTAssertTrue(combined.output.isEmpty)
+    }
+
+    func testResponsesStreamSkipsEmptyFunctionCallPlaceholders() throws {
+        let lines = [
+            "data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"content_index\":0,\"delta\":\"Hello\"}"
+        ]
+
+        var combined = OpenAI.ResponsesResponse.empty
+        for line in lines {
+            let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
+            if let response {
+                combined = combined.combining(with: response)
+            }
+        }
+
+        XCTAssertEqual(combined.message?.content.string, "Hello")
+        XCTAssertNil(firstToolCall(in: combined))
+    }
+
+    private func firstToolCall(in response: OpenAI.ResponsesResponse) -> OpenAI.Message.ToolCall? {
+        response.message?.tool_selection?.first
     }
 }
