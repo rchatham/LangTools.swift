@@ -520,14 +520,14 @@ extension OpenAI {
             outputIndex = try container.decodeIfPresent(Int.self, forKey: .output_index)
             contentIndex = try container.decodeIfPresent(Int.self, forKey: .content_index)
             item = try container.decodeIfPresent(OutputItem.self, forKey: .item)
-            textDelta = type == "response.output_text.delta" ? try container.decodeIfPresent(String.self, forKey: .delta) : nil
-            refusalDelta = type == "response.refusal.delta" ? try container.decodeIfPresent(String.self, forKey: .delta) : nil
+            textDelta = nil
+            refusalDelta = nil
             argumentsDelta = nil
         }
 
         public func combining(with next: ResponsesResponse) -> ResponsesResponse {
             if output.isEmpty, id == nil, next.streamType == nil { return next }
-            if next.streamType == "response.completed" { return next }
+            if next.streamType == "response.completed", next.hasCompletedResponsePayload { return next }
 
             var combined = ResponsesResponse(
                 id: next.id ?? id,
@@ -664,6 +664,10 @@ extension OpenAI {
             }
         }
 
+        private var hasCompletedResponsePayload: Bool {
+            streamType == "response.completed" && (id != nil || object != nil || created_at != nil || status != nil || model != nil || !output.isEmpty || usage != nil)
+        }
+
         fileprivate var streamFunctionCallMetadata: (Int, OutputItem)? {
             guard streamType == "response.output_item.added",
                   let outputIndex,
@@ -689,6 +693,9 @@ extension OpenAI {
     }
 
     private final class ResponsesStreamState {
+        // Streaming updates are consumed sequentially by a single request stream;
+        // this mutable cache only carries function-call metadata between events
+        // in that ordered stream.
         private var functionCallsByOutputIndex: [Int: ResponsesResponse.OutputItem] = [:]
 
         func updating(_ response: ResponsesResponse) -> ResponsesResponse {

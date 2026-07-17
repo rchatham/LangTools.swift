@@ -283,6 +283,21 @@ final class ResponsesRequestTests: XCTestCase {
         XCTAssertTrue(combined.output.isEmpty)
     }
 
+    func testMalformedResponsesCompletedStreamEventPreservesAccumulatedResponse() throws {
+        let textLine = "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"content_index\":0,\"delta\":\"Hello\"}"
+        let completedLine = "data: {\"type\":\"response.completed\"}"
+        var combined = OpenAI.ResponsesResponse.empty
+
+        for line in [textLine, completedLine] {
+            let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
+            if let response {
+                combined = combined.combining(with: response)
+            }
+        }
+
+        XCTAssertEqual(combined.message?.content.string, "Hello")
+    }
+
     func testResponsesStreamRefusalDeltaPreservesRefusal() throws {
         let lines = [
             "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}",
