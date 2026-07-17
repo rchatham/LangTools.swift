@@ -36,7 +36,7 @@ public extension OpenAI {
 }
 
 extension OpenAI {
-    public struct ResponsesRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest, LangToolsStructuredOutputRequest {
+    public struct ResponsesRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest, LangToolsStructuredOutputRequest, LangToolsResponseUpdatingRequest {
         public typealias LangTool = OpenAI
         public typealias Response = ResponsesResponse
         public static var endpoint: String { "responses" }
@@ -57,6 +57,9 @@ extension OpenAI {
 
         @CodableIgnored
         public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
+
+        @CodableIgnored
+        private var streamState: ResponsesStreamState?
 
         public var responseSchema: JSONSchema? {
             get { text?.format.schema }
@@ -99,6 +102,7 @@ extension OpenAI {
             self.text = text
             self.metadata = metadata
             self.toolEventHandler = toolEventHandler
+            self.streamState = ResponsesStreamState()
         }
 
         public init(from decoder: Decoder) throws {
@@ -116,7 +120,16 @@ extension OpenAI {
             parallel_tool_calls = try container.decodeIfPresent(Bool.self, forKey: .parallel_tool_calls)
             text = try container.decodeIfPresent(TextConfig.self, forKey: .text)
             metadata = try container.decodeIfPresent([String: String].self, forKey: .metadata)
+            // ResponsesRequest decoding is used for outbound request inspection only.
+            // The Responses API input/tools wire format is intentionally not inflated
+            // back into OpenAI.Message/OpenAI.Tool models here.
             toolEventHandler = nil
+            streamState = ResponsesStreamState()
+        }
+
+        public func updated(response: Decodable) throws -> Decodable {
+            guard let response = response as? ResponsesResponse else { return response }
+            return streamState?.updating(response) ?? response
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -173,7 +186,7 @@ extension OpenAI {
 
             public init(schema: JSONSchema) {
                 self.type = "json_schema"
-                self.name = ChatCompletionRequest.ResponseFormat.JSONSchemaFormat.sanitize(name: schema.title ?? "structured_response")
+                self.name = OpenAI.sanitizeStructuredOutputName(schema.title ?? "structured_response")
                 self.schema = schema
                 self.strict = true
             }
@@ -251,8 +264,12 @@ extension OpenAI {
                     if let content = ContentItem.items(for: message.content, role: message.role), !content.isEmpty {
                         items.append(.message(role: message.role, content: content))
                     }
-                    items.append(contentsOf: (message.tool_calls ?? []).map {
-                        .functionCall(callID: $0.id ?? UUID().uuidString, name: $0.name ?? "", arguments: $0.arguments)
+                    items.append(contentsOf: (message.tool_calls ?? []).enumerated().map { offset, toolCall in
+                        .functionCall(
+                            callID: toolCall.id ?? Self.stableToolCallID(for: toolCall, offset: offset),
+                            name: toolCall.name ?? "",
+                            arguments: toolCall.arguments
+                        )
                     })
                     return items
                 case .tool:
@@ -278,6 +295,10 @@ extension OpenAI {
                     try container.encode(callID, forKey: .call_id)
                     try container.encode(output, forKey: .output)
                 }
+            }
+
+            private static func stableToolCallID(for toolCall: Message.ToolCall, offset: Int) -> String {
+                "tool_call_\(toolCall.index ?? offset)"
             }
 
             enum CodingKeys: String, CodingKey { case type, role, content, call_id, name, arguments, output }
@@ -339,7 +360,7 @@ extension OpenAI {
                 guard item.type == "function_call", !item.isEmptyFunctionCallPlaceholder else { return nil }
                 return OpenAI.Message.ToolCall(
                     index: index,
-                    id: item.call_id ?? item.id ?? UUID().uuidString,
+                    id: item.stableToolCallID(outputIndex: index),
                     type: .function,
                     function: .init(name: item.name ?? "", arguments: item.arguments ?? "")
                 )
@@ -378,7 +399,7 @@ extension OpenAI {
                     content: nil,
                     tool_calls: [OpenAI.Message.ToolCall(
                         index: index,
-                        id: existing?.call_id ?? existing?.id ?? "",
+                        id: existing?.stableToolCallID(outputIndex: index) ?? "",
                         type: .function,
                         function: .init(name: existing?.name ?? "", arguments: argumentsDelta)
                     )],
@@ -506,7 +527,7 @@ extension OpenAI {
 
         public func combining(with next: ResponsesResponse) -> ResponsesResponse {
             if output.isEmpty, id == nil, next.streamType == nil { return next }
-            if next.streamType == "response.completed", !next.output.isEmpty { return next }
+            if next.streamType == "response.completed" { return next }
 
             var combined = ResponsesResponse(
                 id: next.id ?? id,
@@ -607,6 +628,10 @@ extension OpenAI {
                 type == "function_call" && id == nil && call_id == nil && (name ?? "").isEmpty && (arguments ?? "").isEmpty
             }
 
+            func stableToolCallID(outputIndex: Int) -> String {
+                call_id ?? id ?? "response_function_call_\(outputIndex)"
+            }
+
             mutating func appendText(_ text: String, contentIndex: Int) {
                 if content == nil { content = [] }
                 while content!.count <= contentIndex { content!.append(.outputText("")) }
@@ -639,14 +664,50 @@ extension OpenAI {
             }
         }
 
+        fileprivate var streamFunctionCallMetadata: (Int, OutputItem)? {
+            guard streamType == "response.output_item.added",
+                  let outputIndex,
+                  let item,
+                  item.type == "function_call" else { return nil }
+            return (outputIndex, item)
+        }
+
+        fileprivate var streamArgumentsOutputIndex: Int? {
+            guard argumentsDelta != nil else { return nil }
+            return outputIndex
+        }
+
+        fileprivate mutating func applyStreamFunctionCallMetadata(_ item: OutputItem) {
+            guard argumentsDelta != nil else { return }
+            self.item = item
+        }
+
         enum CodingKeys: String, CodingKey {
             case id, object, created_at, status, model, output, usage, type
             case output_index, content_index, item, delta, response
         }
     }
+
+    private final class ResponsesStreamState {
+        private var functionCallsByOutputIndex: [Int: ResponsesResponse.OutputItem] = [:]
+
+        func updating(_ response: ResponsesResponse) -> ResponsesResponse {
+            var response = response
+            if let (outputIndex, item) = response.streamFunctionCallMetadata {
+                functionCallsByOutputIndex[outputIndex] = item
+            }
+            if let outputIndex = response.streamArgumentsOutputIndex,
+               let item = functionCallsByOutputIndex[outputIndex] {
+                response.applyStreamFunctionCallMetadata(item)
+            }
+            return response
+        }
+    }
 }
 
 public extension OpenAI {
+    // This parser intentionally applies to every OpenAI streaming endpoint so
+    // shared SSE framing lines are handled consistently across request types.
     static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
         if buffer.hasPrefix("event:") { return nil }
         return if buffer.hasPrefix("data:"),
@@ -654,6 +715,18 @@ public extension OpenAI {
                   let data = buffer.dropFirst(5).trimmingCharacters(in: .whitespaces).data(using: .utf8) {
             try Self.decodeResponse(data: data)
         } else { nil }
+    }
+}
+
+private extension OpenAI {
+    static func sanitizeStructuredOutputName(_ name: String) -> String {
+        let cleaned = name
+            .unicodeScalars
+            .map { CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-")).contains($0) ? Character($0) : "_" }
+            .map(String.init)
+            .joined()
+        let truncated = String(cleaned.prefix(64))
+        return truncated.isEmpty ? "structured_response" : truncated
     }
 }
 
