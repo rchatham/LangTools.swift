@@ -57,7 +57,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         if case .anthropic(let model) = model {
             return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice(), toolEventHandler: toolEventHandler)
         } else if case .openAI(let model) = model {
-            return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), n: 3, stream: stream, tools: tools, tool_choice: toolChoice, choose: {_ in 2}, toolEventHandler: toolEventHandler)
+            return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice, toolEventHandler: toolEventHandler)
         } else if case .xAI(let model) = model {
             return OpenAI.ChatCompletionRequest(model: OpenAI.Model(customModelID: model.rawValue), messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice, toolEventHandler: toolEventHandler)
         } else if case .gemini(let model) = model {

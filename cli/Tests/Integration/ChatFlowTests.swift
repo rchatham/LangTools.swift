@@ -8,6 +8,7 @@
 import XCTest
 @testable import CLI
 import Ollama
+import OpenAI
 import Foundation
 
 final class ChatFlowTests: XCTestCase {
@@ -161,6 +162,45 @@ final class ChatFlowTests: XCTestCase {
         let output = try runCLI(arguments: ["openai-chat"])
 
         XCTAssertTrue(output.contains("Error: Usage: LangToolsCLI openai-chat --model <model-id> --messages-file <path>"))
+    }
+
+    func testOpenAIRequestsDefaultToSingleCompletion() {
+        let request = NetworkClient().request(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .openAI(.gpt4o_mini),
+            stream: false,
+            tools: nil,
+            toolChoice: nil
+        )
+
+        guard let openAIRequest = request as? OpenAI.ChatCompletionRequest else {
+            return XCTFail("Expected OpenAI chat completion request")
+        }
+
+        XCTAssertNil(openAIRequest.n)
+    }
+
+    func testCodexWorkspaceUsesPrivatePermissions() throws {
+        let workspace = try CodexWorkspace(session: StoredAccountSession(
+            provider: "openai",
+            accountIdentifier: "chatgpt-account",
+            accessToken: "access-token",
+            refreshToken: "refresh-token",
+            idToken: "header.payload.signature",
+            tokenType: "Bearer",
+            expiresAt: nil,
+            accessibleModelIDs: ["gpt-5.1-codex"],
+            createdAt: Date(),
+            id: UUID()
+        ))
+        defer { workspace.remove() }
+
+        XCTAssertEqual(workspace.environment["CODEX_HOME"], workspace.directoryURL.path)
+        XCTAssertEqual(try octalPermissions(at: workspace.directoryURL.path), 0o700)
+        XCTAssertEqual(try octalPermissions(at: workspace.directoryURL.appendingPathComponent("auth.json").path), 0o600)
+        XCTAssertEqual(try octalPermissions(at: workspace.directoryURL.appendingPathComponent("config.toml").path), 0o600)
+        XCTAssertEqual(workspace.directoryURL.deletingLastPathComponent(), FileManager.default.temporaryDirectory)
+        XCTAssertFalse(workspace.directoryURL.lastPathComponent.hasPrefix("langtools-codex-"))
     }
 
     func testNonInteractiveCommandAllowlist() {
@@ -644,5 +684,11 @@ final class ChatFlowTests: XCTestCase {
     private func executablePath() -> String {
         let packageURL = URL(fileURLWithPath: packageDirectory())
         return packageURL.appendingPathComponent(".build/arm64-apple-macosx/debug/langtools").path
+    }
+
+    private func octalPermissions(at path: String) throws -> Int {
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+        let permissions = try XCTUnwrap(attributes[.posixPermissions] as? NSNumber)
+        return permissions.intValue & 0o777
     }
 }

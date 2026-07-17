@@ -256,7 +256,10 @@ struct OpenAIAccountChatCommand {
     }
 }
 
-private struct CodexWorkspace {
+struct CodexWorkspace {
+    private static let directoryPermissions: Int = 0o700
+    private static let filePermissions: Int = 0o600
+
     let directoryURL: URL
     let environment: [String: String]
 
@@ -269,15 +272,20 @@ private struct CodexWorkspace {
         }
 
         directoryURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("langtools-codex-", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: Self.directoryPermissions]
+        )
 
         let authJSON = try Self.makeAuthJSON(session: session, idToken: idToken, refreshToken: refreshToken)
-        try authJSON.write(to: directoryURL.appendingPathComponent("auth.json"), atomically: true, encoding: .utf8)
+        let authURL = directoryURL.appendingPathComponent("auth.json")
+        try Self.writePrivateFile(contents: authJSON, to: authURL)
 
         let config = "cli_auth_credentials_store = \"file\"\n"
-        try config.write(to: directoryURL.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+        let configURL = directoryURL.appendingPathComponent("config.toml")
+        try Self.writePrivateFile(contents: config, to: configURL)
 
         var env = ProcessInfo.processInfo.environment
         env["CODEX_HOME"] = directoryURL.path
@@ -289,6 +297,11 @@ private struct CodexWorkspace {
 
     func remove() {
         try? FileManager.default.removeItem(at: directoryURL)
+    }
+
+    private static func writePrivateFile(contents: String, to url: URL) throws {
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: filePermissions], ofItemAtPath: url.path)
     }
 
     private static func makeAuthJSON(session: StoredAccountSession, idToken: String, refreshToken: String) throws -> String {
