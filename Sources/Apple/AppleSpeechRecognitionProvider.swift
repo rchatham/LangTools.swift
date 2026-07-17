@@ -125,7 +125,17 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
 
     public func startRecognition() throws {
         updateLocaleFromSettings()
-        try startStreamingTranscription(onPartialResult: { _ in }, onFinalResult: { _ in })
+        try startStreamingTranscription(
+            onPartialResult: { [weak self] text in
+                self?.eventHandler?(.partialTranscription(text))
+            },
+            onFinalResult: { [weak self] text in
+                self?.eventHandler?(.finalTranscription(text))
+            },
+            onFailure: { [weak self] error in
+                self?.eventHandler?(.recognitionFailed(error.localizedDescription))
+            }
+        )
     }
 
     public func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {
@@ -200,12 +210,10 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
                 guard let self, self.recognitionSessionID == sessionID else { return }
                 if isFinal {
                     self.currentTranscript = text
-                    self.eventHandler?(.finalTranscription(text))
                     self.onFinalResultCallback?(text)
                     self.cleanupStreaming()
                 } else {
                     self.currentTranscript = text
-                    self.eventHandler?(.partialTranscription(text))
                     self.onPartialResultCallback?(text)
                 }
             }
@@ -267,7 +275,7 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
     public func runStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws -> String? {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                blockingStreamingContinuation = continuation
+                guard storeBlockingStreamingContinuation(continuation) else { return }
                 do {
                     try startStreamingTranscription(
                         onPartialResult: { text in
@@ -320,13 +328,33 @@ public final class AppleSpeechRecognitionProvider: BlockingStreamingSpeechRecogn
     ) async throws -> String? {
         self.onFailureCallback = onFailure
         return try await withCheckedThrowingContinuation { continuation in
-            blockingStreamingContinuation = continuation
+            guard storeBlockingStreamingContinuation(continuation) else { return }
             handleStreamingFailure(error)
         }
     }
 
+    func test_runBlockedStreamingForTesting() async throws -> String? {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard storeBlockingStreamingContinuation(continuation) else { return }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.completeBlockingStreaming(throwing: CancellationError())
+            }
+        }
+    }
+
+    private func storeBlockingStreamingContinuation(_ continuation: CheckedContinuation<String?, Error>) -> Bool {
+        guard blockingStreamingContinuation == nil else {
+            continuation.resume(throwing: AppleLangToolsSpeechError.recordingFailed("Streaming recognition is already active"))
+            return false
+        }
+        blockingStreamingContinuation = continuation
+        return true
+    }
+
     private func handleStreamingFailure(_ error: Error) {
-        eventHandler?(.recognitionFailed(error.localizedDescription))
         onFailureCallback?(error)
         completeBlockingStreaming(throwing: error)
         cleanupStreaming(completeBlockingContinuation: false)

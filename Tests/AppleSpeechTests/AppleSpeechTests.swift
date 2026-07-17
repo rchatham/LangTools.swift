@@ -7,6 +7,7 @@
 
 import XCTest
 import Speech
+import LangTools
 @testable import AppleLangTools
 
 final class AppleSpeechTests: XCTestCase {
@@ -22,23 +23,23 @@ final class AppleSpeechTests: XCTestCase {
     }
 
     @MainActor
-    func testStreamingFailureEmitsEventAndThrowsBlockingContinuation() async {
+    func testStreamingFailureUsesSessionCallbackWithoutDuplicateEventHandlerDelivery() async {
         let provider = AppleSpeechRecognitionProvider(locale: Locale(identifier: "en-US"))
         let expectedError = NSError(domain: "AppleSpeechTests", code: 42, userInfo: [NSLocalizedDescriptionKey: "recognition failed"])
-        var failedMessage: String?
+        var events: [SpeechRecognitionEvent] = []
         provider.eventHandler = { event in
-            if case .recognitionFailed(let message) = event {
-                failedMessage = message
-            }
+            events.append(event)
         }
 
         do {
-            _ = try await provider.test_failStreamingForTesting(expectedError)
+            _ = try await provider.test_failStreamingForTesting(expectedError) { error in
+                events.append(.recognitionFailed(error.localizedDescription))
+            }
             XCTFail("Expected blocking streaming continuation to throw")
         } catch {
             XCTAssertEqual((error as NSError).domain, expectedError.domain)
             XCTAssertEqual((error as NSError).code, expectedError.code)
-            XCTAssertEqual(failedMessage, "recognition failed")
+            XCTAssertEqual(events, [.recognitionFailed("recognition failed")])
             XCTAssertFalse(provider.isStreaming)
         }
     }
@@ -60,6 +61,25 @@ final class AppleSpeechTests: XCTestCase {
             XCTAssertEqual(failedMessage, "recognition failed")
             XCTAssertFalse(provider.isStreaming)
         }
+    }
+
+    @MainActor
+    func testBlockingStreamingRejectsOverlappingSession() async {
+        let provider = AppleSpeechRecognitionProvider(locale: Locale(identifier: "en-US"))
+        let firstRun = Task { @MainActor in
+            try await provider.test_runBlockedStreamingForTesting()
+        }
+        await Task.yield()
+
+        do {
+            _ = try await provider.test_runBlockedStreamingForTesting()
+            XCTFail("Expected overlapping blocking streaming session to throw")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "Recording failed: Streaming recognition is already active")
+        }
+
+        firstRun.cancel()
+        _ = await firstRun.result
     }
 
     // MARK: - Locale Support Tests
