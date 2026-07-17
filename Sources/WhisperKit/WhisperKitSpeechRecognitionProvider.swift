@@ -339,12 +339,18 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
         }
     }
 
+    #if DEBUG
     func test_enqueuePendingInitializationContinuation() async throws {
         try await awaitPendingInitialization()
     }
 
     func test_beginInitialization() {
         isInitializing = true
+    }
+
+    func test_completeInitializationForTesting() {
+        isInitializing = false
+        completePendingInitializationContinuations()
     }
 
     func test_cancelInitializationForTesting() {
@@ -359,6 +365,7 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
     var test_hasPendingInitializationContinuations: Bool {
         !pendingInitializationContinuations.isEmpty
     }
+    #endif
 
     private func awaitPendingInitialization() async throws {
         let continuationID = UUID()

@@ -52,6 +52,24 @@ final class WhisperKitSpeechRecognitionProviderTests: XCTestCase {
         )
     }
 
+    #if DEBUG
+    @MainActor
+    func testPendingInitializationWaitersResumeOnSuccess() async throws {
+        let provider = WhisperKitSpeechRecognitionProvider()
+        provider.test_beginInitialization()
+
+        let waiter = Task { @MainActor in
+            try await provider.test_enqueuePendingInitializationContinuation()
+        }
+        await Task.yield()
+
+        provider.test_completeInitializationForTesting()
+
+        try await waiter.value
+        XCTAssertFalse(provider.test_isInitializing)
+        XCTAssertFalse(provider.test_hasPendingInitializationContinuations)
+    }
+
     @MainActor
     func testPendingInitializationWaitersResumeOnCancellation() async {
         let provider = WhisperKitSpeechRecognitionProvider()
@@ -95,5 +113,6 @@ final class WhisperKitSpeechRecognitionProviderTests: XCTestCase {
             XCTFail("Expected CancellationError, got \(error)")
         }
     }
+    #endif
 }
 #endif
