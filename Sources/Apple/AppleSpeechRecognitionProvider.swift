@@ -3,6 +3,11 @@ import Foundation
 import LangTools
 import Speech
 
+func isBenignAppleSpeechTerminalError(_ error: Error) -> Bool {
+    let nsError = error as NSError
+    return nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 1110
+}
+
 private extension SFSpeechRecognizerAuthorizationStatus {
     var providerAuthorizationState: ProviderAuthorizationState {
         switch self {
@@ -184,7 +189,12 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
             if let error {
                 Task { @MainActor [weak self] in
                     guard let self, self.recognitionSessionID == sessionID else { return }
-                    self.eventHandler?(.recognitionFailed(error.localizedDescription))
+                    if isBenignAppleSpeechTerminalError(error) {
+                        self.eventHandler?(.finalTranscription(self.currentTranscript))
+                        self.onFinalResultCallback?(self.currentTranscript)
+                    } else {
+                        self.eventHandler?(.recognitionFailed(error.localizedDescription))
+                    }
                     self.cleanupStreaming()
                 }
                 return
