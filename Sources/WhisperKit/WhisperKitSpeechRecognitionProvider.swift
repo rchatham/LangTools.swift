@@ -344,8 +344,8 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
 
     public func startStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws {
         try await startStreamingTranscription(
-            onPartialResult: { text, isFinal in
-                onEvent(isFinal ? .finalTranscription(text) : .partialTranscription(text))
+            onPartialResult: { [weak self] text, isFinal in
+                self?.emitStreamingRecognitionEvent(text, isFinal: isFinal, onEvent: onEvent)
             },
             onError: { error in
                 onEvent(.recognitionFailed(error.localizedDescription))
@@ -361,8 +361,8 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
     public func runStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws -> String? {
         try await withTaskCancellationHandler {
             resetStreamingTranscriptState()
-            try await prepareStreamingTranscriber { text, isFinal in
-                onEvent(isFinal ? .finalTranscription(text) : .partialTranscription(text))
+            try await prepareStreamingTranscriber { [weak self] text, isFinal in
+                self?.emitStreamingRecognitionEvent(text, isFinal: isFinal, onEvent: onEvent)
             }
 
             isStreaming = true
@@ -477,7 +477,7 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
                 let isFinal = !newState.isRecording && oldState.isRecording
                 let oldFullText = (oldState.confirmedSegments.map { self.stripSpecialTokens($0.text) } + oldState.unconfirmedSegments.map { self.stripSpecialTokens($0.text) }).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
                 if oldState.isRecording != newState.isRecording || oldState.confirmedSegments.count != newState.confirmedSegments.count || oldState.unconfirmedSegments.count != newState.unconfirmedSegments.count || isFinal {
-                    self.debugLog("stream state recording \(oldState.isRecording)->\(newState.isRecording) confirmed=\(newState.confirmedSegments.count) unconfirmed=\(newState.unconfirmedSegments.count) text=\(fullText.debugDescription) final=\(isFinal)")
+                    self.debugLog("stream state recording \(oldState.isRecording)->\(newState.isRecording) confirmed=\(newState.confirmedSegments.count) unconfirmed=\(newState.unconfirmedSegments.count) textLength=\(fullText.count) final=\(isFinal)")
                 }
                 if !fullText.isEmpty && (fullText != oldFullText || isFinal) {
                     onPartialResult(fullText, isFinal)
@@ -492,7 +492,7 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
     }
 
     public func stopStreamingTranscription() async -> String {
-        debugLog("stopStreamingTranscription begin hasTranscriber=\(audioStreamTranscriber != nil) lastText=\(lastTranscribedText.debugDescription)")
+        debugLog("stopStreamingTranscription begin hasTranscriber=\(audioStreamTranscriber != nil) lastTextLength=\(lastTranscribedText.count)")
         guard audioStreamTranscriber != nil else { return lastTranscribedText }
         guard finalTranscriptionContinuation == nil else { return lastTranscribedText }
         let result = await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
@@ -505,7 +505,7 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
             }
         }
         finishStreamingSession(clearLastTranscribedText: true, resetTranscriber: false)
-        debugLog("stopStreamingTranscription end result=\(result.debugDescription)")
+        debugLog("stopStreamingTranscription end resultLength=\(result.count)")
         return result
     }
 
@@ -547,6 +547,20 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
             audioStreamTranscriber = nil
         }
         deactivateAudioSessionAfterStreaming()
+    }
+
+    func emitStreamingRecognitionEvent(
+        _ text: String,
+        isFinal: Bool,
+        onEvent: SpeechRecognitionStreamingEventHandler
+    ) {
+        if isFinal {
+            guard !hasEmittedFinalTranscription else { return }
+            hasEmittedFinalTranscription = true
+            onEvent(.finalTranscription(text))
+        } else {
+            onEvent(.partialTranscription(text))
+        }
     }
 
     func handleStreamingFailure(
@@ -597,7 +611,7 @@ public final class WhisperKitSpeechRecognitionProvider: BlockingStreamingSpeechR
         continuation.resume(returning: text)
     }
 
-    private func emitFinalTranscriptionIfNeeded(_ text: String) {
+    func emitFinalTranscriptionIfNeeded(_ text: String) {
         guard !hasEmittedFinalTranscription else { return }
         hasEmittedFinalTranscription = true
         eventHandler?(.finalTranscription(text))

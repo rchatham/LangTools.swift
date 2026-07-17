@@ -81,6 +81,25 @@ final class WhisperKitSpeechRecognitionProviderTests: XCTestCase {
     }
 
     @MainActor
+    func testStreamingFinalEventIsDeduplicated() {
+        let provider = WhisperKitSpeechRecognitionProvider()
+        var events: [SpeechRecognitionEvent] = []
+
+        provider.emitStreamingRecognitionEvent("hello", isFinal: true) { event in
+            events.append(event)
+        }
+        provider.emitStreamingRecognitionEvent("hello", isFinal: true) { event in
+            events.append(event)
+        }
+        provider.eventHandler = { event in
+            events.append(event)
+        }
+        provider.emitFinalTranscriptionIfNeeded("hello")
+
+        XCTAssertEqual(events, [.finalTranscription("hello")])
+    }
+
+    @MainActor
     func testResetClearsLazyStreamingState() {
         let provider = WhisperKitSpeechRecognitionProvider()
 
