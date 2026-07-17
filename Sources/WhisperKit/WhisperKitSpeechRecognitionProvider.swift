@@ -55,6 +55,7 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
 
     private var whisperKit: WhisperKit?
     private var isInitializing = false
+    private var pendingInitializationContinuations: [UUID: CheckedContinuation<Void, Error>] = [:]
     private var currentModelVariant: String?
     private var modelVariantProvider: @MainActor () -> String
     private var languageIdentifierProvider: @MainActor () -> String?
@@ -238,6 +239,7 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
         startupTask = nil
         whisperKit = nil
         isInitializing = false
+        completePendingInitializationContinuations(throwing: CancellationError())
         currentModelVariant = nil
         audioStreamTranscriber = nil
         finalTranscriptionContinuation?.resume(returning: currentTranscript)
@@ -283,36 +285,113 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
     }
 
     private func initializeWhisperKit() async throws {
-        let modelVariant = modelVariantProvider()
-        if whisperKit != nil && currentModelVariant != modelVariant {
-            whisperKit = nil
-        }
-        guard !isInitializing else { return }
-        isInitializing = true
-        defer { isInitializing = false }
+        while true {
+            let modelVariant = modelVariantProvider()
+            if whisperKit != nil && currentModelVariant != modelVariant {
+                whisperKit = nil
+            }
 
-        loadingState = isModelDownloaded(modelVariant) ? .loading : .downloading
-        do {
-            let config = WhisperKitConfig(model: modelVariant, verbose: false, prewarm: false, load: false, download: true)
-            let initializedWhisperKit = try await WhisperKit(config)
-            try Task.checkCancellation()
-            whisperKit = initializedWhisperKit
-            loadingState = .loading
-            try await whisperKit?.loadModels()
-            try Task.checkCancellation()
-            currentModelVariant = modelVariant
-            loadingState = .ready
-        } catch is CancellationError {
-            whisperKit = nil
-            currentModelVariant = nil
-            loadingState = .idle
-            throw CancellationError()
-        } catch {
-            whisperKit = nil
-            currentModelVariant = nil
-            loadingState = .failed(error.localizedDescription)
-            throw WhisperKitLangToolsSpeechError.transcriptionFailed("WhisperKit initialization failed: \(error.localizedDescription)")
+            if whisperKit != nil { return }
+
+            if isInitializing {
+                // Await the in-flight initialization rather than returning silently.
+                // This prevents a spurious providerNotConfigured error when transcribe()
+                // races with a concurrent preload(). Re-check the requested model after
+                // the wait so a model-selection change does not reuse the wrong variant.
+                try Task.checkCancellation()
+                try await awaitPendingInitialization()
+                try Task.checkCancellation()
+                continue
+            }
+
+            isInitializing = true
+            loadingState = isModelDownloaded(modelVariant) ? .loading : .downloading
+            do {
+                let config = WhisperKitConfig(model: modelVariant, verbose: false, prewarm: false, load: false, download: true)
+                let initializedWhisperKit = try await WhisperKit(config)
+                try Task.checkCancellation()
+                whisperKit = initializedWhisperKit
+                loadingState = .loading
+                try await whisperKit?.loadModels()
+                try Task.checkCancellation()
+                currentModelVariant = modelVariant
+                loadingState = .ready
+                isInitializing = false
+                completePendingInitializationContinuations()
+                return
+            } catch is CancellationError {
+                whisperKit = nil
+                currentModelVariant = nil
+                loadingState = .idle
+                isInitializing = false
+                let cancellation = CancellationError()
+                completePendingInitializationContinuations(throwing: cancellation)
+                throw cancellation
+            } catch {
+                whisperKit = nil
+                currentModelVariant = nil
+                loadingState = .failed(error.localizedDescription)
+                isInitializing = false
+                let speechError = WhisperKitLangToolsSpeechError.transcriptionFailed("WhisperKit initialization failed: \(error.localizedDescription)")
+                completePendingInitializationContinuations(throwing: speechError)
+                throw speechError
+            }
         }
+    }
+
+    #if DEBUG
+    func test_enqueuePendingInitializationContinuation() async throws {
+        try await awaitPendingInitialization()
+    }
+
+    func test_beginInitialization() {
+        isInitializing = true
+    }
+
+    func test_completeInitializationForTesting() {
+        isInitializing = false
+        completePendingInitializationContinuations()
+    }
+
+    func test_cancelInitializationForTesting() {
+        isInitializing = false
+        completePendingInitializationContinuations(throwing: CancellationError())
+    }
+
+    var test_isInitializing: Bool {
+        isInitializing
+    }
+
+    var test_hasPendingInitializationContinuations: Bool {
+        !pendingInitializationContinuations.isEmpty
+    }
+    #endif
+
+    private func awaitPendingInitialization() async throws {
+        let continuationID = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                pendingInitializationContinuations[continuationID] = continuation
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.completePendingInitializationContinuation(continuationID, throwing: CancellationError())
+            }
+        }
+    }
+
+    private func completePendingInitializationContinuation(_ id: UUID, throwing error: Error? = nil) {
+        guard let continuation = pendingInitializationContinuations.removeValue(forKey: id) else { return }
+        if let error {
+            continuation.resume(throwing: error)
+        } else {
+            continuation.resume()
+        }
+    }
+
+    private func completePendingInitializationContinuations(throwing error: Error? = nil) {
+        let continuationIDs = Array(pendingInitializationContinuations.keys)
+        continuationIDs.forEach { completePendingInitializationContinuation($0, throwing: error) }
     }
 
     func stripSpecialTokens(_ text: String) -> String {

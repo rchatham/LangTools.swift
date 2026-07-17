@@ -37,6 +37,18 @@ final class AppleSpeechTests: XCTestCase {
 
     // MARK: - Authorization Tests
 
+    func testBenignTerminalErrorDetectsNoSpeechError() {
+        let error = NSError(domain: "kAFAssistantErrorDomain", code: 1110)
+
+        XCTAssertTrue(isBenignAppleSpeechTerminalError(error))
+    }
+
+    func testBenignTerminalErrorRejectsOtherErrors() {
+        let error = NSError(domain: "kAFAssistantErrorDomain", code: 1101)
+
+        XCTAssertFalse(isBenignAppleSpeechTerminalError(error))
+    }
+
     func testRequestAuthorizationReturnsStatus() async {
         let status = await AppleSpeech.requestAuthorization()
 
