@@ -53,6 +53,19 @@ final class ResponsesRequestTests: XCTestCase {
         XCTAssertEqual(format["strict"] as? Bool, true)
     }
 
+    func testResponsesRequestKeepsMessageInstructionsWhenExplicitInstructionsAreEmpty() throws {
+        let request = OpenAI.ResponsesRequest(
+            model: .gpt4o_mini,
+            messages: [.init(role: .system, content: "Be concise.")],
+            instructions: ""
+        )
+
+        let data = try JSONEncoder().encode(request)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(json["instructions"] as? String, "Be concise.")
+    }
+
     func testResponsesRequestEncodesForcedToolChoiceFlattened() throws {
         let request = OpenAI.ResponsesRequest(
             model: .gpt4o_mini,

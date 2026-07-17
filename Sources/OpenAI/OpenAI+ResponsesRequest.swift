@@ -155,10 +155,11 @@ extension OpenAI {
                 .map(\.content.text)
                 .filter { !$0.isEmpty }
                 .joined(separator: "\n\n")
-            if let instructions, !instructions.isEmpty, !messageInstructions.isEmpty {
-                return instructions + "\n\n" + messageInstructions
+            let explicitInstructions = instructions.flatMap { $0.isEmpty ? nil : $0 }
+            if let explicitInstructions, !messageInstructions.isEmpty {
+                return explicitInstructions + "\n\n" + messageInstructions
             }
-            return instructions ?? (messageInstructions.isEmpty ? nil : messageInstructions)
+            return explicitInstructions ?? (messageInstructions.isEmpty ? nil : messageInstructions)
         }
 
         private var responsesInputItems: [InputItem] {
