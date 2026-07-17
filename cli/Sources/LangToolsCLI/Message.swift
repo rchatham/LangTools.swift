@@ -20,6 +20,7 @@ class Message: Codable, ObservableObject {
     var text: String?
     var role: Role
     var contentType: ContentType?
+    var contentKind: String?
     var imageDetail: ImageDetail?
 
     init(uuid: UUID = UUID(), text: String, role: Role) {
@@ -35,6 +36,7 @@ extension Message: Equatable, Hashable {
         hasher.combine(text)
         hasher.combine(role)
         hasher.combine(contentType)
+        hasher.combine(contentKind)
         hasher.combine(imageDetail)
     }
     static func == (lhs: Message, rhs: Message) -> Bool {
@@ -42,6 +44,7 @@ extension Message: Equatable, Hashable {
         lhs.text == rhs.text &&
         lhs.role == rhs.role &&
         lhs.contentType == rhs.contentType &&
+        lhs.contentKind == rhs.contentKind &&
         lhs.imageDetail == rhs.imageDetail
     }
 }

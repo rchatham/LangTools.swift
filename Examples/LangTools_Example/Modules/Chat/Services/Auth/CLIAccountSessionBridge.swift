@@ -97,7 +97,12 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
     }
 
     private func exportOpenAISession(using command: ResolvedCommand) async throws -> AccountSession {
-        let result = try await runLogged(command: command, extraArguments: ["auth", "export-session", "openai", "--format", "json"], action: "OpenAI session export")
+        let result = try await runLogged(
+            command: command,
+            extraArguments: ["auth", "export-session", "openai", "--format", "json"],
+            action: "OpenAI session export",
+            outputVisibility: .redacted
+        )
         guard result.status == 0 else {
             throw CLIAccountSessionBridgeError.commandFailed(commandFailureMessage(for: result, action: "OpenAI session export", executable: command.executable))
         }
@@ -113,9 +118,12 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
 
     private func writeOpenAIChatRequestFile(messages: [Message]) throws -> URL {
         let payload = OpenAIChatCLIRequestFile(
-            messages: messages.compactMap { message in
-                guard let content = message.text else { return nil }
-                return OpenAIChatCLIMessage(role: message.role, content: content)
+            messages: messages.map { message in
+                OpenAIChatCLIMessage(
+                    role: message.role,
+                    content: serializedContent(for: message),
+                    contentKind: serializedContentKind(for: message)
+                )
             }
         )
         let encoder = JSONEncoder()
@@ -145,11 +153,55 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
         return "\(action) failed: LangToolsCLI exited with status \(result.status) at \(executable). \(logHint)"
     }
 
-    private func runLogged(command: ResolvedCommand, extraArguments: [String], action: String) async throws -> CommandResult {
+    private func runLogged(
+        command: ResolvedCommand,
+        extraArguments: [String],
+        action: String,
+        outputVisibility: CLIBridgeLogOutputVisibility = .plain
+    ) async throws -> CommandResult {
         let arguments = command.arguments + extraArguments
         let result = try await runner.run(executable: command.executable, arguments: arguments)
-        logger.log(action: action, executable: command.executable, arguments: arguments, result: result)
+        logger.log(action: action, executable: command.executable, arguments: arguments, result: result, outputVisibility: outputVisibility)
         return result
+    }
+
+    private func serializedContent(for message: Message) -> String {
+        if let text = message.text, text.isEmpty == false {
+            return text
+        }
+
+        switch message.contentType {
+        case .agentEvent(let content):
+            return content.formattedText
+        case .contentCards(let cards):
+            if let message = cards.message, message.isEmpty == false {
+                return message
+            }
+            return "Structured content cards (\(cards.cardType)), count: \(cards.cardCount)"
+        case .array(let items):
+            return items.joined(separator: "\n")
+        case .string(let text):
+            return text
+        case .null, .none:
+            return "[No content]"
+        }
+    }
+
+    private func serializedContentKind(for message: Message) -> String? {
+        switch message.contentType {
+        case .agentEvent:
+            return "agentEvent"
+        case .contentCards:
+            return "contentCards"
+        case .array:
+            return "array"
+        case .string:
+            return "string"
+        case .null:
+            return "null"
+        case .none:
+            return nil
+        }
     }
 
     private func resolveCommand() throws -> ResolvedCommand {
@@ -219,10 +271,16 @@ private struct OpenAIChatCLIRequestFile: Codable {
 private struct OpenAIChatCLIMessage: Codable {
     let role: Role
     let content: String
+    let contentKind: String?
 }
 
 private struct OpenAIChatCLIResponse: Codable {
     let content: String
+}
+
+public enum CLIBridgeLogOutputVisibility {
+    case plain
+    case redacted
 }
 
 public struct CLIBridgeLogger {
@@ -250,16 +308,24 @@ public struct CLIBridgeLogger {
         fileURL.path
     }
 
-    public func log(action: String, executable: String, arguments: [String], result: CommandResult) {
+    public func log(
+        action: String,
+        executable: String,
+        arguments: [String],
+        result: CommandResult,
+        outputVisibility: CLIBridgeLogOutputVisibility = .plain
+    ) {
+        let stdout = outputVisibility == .redacted ? "<redacted>" : (result.stdout.isEmpty ? "<empty>" : result.stdout)
+        let stderr = outputVisibility == .redacted ? redactIfNeeded(result.stderr) : (result.stderr.isEmpty ? "<empty>" : result.stderr)
         let lines = [
             "[\(formatter.string(from: Date()))] \(action)",
             "executable: \(executable)",
             "arguments: \(arguments.joined(separator: " "))",
             "status: \(result.status)",
             "stdout:",
-            result.stdout.isEmpty ? "<empty>" : result.stdout,
+            stdout,
             "stderr:",
-            result.stderr.isEmpty ? "<empty>" : result.stderr,
+            stderr,
             String(repeating: "-", count: 80)
         ]
         let entry = lines.joined(separator: "\n") + "\n"
@@ -275,6 +341,10 @@ public struct CLIBridgeLogger {
         }
 
         NSLog("%@", entry)
+    }
+
+    private func redactIfNeeded(_ text: String) -> String {
+        text.isEmpty ? "<empty>" : "<redacted>"
     }
 }
 

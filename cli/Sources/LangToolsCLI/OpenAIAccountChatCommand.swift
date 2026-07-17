@@ -229,7 +229,9 @@ struct OpenAIAccountChatCommand {
             default:
                 role = "User"
             }
-            return "[\(role)]\n\(message.text ?? "")"
+            let contentLabel = message.contentKind.map { " | \($0)" } ?? ""
+            let content = message.text?.isEmpty == false ? message.text! : "[No content]"
+            return "[\(role)\(contentLabel)]\n\(content)"
         }.joined(separator: "\n\n")
 
         return """
@@ -346,7 +348,11 @@ private struct OpenAIAccountChatRequest {
         let data = try Data(contentsOf: URL(fileURLWithPath: messagesFile))
         let decoder = JSONDecoder()
         let payload = try decoder.decode(OpenAIAccountChatMessagesFile.self, from: data)
-        return payload.messages.map { Message(text: $0.content, role: $0.role) }
+        return payload.messages.map {
+            let message = Message(text: $0.content, role: $0.role)
+            message.contentKind = $0.contentKind
+            return message
+        }
     }
 
     private static func value(for flag: String, in arguments: [String]) throws -> String {
@@ -364,6 +370,7 @@ private struct OpenAIAccountChatMessagesFile: Codable {
 private struct OpenAIAccountChatMessage: Codable {
     let role: OpenAI.Message.Role
     let content: String
+    let contentKind: String?
 }
 
 private struct OpenAIAccountChatResponse: Codable {

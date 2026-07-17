@@ -30,7 +30,14 @@ public final class AccountProxyTransport: AccountProxyTransportProtocol {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let response = try await send(messages: messages, model: model, session: session, stream: stream, tools: tools, toolChoice: toolChoice)
+                    let response = try await send(
+                        messages: messages,
+                        model: model,
+                        session: session,
+                        stream: false,
+                        tools: tools,
+                        toolChoice: toolChoice
+                    )
                     continuation.yield(response.content)
                     continuation.finish()
                 } catch {
