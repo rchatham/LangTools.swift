@@ -8,7 +8,8 @@
 import XCTest
 import Speech
 import AVFoundation
-@testable import AppleSpeech
+import LangTools
+@testable import AppleLangTools
 
 final class TranscriptionRequestTests: XCTestCase {
 
@@ -53,6 +54,35 @@ final class TranscriptionRequestTests: XCTestCase {
         XCTAssertEqual(request.locale, .current)
         XCTAssertTrue(request.reportPartialResults)
         XCTAssertEqual(request.taskHint, .unspecified)
+    }
+
+    func testTranscriptionRequestExposesGenericSTTShape() {
+        let request = AppleSpeech.TranscriptionRequest(
+            audioURL: testAudioURL,
+            locale: Locale(identifier: "en-US")
+        )
+
+        let genericRequest: any LangToolsSpeechTranscriptionRequest = request
+        XCTAssertNil(genericRequest.speechAudioData)
+        XCTAssertEqual(genericRequest.speechAudioFileURL, testAudioURL)
+        XCTAssertEqual(genericRequest.speechAudioFormat, "wav")
+        XCTAssertEqual(genericRequest.speechLanguageIdentifier, "en-US")
+        XCTAssertNil(genericRequest.speechPrompt)
+    }
+
+    func testSpeechAudioFormatIsNilWhenPathExtensionIsEmpty() {
+        let noExtURL = URL(fileURLWithPath: "/tmp/audiofile")
+        let request = AppleSpeech.TranscriptionRequest(audioURL: noExtURL)
+
+        XCTAssertNil(request.speechAudioFormat,
+            "speechAudioFormat should be nil when the URL has no path extension")
+    }
+
+    func testSpeechAudioFormatIsLowercasedWhenPathExtensionIsUppercase() {
+        let uppercaseExtURL = URL(fileURLWithPath: "/tmp/audio.WAV")
+        let request = AppleSpeech.TranscriptionRequest(audioURL: uppercaseExtURL)
+
+        XCTAssertEqual(request.speechAudioFormat, "wav")
     }
 
     // MARK: - Task Hint Tests

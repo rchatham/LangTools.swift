@@ -5,6 +5,7 @@
 //  Created by Reid Chatham on 9/23/24.
 //
 
+import Combine
 import SwiftUI
 import Chat
 import Audio
@@ -24,7 +25,7 @@ import ToolKit
 struct LangTools_ExampleApp: App {
     // Use @StateObject so SwiftUI observes voiceInputHandler.objectWillChange
     // This enables instant UI updates when settings change
-    @StateObject private var voiceInputHandler = VoiceInputHandlerAdapter()
+    @StateObject private var voiceInputHandler = VoiceInputHandlerAdapter(settings: ToolSettings.shared)
 
     init() {
         registerToolConfigurations()
@@ -414,3 +415,39 @@ extension Message: @retroactive ChatMessageInfo {
     public weak var parentMessage: Message? { parent }
     public var childChatMessages: [Message] { childMessages }
 }
+
+extension ToolSettings: @retroactive VoiceInputSettingsProviding {
+    public var sttProviderType: STTProviderType {
+        switch sttProvider {
+        case .appleSpeech:
+            return .appleSpeech
+        case .openAIWhisper:
+            return .openAIWhisper
+        case .whisperKit:
+            return .whisperKit
+        }
+    }
+
+    public var sttLanguageIdentifier: String? {
+        sttLanguage == .auto ? nil : sttLanguage.rawValue
+    }
+
+    public var whisperKitModelVariant: String {
+        whisperKitModelSize.rawValue
+    }
+
+    public var openAIStreamingChunkInterval: TimeInterval {
+        streamingChunkInterval.rawValue
+    }
+
+    public var openAIApiKey: String? {
+        KeychainService.shared.getApiKey(for: .openAI)
+    }
+
+    public var settingsDidChange: AnyPublisher<Void, Never> {
+        objectWillChange.map { _ in () }.eraseToAnyPublisher()
+    }
+}
+
+// local variable used to store apiKey while passing from ui to app
+private var apiKeyInput: String = ""

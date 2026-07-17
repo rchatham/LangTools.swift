@@ -30,7 +30,7 @@ let package = Package(
         .package(url: "https://github.com/rchatham/JSON.swift.git", branch: "main"),
         .package(url: "https://github.com/kishikawakatsumi/KeychainAccess.git", from: "4.0.0"),
         .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.6.0"),
-        .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.9.0"),
+        .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.18.0"),
     ],
     targets: [
         .target(
@@ -50,7 +50,6 @@ let package = Package(
                 .product(name: "XAI", package: "langtools.swift"),
                 .product(name: "Gemini", package: "langtools.swift"),
                 .product(name: "Ollama", package: "langtools.swift"),
-                .product(name: "AppleSpeech", package: "langtools.swift"),
                 "ToolKit",
                 "KeychainAccess",
             ],
@@ -61,8 +60,8 @@ let package = Package(
                 .product(name: "ChatUI", package: "ChatUI"),
                 .product(name: "OpenAI", package: "langtools.swift"),
                 .product(name: "LangTools", package: "langtools.swift"),
-                .product(name: "WhisperKit", package: "WhisperKit", condition: .when(platforms: [.macOS, .iOS])),
-                "Chat",
+                .product(name: "AppleLangTools", package: "langtools.swift"),
+                .product(name: "WhisperKitLangTools", package: "langtools.swift"),
             ],
             path: "Modules/Audio"),
         .target(

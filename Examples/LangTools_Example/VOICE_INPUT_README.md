@@ -50,7 +50,7 @@ dependencies: [
 
 // In your target:
 dependencies: [
-    .product(name: "AppleSpeech", package: "langtools.swift"),
+    .product(name: "AppleLangTools", package: "langtools.swift"),
     .product(name: "ChatUI", package: "ChatUI"),  // If using separate package
 ]
 ```
@@ -74,7 +74,7 @@ Key components:
 
 ```swift
 import ChatUI
-import AppleSpeech
+import AppleLangTools
 import AVFoundation
 
 @MainActor
@@ -220,8 +220,8 @@ protocol VoiceInputHandler: AnyObject {
 
 ### Build Errors
 
-**"No such module 'AppleSpeech'"**
-- Ensure AppleSpeech is added as a package dependency
+**"No such module 'AppleLangTools'"**
+- Ensure AppleLangTools is added as a package dependency
 - Clean build folder: `swift package clean`
 
 **"No such module 'ChatUI'"**
@@ -288,7 +288,7 @@ Picker("STT Provider", selection: $selectedProvider) {
 
 ## Resources
 
-- [AppleSpeech Module Documentation](../../Sources/AppleSpeech/README.md)
+- [Apple Speech Module Documentation](../../Sources/Apple/README.md)
 - [ChatUI Audio Components](../../../ChatUI/Sources/ChatUI/Audio/)
 - [Apple Speech Framework](https://developer.apple.com/documentation/speech)
 - [LangTools STT Protocol](../../Sources/LangTools/LangTools+Request.swift)

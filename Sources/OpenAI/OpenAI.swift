@@ -99,14 +99,14 @@ public struct OpenAIErrorResponse: Error, Codable {
 }
 
 public enum OpenAIModelType {
-    case chat, tts, stt, embedding
+    case chat, tts, stt, embedding, image, realtime, audio
 }
 
 public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRepresentable {
     public static var allCases: [OpenAIModel] = openAIModels
     public static var chatModels: [OpenAIModel] { allCases.filter({ $0.type == .chat }) }
-    public static var reasoning: [OpenAIModel] { [.o1, .o1_mini, .o3_mini, .o4_mini] }
-    public static var codex: [OpenAIModel] { [.gpt51_codex, .gpt53_codex] }
+    public static var reasoning: [OpenAIModel] { [.o1, .o1_mini, .o3, .o3_pro, .o3_mini, .o4_mini] }
+    public static var codex: [OpenAIModel] { [.gpt51_codex] }
     public static var searchPreview: [OpenAIModel] { [.gpt4o_searchPreview, .gpt4o_mini_searchPreview] }
     static let openAIModels: [OpenAIModel] = ModelID.allCases.map { OpenAIModel(modelID: $0) }
 
@@ -129,8 +129,11 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
 
     public var type: OpenAIModelType {
         id.hasPrefix("text") ? .embedding :
-        id.hasPrefix("tts") ? .tts :
-        id.hasPrefix("whisper") ? .stt : .chat
+        id.hasPrefix("tts") || id.hasSuffix("-tts") ? .tts :
+        id.contains("whisper") || id.contains("transcribe") ? .stt :
+        id.hasPrefix("gpt-image") || id.hasPrefix("dall-e") ? .image :
+        id.contains("realtime") ? .realtime :
+        id.contains("audio") ? .audio : .chat
     }
 
     // MARK: - Deprecated GPT-3.5 Models
@@ -168,6 +171,8 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let chatGPT4o_latest = OpenAIModel(modelID: .chatGPT4o_latest)
     public static let o1 = OpenAIModel(modelID: .o1)
     public static let o1_mini = OpenAIModel(modelID: .o1_mini)
+    public static let o3 = OpenAIModel(modelID: .o3)
+    public static let o3_pro = OpenAIModel(modelID: .o3_pro)
     public static let o3_mini = OpenAIModel(modelID: .o3_mini)
     public static let o4_mini = OpenAIModel(modelID: .o4_mini)
     @available(*, deprecated, message: "Preview model deprecated. Use o1 instead.")
@@ -186,17 +191,45 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let gpt5 = OpenAIModel(modelID: .gpt5)
     public static let gpt5_mini = OpenAIModel(modelID: .gpt5_mini)
     public static let gpt5_nano = OpenAIModel(modelID: .gpt5_nano)
+    public static let gpt5_pro = OpenAIModel(modelID: .gpt5_pro)
     public static let gpt5_1 = OpenAIModel(modelID: .gpt5_1)
     public static let gpt5_2 = OpenAIModel(modelID: .gpt5_2)
+    public static let gpt5_2_pro = OpenAIModel(modelID: .gpt5_2_pro)
+    @available(*, deprecated, message: "Not listed in OpenAI's current public model catalog. Use gpt5_4 or gpt5_5 instead.")
     public static let gpt5_3 = OpenAIModel(modelID: .gpt5_3)
+    public static let gpt5_4 = OpenAIModel(modelID: .gpt5_4)
+    public static let gpt5_4_pro = OpenAIModel(modelID: .gpt5_4_pro)
+    public static let gpt5_4_mini = OpenAIModel(modelID: .gpt5_4_mini)
+    public static let gpt5_4_nano = OpenAIModel(modelID: .gpt5_4_nano)
+    public static let gpt5_5 = OpenAIModel(modelID: .gpt5_5)
+    public static let gpt5_5_pro = OpenAIModel(modelID: .gpt5_5_pro)
 
     // Codex Models
     public static let gpt51_codex = OpenAIModel(modelID: .gpt51_codex)
+    @available(*, deprecated, message: "Not listed in OpenAI's current public model catalog.")
     public static let gpt53_codex = OpenAIModel(modelID: .gpt53_codex)
+
+    // Realtime and Audio Models
+    public static let gptRealtime2 = OpenAIModel(modelID: .gptRealtime2)
+    public static let gptRealtime15 = OpenAIModel(modelID: .gptRealtime15)
+    public static let gptRealtime = OpenAIModel(modelID: .gptRealtime)
+    public static let gptRealtimeMini = OpenAIModel(modelID: .gptRealtimeMini)
+    public static let gptAudio15 = OpenAIModel(modelID: .gptAudio15)
+    public static let gptAudio = OpenAIModel(modelID: .gptAudio)
 
     public static let tts_1 = OpenAIModel(modelID: .tts_1)
     public static let tts_1_hd = OpenAIModel(modelID: .tts_1_hd)
+    public static let gpt4o_mini_tts = OpenAIModel(modelID: .gpt4o_mini_tts)
     public static let whisper = OpenAIModel(modelID: .whisper)
+    public static let gpt4o_transcribe = OpenAIModel(modelID: .gpt4o_transcribe)
+    public static let gpt4o_mini_transcribe = OpenAIModel(modelID: .gpt4o_mini_transcribe)
+    public static let gpt4o_transcribe_diarize = OpenAIModel(modelID: .gpt4o_transcribe_diarize)
+    public static let gptRealtimeWhisper = OpenAIModel(modelID: .gptRealtimeWhisper)
+
+    // Image Models
+    public static let gptImage2 = OpenAIModel(modelID: .gptImage2)
+    public static let gptImage15 = OpenAIModel(modelID: .gptImage15)
+    public static let gptImage1 = OpenAIModel(modelID: .gptImage1)
     @available(*, deprecated, message: "Use textEmbedding3Small or textEmbedding3Large instead.")
     public static let textEmbeddingAda002 = OpenAIModel(modelID: .textEmbeddingAda002)
     public static let textEmbedding3Large = OpenAIModel(modelID: .textEmbedding3Large)
@@ -244,9 +277,17 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         case gpt5 = "gpt-5"
         case gpt5_mini = "gpt-5-mini"
         case gpt5_nano = "gpt-5-nano"
+        case gpt5_pro = "gpt-5-pro"
         case gpt5_1 = "gpt-5.1"
         case gpt5_2 = "gpt-5.2"
+        case gpt5_2_pro = "gpt-5.2-pro"
         case gpt5_3 = "gpt-5.3"
+        case gpt5_4 = "gpt-5.4"
+        case gpt5_4_pro = "gpt-5.4-pro"
+        case gpt5_4_mini = "gpt-5.4-mini"
+        case gpt5_4_nano = "gpt-5.4-nano"
+        case gpt5_5 = "gpt-5.5"
+        case gpt5_5_pro = "gpt-5.5-pro"
 
         // MARK: - Codex Models
         case gpt51_codex = "gpt-5.1-codex"
@@ -256,15 +297,35 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         case o1 = "o1"
         case o1_mini = "o1-mini"
         case o1_preview = "o1-preview"
+        case o3 = "o3"
+        case o3_pro = "o3-pro"
         case o3_mini = "o3-mini"
         case o4_mini = "o4-mini"
+
+        // MARK: - Realtime and Audio Models
+        case gptRealtime2 = "gpt-realtime-2"
+        case gptRealtime15 = "gpt-realtime-1.5"
+        case gptRealtime = "gpt-realtime"
+        case gptRealtimeMini = "gpt-realtime-mini"
+        case gptAudio15 = "gpt-audio-1.5"
+        case gptAudio = "gpt-audio"
 
         // MARK: - Text-to-Speech Models
         case tts_1 = "tts-1"
         case tts_1_hd = "tts-1-hd"
+        case gpt4o_mini_tts = "gpt-4o-mini-tts"
 
         // MARK: - Speech-to-Text Models
         case whisper = "whisper-1"
+        case gpt4o_transcribe = "gpt-4o-transcribe"
+        case gpt4o_mini_transcribe = "gpt-4o-mini-transcribe"
+        case gpt4o_transcribe_diarize = "gpt-4o-transcribe-diarize"
+        case gptRealtimeWhisper = "gpt-realtime-whisper"
+
+        // MARK: - Image Models
+        case gptImage2 = "gpt-image-2"
+        case gptImage15 = "gpt-image-1.5"
+        case gptImage1 = "gpt-image-1"
 
         // MARK: - Embedding Models
         case textEmbeddingAda002 = "text-embedding-ada-002"

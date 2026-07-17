@@ -18,10 +18,12 @@ let package = Package(
         .library(name: "XAI", targets: ["XAI"]),
         .library(name: "Gemini", targets: ["Gemini"]),
         .library(name: "Ollama", targets: ["Ollama"]),
-        .library(name: "AppleSpeech", targets: ["AppleSpeech"]),
+        .library(name: "AppleLangTools", targets: ["AppleLangTools"]),
+        .library(name: "WhisperKitLangTools", targets: ["WhisperKitLangTools"]),
     ],
     dependencies: [
         .package(url: "https://github.com/rchatham/JSON.swift.git", branch: "main"),
+        .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.18.0"),
     ],
     targets: [
         .target(name: "LangTools", dependencies: [.product(name: "JSON", package: "JSON.swift")], resources: [.process("README.md")]),
@@ -31,7 +33,8 @@ let package = Package(
         .target(name: "XAI", dependencies: [.target(name: "LangTools"), .target(name: "OpenAI")], resources: [.process("README.md")]),
         .target(name: "Gemini", dependencies: [.target(name: "LangTools"), .target(name: "OpenAI")], resources: [.process("README.md")]),
         .target(name: "Ollama", dependencies: [.target(name: "LangTools"), .target(name: "OpenAI")], resources: [.process("README.md")]),
-        .target(name: "AppleSpeech", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
+        .target(name: "AppleLangTools", dependencies: [.target(name: "LangTools")], path: "Sources/Apple", resources: [.process("README.md")]),
+        .target(name: "WhisperKitLangTools", dependencies: [.target(name: "LangTools"), .product(name: "WhisperKit", package: "WhisperKit", condition: .when(platforms: [.macOS, .iOS]))], path: "Sources/WhisperKit"),
         .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], path: "Tests/TestUtils", resources: [.process("Resources/")]),
         .testTarget(name: "LangToolsTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils"]),
         .testTarget(name: "OpenAITests", dependencies: ["OpenAI", "TestUtils"]),
@@ -39,6 +42,7 @@ let package = Package(
         .testTarget(name: "XAITests", dependencies: ["XAI", "OpenAI", "TestUtils"]),
         .testTarget(name: "GeminiTests", dependencies: ["Gemini", "OpenAI", "TestUtils"]),
         .testTarget(name: "OllamaTests", dependencies: ["Ollama", "OpenAI", "TestUtils"]),
-        .testTarget(name: "AppleSpeechTests", dependencies: ["AppleSpeech"]),
+        .testTarget(name: "AppleSpeechTests", dependencies: ["AppleLangTools"]),
+        .testTarget(name: "WhisperKitLangToolsTests", dependencies: ["WhisperKitLangTools"]),
     ]
 )

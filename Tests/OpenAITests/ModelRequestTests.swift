@@ -31,6 +31,38 @@ final class ModelRequestTests: XCTestCase {
         super.tearDown()
     }
 
+    // MARK: - Model Catalog Tests
+
+    func testCurrentModelIDs() {
+        XCTAssertEqual(OpenAI.Model.gpt5_5.rawValue, "gpt-5.5")
+        XCTAssertEqual(OpenAI.Model.gpt5_5_pro.rawValue, "gpt-5.5-pro")
+        XCTAssertEqual(OpenAI.Model.gpt5_4.rawValue, "gpt-5.4")
+        XCTAssertEqual(OpenAI.Model.gpt5_4_pro.rawValue, "gpt-5.4-pro")
+        XCTAssertEqual(OpenAI.Model.gpt5_4_mini.rawValue, "gpt-5.4-mini")
+        XCTAssertEqual(OpenAI.Model.gpt5_4_nano.rawValue, "gpt-5.4-nano")
+        XCTAssertEqual(OpenAI.Model.gpt5_2_pro.rawValue, "gpt-5.2-pro")
+        XCTAssertEqual(OpenAI.Model.gpt5_pro.rawValue, "gpt-5-pro")
+        XCTAssertEqual(OpenAI.Model.o3.rawValue, "o3")
+        XCTAssertEqual(OpenAI.Model.o3_pro.rawValue, "o3-pro")
+        XCTAssertEqual(OpenAI.Model.gptRealtime2.rawValue, "gpt-realtime-2")
+        XCTAssertEqual(OpenAI.Model.gptAudio15.rawValue, "gpt-audio-1.5")
+        XCTAssertEqual(OpenAI.Model.gpt4o_transcribe.rawValue, "gpt-4o-transcribe")
+        XCTAssertEqual(OpenAI.Model.gpt4o_mini_transcribe.rawValue, "gpt-4o-mini-transcribe")
+        XCTAssertEqual(OpenAI.Model.gpt4o_transcribe_diarize.rawValue, "gpt-4o-transcribe-diarize")
+        XCTAssertEqual(OpenAI.Model.gptImage2.rawValue, "gpt-image-2")
+    }
+
+    func testCurrentModelTypes() {
+        XCTAssertEqual(OpenAI.Model.gpt5_5.type, .chat)
+        XCTAssertEqual(OpenAI.Model.o3.type, .chat)
+        XCTAssertEqual(OpenAI.Model.gptRealtime.type, .realtime)
+        XCTAssertEqual(OpenAI.Model.gptAudio.type, .audio)
+        XCTAssertEqual(OpenAI.Model.gpt4o_mini_tts.type, .tts)
+        XCTAssertEqual(OpenAI.Model.gpt4o_transcribe.type, .stt)
+        XCTAssertEqual(OpenAI.Model.gptRealtimeWhisper.type, .stt)
+        XCTAssertEqual(OpenAI.Model.gptImage1.type, .image)
+    }
+
     // MARK: - List Models Tests
 
     func testListModelsRequest() async throws {
