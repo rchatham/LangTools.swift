@@ -20,6 +20,7 @@
 		B1E4E5132F314EF400AE11AA /* Audio in Frameworks */ = {isa = PBXBuildFile; productRef = B1E4E5122F314EF400AE11AA /* Audio */; };
 		B1E4E5152F314EF400AE11AA /* Chat in Frameworks */ = {isa = PBXBuildFile; productRef = B1E4E5142F314EF400AE11AA /* Chat */; };
 		B1E4E5172F314EF400AE11AA /* ExampleAgents in Frameworks */ = {isa = PBXBuildFile; productRef = B1E4E5162F314EF400AE11AA /* ExampleAgents */; };
+		B1E4E5192F314EF400AE11AA /* Realtime in Frameworks */ = {isa = PBXBuildFile; productRef = B1E4E5182F314EF400AE11AA /* Realtime */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -121,6 +122,7 @@
 				B19B31BD2F2D205700645F8A /* ExampleAgents in Frameworks */,
 				B19B31BB2F2D205700645F8A /* Chat in Frameworks */,
 				B19B31B92F2D205700645F8A /* Audio in Frameworks */,
+				B1E4E5192F314EF400AE11AA /* Realtime in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -201,6 +203,7 @@
 				B1E4E5122F314EF400AE11AA /* Audio */,
 				B1E4E5142F314EF400AE11AA /* Chat */,
 				B1E4E5162F314EF400AE11AA /* ExampleAgents */,
+				B1E4E5182F314EF400AE11AA /* Realtime */,
 			);
 			productName = LangTools_Example;
 			productReference = B1D1EBDF2CA2518F00AD7FA6 /* LangTools_Example.app */;
@@ -732,6 +735,10 @@
 		B1E4E5162F314EF400AE11AA /* ExampleAgents */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ExampleAgents;
+		};
+		B1E4E5182F314EF400AE11AA /* Realtime */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Realtime;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -10,6 +10,7 @@ import SwiftUI
 import Chat
 import Audio
 import ExampleAgents
+import Realtime
 
 import LangTools
 import Agents
@@ -113,6 +114,7 @@ struct LangTools_ExampleApp: App {
 struct ChatContainerView: View {
     @StateObject private var messageService: MessageService
     @ObservedObject var voiceInputHandler: VoiceInputHandlerAdapter
+    @State private var showRealtimeView = false
 
     init(voiceInputHandler: VoiceInputHandlerAdapter) {
         let agents: [Agent] = [
@@ -140,6 +142,21 @@ struct ChatContainerView: View {
                     return AnyView(ContentCardRegistry.shared.view(for: content))
                 }
             )
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showRealtimeView = true
+                    } label: {
+                        Label("Realtime Voice", systemImage: "waveform.circle")
+                    }
+                    .help("Open a live voice conversation")
+                }
+            }
+            .sheet(isPresented: $showRealtimeView) {
+                RealtimeView(apiKeyProvider: {
+                    KeychainService.shared.getApiKey(for: .openAI)
+                })
+            }
         }
     }
 

@@ -17,7 +17,7 @@ final public class OpenAI: LangTools {
     public typealias ErrorResponse = OpenAIErrorResponse
 
     private var configuration: OpenAIConfiguration
-    private var apiKey: String { configuration.apiKey }
+    internal var apiKey: String { configuration.apiKey }
     public var session: URLSession { configuration.session }
 
     public struct OpenAIConfiguration {

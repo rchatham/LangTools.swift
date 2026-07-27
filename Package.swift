@@ -20,6 +20,8 @@ let package = Package(
         .library(name: "Ollama", targets: ["Ollama"]),
         .library(name: "AppleLangTools", targets: ["AppleLangTools"]),
         .library(name: "WhisperKitLangTools", targets: ["WhisperKitLangTools"]),
+        .library(name: "ElevenLabs", targets: ["ElevenLabs"]),
+        .library(name: "RealtimeTools", targets: ["RealtimeTools"]),
         .executable(name: "ChatCLI", targets: ["ChatCLI"]),
     ],
     dependencies: [
@@ -37,6 +39,8 @@ let package = Package(
         .target(name: "Ollama", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
         .target(name: "AppleLangTools", dependencies: [.target(name: "LangTools")], path: "Sources/Apple", resources: [.process("README.md")]),
         .target(name: "WhisperKitLangTools", dependencies: [.target(name: "LangTools"), .product(name: "WhisperKit", package: "WhisperKit", condition: .when(platforms: [.macOS, .iOS]))], path: "Sources/WhisperKit"),
+        .target(name: "ElevenLabs", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
+        .target(name: "RealtimeTools", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
         .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], path: "Tests/TestUtils", resources: [.process("Resources/")]),
 
         // Test targets
@@ -48,6 +52,8 @@ let package = Package(
         .testTarget(name: "OllamaTests", dependencies: ["Ollama", "OpenAI", "TestUtils"]),
         .testTarget(name: "AppleSpeechTests", dependencies: ["AppleLangTools"]),
         .testTarget(name: "WhisperKitLangToolsTests", dependencies: ["WhisperKitLangTools"]),
+        .testTarget(name: "ElevenLabsTests", dependencies: ["ElevenLabs", "TestUtils"]),
+        .testTarget(name: "RealtimeToolsTests", dependencies: ["RealtimeTools", "OpenAI", "ElevenLabs", "TestUtils"]),
 
         // Executable target
         .executableTarget(name: "ChatCLI", dependencies: ["LangTools", "OpenAI", "Anthropic", "XAI", "Gemini", "Ollama"]),

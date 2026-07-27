@@ -8,6 +8,7 @@
 import Foundation
 import SwiftUI
 
+
 /// Available speech-to-text provider options
 public enum STTProvider: String, CaseIterable, Codable {
     case appleSpeech = "Apple Speech"
@@ -165,6 +166,10 @@ public class ToolSettings: ObservableObject {
 
     /// Chunk interval for OpenAI simulated streaming
     @Published public var streamingChunkInterval: StreamingChunkInterval {
+        didSet { saveSettings() }
+    }
+
+    @Published var emailToolEnabled: Bool {
         didSet { saveSettings() }
     }
 

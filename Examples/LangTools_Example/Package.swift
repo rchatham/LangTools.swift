@@ -23,6 +23,9 @@ let package = Package(
         .library(
             name: "ToolKit",
             targets: ["ToolKit"]),
+        .library(
+            name: "Realtime",
+            targets: ["Realtime"]),
     ],
     dependencies: [
         .package(name: "langtools.swift", path: "../../"),
@@ -64,6 +67,13 @@ let package = Package(
                 .product(name: "WhisperKitLangTools", package: "langtools.swift"),
             ],
             path: "Modules/Audio"),
+        .target(
+            name: "Realtime",
+            dependencies: [
+                .product(name: "LangTools", package: "langtools.swift"),
+                .product(name: "OpenAI", package: "langtools.swift"),
+            ],
+            path: "Modules/Realtime"),
         .target(
             name: "ExampleAgents",
             dependencies: [
