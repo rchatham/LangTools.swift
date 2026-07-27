@@ -1,0 +1,6 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_f","object":"response","created_at":9,"status":"in_progress","model":"gpt-4o-mini","output":[]}}
+
+event: response.failed
+data: {"type":"response.failed","response":{"id":"resp_f","object":"response","created_at":9,"status":"failed","model":"gpt-4o-mini","error":{"code":"server_error","message":"boom"}}}
+

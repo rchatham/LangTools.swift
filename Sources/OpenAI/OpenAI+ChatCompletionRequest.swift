@@ -310,13 +310,7 @@ extension OpenAI {
 
                 /// Sanitises a candidate `name` to match OpenAI's `^[a-zA-Z0-9_-]{1,64}$`.
                 public static func sanitize(name: String) -> String {
-                    let cleaned = name
-                        .unicodeScalars
-                        .map { CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-")).contains($0) ? Character($0) : "_" }
-                        .map(String.init)
-                        .joined()
-                    let truncated = String(cleaned.prefix(64))
-                    return truncated.isEmpty ? "structured_response" : truncated
+                    OpenAI.sanitizeSchemaName(name)
                 }
             }
 
