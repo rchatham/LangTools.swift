@@ -14,7 +14,6 @@ public struct ExampleTranslationProvider: TextTranslationProviding {
         runsOnDevice: true,
         supportsStreamingPartials: false,
         supportsContinuousMode: false,
-        supportsDualLanguageAutoDetect: false,
         requiresNetwork: false,
         requiresModelDownload: false
     )

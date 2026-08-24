@@ -341,7 +341,7 @@ public class STTService: ObservableObject {
         switch event {
         case .partialTranscription(let text):
             if !text.isEmpty { partialTranscription = text }
-        case .finalTranscription(let text), .dualLanguageFinalTranscription(let text, _):
+        case .finalTranscription(let text):
             transcribedText = text
             partialTranscription = ""
             isRecording = false
@@ -350,8 +350,6 @@ public class STTService: ObservableObject {
         case .recognitionFailed(let message):
             error = .transcriptionFailed(message)
             status = .error(message)
-        case .autoDetectLanguageSwitch:
-            break
         }
     }
 

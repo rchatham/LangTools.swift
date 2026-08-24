@@ -7,7 +7,6 @@ final class ProviderAbstractionsTests: XCTestCase {
             runsOnDevice: true,
             supportsStreamingPartials: false,
             supportsContinuousMode: false,
-            supportsDualLanguageAutoDetect: false,
             requiresNetwork: false,
             requiresModelDownload: true
         )
@@ -15,7 +14,6 @@ final class ProviderAbstractionsTests: XCTestCase {
         XCTAssertTrue(capabilities.runsOnDevice)
         XCTAssertFalse(capabilities.supportsStreamingPartials)
         XCTAssertFalse(capabilities.supportsContinuousMode)
-        XCTAssertFalse(capabilities.supportsDualLanguageAutoDetect)
         XCTAssertFalse(capabilities.requiresNetwork)
         XCTAssertTrue(capabilities.requiresModelDownload)
     }
@@ -72,13 +70,6 @@ final class ProviderAbstractionsTests: XCTestCase {
         XCTAssertNotEqual(ProviderAssetState.failed(reason: "a"), .failed(reason: "b"))
     }
 
-    func testSpeechAutoDetectWinnerUndetectedNotNilAmbiguous() {
-        let winner = SpeechAutoDetectWinner.undetected
-        XCTAssertNotEqual(winner, .primary)
-        XCTAssertNotEqual(winner, .secondary)
-        XCTAssertEqual(winner, .undetected)
-    }
-
     // MARK: - Generic abstraction boundary
 
     func testGenericTTSBoundaryAcceptsAnyLangToolsSpeechSynthesisRequest() {
@@ -132,7 +123,6 @@ final class ProviderAbstractionsTests: XCTestCase {
             func refreshAuthorizationState() {}
             func prepareAssetsIfNeeded() {}
             func startRecognition() throws {}
-            func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {}
             func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {}
             func finalizeRecognition() {}
 
@@ -187,7 +177,6 @@ final class ProviderAbstractionsTests: XCTestCase {
             func refreshAuthorizationState() {}
             func prepareAssetsIfNeeded() {}
             func startRecognition() throws {}
-            func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {}
             func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {}
             func finalizeRecognition() {}
 
@@ -236,6 +225,115 @@ final class ProviderAbstractionsTests: XCTestCase {
     }
 
     @MainActor
+    func testStreamingSpeechRecognitionProviderUsesProviderOverride() async throws {
+        final class StubBlockingStreamingProvider: StreamingSpeechRecognitionProviding {
+            let providerID = LangToolsProviderID(rawValue: "stub.blocking")
+            let displayName = "Stub Blocking"
+            let capabilities = ProviderCapabilities(runsOnDevice: true, supportsStreamingPartials: true)
+            let authorizationState: ProviderAuthorizationState = .authorized
+            let assetState: ProviderAssetState = .notRequired
+            let isAvailable = true
+            private(set) var isListening = false
+            var isStreaming: Bool { isListening }
+            var currentTranscript = ""
+            var eventHandler: (@MainActor @Sendable (SpeechRecognitionEvent) -> Void)?
+
+            func configure(languageIdentifier: String) {}
+            func requestAuthorization() async -> ProviderAuthorizationState { .authorized }
+            func refreshAuthorizationState() {}
+            func prepareAssetsIfNeeded() {}
+            func startRecognition() throws {}
+            func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {}
+            func finalizeRecognition() {}
+
+            func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse {
+                "blocking"
+            }
+
+            func startStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws {
+                isListening = true
+                currentTranscript = "hello"
+                onEvent(.partialTranscription("hel"))
+            }
+
+            func stopStreamingRecognition() async -> String? {
+                isListening = false
+                return currentTranscript
+            }
+
+            @discardableResult
+            func runStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws -> String? {
+                isListening = true
+                onEvent(.partialTranscription("hel"))
+                currentTranscript = "hello"
+                onEvent(.finalTranscription("hello"))
+                isListening = false
+                return currentTranscript
+            }
+        }
+
+        let provider: any StreamingSpeechRecognitionProviding = StubBlockingStreamingProvider()
+        var events: [SpeechRecognitionEvent] = []
+        let finalText = try await provider.runStreamingRecognition { event in
+            events.append(event)
+        }
+
+        XCTAssertEqual(events, [.partialTranscription("hel"), .finalTranscription("hello")])
+        XCTAssertEqual(finalText, "hello")
+        XCTAssertFalse(provider.isStreaming)
+    }
+
+    @MainActor
+    func testStreamingSpeechRecognitionProviderDefaultRunCompletesOnFinalEvent() async throws {
+        final class DefaultRunStreamingProvider: StreamingSpeechRecognitionProviding {
+            let providerID = LangToolsProviderID(rawValue: "stub.default-run")
+            let displayName = "Stub Default Run"
+            let capabilities = ProviderCapabilities(runsOnDevice: true, supportsStreamingPartials: true)
+            let authorizationState: ProviderAuthorizationState = .authorized
+            let assetState: ProviderAssetState = .notRequired
+            let isAvailable = true
+            private(set) var isListening = false
+            var isStreaming: Bool { isListening }
+            var currentTranscript = ""
+            var eventHandler: (@MainActor @Sendable (SpeechRecognitionEvent) -> Void)?
+
+            func configure(languageIdentifier: String) {}
+            func requestAuthorization() async -> ProviderAuthorizationState { .authorized }
+            func refreshAuthorizationState() {}
+            func prepareAssetsIfNeeded() {}
+            func startRecognition() throws {}
+            func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {}
+            func finalizeRecognition() {}
+
+            func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse {
+                "default"
+            }
+
+            func startStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws {
+                isListening = true
+                onEvent(.partialTranscription("hel"))
+                currentTranscript = "hello"
+                onEvent(.finalTranscription("hello"))
+            }
+
+            func stopStreamingRecognition() async -> String? {
+                isListening = false
+                return currentTranscript
+            }
+        }
+
+        let provider: any StreamingSpeechRecognitionProviding = DefaultRunStreamingProvider()
+        var events: [SpeechRecognitionEvent] = []
+        let finalText = try await provider.runStreamingRecognition { event in
+            events.append(event)
+        }
+
+        XCTAssertEqual(events, [.partialTranscription("hel"), .finalTranscription("hello")])
+        XCTAssertEqual(finalText, "hello")
+        XCTAssertFalse(provider.isStreaming)
+    }
+
+    @MainActor
     func testStreamingProviderDefaultRejectsExternalAudio() async throws {
         final class NativeOnlyStreamingProvider: StreamingSpeechRecognitionProviding {
             let providerID = LangToolsProviderID(rawValue: "stub.native")
@@ -254,7 +352,6 @@ final class ProviderAbstractionsTests: XCTestCase {
             func refreshAuthorizationState() {}
             func prepareAssetsIfNeeded() {}
             func startRecognition() throws {}
-            func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {}
             func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {}
             func finalizeRecognition() {}
 
@@ -301,7 +398,6 @@ final class ProviderAbstractionsTests: XCTestCase {
             func refreshAuthorizationState() {}
             func prepareAssetsIfNeeded() {}
             func startRecognition() throws {}
-            func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {}
             func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {}
             func finalizeRecognition() {}
 

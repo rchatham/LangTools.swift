@@ -27,7 +27,6 @@ public struct ProviderCapabilities: Equatable, Sendable {
     public let runsOnDevice: Bool
     public let supportsStreamingPartials: Bool
     public let supportsContinuousMode: Bool
-    public let supportsDualLanguageAutoDetect: Bool
     public let requiresNetwork: Bool
     public let requiresModelDownload: Bool
 
@@ -35,14 +34,12 @@ public struct ProviderCapabilities: Equatable, Sendable {
         runsOnDevice: Bool,
         supportsStreamingPartials: Bool = false,
         supportsContinuousMode: Bool = false,
-        supportsDualLanguageAutoDetect: Bool = false,
         requiresNetwork: Bool = false,
         requiresModelDownload: Bool = false
     ) {
         self.runsOnDevice = runsOnDevice
         self.supportsStreamingPartials = supportsStreamingPartials
         self.supportsContinuousMode = supportsContinuousMode
-        self.supportsDualLanguageAutoDetect = supportsDualLanguageAutoDetect
         self.requiresNetwork = requiresNetwork
         self.requiresModelDownload = requiresModelDownload
     }
@@ -67,21 +64,10 @@ public enum ProviderAssetState: Equatable, Sendable {
     case failed(reason: String)
 }
 
-/// Language selected during dual-language speech recognition.
-public enum SpeechAutoDetectWinner: Equatable, Sendable {
-    case primary
-    case secondary
-    /// No winner was determined (e.g. inconclusive detection). Named `undetected`
-    /// rather than `none` to avoid shadowing `Optional.none` in generic contexts.
-    case undetected
-}
-
 /// Speech recognition events emitted by an STT provider.
 public enum SpeechRecognitionEvent: Equatable, Sendable {
     case partialTranscription(String)
     case finalTranscription(String)
-    case dualLanguageFinalTranscription(String, winner: SpeechAutoDetectWinner)
-    case autoDetectLanguageSwitch
     case recognitionFailed(String)
 }
 
@@ -109,8 +95,6 @@ public protocol SpeechRecognitionProviding: AnyObject {
     /// Transcribe already-captured audio data in a provider-supported format.
     func transcribe(audioData: Data) async throws -> any LangToolsTranscriptionResponse
     func startRecognition() throws
-    @available(iOS 16, macOS 13, *)
-    func startDualLanguageRecognition(otherLanguageIdentifier: String) throws
     func stopRecognition(finalizePending: Bool, clearTranscript: Bool)
     func finalizeRecognition()
 }
@@ -122,6 +106,7 @@ public typealias SpeechRecognitionStreamingEventHandler = @MainActor @Sendable (
 public enum StreamingSpeechRecognitionError: Error, LocalizedError, Equatable, Sendable {
     case externalAudioUnsupported
     case notStreaming
+    case recognitionFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -129,6 +114,8 @@ public enum StreamingSpeechRecognitionError: Error, LocalizedError, Equatable, S
             return "This speech recognition provider does not accept externally captured streaming audio"
         case .notStreaming:
             return "Speech recognition streaming has not started"
+        case .recognitionFailed(let message):
+            return message
         }
     }
 }
@@ -154,7 +141,15 @@ public protocol StreamingSpeechRecognitionProviding: SpeechRecognitionProviding 
     /// `appendStreamingAudio(_:)` during an active streaming session.
     var supportsExternalAudioStreaming: Bool { get }
 
+    /// Starts provider-owned streaming and returns once capture startup has been requested.
+    /// Events continue asynchronously through `onEvent`; call `stopStreamingRecognition()`
+    /// to end the stream and collect the best final transcript.
     func startStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws
+
+    /// Starts streaming recognition, suspends while recognition runs, and returns the
+    /// best final transcript once the stream ends, is cancelled, or fails.
+    @discardableResult
+    func runStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws -> String?
     /// Append externally captured audio during an active streaming session.
     ///
     /// Providers define whether `audioData` must be an incremental chunk or the
@@ -169,6 +164,62 @@ public extension StreamingSpeechRecognitionProviding {
 
     func appendStreamingAudio(_ audioData: Data) async throws {
         throw StreamingSpeechRecognitionError.externalAudioUnsupported
+    }
+
+    @discardableResult
+    func runStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws -> String? {
+        let runState = DefaultStreamingRecognitionRunState()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                runState.store(continuation)
+                Task { @MainActor in
+                    do {
+                        try await startStreamingRecognition { event in
+                            onEvent(event)
+                            switch event {
+                            case .partialTranscription:
+                                break
+                            case .finalTranscription(let text):
+                                Task { @MainActor in
+                                    let finalText = await self.stopStreamingRecognition()
+                                    runState.complete(returning: finalText ?? (text.isEmpty ? nil : text))
+                                }
+                            case .recognitionFailed(let message):
+                                runState.complete(throwing: StreamingSpeechRecognitionError.recognitionFailed(message))
+                            }
+                        }
+                    } catch {
+                        runState.complete(throwing: error)
+                    }
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in
+                _ = await self.stopStreamingRecognition()
+                runState.complete(throwing: CancellationError())
+            }
+        }
+    }
+}
+
+@MainActor
+private final class DefaultStreamingRecognitionRunState {
+    private var continuation: CheckedContinuation<String?, Error>?
+
+    func store(_ continuation: CheckedContinuation<String?, Error>) {
+        self.continuation = continuation
+    }
+
+    func complete(returning text: String?) {
+        guard let continuation else { return }
+        self.continuation = nil
+        continuation.resume(returning: text)
+    }
+
+    func complete(throwing error: Error) {
+        guard let continuation else { return }
+        self.continuation = nil
+        continuation.resume(throwing: error)
     }
 }
 

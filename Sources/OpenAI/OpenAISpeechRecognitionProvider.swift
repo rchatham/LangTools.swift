@@ -22,7 +22,6 @@ open class OpenAISpeechRecognitionProvider: StreamingSpeechRecognitionProviding 
         runsOnDevice: false,
         supportsStreamingPartials: false,
         supportsContinuousMode: false,
-        supportsDualLanguageAutoDetect: false,
         requiresNetwork: true,
         requiresModelDownload: false
     )
@@ -125,10 +124,6 @@ open class OpenAISpeechRecognitionProvider: StreamingSpeechRecognitionProviding 
     public func prepareAssetsIfNeeded() {}
 
     public func startRecognition() throws {
-        throw OpenAISpeechProviderError.liveRecognitionUnsupported
-    }
-
-    public func startDualLanguageRecognition(otherLanguageIdentifier: String) throws {
         throw OpenAISpeechProviderError.liveRecognitionUnsupported
     }
 
