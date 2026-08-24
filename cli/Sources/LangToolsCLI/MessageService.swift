@@ -13,9 +13,7 @@ import Gemini
 import LangTools
 import OpenAI
 import XAI
-#if canImport(SwiftUI)
-import SwiftUI
-#endif
+import Combine
 
 class MessageService: ObservableObject {
     struct ToolAvailabilityDecision {
