@@ -24,7 +24,7 @@ public protocol LangToolsLogger {
 ///     configuration: .init(apiKey: "...", logger: PrintLogger())
 /// )
 /// ```
-public struct PrintLogger: LangToolsLogger {
+public struct PrintLogger: LangToolsLogger, Sendable {
     public init() {}
 
     public func debug(_ message: String) {
