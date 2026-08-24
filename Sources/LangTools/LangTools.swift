@@ -37,10 +37,12 @@ extension LangTools {
 extension LangTools {
     public func perform<Request: LangToolsRequest>(request: Request, completion: @escaping (Result<Request.Response, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
         Task {
-            guard request.stream, let request = request as? any LangToolsStreamableRequest
-            else { do { return  completion(.success(try await perform(request: request))) } catch { return  completion(.failure(error)) }}
+            guard request.stream, let request = request as? any LangToolsStreamableRequest else {
+                do { completion(.success(try await perform(request: request))) }
+                catch { completion(.failure(error)) }
+                return
+            }
             do { for try await response in stream(request: request) { completion(.success(response as! Request.Response)) }; didCompleteStreaming?(nil) } catch { didCompleteStreaming?(error) }
-
         }
     }
 
