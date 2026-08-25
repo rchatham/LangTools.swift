@@ -10,8 +10,9 @@ import Foundation
 import LangTools
 
 extension OpenAI {
-    public struct AudioTranscriptionRequest: LangToolsRequest {
+    public struct AudioTranscriptionRequest: LangToolsRequest, LangToolsSTTRequest {
         public typealias Response = AudioTranscriptionResponse
+        public typealias TranscriptionResponse = AudioTranscriptionResponse
         public typealias LangTool = OpenAI
         public static var endpoint: String { "audio/transcriptions" }
 
@@ -75,7 +76,7 @@ extension OpenAI {
             }
         }
 
-        public struct AudioTranscriptionResponse: Codable {
+        public struct AudioTranscriptionResponse: Codable, LangToolsTranscriptionResponse {
             /// The task being performed (e.g., "transcribe")
             public let task: String?
 
@@ -93,6 +94,9 @@ extension OpenAI {
 
             /// Detailed segments of the transcription with analysis
             public let segments: [Segment]?
+
+            public var transcriptText: String { text }
+            public var detectedLanguageIdentifier: String? { language }
 
             /// Represents a single word and its timing in the audio
             public struct Word: Codable {
@@ -148,6 +152,14 @@ extension OpenAI {
             }
         }
     }
+}
+
+public extension OpenAI.AudioTranscriptionRequest {
+    var speechAudioData: Data? { file }
+    var speechAudioFileURL: URL? { nil }
+    var speechAudioFormat: String? { fileType.rawValue }
+    var speechLanguageIdentifier: String? { language }
+    var speechPrompt: String? { prompt }
 }
 
 extension OpenAI.AudioTranscriptionRequest: MultipartFormDataEncodableRequest {

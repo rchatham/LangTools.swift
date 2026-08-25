@@ -116,7 +116,7 @@ Created production-ready SwiftUI components:
 - `AudioRecorder.swift`
 - `AudioConverter.swift`
 - `Providers/AppleSpeechSTTProvider.swift`
-- `Providers/OpenAISTTProvider.swift`
+- `Providers/OpenAISpeechRecognitionProvider.swift`
 - `Providers/WhisperKitSTTProvider.swift`
 
 **Result**: Cleaner, more maintainable STT service with equivalent functionality.

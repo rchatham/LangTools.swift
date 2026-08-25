@@ -22,7 +22,7 @@ AppleSpeech provides privacy-first, offline-capable speech-to-text using Apple's
 Request permission before using speech recognition:
 
 ```swift
-import AppleSpeech
+import AppleLangTools
 
 // Request authorization
 let status = await AppleSpeech.requestAuthorization()
@@ -88,7 +88,6 @@ let request = AppleSpeech.TranscriptionRequest(
 
 - iOS 16.0+
 - macOS 14.0+
-- watchOS 8.0+
 
 ## Error Handling
 

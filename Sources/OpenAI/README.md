@@ -36,15 +36,49 @@ Swift interface for OpenAI's APIs, part of the LangTools framework.
 .gpt4o_audioPreview    // "gpt-4o-audio-preview"
 .chatGPT4o_latest      // "chatgpt-4o-latest"
 
-// O1 models
-.o1                    // "o1"
-.o1_mini              // "o1-mini"
-.o1_preview           // "o1-preview"
+// GPT-5 models
+.gpt5                 // "gpt-5"
+.gpt5_mini            // "gpt-5-mini"
+.gpt5_nano            // "gpt-5-nano"
+.gpt5_pro             // "gpt-5-pro"
+.gpt5_1               // "gpt-5.1"
+.gpt5_2               // "gpt-5.2"
+.gpt5_2_pro           // "gpt-5.2-pro"
+.gpt5_4               // "gpt-5.4"
+.gpt5_4_pro           // "gpt-5.4-pro"
+.gpt5_4_mini          // "gpt-5.4-mini"
+.gpt5_4_nano          // "gpt-5.4-nano"
+.gpt5_5               // "gpt-5.5"
+.gpt5_5_pro           // "gpt-5.5-pro"
 
-// Audio models
+// Reasoning models
+.o1                    // "o1"
+.o1_mini               // "o1-mini"
+.o3                    // "o3"
+.o3_pro                // "o3-pro"
+.o3_mini               // "o3-mini"
+.o4_mini               // "o4-mini"
+
+// Audio, realtime, and speech models
+.gptRealtime2          // "gpt-realtime-2"
+.gptRealtime15         // "gpt-realtime-1.5"
+.gptRealtime           // "gpt-realtime"
+.gptRealtimeMini       // "gpt-realtime-mini"
+.gptAudio15            // "gpt-audio-1.5"
+.gptAudio              // "gpt-audio"
 .tts_1                 // Text-to-Speech
-.tts_1_hd             // High-quality Text-to-Speech
-.whisper              // Speech-to-Text
+.tts_1_hd              // High-quality Text-to-Speech
+.gpt4o_mini_tts        // "gpt-4o-mini-tts"
+.whisper               // Speech-to-Text
+.gpt4o_transcribe      // "gpt-4o-transcribe"
+.gpt4o_mini_transcribe // "gpt-4o-mini-transcribe"
+.gpt4o_transcribe_diarize // "gpt-4o-transcribe-diarize"
+.gptRealtimeWhisper    // "gpt-realtime-whisper"
+
+// Image models
+.gptImage2             // "gpt-image-2"
+.gptImage15            // "gpt-image-1.5"
+.gptImage1             // "gpt-image-1"
 
 // Embedding models
 .textEmbeddingAda002         // "text-embedding-ada-002"

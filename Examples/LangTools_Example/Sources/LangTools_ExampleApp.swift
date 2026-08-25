@@ -5,6 +5,7 @@
 //  Created by Reid Chatham on 9/23/24.
 //
 
+import Combine
 import SwiftUI
 import Chat
 import Audio
@@ -24,7 +25,7 @@ import ToolKit
 struct LangTools_ExampleApp: App {
     // Use @StateObject so SwiftUI observes voiceInputHandler.objectWillChange
     // This enables instant UI updates when settings change
-    @StateObject private var voiceInputHandler = VoiceInputHandlerAdapter()
+    @StateObject private var voiceInputHandler = VoiceInputHandlerAdapter(settings: ToolSettings.shared)
 
     init() {
         configureUITestDefaults()
@@ -51,9 +52,6 @@ struct LangTools_ExampleApp: App {
         #endif
     }
 
-    // @MainActor is required because ToolManager is @MainActor-isolated.
-    // This is safe to call from App.init() since SwiftUI runs @main struct
-    // initializers on the main actor.
     @MainActor
     func registerToolConfigurations() {
         ToolManager.shared.register([
@@ -81,15 +79,10 @@ struct LangTools_ExampleApp: App {
         ])
     }
 
-    // MARK: - Content Card Registry
-
-    /// Binds each agent's structured output type to its decode logic and SwiftUI view.
-    /// Called once at startup before any messages are sent or rendered.
     @MainActor
     func registerCardTypes() {
         let registry = ContentCardRegistry.shared
 
-        // Calendar — wrapper response: { "events": [...], "message": "..." }
         registry.register(
             agent: "calendarAgent",
             cardType: "calendarEvent",
@@ -109,9 +102,8 @@ struct LangTools_ExampleApp: App {
     }
 
     func initializeOllama() {
-        // Initialize OllamaService to start background refresh
         Task {
-            try? await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second after app launch
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
             await MainActor.run {
                 OllamaService.shared.refreshModels()
             }
@@ -124,8 +116,6 @@ struct LangTools_ExampleApp: App {
     }
 }
 
-/// Per-window container that holds the MessageService @StateObject
-/// Each window creates a new instance, giving each window independent chat state
 struct ChatContainerView: View {
     @StateObject private var messageService: MessageService
     @ObservedObject var voiceInputHandler: VoiceInputHandlerAdapter
@@ -167,7 +157,6 @@ struct ChatContainerView: View {
     private var chatSettingsView: AnyView {
         let viewModel = ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages)
 
-        // Wire up WhisperKit state from voice input handler
         viewModel.onPreloadWhisperKit = { [weak voiceInputHandler] in
             voiceInputHandler?.preloadWhisperKit()
         }
@@ -198,94 +187,48 @@ extension MessageService: @retroactive ChatMessageService {
         case let error as LangToolsError:
             switch error {
             case .jsonParsingFailure(let error):
-                return ChatAlertInfo(
-                    title: "JSON Parsing Error",
-                    message: error.localizedDescription
-                )
-
+                return ChatAlertInfo(title: "JSON Parsing Error", message: error.localizedDescription)
             case .apiError(let error):
                 return handleApiError(error)
-
             case .invalidData:
-                return ChatAlertInfo(
-                    title: "Invalid Data",
-                    message: "The received data was invalid or corrupted."
-                )
-
+                return ChatAlertInfo(title: "Invalid Data", message: "The received data was invalid or corrupted.")
             case .invalidURL:
-                return ChatAlertInfo(
-                    title: "Invalid URL",
-                    message: "The request URL was invalid."
-                )
-
+                return ChatAlertInfo(title: "Invalid URL", message: "The request URL was invalid.")
             case .requestFailed:
-                return ChatAlertInfo(
-                    title: "Request Failed",
-                    message: "The network request failed to complete."
-                )
-
+                return ChatAlertInfo(title: "Request Failed", message: "The network request failed to complete.")
             case .responseUnsuccessful(statusCode: let code, let error):
                 var message = "Status code: \(code)"
                 if let error {
                     message += "\nerror: " + (handleApiError(error)?.message ?? error.localizedDescription)
                 }
-                return ChatAlertInfo(
-                    title: "Request Unsuccessful",
-                    message: message
-                )
-
+                return ChatAlertInfo(title: "Request Unsuccessful", message: message)
             case .streamParsingFailure:
-                return ChatAlertInfo(
-                    title: "Stream Error",
-                    message: "Failed to parse the response stream."
-                )
-
+                return ChatAlertInfo(title: "Stream Error", message: "Failed to parse the response stream.")
             case .failedToDecodeStream(buffer: let buffer, error: let error):
-                return ChatAlertInfo(
-                    title: "Stream Decoding Error",
-                    message: "Failed to decode stream data: \(buffer).\n\(error.localizedDescription)"
-                )
-
+                return ChatAlertInfo(title: "Stream Decoding Error", message: "Failed to decode stream data: \(buffer).\n\(error.localizedDescription)")
             case .invalidContentType:
-                return ChatAlertInfo(
-                    title: "Invalid Content",
-                    message: "The response contained an invalid content type."
-                )
-
-            default: return nil
+                return ChatAlertInfo(title: "Invalid Content", message: "The response contained an invalid content type.")
+            default:
+                return nil
             }
 
         case let error as LangToolsRequestError:
             switch error {
             case .multipleChoiceIndexOutOfBounds:
-                return ChatAlertInfo(
-                    title: "Invalid Selection",
-                    message: "The selected choice was out of bounds."
-                )
-
+                return ChatAlertInfo(title: "Invalid Selection", message: "The selected choice was out of bounds.")
             case .failedToDecodeFunctionArguments:
-                return ChatAlertInfo(
-                    title: "Decoding Error",
-                    message: "Failed to decode function arguments."
-                )
-
+                return ChatAlertInfo(title: "Decoding Error", message: "Failed to decode function arguments.")
             case .missingRequiredFunctionArguments:
-                return ChatAlertInfo(
-                    title: "Missing Arguments",
-                    message: "Required function arguments are missing."
-                )
+                return ChatAlertInfo(title: "Missing Arguments", message: "Required function arguments are missing.")
             }
 
         case is LangToolchainError:
             let service = UserDefaults.model.apiService
             return ChatAlertInfo(
                 title: "Provider Access Required",
-                button: ButtonInfo(
-                    text: "Manage Access",
-                    action: { _ in
-                        AuthPresentationCoordinator.shared.present(preferredService: service)
-                    }
-                ),
+                button: ButtonInfo(text: "Manage Access", action: { _ in
+                    AuthPresentationCoordinator.shared.present(preferredService: service)
+                }),
                 message: "Configure \(service.displayName) access to use this model. You can add an API key or connect an account from Manage Access."
             )
 
@@ -293,12 +236,9 @@ extension MessageService: @retroactive ChatMessageService {
             let service = UserDefaults.model.apiService
             return ChatAlertInfo(
                 title: "Access Configuration",
-                button: ButtonInfo(
-                    text: "Manage Access",
-                    action: { _ in
-                        AuthPresentationCoordinator.shared.present(preferredService: service)
-                    }
-                ),
+                button: ButtonInfo(text: "Manage Access", action: { _ in
+                    AuthPresentationCoordinator.shared.present(preferredService: service)
+                }),
                 message: error.errorDescription ?? "Update provider access settings."
             )
 
@@ -306,7 +246,7 @@ extension MessageService: @retroactive ChatMessageService {
             return handleCLIAccountError(error)
 
         default:
-            return nil // ChatAlertInfo( title: "Unknown Error", message: "An unexpected error occurred." )
+            return nil
         }
     }
 
@@ -317,35 +257,18 @@ extension MessageService: @retroactive ChatMessageService {
         if lowercasedMessage.contains("status 429") || lowercasedMessage.contains("quota") || lowercasedMessage.contains("billing") {
             return ChatAlertInfo(
                 title: "OpenAI Account Quota Exceeded",
-                button: ButtonInfo(
-                    text: "Manage Access",
-                    action: { _ in
-                        AuthPresentationCoordinator.shared.present(preferredService: .openAI)
-                    }
-                ),
+                button: ButtonInfo(text: "Manage Access", action: { _ in
+                    AuthPresentationCoordinator.shared.present(preferredService: .openAI)
+                }),
                 message: "Your OpenAI account-backed session could not complete this request because its quota is exhausted. Add an OpenAI API key, switch to another provider, or update your OpenAI billing/quota settings.\n\n\(message)"
             )
         }
 
         if lowercasedMessage.contains("rate limit") {
-            return ChatAlertInfo(
-                title: "OpenAI Rate Limited",
-                button: ButtonInfo(
-                    text: "OK",
-                    role: .cancel
-                ),
-                message: message
-            )
+            return ChatAlertInfo(title: "OpenAI Rate Limited", button: ButtonInfo(text: "OK", role: .cancel), message: message)
         }
 
-        return ChatAlertInfo(
-            title: "OpenAI Account Error",
-            button: ButtonInfo(
-                text: "OK",
-                role: .cancel
-            ),
-            message: message
-        )
+        return ChatAlertInfo(title: "OpenAI Account Error", button: ButtonInfo(text: "OK", role: .cancel), message: message)
     }
 
     private func normalizedCLIErrorMessage(_ error: CLIAccountSessionBridgeError) -> String {
@@ -358,64 +281,17 @@ extension MessageService: @retroactive ChatMessageService {
     func handleApiError(_ error: Error) -> ChatAlertInfo? {
         switch error {
         case let error as OpenAIErrorResponse:
-            return ChatAlertInfo(
-                title: "OpenAI API Error",
-                button: ButtonInfo(
-                    text: "OK",
-                    role: .cancel
-                ),
-                message: error.error.message
-            )
-
+            return ChatAlertInfo(title: "OpenAI API Error", button: ButtonInfo(text: "OK", role: .cancel), message: error.error.message)
         case let error as XAIErrorResponse:
-            return ChatAlertInfo(
-                title: "xAI API Error",
-                button: ButtonInfo(
-                    text: "OK",
-                    role: .cancel
-                ),
-                message: error.error.message
-            )
-
+            return ChatAlertInfo(title: "xAI API Error", button: ButtonInfo(text: "OK", role: .cancel), message: error.error.message)
         case let error as GeminiErrorResponse:
-            return ChatAlertInfo(
-                title: "Gemini API Error",
-                button: ButtonInfo(
-                    text: "OK",
-                    role: .cancel
-                ),
-                message: error.error.message
-            )
-
+            return ChatAlertInfo(title: "Gemini API Error", button: ButtonInfo(text: "OK", role: .cancel), message: error.error.message)
         case let error as AnthropicErrorResponse:
-            return ChatAlertInfo(
-                title: "Anthropic API Error",
-                button: ButtonInfo(
-                    text: "OK",
-                    role: .cancel
-                ),
-                message: error.error.message
-            )
-
+            return ChatAlertInfo(title: "Anthropic API Error", button: ButtonInfo(text: "OK", role: .cancel), message: error.error.message)
         case let error as OllamaErrorResponse:
-            return ChatAlertInfo(
-                title: "Ollama API Error",
-                button: ButtonInfo(
-                    text: "OK",
-                    role: .cancel
-                ),
-                message: error.error.message
-            )
-
+            return ChatAlertInfo(title: "Ollama API Error", button: ButtonInfo(text: "OK", role: .cancel), message: error.error.message)
         default:
-            return ChatAlertInfo(
-                title: "API Error",
-                button: ButtonInfo(
-                    text: "OK",
-                    role: .cancel
-                ),
-                message: "An unexpected API error occurred.\n\(error.localizedDescription)"
-            )
+            return ChatAlertInfo(title: "API Error", button: ButtonInfo(text: "OK", role: .cancel), message: "An unexpected API error occurred.\n\(error.localizedDescription)")
         }
     }
 }
@@ -474,3 +350,38 @@ private struct UITestNetworkClient: NetworkClientProtocol {
     func connectAccount(_ provider: AccountLoginProvider) async throws {}
     func disconnectAccount(_ provider: AccountLoginProvider) async throws {}
 }
+
+extension ToolSettings: @retroactive VoiceInputSettingsProviding {
+    public var sttProviderType: STTProviderType {
+        switch sttProvider {
+        case .appleSpeech:
+            return .appleSpeech
+        case .openAIWhisper:
+            return .openAIWhisper
+        case .whisperKit:
+            return .whisperKit
+        }
+    }
+
+    public var sttLanguageIdentifier: String? {
+        sttLanguage == .auto ? nil : sttLanguage.rawValue
+    }
+
+    public var whisperKitModelVariant: String {
+        whisperKitModelSize.rawValue
+    }
+
+    public var openAIStreamingChunkInterval: TimeInterval {
+        streamingChunkInterval.rawValue
+    }
+
+    public var openAIApiKey: String? {
+        KeychainService.shared.getApiKey(for: .openAI)
+    }
+
+    public var settingsDidChange: AnyPublisher<Void, Never> {
+        objectWillChange.map { _ in () }.eraseToAnyPublisher()
+    }
+}
+
+private var apiKeyInput: String = ""
