@@ -37,3 +37,14 @@ jobs:
       #   Scripts/run-extended-tests.sh --filter PerformanceRatioGateTests -v
       # Follow-up for MockURLProtocol hardening: https://github.com/rchatham/LangTools.swift/issues/41
       run: swift test -v --no-parallel --skip AppleSpeechTests --skip WhisperKitLangToolsTests
+
+  extended-tests:
+
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run Agents extended tests
+      run: Scripts/run-extended-tests.sh --filter AgentsTests -v --no-parallel
+    - name: Run Integration extended tests
+      run: Scripts/run-extended-tests.sh --filter IntegrationTests -v --no-parallel
