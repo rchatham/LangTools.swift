@@ -27,6 +27,7 @@ struct LangTools_ExampleApp: App {
     @StateObject private var voiceInputHandler = VoiceInputHandlerAdapter()
 
     init() {
+        configureUITestDefaults()
         registerToolConfigurations()
         registerCardTypes()
         initializeOllama()
@@ -116,6 +117,11 @@ struct LangTools_ExampleApp: App {
             }
         }
     }
+
+    func configureUITestDefaults() {
+        guard UITestMode.current != nil else { return }
+        UserDefaults.model = .codex(.gpt5_5)
+    }
 }
 
 /// Per-window container that holds the MessageService @StateObject
@@ -130,7 +136,11 @@ struct ChatContainerView: View {
             ReminderAgent(),
             ResearchAgent()
         ]
-        let service = MessageService(agents: agents)
+        let service = if let uiTestMode = UITestMode.current {
+            MessageService(networkClient: UITestNetworkClient(mode: uiTestMode), agents: agents)
+        } else {
+            MessageService(agents: agents)
+        }
         service.agentResultParser = ContentCardRegistry.shared.agentResultParser
         _messageService = StateObject(wrappedValue: service)
         self.voiceInputHandler = voiceInputHandler
@@ -413,4 +423,54 @@ extension MessageService: @retroactive ChatMessageService {
 extension Message: @retroactive ChatMessageInfo {
     public weak var parentMessage: Message? { parent }
     public var childChatMessages: [Message] { childMessages }
+}
+
+private enum UITestMode: String {
+    case codexSuccess
+    case codexNotLoggedIn
+
+    static var current: UITestMode? {
+        guard let rawValue = ProcessInfo.processInfo.environment["LANGTOOLS_UI_TEST_MODE"] else {
+            return nil
+        }
+        return UITestMode(rawValue: rawValue)
+    }
+}
+
+private struct UITestNetworkClient: NetworkClientProtocol {
+    static var shared: NetworkClientProtocol { Self(mode: .codexSuccess) }
+
+    let mode: UITestMode
+
+    func performChatCompletionRequest(messages: [Message], model: Model, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message {
+        switch mode {
+        case .codexSuccess:
+            return Message(text: "OK", role: .assistant)
+        case .codexNotLoggedIn:
+            throw CLIAccountSessionBridgeError.commandFailed(
+                "Codex is not logged in. Checked /Users/reidchatham/.codex/auth.json. Run `codex login` and sign in with your OpenAI account, then try again."
+            )
+        }
+    }
+
+    func streamChatCompletionRequest(messages: [Message], model: Model, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            switch mode {
+            case .codexSuccess:
+                continuation.yield("OK")
+                continuation.finish()
+            case .codexNotLoggedIn:
+                continuation.finish(throwing: CLIAccountSessionBridgeError.commandFailed(
+                    "Codex is not logged in. Checked /Users/reidchatham/.codex/auth.json. Run `codex login` and sign in with your OpenAI account, then try again."
+                ))
+            }
+        }
+    }
+
+    func playAudio(for text: String) async throws {}
+    func agentContext(messages: [Message], model: Model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext { throw NetworkClient.NetworkError.incompatibleRequest }
+    func updateApiKey(_ apiKey: String, for llm: APIService) throws {}
+    func removeApiKey(for llm: APIService) throws {}
+    func connectAccount(_ provider: AccountLoginProvider) async throws {}
+    func disconnectAccount(_ provider: AccountLoginProvider) async throws {}
 }

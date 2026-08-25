@@ -83,10 +83,6 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         try ensureModelAccess(for: model)
 
         if let session = accountSession(for: model) {
-            if session.provider == .openAI {
-                return try await openAIAccountChatBridge.performOpenAIChat(messages: messages, model: model)
-            }
-
             return try await accountProxyTransport.performChatCompletionRequest(
                 messages: messages,
                 model: model,
@@ -107,23 +103,6 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         try ensureModelAccess(for: model)
 
         if let session = accountSession(for: model) {
-            if session.provider == .openAI {
-                return AsyncThrowingStream { continuation in
-                    let task = Task {
-                        do {
-                            let message = try await openAIAccountChatBridge.performOpenAIChat(messages: messages, model: model)
-                            if let text = message.text {
-                                continuation.yield(text)
-                            }
-                            continuation.finish()
-                        } catch {
-                            continuation.finish(throwing: error)
-                        }
-                    }
-                    continuation.onTermination = { _ in task.cancel() }
-                }
-            }
-
             return try accountProxyTransport.streamChatCompletionRequest(
                 messages: messages,
                 model: model,
@@ -147,7 +126,7 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
     func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) -> any LangToolsChatRequest & LangToolsStreamableRequest {
         switch model {
         case .anthropic(let model): return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.convertTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
-        case .openAI(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), /*n: 3,*/ stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice/*, choose: {_ in 2}*/)
+        case .openAI(let model), .codex(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), /*n: 3,*/ stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice/*, choose: {_ in 2}*/)
         case .xAI(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice)
         case .gemini(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream/*, tools: tools?.convertTools(), tool_choice: toolChoice*/)
         case .ollama(let model): return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools?.convertTools())
@@ -162,7 +141,7 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         switch model {
         case .anthropic(let model): return AgentContext(langTool: try requiredLangTool(Anthropic.self), model: model, messages: messages.toAnthropicMessages(), eventHandler: eventHandler)
         case .gemini(let model): return AgentContext(langTool: try requiredLangTool(Gemini.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
-        case .openAI(let model): return AgentContext(langTool: try requiredLangTool(OpenAI.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .openAI(let model), .codex(let model): return AgentContext(langTool: try requiredLangTool(OpenAI.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
         case .xAI(let model): return AgentContext(langTool: try requiredLangTool(XAI.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
         case .ollama(let model): return AgentContext(langTool: try requiredLangTool(Ollama.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
         }
@@ -240,13 +219,22 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
     }
 
     private func accountSession(for model: Model) -> AccountSession? {
-        let state = providerAccessManager.state(for: model.apiService)
-        guard state.hasAccountSession, state.hasAPIKey == false,
-              let provider = model.apiService.accountLoginProvider
-        else {
+        guard let provider = model.apiService.accountLoginProvider else {
             return nil
         }
-        return providerAccessManager.session(for: provider)
+
+        switch model {
+        case .codex:
+            return providerAccessManager.session(for: provider)
+        case .openAI:
+            return nil
+        default:
+            let state = providerAccessManager.state(for: model.apiService)
+            guard state.hasAccountSession, state.hasAPIKey == false else {
+                return nil
+            }
+            return providerAccessManager.session(for: provider)
+        }
     }
 }
 

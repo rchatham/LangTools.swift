@@ -72,15 +72,9 @@ public final class ProviderAccessManager: ObservableObject {
     }
 
     public func availableChatModels() -> [Model] {
-        let configuredServices = Set(states.values.filter { $0.authStatus != .notConfigured }.map(\.service))
-        return Model.chatModels.filter { model in
-            switch model {
-            case .ollama:
-                return true
-            default:
-                return configuredServices.contains(model.apiService)
-            }
-        }
+        statesForAccessUI()
+            .flatMap(\.availableModels)
+            + state(for: .ollama).availableModels
     }
 
     public func validateSelectedModel(_ model: Model) -> Model {
@@ -139,30 +133,56 @@ public final class ProviderAccessManager: ObservableObject {
             return []
         }
 
-        if let session, !session.accessibleModelIDs.isEmpty {
-            let sessionModels = session.accessibleModelIDs.compactMap(Model.init(rawValue:))
-            if !sessionModels.isEmpty {
-                return sessionModels
+        let sessionModels: [Model] = {
+            guard let session else { return [] }
+            let parsed: [Model]
+            switch service {
+            case .openAI:
+                parsed = session.accessibleModelIDs.compactMap(OpenAI.Model.init(rawValue:)).map(Model.codex)
+            case .anthropic, .xAI, .gemini, .ollama, .serper:
+                parsed = session.accessibleModelIDs.compactMap(Model.init(rawValue:))
             }
+            if parsed.isEmpty == false {
+                return parsed
+            }
+            if service == .openAI {
+                return [
+                    .codex(.gpt5_5),
+                    .codex(.gpt5_4),
+                    .codex(.gpt5_4_mini),
+                    .codex(.gpt53_codex_spark),
+                ]
+            }
+            return []
+        }()
+
+        let platformModels: [Model] = {
+            guard hasAPIKey else { return [] }
+            switch service {
+            case .openAI:
+                return OpenAI.Model.chatModels.map { .openAI($0) }
+            case .anthropic:
+                return Anthropic.Model.activeCases.map { .anthropic($0) }
+            case .xAI:
+                return XAI.Model.allCases.map { .xAI($0) }
+            case .gemini:
+                return Gemini.Model.allCases.map { .gemini($0) }
+            case .ollama:
+                return Model.cachedOllamaModels.map { .ollama($0) }
+            case .serper:
+                return []
+            }
+        }()
+
+        if hasSession, hasAPIKey == false {
+            return sessionModels
         }
 
-        switch service {
-        case .openAI:
-            if hasSession, hasAPIKey == false {
-                return OpenAI.Model.codex.map { .openAI($0) }
-            }
-            return OpenAI.Model.chatModels.map { .openAI($0) }
-        case .anthropic:
-            return Anthropic.Model.activeCases.map { .anthropic($0) }
-        case .xAI:
-            return XAI.Model.allCases.map { .xAI($0) }
-        case .gemini:
-            return Gemini.Model.allCases.map { .gemini($0) }
-        case .ollama:
-            return Model.cachedOllamaModels.map { .ollama($0) }
-        case .serper:
-            return []
+        if hasSession, hasAPIKey {
+            return sessionModels + platformModels
         }
+
+        return platformModels
     }
 }
 

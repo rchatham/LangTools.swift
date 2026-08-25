@@ -41,15 +41,15 @@ final class ProviderAccessManagerTests: XCTestCase {
             provider: .openAI,
             accountIdentifier: "openai-user",
             accessToken: "token",
-            accessibleModelIDs: ["gpt-5.1-codex"]
+            accessibleModelIDs: ["gpt-5.5", "gpt-5.3-codex-spark"]
         )
 
         try sessionStore.save(session)
         accessManager.refresh()
 
         let models = accessManager.state(for: .openAI).availableModels
-        XCTAssertEqual(models.map(\.rawValue), ["gpt-5.1-codex"])
-        XCTAssertEqual(models.first?.rawValue, "gpt-5.1-codex")
+        XCTAssertEqual(models.map(\.rawValue), ["codex/gpt-5.5", "codex/gpt-5.3-codex-spark"])
+        XCTAssertEqual(models.first?.rawValue, "codex/gpt-5.5")
     }
 
     func testOpenAIAccountSessionWithoutAccessibleModelIDsFallsBackToCodexModels() throws {
@@ -64,6 +64,41 @@ final class ProviderAccessManagerTests: XCTestCase {
         accessManager.refresh()
 
         let modelIDs = accessManager.state(for: .openAI).availableModels.map(\.rawValue)
-        XCTAssertEqual(modelIDs, ["gpt-5.1-codex", "gpt-5.3-codex"])
+        XCTAssertEqual(modelIDs, ["codex/gpt-5.5", "codex/gpt-5.4", "codex/gpt-5.4-mini", "codex/gpt-5.3-codex-spark"])
+    }
+
+    func testOpenAIAPIKeyAndCodexSessionShowSeparateModelEntries() throws {
+        keychainService.saveApiKey(apiKey: "sk-test", for: .openAI)
+        let session = AccountSession(
+            provider: .openAI,
+            accountIdentifier: "openai-user",
+            accessToken: "token",
+            accessibleModelIDs: ["gpt-5.5", "gpt-5.3-codex-spark"]
+        )
+
+        try sessionStore.save(session)
+        accessManager.refresh()
+
+        let modelIDs = accessManager.state(for: .openAI).availableModels.map(\.rawValue)
+        XCTAssertTrue(modelIDs.contains("codex/gpt-5.5"))
+        XCTAssertTrue(modelIDs.contains("openai/gpt-5.5"))
+        XCTAssertTrue(modelIDs.contains("codex/gpt-5.3-codex-spark"))
+    }
+
+    func testOpenAIAccountSessionDoesNotExposePlatformOnlyModelsWithoutAPIKey() throws {
+        let session = AccountSession(
+            provider: .openAI,
+            accountIdentifier: "openai-user",
+            accessToken: "token",
+            accessibleModelIDs: ["gpt-5.5"]
+        )
+
+        try sessionStore.save(session)
+        accessManager.refresh()
+
+        let modelIDs = accessManager.state(for: .openAI).availableModels.map(\.rawValue)
+        XCTAssertEqual(modelIDs, ["codex/gpt-5.5"])
+        XCTAssertFalse(modelIDs.contains("openai/gpt-5.5"))
+        XCTAssertFalse(modelIDs.contains("openai/gpt-4o-mini"))
     }
 }

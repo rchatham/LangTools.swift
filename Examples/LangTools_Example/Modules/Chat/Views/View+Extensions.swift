@@ -38,7 +38,7 @@ extension View {
         let service: APIService = {
             switch UserDefaults.model {
             case .anthropic: return .anthropic
-            case .openAI: return .openAI
+            case .openAI, .codex: return .openAI
             case .xAI: return .xAI
             case .gemini: return .gemini
             case .ollama: return .ollama

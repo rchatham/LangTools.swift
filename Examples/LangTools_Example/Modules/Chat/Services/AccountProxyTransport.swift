@@ -44,22 +44,41 @@ public final class AccountProxyTransport: AccountProxyTransportProtocol {
     private func send(messages: [Message], model: Model, session: AccountSession, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> AccountChatResponse {
         let payload = AccountChatRequest(
             provider: session.provider,
-            model: model.rawValue,
+            model: model.slug,
             messages: messages.map(AccountChatMessage.init),
             stream: stream,
             toolChoice: toolChoice.map(AccountToolChoice.init),
             tools: tools
         )
 
-        var request = URLRequest(url: configuration.accountChatURL())
+        var request = URLRequest(url: configuration.accountChatURL(for: session.provider))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(configuration.authorizationToken(for: session.provider, session: session))", forHTTPHeaderField: "Authorization")
         request.httpBody = try encoder.encode(payload)
 
-        let (data, response) = try await urlSession.data(for: request)
-        try validate(response: response, data: data)
-        return try decoder.decode(AccountChatResponse.self, from: data)
+        do {
+            let (data, response) = try await urlSession.data(for: request)
+            try validate(response: response, data: data)
+            return try decoder.decode(AccountChatResponse.self, from: data)
+        } catch let error as NetworkClient.NetworkError {
+            throw error
+        } catch {
+            throw mapTransportError(error, provider: session.provider)
+        }
+    }
+
+    private func mapTransportError(_ error: Error, provider: AccountLoginProvider) -> NetworkClient.NetworkError {
+        guard provider == .openAI else {
+            return .accountProxyTransportFailed(error.localizedDescription)
+        }
+
+        if let urlError = error as? URLError,
+           urlError.code == .cannotConnectToHost || urlError.code == .networkConnectionLost || urlError.code == .timedOut {
+            return .accountProxyTransportFailed("Codex helper is not running. Start it with: cd /Users/reidchatham/Developer/App/LangTools-account-login/cli && swift run LangToolsCLI serve")
+        }
+
+        return .accountProxyTransportFailed(error.localizedDescription)
     }
 
     private func validate(response: URLResponse, data: Data) throws {
@@ -69,6 +88,9 @@ public final class AccountProxyTransport: AccountProxyTransportProtocol {
 
         guard (200..<300).contains(httpResponse.statusCode) else {
             let message = String(data: data, encoding: .utf8) ?? "Proxy request failed with status \(httpResponse.statusCode)."
+            if httpResponse.statusCode == 401 {
+                throw NetworkClient.NetworkError.accountProxyTransportFailed("Codex helper rejected the request. Check the helper token in Settings.")
+            }
             throw NetworkClient.NetworkError.accountProxyTransportFailed(message)
         }
     }

@@ -25,36 +25,34 @@ final class NetworkClientAuthTests: XCTestCase {
         super.tearDown()
     }
 
-    func testOpenAIAccountSessionUsesCLIChatBridge() async throws {
+    func testOpenAIAccountSessionUsesProxyTransport() async throws {
         let session = AccountSession(
             provider: .openAI,
             accountIdentifier: "openai-user",
             accessToken: "access-token",
-            accessibleModelIDs: ["gpt-5.1-codex"]
+            accessibleModelIDs: ["gpt-5.5"]
         )
         try sessionStore.save(session)
         accessManager.refresh()
 
         let proxyTransport = TestAccountProxyTransport()
-        let bridge = TestOpenAIAccountChatBridge()
         let client = NetworkClient(
             keychainService: keychainService,
             accountLoginService: StubAccountLoginService(),
             accountProxyTransport: proxyTransport,
-            openAIAccountChatBridge: bridge,
             providerAccessManager: accessManager
         )
 
         let message = try await client.performChatCompletionRequest(
             messages: [Message(text: "Hello", role: .user)],
-            model: .openAI(.gpt51_codex),
+            model: .codex(.gpt5_5),
             tools: nil,
             toolChoice: nil
         )
 
-        XCTAssertEqual(message.text, "cli response")
-        XCTAssertEqual(bridge.lastModel, .openAI(.gpt51_codex))
-        XCTAssertNil(proxyTransport.lastSession)
+        XCTAssertEqual(message.text, "proxied response")
+        XCTAssertEqual(proxyTransport.lastModel, .codex(.gpt5_5))
+        XCTAssertEqual(proxyTransport.lastSession?.accountIdentifier, "openai-user")
     }
 
     func testClaudeCodeAccountSessionStillUsesProxyTransport() async throws {
@@ -113,37 +111,35 @@ final class NetworkClientAuthTests: XCTestCase {
             provider: .openAI,
             accountIdentifier: "openai-user",
             accessToken: "access-token",
-            accessibleModelIDs: ["gpt-5.1-codex"]
+            accessibleModelIDs: ["gpt-5.5"]
         )
         try sessionStore.save(session)
         accessManager.refresh()
 
-        let expectedError = CLIAccountSessionBridgeError.commandFailed("Error: OpenAI request failed (status 429): You exceeded your current quota")
-        let bridge = TestOpenAIAccountChatBridge(error: expectedError)
+        let expectedError = NetworkClient.NetworkError.accountProxyTransportFailed("OpenAI helper failed")
         let client = NetworkClient(
             keychainService: keychainService,
             accountLoginService: StubAccountLoginService(),
-            accountProxyTransport: TestAccountProxyTransport(),
-            openAIAccountChatBridge: bridge,
+            accountProxyTransport: TestAccountProxyTransport(error: expectedError),
             providerAccessManager: accessManager
         )
 
         do {
             _ = try await client.performChatCompletionRequest(
                 messages: [Message(text: "Hello", role: .user)],
-                model: .openAI(.gpt51_codex),
+                model: .codex(.gpt5_5),
                 tools: nil,
                 toolChoice: nil
             )
-            XCTFail("Expected bridge error")
-        } catch let error as CLIAccountSessionBridgeError {
+            XCTFail("Expected transport error")
+        } catch let error as NetworkClient.NetworkError {
             XCTAssertEqual(error, expectedError)
         }
     }
 }
 
-private final class TestOpenAIAccountChatBridge: OpenAIAccountChatBridging {
-    private(set) var lastMessages: [Message] = []
+private final class TestAccountProxyTransport: AccountProxyTransportProtocol {
+    private(set) var lastSession: AccountSession?
     private(set) var lastModel: Model?
     private let error: Error?
 
@@ -151,26 +147,15 @@ private final class TestOpenAIAccountChatBridge: OpenAIAccountChatBridging {
         self.error = error
     }
 
-    func performOpenAIChat(messages: [Message], model: Model) async throws -> Message {
-        lastMessages = messages
-        lastModel = model
-        if let error {
-            throw error
-        }
-        return Message(text: "cli response", role: .assistant)
-    }
-}
-
-private final class TestAccountProxyTransport: AccountProxyTransportProtocol {
-    private(set) var lastSession: AccountSession?
-    private(set) var lastModel: Model?
-
     func performChatCompletionRequest(messages: [Message], model: Model, session: AccountSession, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message {
         _ = messages
         _ = tools
         _ = toolChoice
         lastSession = session
         lastModel = model
+        if let error {
+            throw error
+        }
         return Message(text: "proxied response", role: .assistant)
     }
 
@@ -181,6 +166,11 @@ private final class TestAccountProxyTransport: AccountProxyTransportProtocol {
         _ = toolChoice
         lastSession = session
         lastModel = model
+        if let error {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: error)
+            }
+        }
         return AsyncThrowingStream { continuation in
             continuation.yield("proxied response")
             continuation.finish()

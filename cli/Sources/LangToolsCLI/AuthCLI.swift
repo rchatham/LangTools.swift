@@ -23,6 +23,23 @@ struct AuthCLI {
         }
     }
 
+    static func loginOpenAI() async throws -> StoredAccountSession {
+        let commands = AuthCommands()
+        return try await commands.loginAndReturnSession(provider: .openai)
+    }
+
+    static func exportOpenAISession() throws -> StoredAccountSession {
+        try AuthCommands().loadSession(provider: .openai)
+    }
+
+    static func logoutOpenAI() throws {
+        try AuthCommands().logout(provider: .openai)
+    }
+
+    static func openAIAccessibleModelIDs() -> [String] {
+        CodexModelCatalog.accessibleModelIDs()
+    }
+
     static let usage = """
     Usage:
       LangToolsCLI auth login openai
@@ -130,15 +147,21 @@ private struct AuthCommands {
     private let auth = OpenAICLIAuthFlow()
 
     func login(provider: Provider) async throws {
-        guard provider == .openai else { throw CLIError.unsupportedProvider }
-        let session = try await auth.login()
-        try store.save(session)
+        let session = try await loginAndReturnSession(provider: provider)
         print("Logged in to OpenAI as \(session.accountIdentifier)")
     }
 
-    func exportSession(provider: Provider, format: OutputFormat) throws {
+    func loginAndReturnSession(provider: Provider) async throws -> StoredAccountSession {
         guard provider == .openai else { throw CLIError.unsupportedProvider }
-        let session = try store.load()
+        let session = try await auth.login().withAccessibleModelIDs(CodexModelCatalog.accessibleModelIDs())
+        try CodexAccountSessionSynchronizer.sync(session: session)
+        let refreshedSession = session.withAccessibleModelIDs(CodexModelCatalog.accessibleModelIDs())
+        try store.save(refreshedSession)
+        return refreshedSession
+    }
+
+    func exportSession(provider: Provider, format: OutputFormat) throws {
+        let session = try loadSession(provider: provider)
         switch format {
         case .json:
             let encoder = JSONEncoder()
@@ -151,24 +174,34 @@ private struct AuthCommands {
     }
 
     func status(provider: Provider, format: OutputFormat) throws {
-        guard provider == .openai else { throw CLIError.unsupportedProvider }
-        let session = try? store.load()
+        let payload = statusPayload(provider: provider)
         switch format {
         case .json:
-            let payload: [String: Any] = [
-                "provider": provider.rawValue,
-                "authenticated": session != nil,
-                "accountIdentifier": session?.accountIdentifier as Any,
-                "expiresAt": session?.expiresAt?.ISO8601Format() as Any
-            ]
             let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
             FileHandle.standardOutput.write(data)
             FileHandle.standardOutput.write(Data("\n".utf8))
         }
     }
 
+    func loadSession(provider: Provider) throws -> StoredAccountSession {
+        guard provider == .openai else { throw CLIError.unsupportedProvider }
+        return try store.load().withAccessibleModelIDs(CodexModelCatalog.accessibleModelIDs())
+    }
+
+    func statusPayload(provider: Provider) -> [String: Any] {
+        let session = try? loadSession(provider: provider)
+        return [
+            "provider": provider.rawValue,
+            "authenticated": session != nil,
+            "accountIdentifier": session?.accountIdentifier as Any,
+            "expiresAt": session?.expiresAt?.ISO8601Format() as Any,
+            "accessibleModelIDs": session?.accessibleModelIDs as Any
+        ]
+    }
+
     func logout(provider: Provider) throws {
         guard provider == .openai else { throw CLIError.unsupportedProvider }
+        try CodexAccountSessionSynchronizer.logout()
         try store.remove()
         print("Logged out of OpenAI")
     }
@@ -333,7 +366,7 @@ private struct TokenResponse: Codable {
             idToken: idToken,
             tokenType: tokenType,
             expiresAt: expiresIn.map { now.addingTimeInterval(TimeInterval($0)) },
-            accessibleModelIDs: OpenAI.Model.codex.map(\.rawValue),
+            accessibleModelIDs: CodexModelCatalog.accessibleModelIDs(),
             createdAt: now,
             id: UUID()
         )
@@ -353,6 +386,122 @@ private struct TokenResponse: Codable {
             return nil
         }
         return accountID
+    }
+}
+
+private enum CodexAccountSessionSynchronizer {
+    static func sync(session: StoredAccountSession) throws {
+        let result = try runCodex(arguments: ["login", "--with-access-token"], stdin: session.accessToken + "\n")
+        guard result.status == 0 else {
+            throw CLIError.tokenExchangeFailed(errorMessage(for: result, fallback: "Codex login failed while applying the OpenAI account session."))
+        }
+    }
+
+    static func logout() throws {
+        let result = try runCodex(arguments: ["logout"])
+        guard result.status == 0 else {
+            throw CLIError.tokenExchangeFailed(errorMessage(for: result, fallback: "Codex logout failed while removing the OpenAI account session."))
+        }
+    }
+
+    private static func runCodex(arguments: [String], stdin: String? = nil) throws -> (status: Int32, stdout: String, stderr: String) {
+        let command = try OpenAIAccountChatCommand.resolveCodexCommand()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: command.executable)
+        process.arguments = command.arguments + arguments
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        var stdinPipe: Pipe?
+        if stdin != nil {
+            let pipe = Pipe()
+            process.standardInput = pipe
+            stdinPipe = pipe
+        }
+
+        do {
+            try process.run()
+        } catch {
+            throw CLIError.tokenExchangeFailed("Unable to launch Codex CLI to apply the OpenAI account session. Install Codex and try again.")
+        }
+
+        if let stdin, let stdinPipe, let data = stdin.data(using: .utf8) {
+            try? stdinPipe.fileHandleForWriting.write(contentsOf: data)
+            try? stdinPipe.fileHandleForWriting.close()
+        }
+
+        process.waitUntilExit()
+        return (
+            status: process.terminationStatus,
+            stdout: String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self),
+            stderr: String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        )
+    }
+
+    private static func errorMessage(for result: (status: Int32, stdout: String, stderr: String), fallback: String) -> String {
+        let stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        if stderr.isEmpty == false {
+            return stderr
+        }
+        let stdout = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        if stdout.isEmpty == false {
+            return stdout
+        }
+        return fallback
+    }
+}
+
+private struct CodexModelCatalog {
+    private struct CachedModelsPayload: Decodable {
+        struct CachedModel: Decodable {
+            let slug: String
+        }
+
+        let models: [CachedModel]
+    }
+
+    static func accessibleModelIDs() -> [String] {
+        let fileURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex", isDirectory: true)
+            .appendingPathComponent("models_cache.json")
+
+        guard let data = try? Data(contentsOf: fileURL),
+              let payload = try? JSONDecoder().decode(CachedModelsPayload.self, from: data)
+        else {
+            return defaultModelIDs
+        }
+
+        let supported = payload.models
+            .compactMap { OpenAI.Model(rawValue: $0.slug)?.rawValue }
+
+        return supported.isEmpty ? defaultModelIDs : supported
+    }
+
+    private static let defaultModelIDs = [
+        OpenAI.Model.gpt5_5.rawValue,
+        OpenAI.Model.gpt5_4.rawValue,
+        OpenAI.Model.gpt5_4_mini.rawValue,
+        OpenAI.Model.gpt53_codex_spark.rawValue,
+    ]
+}
+
+private extension StoredAccountSession {
+    func withAccessibleModelIDs(_ accessibleModelIDs: [String]) -> StoredAccountSession {
+        StoredAccountSession(
+            provider: provider,
+            accountIdentifier: accountIdentifier,
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+            idToken: idToken,
+            tokenType: tokenType,
+            expiresAt: expiresAt,
+            accessibleModelIDs: accessibleModelIDs,
+            createdAt: createdAt,
+            id: id
+        )
     }
 }
 

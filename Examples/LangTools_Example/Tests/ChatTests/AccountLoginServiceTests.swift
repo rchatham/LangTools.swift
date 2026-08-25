@@ -175,7 +175,7 @@ final class AccountLoginServiceTests: XCTestCase {
               "idToken": "id-token",
               "tokenType": "Bearer",
               "expiresAt": "2026-04-28T17:00:00Z",
-              "accessibleModelIDs": ["gpt-5.1-codex"],
+              "accessibleModelIDs": ["gpt-5.3-codex-spark"],
               "createdAt": "2026-04-28T16:00:00Z",
               "id": "00000000-0000-0000-0000-000000000001"
             }
@@ -191,24 +191,21 @@ final class AccountLoginServiceTests: XCTestCase {
     }
 
     @MainActor
-    func testBeginLoginUsesCLIBridgeForOpenAI() async throws {
-        let bridge = CLIAccountSessionBridge(runner: TestCommandRunner(results: [
-            CommandResult(status: 0, stdout: "Logged in\n", stderr: ""),
-            CommandResult(status: 0, stdout: """
-            {
-              "provider": "openAI",
-              "accountIdentifier": "chatgpt-account",
-              "accessToken": "access-token",
-              "refreshToken": "refresh-token",
-              "idToken": null,
-              "tokenType": "Bearer",
-              "expiresAt": null,
-              "accessibleModelIDs": [],
-              "createdAt": "2026-04-28T16:00:00Z",
-              "id": "00000000-0000-0000-0000-000000000001"
-            }
-            """, stderr: "")
-        ]))
+    func testBeginLoginUsesCodexHelperForOpenAI() async throws {
+        let helperClient = TestCodexHelperClient(
+            loginSession: AccountSession(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+                provider: .openAI,
+                accountIdentifier: "chatgpt-account",
+                accessToken: "access-token",
+                refreshToken: "refresh-token",
+                idToken: nil,
+                tokenType: "Bearer",
+                expiresAt: nil,
+                accessibleModelIDs: [],
+                createdAt: Date(timeIntervalSince1970: 0)
+            )
+        )
         let service = BrowserAccountLoginService(
             coordinator: TestAccountLoginCoordinator(),
             backendClient: TestAccountLoginBackendClient(
@@ -216,13 +213,15 @@ final class AccountLoginServiceTests: XCTestCase {
             ),
             sessionStore: AuthSessionStore(keychain: .init(service: "AccountLoginServiceTests.\(UUID().uuidString)")),
             configuration: AccountBackendConfiguration(baseURL: URL(string: "http://localhost:8080")!),
-            cliBridge: bridge
+            cliBridge: CLIAccountSessionBridge(runner: TestCommandRunner(results: [])),
+            codexHelperClient: helperClient
         )
 
         let session = try await service.beginLogin(for: .openAI)
 
         XCTAssertEqual(session.provider, .openAI)
         XCTAssertEqual(session.accountIdentifier, "chatgpt-account")
+        XCTAssertEqual(helperClient.loginCallCount, 1)
     }
 
     @MainActor
@@ -358,6 +357,34 @@ private extension URLRequest {
     }
 }
 
+private final class TestCodexHelperClient: CodexHelperClientProtocol {
+    let loginSession: AccountSession
+    private(set) var loginCallCount = 0
+
+    init(loginSession: AccountSession) {
+        self.loginSession = loginSession
+    }
+
+    func loginOpenAI() async throws -> AccountSession {
+        loginCallCount += 1
+        return loginSession
+    }
+
+    func logoutOpenAI() async throws {}
+
+    func statusOpenAI() async throws -> CodexHelperStatus {
+        CodexHelperStatus(provider: "openAI", authenticated: true, accountIdentifier: loginSession.accountIdentifier, expiresAt: nil, accessibleModelIDs: loginSession.accessibleModelIDs)
+    }
+
+    func listOpenAIModels() async throws -> [String] {
+        loginSession.accessibleModelIDs
+    }
+
+    func healthCheck() async throws -> HelperHealthStatus {
+        HelperHealthStatus(status: "ok", version: 1)
+    }
+}
+
 private final class TestCommandRunner: CommandRunning {
     private var results: [CommandResult]
 
@@ -365,9 +392,10 @@ private final class TestCommandRunner: CommandRunning {
         self.results = results
     }
 
-    func run(executable: String, arguments: [String]) async throws -> CommandResult {
+    func run(executable: String, arguments: [String], environment: [String : String]?) async throws -> CommandResult {
         _ = executable
         _ = arguments
+        _ = environment
         return results.removeFirst()
     }
 }
