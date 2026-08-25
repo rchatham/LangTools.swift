@@ -26,7 +26,7 @@ final class ModelRequestTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
@@ -66,7 +66,7 @@ final class ModelRequestTests: XCTestCase {
     // MARK: - List Models Tests
 
     func testListModelsRequest() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ListModelDataRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ListModelDataRequest.endpoint) { request in
             // Verify request
             XCTAssertEqual(request.httpMethod, "GET")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test_key")
@@ -95,7 +95,7 @@ final class ModelRequestTests: XCTestCase {
 
     func testRetrieveModelRequest() async throws {
         let modelId = "gpt-4o"
-        MockURLProtocol.mockNetworkHandlers[OpenAI.RetrieveModelRequest.endpoint + "/" + modelId] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.RetrieveModelRequest.endpoint + "/" + modelId) { request in
             // Verify request
             XCTAssertEqual(request.httpMethod, "GET")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test_key")
@@ -117,7 +117,7 @@ final class ModelRequestTests: XCTestCase {
 
     func testDeleteFineTunedModelRequest() async throws {
         let modelId = "ft:gpt-4o-mini:acemeco:suffix:abc123"
-        MockURLProtocol.mockNetworkHandlers[OpenAI.DeleteFineTunedModelRequest.endpoint] = {
+        MockURLProtocol.setHandler(for: OpenAI.DeleteFineTunedModelRequest.endpoint) {
             request in
             // Verify request
             XCTAssertEqual(request.httpMethod, "DELETE")
@@ -137,7 +137,7 @@ final class ModelRequestTests: XCTestCase {
     // MARK: - Error Tests
 
     func testUnauthorizedError() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ListModelDataRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ListModelDataRequest.endpoint) { _ in
             let errorResponse = OpenAIErrorResponse(
                 error: .init(
                     message: "Invalid authentication token",
@@ -168,7 +168,7 @@ final class ModelRequestTests: XCTestCase {
 
     func testModelNotFoundError() async throws {
         let modelId = "nonexistent-model"
-        MockURLProtocol.mockNetworkHandlers[OpenAI.RetrieveModelRequest.endpoint + "/" + modelId] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.RetrieveModelRequest.endpoint + "/" + modelId) { _ in
             let errorResponse = OpenAIErrorResponse(
                 error: .init(
                     message: "The model 'nonexistent-model' does not exist",

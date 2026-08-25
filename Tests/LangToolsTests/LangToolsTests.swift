@@ -19,13 +19,13 @@ final class LangToolsTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
 
     func test() async throws {
-        MockURLProtocol.mockNetworkHandlers[MockRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: MockRequest.endpoint) { request in
             return (.success(try MockResponse.success.data()), 200)
         }
         let response = try await api.perform(request: MockRequest())
@@ -33,7 +33,7 @@ final class LangToolsTests: XCTestCase {
     }
 
     func testStream() async throws {
-        MockURLProtocol.mockNetworkHandlers[MockRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: MockRequest.endpoint) { request in
             return (.success(try MockResponse.success.streamData()), 200)
         }
         var results: [MockResponse] = []
@@ -42,6 +42,22 @@ final class LangToolsTests: XCTestCase {
         }
         let content = results.reduce("") { $0 + ($1.status) }
         XCTAssertEqual(content, "success")
+    }
+
+    func testMockURLProtocolHandlerRegistrationIsAtomic() async throws {
+        MockURLProtocol.resetHandlers()
+
+        await withTaskGroup(of: Void.self) { group in
+            for index in 0..<250 {
+                group.addTask {
+                    MockURLProtocol.setHandler(for: "atomic-registration-\(index)") { _ in
+                        (.success(Data()), 200)
+                    }
+                }
+            }
+        }
+
+        XCTAssertEqual(MockURLProtocol.handlerCount(), 250)
     }
 
     // MARK: - LangToolsError Tests
@@ -127,7 +143,7 @@ final class LangToolsTests: XCTestCase {
     // MARK: - HTTP Error Response Tests
 
     func testErrorResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[MockRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: MockRequest.endpoint) { request in
             return (.success(Data()), 500)
         }
 

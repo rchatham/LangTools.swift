@@ -28,7 +28,7 @@ final class OpenAIPerformanceTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
@@ -142,7 +142,7 @@ final class OpenAIPerformanceTests: XCTestCase {
     func testStreamingThroughput_SmallStream() {
         let streamData = PerformanceFixtures.openAIStreamChunksData(chunkCount: 10)
         measure {
-            MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+            MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
                 (.success(streamData), 200)
             }
             let exp = expectation(description: "stream")
@@ -171,7 +171,7 @@ final class OpenAIPerformanceTests: XCTestCase {
     func testStreamingThroughput_MediumStream() {
         let streamData = PerformanceFixtures.openAIStreamChunksData(chunkCount: 50)
         measure {
-            MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+            MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
                 (.success(streamData), 200)
             }
             let exp = expectation(description: "stream")

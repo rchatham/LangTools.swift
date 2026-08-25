@@ -25,13 +25,13 @@ class OpenAITests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
 
     func testChatStream() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try OpenAI.ChatCompletionResponse(
                 id: "testid",
                 object: "chat.completion.chunk",
@@ -61,7 +61,7 @@ class OpenAITests: XCTestCase {
     }
 
     func testChatStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try self.getData(filename: "assistant_response_stream", fileExtension: "txt")!), 200)
         }
         var results: [OpenAI.ChatCompletionResponse] = []
@@ -141,7 +141,7 @@ class OpenAITests: XCTestCase {
     }
 
     func testToolCallStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try self.getData(filename: "tool_call_stream", fileExtension: "txt")!), 200)
         }
 
@@ -204,7 +204,7 @@ class OpenAITests: XCTestCase {
     }
 
     func testAudioStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try self.getData(filename: "audio_response_stream", fileExtension: "txt")!), 200)
         }
 
@@ -243,7 +243,7 @@ class OpenAITests: XCTestCase {
     }
 
     func testToolCallWithFunctionCallbackStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try self.getData(filename: "tool_call_stream", fileExtension: "txt")!), 200)
         }
         let tools: [OpenAI.Tool] = [.function(.init(
@@ -261,7 +261,7 @@ class OpenAITests: XCTestCase {
                 ],
                 required: ["location", "format"]),
             callback: { _,_ in
-                MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+                MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
                     return (.success(try self.getData(filename: "tool_call_stream_response", fileExtension: "txt")!), 200)
                 }
                 return "27"

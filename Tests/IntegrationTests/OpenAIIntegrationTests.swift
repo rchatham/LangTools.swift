@@ -28,7 +28,7 @@ final class OpenAIIntegrationTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
@@ -36,7 +36,7 @@ final class OpenAIIntegrationTests: XCTestCase {
     // MARK: - Basic Chat Completion
 
     func testPerformChatCompletion() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             let data = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 1)
             return (.success(data), 200)
         }
@@ -57,7 +57,7 @@ final class OpenAIIntegrationTests: XCTestCase {
     }
 
     func testPerformChatCompletionWithMultipleChoices() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             let data = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 3)
             return (.success(data), 200)
         }
@@ -79,7 +79,7 @@ final class OpenAIIntegrationTests: XCTestCase {
 
     func testStreamChatCompletion() async throws {
         let streamData = PerformanceFixtures.openAIStreamChunksData(chunkCount: 5)
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(streamData), 200)
         }
         let request = OpenAI.ChatCompletionRequest(
@@ -101,7 +101,7 @@ final class OpenAIIntegrationTests: XCTestCase {
 
     func testStreamChatCompletionAccumulatesContent() async throws {
         let streamData = PerformanceFixtures.openAIStreamChunksData(chunkCount: 10)
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(streamData), 200)
         }
         let request = OpenAI.ChatCompletionRequest(
@@ -123,7 +123,7 @@ final class OpenAIIntegrationTests: XCTestCase {
 
     func testStreamToolCalling() async throws {
         let streamData = PerformanceFixtures.openAIToolCallStreamData(toolCount: 1)
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(streamData), 200)
         }
         let request = OpenAI.ChatCompletionRequest(
@@ -165,7 +165,7 @@ final class OpenAIIntegrationTests: XCTestCase {
         // First request returns tool call; callback registers handler for second request.
         // This matches the pattern used in OpenAITests.testToolCallWithFunctionCallbackStreamResponse.
         // Safe because the tool completion loop is sequential: callback completes before next request.
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(toolStreamData), 200)
         }
 
@@ -180,7 +180,7 @@ final class OpenAIIntegrationTests: XCTestCase {
                 required: ["location"]
             ),
             callback: { _, args in
-                MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+                MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
                     (.success(finalStreamData), 200)
                 }
                 return "72°F and sunny"
@@ -213,7 +213,7 @@ final class OpenAIIntegrationTests: XCTestCase {
         {"error": {"message": "Invalid API key", "type": "authentication_error", "param": null, "code": "invalid_api_key"}}
         """.data(using: .utf8)!
 
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(errorJSON), 401)
         }
         let request = OpenAI.ChatCompletionRequest(
@@ -240,7 +240,7 @@ final class OpenAIIntegrationTests: XCTestCase {
 
     func testHandlesNetworkError() async throws {
         let networkError = URLError(.notConnectedToInternet)
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.failure(networkError), nil)
         }
         let request = OpenAI.ChatCompletionRequest(
@@ -262,7 +262,7 @@ final class OpenAIIntegrationTests: XCTestCase {
     // MARK: - Message Types
 
     func testSystemMessageInConversation() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             let data = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 1)
             return (.success(data), 200)
         }
@@ -328,7 +328,7 @@ final class OpenAIIntegrationTests: XCTestCase {
 
     func testResponseWithLogprobs() async throws {
         let data = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 1)
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(data), 200)
         }
         let request = OpenAI.ChatCompletionRequest(
@@ -349,7 +349,7 @@ final class OpenAIIntegrationTests: XCTestCase {
 
     func testUsageStatistics() async throws {
         let data = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 1)
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(data), 200)
         }
         let response = try await api.perform(request: OpenAI.ChatCompletionRequest(
@@ -366,7 +366,7 @@ final class OpenAIIntegrationTests: XCTestCase {
     // MARK: - Large Conversation Handling
 
     func testLargeConversationHistory() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             let data = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 1)
             return (.success(data), 200)
         }
@@ -386,7 +386,7 @@ final class OpenAIIntegrationTests: XCTestCase {
 
     func testSequentialRequestsReuseProvider() async throws {
         for i in 0..<3 {
-            MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+            MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
                 let data = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 1)
                 return (.success(data), 200)
             }
@@ -431,7 +431,7 @@ final class OpenAIIntegrationTests: XCTestCase {
         }
         """.data(using: .utf8)!
 
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(responseJSON), 200)
         }
 
@@ -496,7 +496,7 @@ final class OpenAIIntegrationTests: XCTestCase {
         {"error": {"message": "Model not found", "type": "invalid_request_error", "param": "model", "code": "model_not_found"}}
         """.data(using: .utf8)!
 
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(errorJSON), 404)
         }
 
@@ -538,7 +538,7 @@ final class OpenAIIntegrationTests: XCTestCase {
         }
         """.data(using: .utf8)!
 
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(responseJSON), 200)
         }
 
@@ -561,7 +561,7 @@ final class OpenAIIntegrationTests: XCTestCase {
         let finalStreamData = PerformanceFixtures.openAIStreamChunksData(chunkCount: 2)
 
         // Sequential: callback completes before next request (see OpenAITests pattern)
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(toolStreamData), 200)
         }
 
@@ -588,7 +588,7 @@ final class OpenAIIntegrationTests: XCTestCase {
                 required: ["location"]
             ),
             callback: { _, _ in
-                MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+                MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
                     (.success(finalStreamData), 200)
                 }
                 throw ToolError()
@@ -622,7 +622,7 @@ final class OpenAIIntegrationTests: XCTestCase {
         {"error": {"message": "Server error", "type": "server_error", "param": null, "code": null}}
         """.data(using: .utf8)!
 
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(errorJSON), 500)
         }
 

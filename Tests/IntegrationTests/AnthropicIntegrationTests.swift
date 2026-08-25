@@ -29,7 +29,7 @@ final class AnthropicIntegrationTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
@@ -37,7 +37,7 @@ final class AnthropicIntegrationTests: XCTestCase {
     // MARK: - Basic Message Request
 
     func testPerformMessageRequest() async throws {
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             let data = PerformanceFixtures.anthropicMessageResponseJSON()
             return (.success(data), 200)
         }
@@ -55,7 +55,7 @@ final class AnthropicIntegrationTests: XCTestCase {
     }
 
     func testPerformMessageRequestWithSystemPrompt() async throws {
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { request in
             if let httpBody = request.bodyData,
                let json = try? JSONSerialization.jsonObject(with: httpBody),
                let body = json as? [String: Any] {
@@ -79,7 +79,7 @@ final class AnthropicIntegrationTests: XCTestCase {
 
     func testStreamMessageRequest() async throws {
         let streamData = PerformanceFixtures.anthropicStreamData(chunkCount: 5)
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             (.success(streamData), 200)
         }
         let request = Anthropic.MessageRequest(
@@ -98,7 +98,7 @@ final class AnthropicIntegrationTests: XCTestCase {
 
     func testStreamAccumulatesContent() async throws {
         let streamData = PerformanceFixtures.anthropicStreamData(chunkCount: 8)
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             (.success(streamData), 200)
         }
         let request = Anthropic.MessageRequest(
@@ -117,7 +117,7 @@ final class AnthropicIntegrationTests: XCTestCase {
 
     func testStreamStopReason() async throws {
         let streamData = PerformanceFixtures.anthropicStreamData(chunkCount: 3)
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             (.success(streamData), 200)
         }
         let request = Anthropic.MessageRequest(
@@ -138,7 +138,7 @@ final class AnthropicIntegrationTests: XCTestCase {
 
     func testToolCallResponse() async throws {
         let data = PerformanceFixtures.anthropicMessageResponseWithToolsJSON(toolCount: 1)
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             (.success(data), 200)
         }
         let request = Anthropic.MessageRequest(
@@ -177,7 +177,7 @@ final class AnthropicIntegrationTests: XCTestCase {
 
         // First request returns tool use; callback registers handler for second request.
         // Safe because the tool completion loop is sequential: callback completes before next request.
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             (.success(toolStreamData), 200)
         }
 
@@ -192,7 +192,7 @@ final class AnthropicIntegrationTests: XCTestCase {
                 required: ["location"]
             ),
             callback: { _ in
-                MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+                MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
                     (.success(finalResponseData), 200)
                 }
                 return "72°F and sunny"
@@ -219,7 +219,7 @@ final class AnthropicIntegrationTests: XCTestCase {
 
     func testMultipleToolCalls() async throws {
         let data = PerformanceFixtures.anthropicMessageResponseWithToolsJSON(toolCount: 3)
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             (.success(data), 200)
         }
         let request = Anthropic.MessageRequest(
@@ -259,7 +259,7 @@ final class AnthropicIntegrationTests: XCTestCase {
         {"type": "error", "error": {"type": "authentication_error", "message": "Invalid API key"}}
         """.data(using: .utf8)!
 
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             (.success(errorJSON), 401)
         }
         let request = Anthropic.MessageRequest(
@@ -286,7 +286,7 @@ final class AnthropicIntegrationTests: XCTestCase {
 
     func testHandlesNetworkError() async throws {
         let networkError = URLError(.timedOut)
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             (.failure(networkError), nil)
         }
         let request = Anthropic.MessageRequest(
@@ -396,7 +396,7 @@ final class AnthropicIntegrationTests: XCTestCase {
 
     func testUsageStatistics() async throws {
         let data = PerformanceFixtures.anthropicMessageResponseJSON()
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             (.success(data), 200)
         }
         let response = try await api.perform(request: Anthropic.MessageRequest(
@@ -411,7 +411,7 @@ final class AnthropicIntegrationTests: XCTestCase {
     // MARK: - Large Conversation Handling
 
     func testLargeConversationHistory() async throws {
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             let data = PerformanceFixtures.anthropicMessageResponseJSON()
             return (.success(data), 200)
         }
@@ -477,7 +477,7 @@ final class AnthropicIntegrationTests: XCTestCase {
         }
         """.data(using: .utf8)!
 
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             (.success(responseJSON), 200)
         }
 
@@ -553,7 +553,7 @@ final class AnthropicIntegrationTests: XCTestCase {
         {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}
         """.data(using: .utf8)!
 
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             (.success(errorJSON), 529)
         }
 
@@ -593,7 +593,7 @@ final class AnthropicIntegrationTests: XCTestCase {
         }
         """.data(using: .utf8)!
 
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             (.success(responseJSON), 200)
         }
 
@@ -616,7 +616,7 @@ final class AnthropicIntegrationTests: XCTestCase {
         {"type": "error", "error": {"type": "overloaded_error", "message": "Server overloaded"}}
         """.data(using: .utf8)!
 
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             (.success(errorJSON), 529)
         }
 

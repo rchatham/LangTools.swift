@@ -21,9 +21,30 @@ class MockURLProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var _handlers: [String: MockNetworkHandler] = [:]
 
+    @available(*, deprecated, message: "Use setHandler/removeHandler/resetHandlers for atomic mutation")
     public static var mockNetworkHandlers: [String: MockNetworkHandler] {
         get { lock.lock(); defer { lock.unlock() }; return _handlers }
         set { lock.lock(); defer { lock.unlock() }; _handlers = newValue }
+    }
+
+    public static func setHandler(for endpoint: String, handler: @escaping MockNetworkHandler) {
+        lock.lock(); defer { lock.unlock() }
+        _handlers[endpoint] = handler
+    }
+
+    public static func removeHandler(for endpoint: String) {
+        lock.lock(); defer { lock.unlock() }
+        _handlers.removeValue(forKey: endpoint)
+    }
+
+    public static func resetHandlers() {
+        lock.lock(); defer { lock.unlock() }
+        _handlers.removeAll()
+    }
+
+    public static func handlerCount() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return _handlers.count
     }
 
     // Requests to these hosts are intercepted even when no handler is registered and
@@ -149,7 +170,7 @@ extension URLSessionTask {
 extension MockURLProtocol {
     static func registerResponse(for endpoint: String, data: Data, statusCode:
     Int) {
-        MockURLProtocol.mockNetworkHandlers[endpoint] = { request in
+        MockURLProtocol.setHandler(for: endpoint) { request in
         (.success(data), statusCode) }
     }
 

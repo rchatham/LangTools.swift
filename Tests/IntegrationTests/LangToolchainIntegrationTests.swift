@@ -35,7 +35,7 @@ final class LangToolchainIntegrationTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
@@ -43,7 +43,7 @@ final class LangToolchainIntegrationTests: XCTestCase {
     // MARK: - Provider Routing
 
     func testRoutesOpenAIRequestToOpenAI() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             let data = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 1)
             return (.success(data), 200)
         }
@@ -57,7 +57,7 @@ final class LangToolchainIntegrationTests: XCTestCase {
     }
 
     func testRoutesAnthropicRequestToAnthropic() async throws {
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             let data = PerformanceFixtures.anthropicMessageResponseJSON()
             return (.success(data), 200)
         }
@@ -92,7 +92,7 @@ final class LangToolchainIntegrationTests: XCTestCase {
 
     func testStreamOpenAIThroughToolchain() async throws {
         let streamData = PerformanceFixtures.openAIStreamChunksData(chunkCount: 5)
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(streamData), 200)
         }
         let request = OpenAI.ChatCompletionRequest(
@@ -110,7 +110,7 @@ final class LangToolchainIntegrationTests: XCTestCase {
 
     func testStreamAnthropicThroughToolchain() async throws {
         let streamData = PerformanceFixtures.anthropicStreamData(chunkCount: 5)
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             (.success(streamData), 200)
         }
         let request = Anthropic.MessageRequest(
@@ -160,7 +160,7 @@ final class LangToolchainIntegrationTests: XCTestCase {
 
     func testSequentialMultiProviderFlow() async throws {
         // First, call OpenAI
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             let data = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 1)
             return (.success(data), 200)
         }
@@ -172,7 +172,7 @@ final class LangToolchainIntegrationTests: XCTestCase {
         let openaiContent = openaiResponse.choices.first?.message?.content.string ?? ""
 
         // Then, call Anthropic with the OpenAI response
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             let data = PerformanceFixtures.anthropicMessageResponseJSON()
             return (.success(data), 200)
         }

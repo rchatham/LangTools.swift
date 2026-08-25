@@ -50,7 +50,7 @@ final class AgentsTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
@@ -89,7 +89,7 @@ final class AgentsTests: XCTestCase {
     // MARK: - Agent Execution
 
     func testAgentExecuteReturnsTextResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(self.mockChatResponse(content: "The answer is 42.")), 200)
         }
 
@@ -103,7 +103,7 @@ final class AgentsTests: XCTestCase {
         let emptyJSON = """
         {"id":"x","object":"chat.completion","created":0,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}
         """.data(using: .utf8)!
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(emptyJSON), 200)
         }
 
@@ -123,7 +123,7 @@ final class AgentsTests: XCTestCase {
     }
 
     func testAgentExecuteNetworkErrorThrows() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.failure(URLError(.notConnectedToInternet)), nil)
         }
 

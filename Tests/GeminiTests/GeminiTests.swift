@@ -26,13 +26,13 @@ class GeminiTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
 
     func testGeminiChatCompletion() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try OpenAI.ChatCompletionResponse(
                 id: "gemini-test-id",
                 object: "chat.completion",
@@ -62,7 +62,7 @@ class GeminiTests: XCTestCase {
     }
 
     func testGeminiChatStream() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try OpenAI.ChatCompletionResponse(
                 id: "gemini-stream-id",
                 object: "chat.completion.chunk",
