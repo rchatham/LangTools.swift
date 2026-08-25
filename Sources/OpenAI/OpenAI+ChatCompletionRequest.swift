@@ -468,7 +468,14 @@ extension OpenAI {
             }
 
             func combining(_ toolCalls: [Message.ToolCall]?, with next: [Message.ToolCall]?) -> [Message.ToolCall]? {
-                guard let toolCalls = toolCalls, let next = next else { return toolCalls ?? next }
+                guard let toolCalls = toolCalls, let next = next else {
+                    // A nil side is the common case (deltas after the tool-call chunks carry no
+                    // tool_calls, decoded as nil rather than []), so the surviving array must
+                    // still self-heal here like the merge below — otherwise an out-of-order
+                    // accumulator ships unsorted through the terminal delta.
+                    guard let survivor = toolCalls ?? next else { return nil }
+                    return survivor.isSortedByIndex ? survivor : survivor.sorted()
+                }
                 let orderedNext = next.isSortedByIndex ? next : next.sorted()
                 return orderedNext.reduce(into: toolCalls.isSortedByIndex ? toolCalls : toolCalls.sorted()) { partialResult, next in
                     if let index = partialResult.firstIndex(where: { $0.index == next.index })  {
@@ -537,13 +544,13 @@ extension OpenAI {
         }
 
         func combining(_ choices: [Choice], with next: [Choice]) -> [Choice] {
-            if choices.isEmpty { return next }
-            // `next.isEmpty` is the common case (the terminal usage-only chunk of a real stream
-            // has no choices), so this path runs on nearly every stream — it must still self-heal
-            // via isSortedByIndex rather than trust `choices` unconditionally, matching the
-            // ternary the reduce below applies on every other path.
-            if next.isEmpty { return choices.isSortedByIndex ? choices : choices.sorted() }
+            // The first chunk must establish the sorted-accumulator invariant too — if it carries
+            // multiple out-of-order choices and is also the last combine, nothing downstream heals it.
+            if choices.isEmpty { return next.isSortedByIndex ? next : next.sorted() }
             let orderedNext = next.isSortedByIndex ? next : next.sorted()
+            // An empty `next` (the terminal usage-only chunk of a real stream) falls through to
+            // the reduce as a no-op over the self-healed initial value — no early return needed,
+            // and the accumulator still comes back sorted.
             return orderedNext.reduce(into: choices.isSortedByIndex ? choices : choices.sorted()) { partialResult, next in
                 if let index = partialResult.firstIndex(where: { $0.index == next.index }) {
                     partialResult[index] = partialResult[index].combining(with: next)

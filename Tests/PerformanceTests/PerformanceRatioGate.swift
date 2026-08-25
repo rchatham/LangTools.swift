@@ -66,7 +66,13 @@ public extension XCTestCase {
             return
         }
 
-        let ceiling = PerformanceRatios.ceiling(for: key) ?? maxRatio
+        let ceiling: Double
+        do {
+            ceiling = try PerformanceRatios.ceiling(for: key) ?? maxRatio
+        } catch {
+            XCTFail("ratios.json exists but could not be read/decoded (\(error)) — fix or delete \(PerformanceRatios.fileURL.path) (re-record with RECORD_PERF_RATIOS=1)", file: file, line: line)
+            return
+        }
         XCTAssertLessThanOrEqual(
             ratio, ceiling,
             "\(key) is \(String(format: "%.2f", ratio))× the Foundation baseline, exceeding the ceiling of \(String(format: "%.2f", ceiling))× (see ratios.json; re-record with RECORD_PERF_RATIOS=1 if this is an intended change)",
@@ -108,24 +114,27 @@ public enum PerformanceRatios {
     /// trip the gate. A regression has to exceed the observed ratio by more than this to fail.
     static let recordHeadroom: Double = 1.4
 
-    public static func load() -> [String: Double] {
-        guard let data = try? Data(contentsOf: fileURL),
-              let map = try? JSONDecoder().decode([String: Double].self, from: data) else {
-            return [:]
-        }
-        return map
+    /// A missing file is a legitimate first-run state and returns `[:]` (callers fall back to
+    /// `maxRatio`). A file that exists but can't be read or decoded throws instead — silently
+    /// returning `[:]` there would disable every committed ceiling and let regressions pass.
+    public static func load() throws -> [String: Double] {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return [:] }
+        let data = try Data(contentsOf: fileURL)
+        return try JSONDecoder().decode([String: Double].self, from: data)
     }
 
-    public static func ceiling(for key: String) -> Double? {
-        load()[key]
+    public static func ceiling(for key: String) throws -> Double? {
+        try load()[key]
     }
 
     public static func record(key: String, observedRatio: Double) throws {
-        var map = load()
+        var map = try load()
         map[key] = ((observedRatio * recordHeadroom) * 100).rounded() / 100 // 2-decimal ceiling
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(map)
-        try data.write(to: fileURL)
+        // .atomic so an interrupted run can't leave a truncated ratios.json, which load()
+        // would then reject and fail every gate.
+        try data.write(to: fileURL, options: .atomic)
     }
 }
