@@ -14,7 +14,7 @@ struct ChatCommand {
         networkClient.refreshCredentials()
 
         print("Chat CLI Started")
-        print("Commands: 'exit', 'model', 'test', '/auth ...'")
+        print("Commands: 'exit', '/model', 'test', '/auth ...'")
         print("Current model: \(UserDefaults.model.rawValue)")
         print("Tip: use /auth login openai to enable OpenAI account-backed chat without an API key.")
 
@@ -27,7 +27,7 @@ struct ChatCommand {
                 break
             }
 
-            if input.lowercased() == "model" {
+            if isModelCommand(input) {
                 try await changeModel()
                 continue
             }
@@ -48,6 +48,11 @@ struct ChatCommand {
                 print("Error: \(error.localizedDescription)")
             }
         }
+    }
+
+    static func isModelCommand(_ input: String) -> Bool {
+        let normalized = input.lowercased()
+        return normalized == "model" || normalized == "/model"
     }
 
     static func handleAuthCommand(_ input: String) async throws {

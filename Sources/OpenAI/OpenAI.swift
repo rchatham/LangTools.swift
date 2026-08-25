@@ -35,7 +35,7 @@ final public class OpenAI: LangTools {
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
             { ($0 as? ChatCompletionRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
-            { ($0 as? ResponsesRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
+            { String(reflecting: type(of: $0)).contains("ResponsesRequest") },
             { $0 is AudioSpeechRequest },
             { $0 is AudioTranscriptionRequest },
             { $0 is ListModelDataRequest },
@@ -104,13 +104,20 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static var allCases: [OpenAIModel] = openAIModels
     public static var chatModels: [OpenAIModel] { allCases.filter({ $0.type == .chat }) }
     public static var reasoning: [OpenAIModel] { [.o1, .o1_mini, .o3_mini, .o4_mini] }
-    public static var codex: [OpenAIModel] { [.gpt51_codex, .gpt53_codex] }
+    public static var codex: [OpenAIModel] { [.gpt5_5, .gpt5_4, .gpt5_4_mini, .gpt53_codex_spark] }
     public static var searchPreview: [OpenAIModel] { [.gpt4o_searchPreview, .gpt4o_mini_searchPreview] }
     static let openAIModels: [OpenAIModel] = ModelID.allCases.map { OpenAIModel(modelID: $0) }
 
     public init?(rawValue: String) {
-        if ModelID(rawValue: rawValue) != nil {
-            id = rawValue
+        let normalizedRawValue = switch rawValue {
+        case "gpt-5.1-codex", "gpt-5.3-codex":
+            "gpt-5.3-codex-spark"
+        default:
+            rawValue
+        }
+
+        if ModelID(rawValue: normalizedRawValue) != nil {
+            id = normalizedRawValue
         } else { return nil }
     }
 
@@ -187,10 +194,12 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let gpt5_1 = OpenAIModel(modelID: .gpt5_1)
     public static let gpt5_2 = OpenAIModel(modelID: .gpt5_2)
     public static let gpt5_3 = OpenAIModel(modelID: .gpt5_3)
+    public static let gpt5_4 = OpenAIModel(modelID: .gpt5_4)
+    public static let gpt5_4_mini = OpenAIModel(modelID: .gpt5_4_mini)
+    public static let gpt5_5 = OpenAIModel(modelID: .gpt5_5)
 
     // Codex Models
-    public static let gpt51_codex = OpenAIModel(modelID: .gpt51_codex)
-    public static let gpt53_codex = OpenAIModel(modelID: .gpt53_codex)
+    public static let gpt53_codex_spark = OpenAIModel(modelID: .gpt53_codex_spark)
 
     public static let tts_1 = OpenAIModel(modelID: .tts_1)
     public static let tts_1_hd = OpenAIModel(modelID: .tts_1_hd)
@@ -245,10 +254,12 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         case gpt5_1 = "gpt-5.1"
         case gpt5_2 = "gpt-5.2"
         case gpt5_3 = "gpt-5.3"
+        case gpt5_4 = "gpt-5.4"
+        case gpt5_4_mini = "gpt-5.4-mini"
+        case gpt5_5 = "gpt-5.5"
 
         // MARK: - Codex Models
-        case gpt51_codex = "gpt-5.1-codex"
-        case gpt53_codex = "gpt-5.3-codex"
+        case gpt53_codex_spark = "gpt-5.3-codex-spark"
 
         // MARK: - Reasoning Models (o-series)
         case o1 = "o1"

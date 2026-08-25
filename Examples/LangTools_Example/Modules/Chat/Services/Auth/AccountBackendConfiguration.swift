@@ -5,9 +5,17 @@ public struct AccountBackendConfiguration: Equatable {
     public static let callbackHost = "auth"
 
     public let baseURL: URL
+    public let codexHelperBaseURL: URL
+    public let codexHelperToken: String
 
-    public init(baseURL: URL = UserDefaults.accountBackendBaseURL) {
+    public init(
+        baseURL: URL = UserDefaults.accountBackendBaseURL,
+        codexHelperBaseURL: URL = UserDefaults.codexHelperBaseURL,
+        codexHelperToken: String = UserDefaults.codexHelperToken
+    ) {
         self.baseURL = baseURL
+        self.codexHelperBaseURL = codexHelperBaseURL
+        self.codexHelperToken = codexHelperToken
     }
 
     public func callbackURL(for provider: AccountLoginProvider) -> URL {
@@ -49,7 +57,21 @@ public struct AccountBackendConfiguration: Equatable {
         baseURL.appending(path: "/auth/\(provider.startPathComponent)/logout")
     }
 
-    public func accountChatURL() -> URL {
-        baseURL.appending(path: "/account/chat/completions")
+    public func accountChatURL(for provider: AccountLoginProvider) -> URL {
+        switch provider {
+        case .openAI:
+            return codexHelperBaseURL.appending(path: "/v1/account/chat/completions")
+        case .claudeCode:
+            return baseURL.appending(path: "/account/chat/completions")
+        }
+    }
+
+    public func authorizationToken(for provider: AccountLoginProvider, session: AccountSession) -> String {
+        switch provider {
+        case .openAI:
+            return codexHelperToken
+        case .claudeCode:
+            return session.accessToken
+        }
     }
 }

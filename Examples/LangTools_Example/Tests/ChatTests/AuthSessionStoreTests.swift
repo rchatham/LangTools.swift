@@ -25,7 +25,7 @@ final class AuthSessionStoreTests: XCTestCase {
             refreshToken: "refresh-token",
             idToken: "id-token",
             tokenType: "Bearer",
-            accessibleModelIDs: ["gpt-4o-mini", "gpt-5.1-codex"]
+            accessibleModelIDs: ["gpt-4o-mini", "gpt-5.3-codex-spark"]
         )
 
         try store.save(session)
@@ -43,7 +43,7 @@ final class AuthSessionStoreTests: XCTestCase {
           "accessToken": "token",
           "refreshToken": "refresh-token",
           "expiresAt": null,
-          "accessibleModelIDs": ["gpt-5.1-codex"],
+          "accessibleModelIDs": ["gpt-5.3-codex-spark"],
           "createdAt": 0
         }
         """

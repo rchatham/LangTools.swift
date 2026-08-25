@@ -125,7 +125,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
 
         switch service {
         case .openAI:
-            return "Models are shown when their provider is configured. OpenAI status: \(status). Add an API key for direct API requests, or sign in with OpenAI via LangToolsAuthCLI to unlock account-based access like Codex."
+            return "Models are shown when their provider is configured. OpenAI status: \(status). Add an API key for direct OpenAI Platform API requests, or sign in with OpenAI through the external Codex helper for account-backed Codex access."
         case .anthropic:
             return "Models are shown when their provider is configured. Anthropic status: \(status). Add an Anthropic API key or sign in with Claude Code for account-based access."
         case .xAI, .gemini:
@@ -221,7 +221,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
         }
         switch provider {
         case .openAI:
-            return "Login with OpenAI via CLI"
+            return "Login with OpenAI via Codex Helper"
         case .claudeCode:
             return "Login with Claude Code"
         }

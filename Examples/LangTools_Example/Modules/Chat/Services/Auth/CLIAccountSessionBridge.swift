@@ -1,7 +1,8 @@
 import Foundation
+import Darwin
 
 public protocol CommandRunning {
-    func run(executable: String, arguments: [String]) async throws -> CommandResult
+    func run(executable: String, arguments: [String], environment: [String: String]?) async throws -> CommandResult
 }
 
 public struct CommandResult: Equatable {
@@ -80,7 +81,7 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
 
         let result = try await runLogged(
             command: command,
-            extraArguments: ["openai-chat", "--model", model.rawValue, "--messages-file", requestFileURL.path],
+            extraArguments: ["openai-chat", "--model", model.rawValue, "--messages-file", requestFileURL.path, "--codex-home", helperCodexHomePath()],
             action: "OpenAI chat"
         )
         guard result.status == 0 else {
@@ -147,18 +148,18 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
 
     private func runLogged(command: ResolvedCommand, extraArguments: [String], action: String) async throws -> CommandResult {
         let arguments = command.arguments + extraArguments
-        let result = try await runner.run(executable: command.executable, arguments: arguments)
-        logger.log(action: action, executable: command.executable, arguments: arguments, result: result)
+        let result = try await runner.run(executable: command.executable, arguments: arguments, environment: command.environment)
+        logger.log(action: action, executable: command.executable, arguments: arguments, environment: command.environment, result: result)
         return result
     }
 
     private func resolveCommand() throws -> ResolvedCommand {
         if let explicitPath = ProcessInfo.processInfo.environment["LANGTOOLS_AUTH_CLI_PATH"], explicitPath.isEmpty == false {
-            return ResolvedCommand(executable: explicitPath, arguments: [])
+            return ResolvedCommand(executable: explicitPath, arguments: [], environment: helperEnvironment())
         }
 
         for candidate in bundledCandidatePaths() where FileManager.default.isExecutableFile(atPath: candidate) {
-            return ResolvedCommand(executable: candidate, arguments: [])
+            return ResolvedCommand(executable: candidate, arguments: [], environment: helperEnvironment())
         }
 
         let examplePackageRoot = URL(fileURLWithPath: #filePath)
@@ -177,7 +178,7 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
             .appendingPathComponent("LangToolsCLI")
 
         if FileManager.default.isExecutableFile(atPath: binaryPath.path) {
-            return ResolvedCommand(executable: binaryPath.path, arguments: [])
+            return ResolvedCommand(executable: binaryPath.path, arguments: [], environment: helperEnvironment())
         }
 
         if isSandboxed {
@@ -186,12 +187,43 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
 
         return ResolvedCommand(
             executable: "/usr/bin/env",
-            arguments: ["swift", "run", "--package-path", cliPackageRoot.path, "LangToolsCLI"]
+            arguments: ["swift", "run", "--package-path", cliPackageRoot.path, "LangToolsCLI"],
+            environment: helperEnvironment()
         )
     }
 
     private var isSandboxed: Bool {
         ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"]?.isEmpty == false
+    }
+
+    private func helperEnvironment() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        let codexHome = helperCodexHomePath()
+        let sandboxHome = FileManager.default.homeDirectoryForCurrentUser.path
+        let realHome = realUserHomeDirectoryPath() ?? (codexHome as NSString).deletingLastPathComponent
+        environment["HOME"] = sandboxHome
+        environment["CODEX_HOME"] = codexHome
+        environment["LANGTOOLS_CODEX_HOME"] = codexHome
+        environment["LANGTOOLS_REAL_HOME"] = realHome
+        return environment
+    }
+
+    private func helperCodexHomePath() -> String {
+        if let explicit = ProcessInfo.processInfo.environment["LANGTOOLS_CODEX_HOME"], explicit.isEmpty == false {
+            return explicit
+        }
+        if let explicit = ProcessInfo.processInfo.environment["CODEX_HOME"], explicit.isEmpty == false {
+            return explicit
+        }
+        let userHome = realUserHomeDirectoryPath() ?? FileManager.default.homeDirectoryForCurrentUser.path
+        return userHome + "/.codex"
+    }
+
+    private func realUserHomeDirectoryPath() -> String? {
+        guard let passwordEntry = getpwuid(getuid()) else {
+            return nil
+        }
+        return String(cString: passwordEntry.pointee.pw_dir)
     }
 
     private func bundledCandidatePaths() -> [String] {
@@ -210,6 +242,7 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
 private struct ResolvedCommand {
     let executable: String
     let arguments: [String]
+    let environment: [String: String]?
 }
 
 private struct OpenAIChatCLIRequestFile: Codable {
@@ -250,11 +283,21 @@ public struct CLIBridgeLogger {
         fileURL.path
     }
 
-    public func log(action: String, executable: String, arguments: [String], result: CommandResult) {
+    public func log(action: String, executable: String, arguments: [String], environment: [String: String]?, result: CommandResult) {
+        let environmentSummary = environment.map {
+            [
+                "HOME=\($0["HOME"] ?? "<unset>")",
+                "CODEX_HOME=\($0["CODEX_HOME"] ?? "<unset>")",
+                "LANGTOOLS_CODEX_HOME=\($0["LANGTOOLS_CODEX_HOME"] ?? "<unset>")",
+            ].joined(separator: "\n")
+        } ?? "<inherit>"
+
         let lines = [
             "[\(formatter.string(from: Date()))] \(action)",
             "executable: \(executable)",
             "arguments: \(arguments.joined(separator: " "))",
+            "environment:",
+            environmentSummary,
             "status: \(result.status)",
             "stdout:",
             result.stdout.isEmpty ? "<empty>" : result.stdout,
@@ -281,12 +324,15 @@ public struct CLIBridgeLogger {
 public struct ProcessRunner: CommandRunning {
     public init() {}
 
-    public func run(executable: String, arguments: [String]) async throws -> CommandResult {
+    public func run(executable: String, arguments: [String], environment: [String: String]? = nil) async throws -> CommandResult {
         #if os(macOS)
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: executable)
             process.arguments = arguments
+            if let environment {
+                process.environment = environment
+            }
 
             let stdout = Pipe()
             let stderr = Pipe()

@@ -8,7 +8,7 @@ private struct ProcessResult {
     let stderr: String
 }
 
-private struct ResolvedCodexCommand {
+struct ResolvedCodexCommand {
     let executable: String
     let arguments: [String]
 }
@@ -16,20 +16,39 @@ private struct ResolvedCodexCommand {
 struct OpenAIAccountChatCommand {
     static func run(arguments: [String]) async throws {
         let request = try OpenAIAccountChatRequest(arguments: arguments)
-        let model = try request.model()
-        let messages = try request.messages()
-        let session = try SessionStore().load()
-        let codex = try resolveCodexCommand()
-        let prompt = renderPrompt(messages: messages)
+        let content = try await performChat(
+            modelID: request.modelID,
+            messages: try request.messages().map { .init(role: $0.role.rawValue, content: $0.text ?? "") },
+            codexHomeOverride: request.codexHome
+        )
 
-        let workspace = try CodexWorkspace(session: session)
-        defer { workspace.remove() }
+        let payload = OpenAIAccountChatResponse(content: content)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(payload)
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    static func performChat(modelID: String, messages: [HelperChatMessage], codexHomeOverride: String?) async throws -> String {
+        guard let model = Model(rawValue: modelID) else {
+            throw OpenAIAccountChatCommandError.invalidModel(modelID)
+        }
+        guard case .openAI = model else {
+            throw OpenAIAccountChatCommandError.invalidModel(modelID)
+        }
+
+        let codex = try resolveCodexCommand()
+        let prompt = renderPrompt(messages: messages.map { Message(text: $0.content, role: OpenAI.Message.Role(rawValue: $0.role) ?? .user) })
+        let sourceCodexHome = try CodexAuthPreflight.validate(codexHomeOverride: codexHomeOverride)
+        let runtimeCodexHome = try prepareRuntimeCodexHome(from: sourceCodexHome)
+        defer { try? FileManager.default.removeItem(at: runtimeCodexHome) }
 
         let result = try runCodex(
             command: codex,
             model: model.rawValue,
             prompt: prompt,
-            workspace: workspace
+            runtimeCodexHome: runtimeCodexHome
         )
 
         guard result.status == 0 else {
@@ -41,15 +60,10 @@ struct OpenAIAccountChatCommand {
             throw OpenAIAccountChatCommandError.invalidResponse
         }
 
-        let payload = OpenAIAccountChatResponse(content: content)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(payload)
-        FileHandle.standardOutput.write(data)
-        FileHandle.standardOutput.write(Data("\n".utf8))
+        return content
     }
 
-    private static func resolveCodexCommand() throws -> ResolvedCodexCommand {
+    static func resolveCodexCommand() throws -> ResolvedCodexCommand {
         if let explicitPath = ProcessInfo.processInfo.environment["LANGTOOLS_CODEX_PATH"],
            explicitPath.isEmpty == false {
             if let command = codexCommand(for: explicitPath) {
@@ -85,9 +99,12 @@ struct OpenAIAccountChatCommand {
         let bundleURL = Bundle.main.bundleURL
 
         return [
+            appBundleURL?.appendingPathComponent("Contents/Resources/CodexCLI/codex").path,
             appBundleURL?.appendingPathComponent("Contents/Resources/CodexCLI/bin/codex").path,
             appBundleURL?.appendingPathComponent("Contents/Helpers/CodexCLI/bin/codex").path,
+            bundleURL.appendingPathComponent("Contents/Resources/CodexCLI/codex").path,
             bundleURL.appendingPathComponent("Contents/Resources/CodexCLI/bin/codex").path,
+            bundleURL.appendingPathComponent("Resources/CodexCLI/codex").path,
             bundleURL.appendingPathComponent("Resources/CodexCLI/bin/codex").path,
         ].compactMap { $0 }
     }
@@ -179,12 +196,77 @@ struct OpenAIAccountChatCommand {
         return nil
     }
 
-    private static func runCodex(command: ResolvedCodexCommand, model: String, prompt: String, workspace: CodexWorkspace) throws -> ProcessResult {
-        try runProcess(
+    private static func runCodex(command: ResolvedCodexCommand, model: String, prompt: String, runtimeCodexHome: URL) throws -> ProcessResult {
+        var environment = ProcessInfo.processInfo.environment
+        environment["CODEX_HOME"] = runtimeCodexHome.path
+        environment["LANGTOOLS_CODEX_HOME"] = runtimeCodexHome.path
+        environment["CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED"] = "1"
+
+        return try runProcess(
             executable: command.executable,
-            arguments: command.arguments + ["-q", "-m", model, prompt],
-            environment: workspace.environment
+            arguments: command.arguments + [
+                "exec",
+                "--ignore-user-config",
+                "--skip-git-repo-check",
+                "--disable", "apps",
+                "--disable", "browser_use",
+                "--disable", "computer_use",
+                "--disable", "in_app_browser",
+                "--disable", "plugins",
+                "-C", "/Users/reidchatham",
+                "--model", model,
+                prompt,
+            ],
+            environment: environment
         )
+    }
+
+    private static func prepareRuntimeCodexHome(from sourceCodexHome: URL) throws -> URL {
+        let fileManager = FileManager.default
+        let baseDirectory = try runtimeCodexBaseDirectory()
+        let runtimeCodexHome = baseDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+
+        try fileManager.createDirectory(at: runtimeCodexHome, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: runtimeCodexHome.appendingPathComponent("log", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: runtimeCodexHome.appendingPathComponent("process_manager", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: runtimeCodexHome.appendingPathComponent("sessions", isDirectory: true), withIntermediateDirectories: true)
+
+        for relativePath in [
+            "auth.json",
+            "models_cache.json",
+            "version.json",
+            "installation_id",
+            "config.json"
+        ] {
+            let sourceURL = sourceCodexHome.appendingPathComponent(relativePath)
+            let destinationURL = runtimeCodexHome.appendingPathComponent(relativePath)
+            if fileManager.fileExists(atPath: sourceURL.path) {
+                try fileManager.copyItem(at: sourceURL, to: destinationURL)
+            }
+        }
+
+        return runtimeCodexHome
+    }
+
+    private static func runtimeCodexBaseDirectory() throws -> URL {
+        let fileManager = FileManager.default
+
+        if let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            let directory = appSupport
+                .appendingPathComponent("LangToolsCLI", isDirectory: true)
+                .appendingPathComponent("CodexRuntime", isDirectory: true)
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            return directory
+        }
+
+        let fallback = fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Application Support", isDirectory: true)
+            .appendingPathComponent("LangToolsCLI", isDirectory: true)
+            .appendingPathComponent("CodexRuntime", isDirectory: true)
+        try fileManager.createDirectory(at: fallback, withIntermediateDirectories: true)
+        return fallback
     }
 
     private static func runProcess(executable: String, arguments: [String], environment: [String: String]? = nil) throws -> ProcessResult {
@@ -254,82 +336,77 @@ struct OpenAIAccountChatCommand {
     }
 }
 
-private struct CodexWorkspace {
-    let directoryURL: URL
-    let environment: [String: String]
+private enum CodexAuthPreflight {
+    static func validate(codexHomeOverride: String?) throws -> URL {
+        let codexHome = resolvedCodexHome(codexHomeOverride: codexHomeOverride)
+        let authFileURL = codexHome
+            .appendingPathComponent("auth.json")
 
-    init(session: StoredAccountSession) throws {
-        guard let idToken = session.idToken, idToken.split(separator: ".").count == 3 else {
-            throw OpenAIAccountChatCommandError.invalidSession
+        let fileManager = FileManager.default
+
+        guard fileManager.fileExists(atPath: authFileURL.path) else {
+            throw OpenAIAccountChatCommandError.codexNotLoggedIn(checkedPath: authFileURL.path)
         }
-        guard let refreshToken = session.refreshToken, refreshToken.isEmpty == false else {
-            throw OpenAIAccountChatCommandError.invalidSession
+
+        let data = try Data(contentsOf: authFileURL)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw OpenAIAccountChatCommandError.codexAuthInvalid
         }
 
-        directoryURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("langtools-codex-", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-
-        let authJSON = try Self.makeAuthJSON(session: session, idToken: idToken, refreshToken: refreshToken)
-        try authJSON.write(to: directoryURL.appendingPathComponent("auth.json"), atomically: true, encoding: .utf8)
-
-        let config = "cli_auth_credentials_store = \"file\"\n"
-        try config.write(to: directoryURL.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
-
-        var env = ProcessInfo.processInfo.environment
-        env["CODEX_HOME"] = directoryURL.path
-        env.removeValue(forKey: "CODEX_API_KEY")
-        env.removeValue(forKey: "OPENAI_API_KEY")
-        env.removeValue(forKey: "OPENAI_BASE_URL")
-        environment = env
-    }
-
-    func remove() {
-        try? FileManager.default.removeItem(at: directoryURL)
-    }
-
-    private static func makeAuthJSON(session: StoredAccountSession, idToken: String, refreshToken: String) throws -> String {
-        let payload: [String: Any?] = [
-            "auth_mode": "chatgptAuthTokens",
-            "tokens": [
-                "id_token": idToken,
-                "access_token": session.accessToken,
-                "refresh_token": refreshToken,
-                "account_id": chatGPTAccountID(from: idToken) ?? chatGPTAccountID(from: session.accessToken) ?? session.accountIdentifier
-            ]
-        ]
-
-        let sanitized = payload.compactMapValues { $0 }
-        let data = try JSONSerialization.data(withJSONObject: sanitized, options: [.prettyPrinted, .sortedKeys])
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    private static func chatGPTAccountID(from token: String) -> String? {
-        let parts = token.split(separator: ".")
-        guard parts.count >= 2 else { return nil }
-        var payload = String(parts[1])
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        while payload.count % 4 != 0 { payload += "=" }
-        guard let data = Data(base64Encoded: payload),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let auth = object["https://api.openai.com/auth"] as? [String: Any],
-              let accountID = auth["chatgpt_account_id"] as? String,
-              accountID.isEmpty == false else {
-            return nil
+        let authMode = (object["auth_mode"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard authMode.isEmpty == false else {
+            throw OpenAIAccountChatCommandError.codexAuthInvalid
         }
-        return accountID
+
+        if authMode == "apikey" {
+            throw OpenAIAccountChatCommandError.codexUsingAPIKey
+        }
+
+        return codexHome
     }
+
+    private static func resolvedCodexHome(codexHomeOverride: String?) -> URL {
+        let fileManager = FileManager.default
+        let argumentCandidate = codexHomeOverride.flatMap { value -> URL? in
+            guard value.isEmpty == false else { return nil }
+            return URL(fileURLWithPath: value, isDirectory: true)
+        }
+        let envCandidates = ["LANGTOOLS_CODEX_HOME", "CODEX_HOME"]
+            .compactMap { key -> URL? in
+                guard let value = ProcessInfo.processInfo.environment[key], value.isEmpty == false else {
+                    return nil
+                }
+                return URL(fileURLWithPath: value, isDirectory: true)
+            }
+
+        let userHome = NSHomeDirectoryForUser(NSUserName()).map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let fallbackCandidates = [
+            userHome,
+            fileManager.homeDirectoryForCurrentUser,
+        ].compactMap { $0?.appendingPathComponent(".codex", isDirectory: true) }
+
+        let candidates = (argumentCandidate.map { [$0] } ?? []) + envCandidates + fallbackCandidates
+        for candidate in candidates {
+            let authFile = candidate.appendingPathComponent("auth.json")
+            if fileManager.fileExists(atPath: authFile.path) {
+                return candidate
+            }
+        }
+
+        return candidates.first ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".codex", isDirectory: true)
+    }
+
 }
 
 private struct OpenAIAccountChatRequest {
     let modelID: String
     let messagesFile: String
+    let codexHome: String?
 
     init(arguments: [String]) throws {
         self.modelID = try Self.value(for: "--model", in: arguments)
         self.messagesFile = try Self.value(for: "--messages-file", in: arguments)
+        self.codexHome = Self.optionalValue(for: "--codex-home", in: arguments)
     }
 
     func model() throws -> Model {
@@ -355,6 +432,13 @@ private struct OpenAIAccountChatRequest {
         }
         return arguments[index + 1]
     }
+
+    private static func optionalValue(for flag: String, in arguments: [String]) -> String? {
+        guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else {
+            return nil
+        }
+        return arguments[index + 1]
+    }
 }
 
 private struct OpenAIAccountChatMessagesFile: Codable {
@@ -374,7 +458,9 @@ private enum OpenAIAccountChatCommandError: LocalizedError {
     case usage
     case invalidModel(String)
     case invalidResponse
-    case invalidSession
+    case codexNotLoggedIn(checkedPath: String)
+    case codexUsingAPIKey
+    case codexAuthInvalid
     case codexUnavailable
     case codexFailed(message: String)
 
@@ -386,8 +472,12 @@ private enum OpenAIAccountChatCommandError: LocalizedError {
             return "Unsupported OpenAI model: \(modelID)"
         case .invalidResponse:
             return "Codex CLI returned an empty response."
-        case .invalidSession:
-            return "The stored OpenAI account session is missing Codex authentication tokens. Sign in again from Manage Access."
+        case .codexNotLoggedIn(let checkedPath):
+            return "Codex is not logged in. Checked \(checkedPath). Run `codex login` and sign in with your OpenAI account, then try again."
+        case .codexUsingAPIKey:
+            return "Codex is currently configured for Platform API key auth in ~/.codex/auth.json. To use OpenAI account-backed Codex chat, run `codex logout`, then `codex login`, and sign in with your OpenAI account instead of using an API key."
+        case .codexAuthInvalid:
+            return "Codex auth state could not be read from ~/.codex/auth.json. Re-run `codex login` and try again."
         case .codexUnavailable:
             return "Codex CLI is not available. Install it and ensure the `codex` binary is on your PATH, or set LANGTOOLS_CODEX_PATH."
         case .codexFailed(let message):
