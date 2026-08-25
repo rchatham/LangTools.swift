@@ -60,6 +60,50 @@ final class ResponsesRequestTests: XCTestCase {
         XCTAssertEqual(format["strict"] as? Bool, true)
     }
 
+    func testResponsesRequestEncodesImageContentWithResponsesShape() throws {
+        let request = OpenAI.ResponsesRequest(
+            model: .gpt4o_mini,
+            messages: [
+                .init(role: .user, content: .array([
+                    .image(.init(image_url: .init(url: "https://example.com/cat.png", detail: .high)))
+                ]))
+            ]
+        )
+
+        let data = try JSONEncoder().encode(request)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let input = try XCTUnwrap(json["input"] as? [[String: Any]])
+        let content = try XCTUnwrap(input.first?["content"] as? [[String: Any]])
+        let image = try XCTUnwrap(content.first)
+
+        XCTAssertEqual(image["type"] as? String, "input_image")
+        XCTAssertEqual(image["image_url"] as? String, "https://example.com/cat.png")
+        XCTAssertEqual(image["detail"] as? String, "high")
+        XCTAssertNil(image["image_url"] as? [String: Any], "Responses image_url should be a flat string, not the Chat Completions object shape")
+    }
+
+    func testResponsesRequestEncodesOptionalFields() throws {
+        let request = OpenAI.ResponsesRequest(
+            model: .gpt4o_mini,
+            messages: [.init(role: .user, content: "Continue")],
+            previous_response_id: "resp_previous",
+            max_output_tokens: 128,
+            temperature: 0.25,
+            top_p: 0.9,
+            metadata: ["trace_id": "abc123"]
+        )
+
+        let data = try JSONEncoder().encode(request)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let metadata = try XCTUnwrap(json["metadata"] as? [String: String])
+
+        XCTAssertEqual(json["previous_response_id"] as? String, "resp_previous")
+        XCTAssertEqual(json["max_output_tokens"] as? Int, 128)
+        XCTAssertEqual(json["temperature"] as? Double, 0.25)
+        XCTAssertEqual(json["top_p"] as? Double, 0.9)
+        XCTAssertEqual(metadata["trace_id"], "abc123")
+    }
+
     func testResponsesRequestKeepsMessageInstructionsWhenExplicitInstructionsAreEmpty() throws {
         let request = OpenAI.ResponsesRequest(
             model: .gpt4o_mini,

@@ -319,12 +319,13 @@ extension OpenAI {
         public struct ContentItem: Encodable {
             public let type: String
             public let text: String?
-            public let image_url: Message.Content.ImageContent.ImageURL?
+            public let image_url: String?
+            public let detail: Message.Content.ImageContent.ImageURL.Detail?
             public let refusal: String?
 
             static func refusalItems(for refusal: String?, role: Message.Role) -> [ContentItem] {
                 guard role == .assistant, let refusal, !refusal.isEmpty else { return [] }
-                return [ContentItem(type: "refusal", text: nil, image_url: nil, refusal: refusal)]
+                return [ContentItem(type: "refusal", text: nil, image_url: nil, detail: nil, refusal: refusal)]
             }
 
             static func items(for content: Message.Content, role: Message.Role) -> [ContentItem]? {
@@ -333,13 +334,13 @@ extension OpenAI {
                 case .null:
                     return nil
                 case .string(let text):
-                    return [ContentItem(type: textType, text: text, image_url: nil, refusal: nil)]
+                    return [ContentItem(type: textType, text: text, image_url: nil, detail: nil, refusal: nil)]
                 case .array(let parts):
                     return parts.compactMap { part in
                         switch part {
-                        case .text(let text): return ContentItem(type: textType, text: text.text, image_url: nil, refusal: nil)
-                        case .image(let image): return ContentItem(type: "input_image", text: nil, image_url: image.image_url, refusal: nil)
-                        case .refusal(let refusal): return ContentItem(type: "refusal", text: nil, image_url: nil, refusal: refusal.refusal)
+                        case .text(let text): return ContentItem(type: textType, text: text.text, image_url: nil, detail: nil, refusal: nil)
+                        case .image(let image): return ContentItem(type: "input_image", text: nil, image_url: image.image_url.url, detail: image.image_url.detail, refusal: nil)
+                        case .refusal(let refusal): return ContentItem(type: "refusal", text: nil, image_url: nil, detail: nil, refusal: refusal.refusal)
                         // Audio/tool-result parts are not valid Responses input
                         // content items in this request encoder and are intentionally omitted.
                         case .toolResult, .audio: return nil
@@ -696,6 +697,7 @@ extension OpenAI {
         }
 
         fileprivate var startsNewOutputStream: Bool {
+            // Normal Responses streams begin with output_item.added at output_index 0.
             streamType == "response.output_item.added" && outputIndex == 0
         }
 
