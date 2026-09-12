@@ -104,6 +104,36 @@ final class ResponsesRequestTests: XCTestCase {
         XCTAssertEqual(metadata["trace_id"], "abc123")
     }
 
+    func testResponsesRequestReencodesAssistantTextAsInputText() throws {
+        let request = OpenAI.ResponsesRequest(
+            model: .gpt4o_mini,
+            messages: [.init(role: .assistant, content: "Prior answer")]
+        )
+
+        let data = try JSONEncoder().encode(request)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let input = try XCTUnwrap(json["input"] as? [[String: Any]])
+        let content = try XCTUnwrap(input.first?["content"] as? [[String: Any]])
+
+        XCTAssertEqual(content.first?["type"] as? String, "input_text")
+        XCTAssertEqual(content.first?["text"] as? String, "Prior answer")
+    }
+
+    func testResponsesStructuredOutputNameUsesASCIIOnly() throws {
+        var request = OpenAI.ResponsesRequest(
+            model: .gpt4o_mini,
+            messages: [.init(role: .user, content: "Return JSON")]
+        )
+        request.responseSchema = .object(properties: ["answer": .string()], title: "café-schema")
+
+        let data = try JSONEncoder().encode(request)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let text = try XCTUnwrap(json["text"] as? [String: Any])
+        let format = try XCTUnwrap(text["format"] as? [String: Any])
+
+        XCTAssertEqual(format["name"] as? String, "caf_-schema")
+    }
+
     func testResponsesRequestKeepsMessageInstructionsWhenExplicitInstructionsAreEmpty() throws {
         let request = OpenAI.ResponsesRequest(
             model: .gpt4o_mini,
@@ -282,8 +312,34 @@ final class ResponsesRequestTests: XCTestCase {
         let firstCallID = try encodedFunctionCallID(for: request)
         let secondCallID = try encodedFunctionCallID(for: request)
 
-        XCTAssertEqual(firstCallID, "tool_call_0")
+        XCTAssertEqual(firstCallID, "tool_call_0_0")
         XCTAssertEqual(secondCallID, firstCallID)
+    }
+
+    func testResponsesRequestEncodesMissingToolCallIDsUniquelyAcrossMessages() throws {
+        let messageData = Data("""
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "index": 0,
+              "type": "function",
+              "function": {"name": "get_weather", "arguments": "{}"}
+            }
+          ]
+        }
+        """.utf8)
+        let firstMessage = try JSONDecoder().decode(OpenAI.Message.self, from: messageData)
+        let secondMessage = try JSONDecoder().decode(OpenAI.Message.self, from: messageData)
+        let request = OpenAI.ResponsesRequest(model: OpenAI.Model.gpt4o_mini, messages: [firstMessage, secondMessage], stream: nil)
+
+        let data = try JSONEncoder().encode(request)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let input = try XCTUnwrap(json["input"] as? [[String: Any]])
+        let callIDs = input.compactMap { $0["call_id"] as? String }
+
+        XCTAssertEqual(callIDs, ["tool_call_0_0", "tool_call_1_0"])
     }
 
     func testResponsesMessageUsesStableFallbackToolCallID() throws {
@@ -305,6 +361,20 @@ final class ResponsesRequestTests: XCTestCase {
 
         XCTAssertEqual(firstID, "response_function_call_0")
         XCTAssertEqual(secondID, firstID)
+    }
+
+    func testResponsesDecodeStreamPreservesLiteralDoneText() throws {
+        let line = "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"content_index\":0,\"delta\":\"literal [DONE] text\"}"
+
+        let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
+
+        XCTAssertEqual(response?.delta?.content, "literal [DONE] text")
+    }
+
+    func testResponsesDecodeStreamIgnoresTrimmedDonePayload() throws {
+        let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream("data: [DONE]")
+
+        XCTAssertNil(response)
     }
 
     func testResponsesStreamAccumulation() throws {
@@ -352,11 +422,10 @@ final class ResponsesRequestTests: XCTestCase {
             "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"}\"}"
         ]
 
-        let responseUpdater = request.responseUpdater()
         let argumentDeltas = try lines.compactMap { line -> OpenAI.Message.ToolCall? in
             let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
             guard let response else { return nil }
-            let updated = try XCTUnwrap(responseUpdater(response) as? OpenAI.ResponsesResponse)
+            let updated = try XCTUnwrap(request.updated(response: response) as? OpenAI.ResponsesResponse)
             return updated.delta?.tool_calls?.first.flatMap { $0.arguments.isEmpty ? nil : $0 }
         }
 
@@ -374,27 +443,6 @@ final class ResponsesRequestTests: XCTestCase {
         XCTAssertEqual(toolCall.name, "get_weather")
     }
 
-    func testResponsesStreamUpdatersDoNotShareMetadataBetweenRequestCopies() throws {
-        let request = OpenAI.ResponsesRequest(
-            model: OpenAI.Model.gpt4o_mini,
-            messages: [OpenAI.Message(role: .user, content: "Use a tool")],
-            stream: nil
-        )
-        let firstUpdater = request.responseUpdater()
-        let secondUpdater = request.responseUpdater()
-        let metadataLine = "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_old\",\"name\":\"old_tool\",\"arguments\":\"\"}}"
-        let argumentsLine = "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"delta\":\"{}\"}"
-
-        let metadataResponse: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(metadataLine)
-        _ = try XCTUnwrap(firstUpdater(try XCTUnwrap(metadataResponse)) as? OpenAI.ResponsesResponse)
-
-        let argumentsResponse: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(argumentsLine)
-        let updated = try XCTUnwrap(secondUpdater(try XCTUnwrap(argumentsResponse)) as? OpenAI.ResponsesResponse)
-
-        XCTAssertEqual(updated.delta?.tool_calls?.first?.id, "")
-        XCTAssertEqual(updated.delta?.tool_calls?.first?.name, "")
-    }
-
     func testResponsesStreamStateResetsWhenRequestIsReusedForNewStream() throws {
         let request = OpenAI.ResponsesRequest(
             model: OpenAI.Model.gpt4o_mini,
@@ -409,17 +457,26 @@ final class ResponsesRequestTests: XCTestCase {
             "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"delta\":\"{}\"}"
         ]
 
-        let responseUpdater = request.responseUpdater()
         for line in firstStreamLines + secondStreamLines {
             let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
             if let response {
-                let updated = try XCTUnwrap(responseUpdater(response) as? OpenAI.ResponsesResponse)
+                let updated = try XCTUnwrap(request.updated(response: response) as? OpenAI.ResponsesResponse)
                 if updated.delta?.tool_calls?.first?.arguments == "{}" {
                     XCTAssertEqual(updated.delta?.tool_calls?.first?.id, "")
                     XCTAssertEqual(updated.delta?.tool_calls?.first?.name, "")
                 }
             }
         }
+    }
+
+    func testResponsesLifecycleEventDecodesNestedResponseMetadata() throws {
+        let line = "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_created\",\"status\":\"in_progress\",\"model\":\"gpt-4o-mini\",\"output\":[]}}"
+
+        let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
+
+        XCTAssertEqual(response?.id, "resp_created")
+        XCTAssertEqual(response?.status, "in_progress")
+        XCTAssertEqual(response?.model, "gpt-4o-mini")
     }
 
     func testResponsesCompletedStreamEventReplacesAccumulatedResponse() throws {

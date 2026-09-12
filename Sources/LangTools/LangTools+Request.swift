@@ -97,13 +97,6 @@ extension LangToolsMultipleChoiceChatRequest {
 
 public protocol LangToolsResponseUpdatingRequest {
     func updated(response: Decodable) throws -> Decodable
-    func responseUpdater() -> (Decodable) throws -> Decodable
-}
-
-public extension LangToolsResponseUpdatingRequest {
-    func responseUpdater() -> (Decodable) throws -> Decodable {
-        { try updated(response: $0) }
-    }
 }
 
 extension LangToolsRequest {
