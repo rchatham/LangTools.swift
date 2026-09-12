@@ -759,11 +759,10 @@ public extension OpenAI {
     // existing chat-completion streams continue through the same parser.
     static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
         if buffer.hasPrefix("event:") { return nil }
-        return if buffer.hasPrefix("data:"),
-                  !buffer.contains("[DONE]"),
-                  let data = buffer.dropFirst(5).trimmingCharacters(in: .whitespaces).data(using: .utf8) {
-            try Self.decodeResponse(data: data)
-        } else { nil }
+        guard buffer.hasPrefix("data:") else { return nil }
+        let payload = buffer.dropFirst(5).trimmingCharacters(in: .whitespaces)
+        guard payload != "[DONE]", let data = payload.data(using: .utf8) else { return nil }
+        return try Self.decodeResponse(data: data)
     }
 }
 
