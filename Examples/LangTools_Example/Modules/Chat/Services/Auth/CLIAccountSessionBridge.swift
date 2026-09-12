@@ -277,6 +277,26 @@ public struct CLIBridgeLogger {
             try? FileManager.default.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
             self.fileURL = logsDirectory.appendingPathComponent("LangToolsCLI-bridge.log")
         }
+        Self.scrubLegacyCredentials(at: self.fileURL)
+    }
+
+    private static func scrubLegacyCredentials(at fileURL: URL) {
+        guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else { return }
+        let keys = ["accessToken", "refreshToken", "idToken"]
+        var scrubbed = content
+        for key in keys {
+            let pattern = "(\\\"\(key)\\\"\\s*:\\s*\\\")[^\\\"]*(\\\")"
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(scrubbed.startIndex..., in: scrubbed)
+            scrubbed = expression.stringByReplacingMatches(
+                in: scrubbed,
+                range: range,
+                withTemplate: "$1<redacted>$2"
+            )
+        }
+        if scrubbed != content {
+            try? scrubbed.write(to: fileURL, atomically: true, encoding: .utf8)
+        }
     }
 
     public var logFilePath: String {

@@ -138,8 +138,10 @@ extension UserDefaults {
             guard let legacyToken = standard.string(forKey: codexHelperTokenKey), legacyToken.isEmpty == false else {
                 return ""
             }
-            keychain.saveSecret(legacyToken, forKey: codexHelperTokenKey)
-            standard.removeObject(forKey: codexHelperTokenKey)
+            if keychain.saveSecret(legacyToken, forKey: codexHelperTokenKey),
+               keychain.secret(forKey: codexHelperTokenKey) == legacyToken {
+                standard.removeObject(forKey: codexHelperTokenKey)
+            }
             return legacyToken
         }
         set {

@@ -164,6 +164,20 @@ final class AccountLoginServiceTests: XCTestCase {
         XCTAssertEqual(refreshedSession.idToken, "old-id-token")
     }
 
+    func testCLIBridgeLoggerScrubsLegacyCredentials() throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        try #"{"accessToken":"secret","refreshToken":"refresh","idToken":"identity"}"#
+            .write(to: fileURL, atomically: true, encoding: .utf8)
+
+        _ = CLIBridgeLogger(fileURL: fileURL)
+        let scrubbed = try String(contentsOf: fileURL, encoding: .utf8)
+        XCTAssertFalse(scrubbed.contains("secret"))
+        XCTAssertFalse(scrubbed.contains("refresh\""))
+        XCTAssertFalse(scrubbed.contains("identity"))
+        XCTAssertTrue(scrubbed.contains("<redacted>"))
+    }
+
     func testCLIAccountSessionBridgeExportsOpenAISession() async throws {
         let runner = TestCommandRunner(results: [
             CommandResult(status: 0, stdout: """
