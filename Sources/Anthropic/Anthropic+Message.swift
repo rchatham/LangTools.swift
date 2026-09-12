@@ -119,7 +119,7 @@ extension Anthropic {
                     // Handle non-text content types by converting to text representation
                     // TODO: Implement proper audio and image support
                     let textRepresentation = String(describing: contentType)
-                    self = .text(try .init(text: textRepresentation))
+                    self = .text(.init(text: textRepresentation))
                 }
             }
 

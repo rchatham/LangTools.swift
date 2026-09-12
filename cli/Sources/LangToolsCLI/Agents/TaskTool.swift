@@ -100,7 +100,7 @@ struct TaskTool: ExecutableTool {
         let resumeId = ToolRegistry.extractString(parameters, key: "resume")
 
         // Get the task manager
-        let taskManager = await TaskManager.shared
+        let taskManager = TaskManager.shared
 
         // Check for resume
         if let id = resumeId, let existingTask = await taskManager.getTask(id: id) {

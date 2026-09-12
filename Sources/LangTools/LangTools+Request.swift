@@ -208,7 +208,7 @@ extension LangToolsToolCallingRequest {
         }
         guard !tool_results.isEmpty else { return nil }
         var results: [Message] = []
-        if var message = response.message as! Self.Response.Message? {
+        if response.message != nil {
             let toolSelectionsWithResult = tool_selections.filter({ tool_results.map{ $0.tool_selection_id }.contains($0.id) })
             results.append(Message(tool_selection: toolSelectionsWithResult))
         }
