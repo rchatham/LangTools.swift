@@ -113,6 +113,7 @@ See individual module README files for detailed documentation and examples:
 - [XAI](Sources/XAI/README.md)
 - [Gemini](Sources/Gemini/README.md)
 - [Ollama](Sources/Ollama/README.md)
+- [Performance comparison snapshot](Docs/performance-comparison.html)
 
 ## Contributing
 
