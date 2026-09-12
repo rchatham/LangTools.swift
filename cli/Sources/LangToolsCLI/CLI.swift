@@ -1,0 +1,1028 @@
+import Foundation
+import LangTools
+import OpenAI
+import Anthropic
+import XAI
+import Gemini
+import Ollama
+import SwiftTUI
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
+let cliVersion = "0.1.0"
+
+var langToolchain = LangToolchain()
+let messageService = MessageService()
+let networkClient = NetworkClient.shared
+
+enum CLIRunMode {
+    case interactive
+    case nonInteractive
+
+    var isInteractive: Bool {
+        self == .interactive
+    }
+
+    static var current: CLIRunMode {
+        let stdinIsTTY = isatty(STDIN_FILENO) != 0
+        let stdoutIsTTY = isatty(STDOUT_FILENO) != 0
+        return stdinIsTTY && stdoutIsTTY ? .interactive : .nonInteractive
+    }
+}
+
+private var ansiColorsEnabled = true
+
+@main
+struct CLI {
+    static func main() async {
+        do {
+            try await run()
+        } catch {
+            fputs("Error: \(error.localizedDescription)\n", stderr)
+            exit(1)
+        }
+    }
+
+    static func run() async throws {
+        let args = CommandLine.arguments
+        let subcommandArguments = Array(args.dropFirst())
+
+        // --version / -v
+        if args.contains("--version") || args.contains("-v") {
+            print("langtools \(cliVersion)")
+            return
+        }
+
+        // --help / -h
+        if args.contains("--help") || args.contains("-h") {
+            printUsage()
+            return
+        }
+
+        if let subcommand = subcommandArguments.first {
+            switch subcommand {
+            case "auth":
+                try await AuthCLI.run(arguments: Array(subcommandArguments.dropFirst()))
+                return
+            case "openai-chat":
+                try await OpenAIAccountChatCommand.run(arguments: Array(subcommandArguments.dropFirst()))
+                return
+            default:
+                break
+            }
+        }
+
+        let runMode = CLIRunMode.current
+        ansiColorsEnabled = runMode.isInteractive
+
+        // --tui flag
+        let useTUI = args.contains("--tui")
+
+        if useTUI {
+            Application(rootView: MainView()).start()
+        } else {
+            try await runTraditionalCLI(runMode: runMode)
+        }
+    }
+
+    static func printUsage() {
+        print("""
+        langtools \(cliVersion) — LLM chat CLI with agentic file/shell tools
+
+        USAGE
+          langtools [OPTIONS]
+          langtools auth <subcommand>
+          langtools openai-chat --model <model-id> --messages-file <path>
+
+        OPTIONS
+          --tui         Launch the SwiftTUI interactive interface
+          --version     Print version and exit
+          --help        Show this help message
+
+        ENVIRONMENT
+          ANTHROPIC_API_KEY   Anthropic API key
+          OPENAI_API_KEY      OpenAI API key
+          XAI_API_KEY         xAI (Grok) API key
+          GEMINI_API_KEY      Google Gemini API key
+          OLLAMA_HOST         Ollama base URL (default: http://localhost:11434)
+
+        COMMANDS (in chat)
+        \(HelpSystem.commandList())
+
+        AUTH SUBCOMMANDS
+          auth login openai
+          auth export-session openai --format json
+          auth status openai --format json
+          auth logout openai
+        """)
+    }
+
+    // MARK: - Traditional CLI
+
+    static func runTraditionalCLI(runMode: CLIRunMode) async throws {
+        loadAPIKeysFromEnvironment()
+        await networkClient.fetchOllamaModels()
+        try await checkAndRequestAPIKeys(runMode: runMode)
+
+        print("LangTools \(cliVersion)")
+        print("Type /help for available commands, or --tui for the TUI mode")
+        print("Model: \(UserDefaults.model.rawValue)")
+
+        if runMode.isInteractive {
+            try await runInteractiveLoop()
+        } else {
+            try await runNonInteractiveLoop()
+        }
+    }
+
+    static func runInteractiveLoop() async throws {
+        while true {
+            print("\nYou: ".green, terminator: "")
+            guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                print("\nGoodbye!")
+                return
+            }
+
+            let shouldExit = try await processInput(input, runMode: .interactive)
+            if shouldExit { return }
+        }
+    }
+
+    static func runNonInteractiveLoop() async throws {
+        while let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) {
+            let shouldExit = try await processInput(input, runMode: .nonInteractive)
+            if shouldExit { return }
+        }
+    }
+
+    static func processInput(_ input: String, runMode: CLIRunMode) async throws -> Bool {
+        let parsed = CommandParser.parse(input)
+        switch parsed {
+        case .empty:
+            return false
+        case .command(let cmd):
+            return await handleCommand(cmd, runMode: runMode)
+        case .message(let text):
+            if text.lowercased() == "exit" {
+                print("Goodbye!")
+                return true
+            }
+            if text.lowercased() == "model" {
+                if runMode.isInteractive {
+                    try? await changeModel()
+                } else {
+                    print("/model is only available in interactive mode.".yellow)
+                }
+                return false
+            }
+            if text.lowercased() == "test" {
+                if runMode.isInteractive {
+                    await AgentTestRunner.runInteractiveTests(messageService: messageService)
+                } else {
+                    print("test is only available in interactive mode.".yellow)
+                }
+                return false
+            }
+
+            do {
+                try await messageService.performMessageCompletionRequest(message: text, stream: true)
+            } catch {
+                print("Error: \(error.localizedDescription)".red)
+            }
+            return false
+        }
+    }
+
+    // MARK: - Environment variable API key loading
+
+    static func loadAPIKeysFromEnvironment() {
+        let envMap: [(APIService, String)] = [
+            (.anthropic, "ANTHROPIC_API_KEY"),
+            (.openAI,    "OPENAI_API_KEY"),
+            (.xAI,       "XAI_API_KEY"),
+            (.gemini,    "GEMINI_API_KEY"),
+        ]
+        for (service, envVar) in envMap {
+            if let key = ProcessInfo.processInfo.environment[envVar], !key.isEmpty {
+                // Only set if not already stored (env acts as a fallback)
+                if UserDefaults.getApiKey(for: service) == nil {
+                    try? networkClient.updateApiKey(key, for: service)
+                }
+            }
+        }
+        // Allow overriding the Ollama base URL via OLLAMA_HOST (e.g. http://192.168.1.10:11434)
+        if let host = ProcessInfo.processInfo.environment["OLLAMA_HOST"], !host.isEmpty,
+           let url = URL(string: host) {
+            networkClient.registerOllama(baseURL: url)
+        }
+    }
+
+    // MARK: - Command dispatch
+
+    /// Handle a parsed slash command. Returns true if the loop should exit.
+    static func handleCommand(_ command: SlashCommand, runMode: CLIRunMode) async -> Bool {
+        guard let type = CommandParser.commandType(for: command.name) else {
+            print("Unknown command: /\(command.name)".red)
+            print("Type /help for available commands")
+            return false
+        }
+
+        if !runMode.isInteractive && !isCommandSupportedInNonInteractiveMode(command, type: type) {
+            print("/\(command.name) is only available in interactive mode.".yellow)
+            return false
+        }
+
+        switch type {
+
+        case .exit, .quit:
+            print("Goodbye!")
+            return true
+
+        case .help:
+            if command.arguments.isEmpty {
+                print(HelpSystem.commandList())
+            } else {
+                print(HelpSystem.commandHelp(for: command.arguments[0]))
+            }
+
+        case .model:
+            if let name = command.arguments.first {
+                // Direct: /model claude-4-6-sonnet
+                if let m = Model(rawValue: name) {
+                    UserDefaults.model = m
+                    print("Model changed to: \(m.rawValue)".green)
+                } else {
+                    print("Unknown model '\(name)'. Use /model without arguments to pick interactively.".red)
+                }
+            } else {
+                try? await changeModel()
+            }
+
+        case .settings:
+            await showSettingsMenu()
+
+        case .apikey:
+            await handleApiKeyCommand(command)
+
+        case .status:
+            showStatus()
+
+        case .clear:
+            messageService.clearMessages()
+            print("Conversation history cleared.".yellow)
+
+        case .tools:
+            showTools()
+
+        case .save:
+            await handleSaveCommand(command)
+
+        case .load:
+            await handleLoadCommand(command)
+
+        case .sessions:
+            showSessions()
+
+        case .compact:
+            compactContext()
+
+        case .plan:
+            await handlePlanCommand()
+
+        case .tasks:
+            await showTasks()
+
+        case .cancel:
+            await handleCancelCommand(command)
+
+        case .ollama:
+            await handleOllamaCommand(command)
+        }
+        return false
+    }
+
+    // MARK: - /tools
+
+    static func showTools() {
+        let names = ToolRegistry.shared.toolNames
+        print("\n\("Available tools (\(names.count))".blue)")
+        print("─────────────────")
+        for name in names {
+            print("  \(name)")
+        }
+    }
+
+    // MARK: - /save, /load, /sessions
+
+    static func handleSaveCommand(_ command: SlashCommand) async {
+        let name = command.arguments.first
+        let wd = FileManager.default.currentDirectoryPath
+        let session = SessionManager.shared.createSession(
+            name: name,
+            workingDirectory: wd,
+            model: UserDefaults.model.rawValue
+        )
+        // Persist current messages into the session
+        for msg in messageService.messages {
+            try? SessionManager.shared.addMessage(
+                role: msg.role == .user ? .user : .assistant,
+                content: msg.text ?? ""
+            )
+        }
+        print("Session saved: \(session.name) [\(session.id.uuidString.prefix(8))]".green)
+    }
+
+    static func handleLoadCommand(_ command: SlashCommand) async {
+        guard let idString = command.arguments.first else {
+            print("Usage: /load <session-id>".red)
+            showSessions()
+            return
+        }
+
+        // Support prefix matching on UUID
+        let sessions = (try? SessionManager.shared.listSessions()) ?? []
+        let match = sessions.first { $0.id.uuidString.lowercased().hasPrefix(idString.lowercased()) }
+
+        guard let session = match else {
+            print("Session not found: \(idString)".red)
+            return
+        }
+
+        // Replace current messages with saved ones
+        messageService.clearMessages()
+        for saved in session.messages {
+            let role: Role = saved.role == .user ? .user : .assistant
+            messageService.messages.append(Message(text: saved.content, role: role))
+        }
+
+        SessionManager.shared.currentSessionId = session.id
+        print("Loaded session '\(session.name)' (\(session.messages.count) messages)".green)
+    }
+
+    static func showSessions() {
+        guard let sessions = try? SessionManager.shared.listSessions() else {
+            print("Failed to list sessions".red)
+            return
+        }
+        if sessions.isEmpty {
+            print("No saved sessions.".yellow)
+            return
+        }
+        print("\n\("Saved sessions".blue)")
+        print("─────────────────")
+        for s in sessions {
+            let short = s.id.uuidString.prefix(8)
+            let date = DateFormatter.localizedString(from: s.updatedAt, dateStyle: .short, timeStyle: .short)
+            print("  \(short)  \(s.name)  (\(s.metadata.messageCount) msgs, \(date))")
+        }
+        print("\nUse /load <id-prefix> to restore a session")
+    }
+
+    // MARK: - /compact
+
+    static func compactContext() {
+        let before = messageService.messages.count
+        let chatMessages = messageService.messages.map {
+            ChatMessage(role: $0.role == .user ? .user : .assistant, content: $0.text ?? "")
+        }
+        let usage = ContextManager.shared.contextUsage(for: chatMessages)
+        guard usage.needsCompaction else {
+            print("Context is within limits (\(usage.formattedUsage)). No compaction needed.".yellow)
+            return
+        }
+        let compacted = ContextManager.shared.compactMessages(chatMessages)
+        messageService.messages = compacted.map {
+            Message(text: $0.content, role: $0.role == .user ? .user : .assistant)
+        }
+        print("Compacted \(before) → \(messageService.messages.count) messages (\(usage.formattedUsage))".green)
+    }
+
+    // MARK: - /plan
+
+    static func handlePlanCommand() async {
+        let result = await MainActor.run { PlanModeManager.shared.enterPlanMode() }
+        print(result.green)
+    }
+
+    // MARK: - /tasks, /cancel
+
+    static func showTasks() async {
+        let tasks = await TaskManager.shared.allActiveTasks
+        if tasks.isEmpty {
+            print("No running background tasks.".yellow)
+        } else {
+            print("\n\("Background tasks".blue)")
+            print("─────────────────")
+            for task in tasks {
+                let shortId = String(task.id.prefix(8))
+                print("  \(shortId)  \(task.agentType.rawValue)  \(task.status.rawValue)")
+            }
+            print("\nUse /cancel <id-prefix> to cancel a task")
+        }
+    }
+
+    static func handleCancelCommand(_ command: SlashCommand) async {
+        guard let prefix = command.arguments.first else {
+            print("Usage: /cancel <task-id-prefix>".red)
+            await showTasks()
+            return
+        }
+        let tasks = await TaskManager.shared.allActiveTasks
+        guard let task = tasks.first(where: { $0.id.lowercased().hasPrefix(prefix.lowercased()) }) else {
+            print("No task matching '\(prefix)'".red)
+            return
+        }
+        await TaskManager.shared.cancelTask(id: task.id)
+        print("Cancelled task \(String(task.id.prefix(8)))".yellow)
+    }
+
+    // MARK: - /apikey
+
+    static func handleApiKeyCommand(_ command: SlashCommand) async {
+        if command.arguments.isEmpty {
+            await showApiKeyMenu()
+            return
+        }
+
+        let serviceName = command.arguments[0].lowercased()
+        guard let service = APIService.allCases.first(where: { $0.rawValue.lowercased() == serviceName }) else {
+            print("Unknown service: \(serviceName)".red)
+            print("Available services: \(APIService.allCases.map { $0.rawValue }.joined(separator: ", "))")
+            return
+        }
+
+        if service == .ollama {
+            print("Ollama runs locally — no API key required.".yellow)
+            print("Set OLLAMA_HOST to override the default base URL (http://localhost:11434)")
+            return
+        }
+
+        if command.arguments.count > 1 {
+            let key = command.arguments.dropFirst().joined(separator: " ")
+            do {
+                try networkClient.updateApiKey(key, for: service)
+                print("\(service.rawValue) API key updated successfully".green)
+            } catch {
+                print("Failed to update API key: \(error.localizedDescription)".red)
+            }
+        } else {
+            print("Enter \(service.rawValue) API key: ", terminator: "")
+            if let key = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
+                do {
+                    try networkClient.updateApiKey(key, for: service)
+                    print("\(service.rawValue) API key updated successfully".green)
+                } catch {
+                    print("Failed to update API key: \(error.localizedDescription)".red)
+                }
+            }
+        }
+    }
+
+    // MARK: - /status
+
+    static func showStatus() {
+        for line in statusLines() {
+            print(line)
+        }
+    }
+
+    static func statusLines(model: Model = UserDefaults.model) -> [String] {
+        var lines: [String] = []
+        lines.append("\n\("Status".blue)")
+        lines.append("─────────────────")
+        lines.append("Version:     \(cliVersion)")
+        lines.append("Model:       \(model.rawValue)")
+        lines.append("Provider:    \(model.provider.rawValue)")
+        lines.append("Max Tokens:  \(UserDefaults.maxTokens == 0 ? "default" : String(UserDefaults.maxTokens))")
+        lines.append("Temperature: \(UserDefaults.temperature)")
+        let chatMessages = messageService.messages.map {
+            ChatMessage(role: $0.role == .user ? .user : .assistant, content: $0.text ?? "")
+        }
+        let usage = ContextManager.shared.contextUsage(for: chatMessages)
+        lines.append("Context:     \(usage.formattedUsage)")
+        lines.append("")
+        lines.append(contentsOf: capabilityStatusLines(for: model))
+        lines.append("")
+        lines.append("API Keys:")
+        for service in APIService.allCases {
+            if service == .ollama {
+                let ollamaModels = Ollama.Model.allCases
+                let modelList = ollamaModels.isEmpty ? "none pulled yet" : ollamaModels.map { $0.rawValue }.joined(separator: ", ")
+                lines.append("  ollama: \("✓ local (no key needed)".green) [\(modelList)]")
+            } else {
+                let hasKey = UserDefaults.getApiKey(for: service) != nil
+                let status = hasKey ? "✓ set".green : "✗ not set".red
+                lines.append("  \(service.rawValue): \(status)")
+            }
+        }
+        lines.append("")
+        lines.append("Tools: \(ToolRegistry.shared.toolNames.count) registered")
+        return lines
+    }
+
+    static func capabilityStatusLines(for model: Model) -> [String] {
+        let capabilities = model.capabilities
+        var lines = ["Capabilities:"]
+        lines.append("  Tool calls:         \(capabilities.supportsTools ? "supported".green : "not available".yellow)")
+        lines.append("  Tool reliability:   \(capabilities.toolReliability.rawValue)")
+        lines.append("  Recommended tools:  \(capabilities.isRecommendedForTools ? "yes".green : "no".yellow)")
+        lines.append("  Streaming:          \(capabilities.supportsStreaming ? "supported".green : "not available".yellow)")
+        lines.append("  Structured output:  \(capabilities.supportsStructuredOutput ? "supported".green : "not available".yellow)")
+        if let cautionText = capabilities.cautionText {
+            lines.append("  Note:               \(cautionText)".yellow)
+        }
+        return lines
+    }
+
+    // MARK: - API key setup
+
+    static func checkAndRequestAPIKeys(runMode: CLIRunMode) async throws {
+        // Only prompt for the default model's provider
+        let defaultService: APIService
+        switch UserDefaults.model {
+        case .anthropic: defaultService = .anthropic
+        case .openAI:    defaultService = .openAI
+        case .xAI:       defaultService = .xAI
+        case .gemini:    defaultService = .gemini
+        case .ollama:    return // Ollama is local — no API key needed
+        }
+
+        if UserDefaults.getApiKey(for: defaultService) == nil {
+            guard runMode.isInteractive else { return }
+            print("\nNo API key found for \(defaultService.rawValue) (current model provider)")
+            print("Enter your \(defaultService.rawValue) API key (or press Enter to skip): ", terminator: "")
+            if let apiKey = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines), !apiKey.isEmpty {
+                do {
+                    try networkClient.updateApiKey(apiKey, for: defaultService)
+                    print("\(defaultService.rawValue) API key saved.".green)
+                } catch {
+                    print("Failed to save API key: \(error.localizedDescription)".red)
+                }
+            } else {
+                print("Skipping — use /apikey or set \(defaultService.rawValue.uppercased())_API_KEY env var later".yellow)
+            }
+        }
+    }
+
+    static func isCommandSupportedInNonInteractiveMode(_ command: SlashCommand, type: CommandType) -> Bool {
+        switch type {
+        case .help, .status, .tools, .exit, .quit:
+            return true
+        case .ollama:
+            let subcommand = command.arguments.first?.lowercased() ?? "list"
+            return ["", "list", "ls"].contains(subcommand)
+        case .clear, .save, .load, .sessions, .model, .compact, .plan, .tasks, .cancel, .settings, .apikey:
+            return false
+        }
+    }
+
+    // MARK: - Model selection
+
+    static func changeModel() async throws {
+        // Refresh Ollama model list before showing the menu
+        await networkClient.fetchOllamaModels()
+
+        // Cloud models
+        var models: [(String, Model)] = [
+            ("OpenAI GPT-4o mini",          .openAI(.gpt4o_mini)),
+            ("OpenAI GPT-5.2",              .openAI(.gpt5_2)),
+            ("Anthropic Claude 4.6 Sonnet", .anthropic(.claude46Sonnet)),
+            ("Gemini 3 Flash",              .gemini(.gemini3Flash)),
+            ("XAI Grok 4 Fast",             .xAI(.grok4FastReasoning)),
+        ]
+
+        // Append locally-available Ollama models (populated at runtime)
+        let ollamaModels = Ollama.Model.allCases
+        for m in ollamaModels {
+            models.append(("Ollama \(m.rawValue)", .ollama(m)))
+        }
+
+        // If no Ollama models are loaded yet, offer a manual entry option
+        let ollamaManualIndex: Int?
+        if ollamaModels.isEmpty {
+            ollamaManualIndex = models.count  // 0-based index of the manual entry row
+            models.append(("Ollama (enter model name manually)", .ollama(Ollama.Model(rawValue: "llama3")!)))
+        } else {
+            ollamaManualIndex = nil
+        }
+
+        print("\n\("Available models".blue)")
+        print("─────────────────")
+        for (i, (name, _)) in models.enumerated() {
+            print("\(i + 1). \(name)")
+        }
+        print("\nSelect model (1-\(models.count)): ", terminator: "")
+        guard let choice = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let idx = Int(choice), idx >= 1, idx <= models.count else {
+            print("Invalid choice. Keeping current model.".yellow)
+            return
+        }
+
+        var newModel = models[idx - 1].1
+
+        // If the user picked the manual Ollama entry, ask for the model name
+        if let manualIdx = ollamaManualIndex, idx - 1 == manualIdx {
+            print("Enter Ollama model name (e.g. llama3, mistral, phi3): ", terminator: "")
+            if let name = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty,
+               let m = Ollama.Model(rawValue: name) {
+                newModel = .ollama(m)
+            } else {
+                print("Invalid model name. Keeping current model.".yellow)
+                return
+            }
+        }
+
+        UserDefaults.model = newModel
+        print("Model changed to: \(newModel.rawValue)".green)
+    }
+
+    // MARK: - Settings Menu
+
+    static func showSettingsMenu() async {
+        var config = Configuration.load()
+
+        while true {
+            let maxTokensDisplay = UserDefaults.maxTokens == 0 ? "default" : String(UserDefaults.maxTokens)
+            let streamingStatus = config.streamingEnabled ? "enabled" : "disabled"
+
+            print("\n\("Settings".blue)")
+            print("─────────────────")
+            print("1. API Keys")
+            print("2. Model (\(UserDefaults.model.rawValue))")
+            print("3. Max Tokens (\(maxTokensDisplay))")
+            print("4. Temperature (\(UserDefaults.temperature))")
+            print("5. Theme (\(config.theme.rawValue))")
+            print("6. Streaming (\(streamingStatus))")
+            print("7. Back")
+
+            print("\nSelect option (1-7): ", terminator: "")
+            guard let choice = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) else { continue }
+
+            switch choice {
+            case "1": await showApiKeyMenu()
+            case "2": try? await changeModel()
+            case "3": updateMaxTokens()
+            case "4": updateTemperature()
+            case "5": showThemeMenu(&config)
+            case "6": toggleStreaming(&config)
+            case "7", "": return
+            default: print("Invalid choice".red)
+            }
+        }
+    }
+
+    static func showApiKeyMenu() async {
+        while true {
+            print("\n\("API Keys".blue)")
+            print("─────────────────")
+            for (index, service) in APIService.allCases.enumerated() {
+                if service == .ollama {
+                    print("\(index + 1). \(service.rawValue): \("✓ local (no key needed)".green)")
+                } else {
+                    let hasKey = UserDefaults.getApiKey(for: service) != nil
+                    let status = hasKey ? "✓ Set".green : "✗ Not set".red
+                    print("\(index + 1). \(service.rawValue): \(status)")
+                }
+            }
+            print("\(APIService.allCases.count + 1). Back")
+
+            print("\nSelect service (1-\(APIService.allCases.count + 1)): ", terminator: "")
+            guard let choice = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let index = Int(choice) else { continue }
+
+            if index == APIService.allCases.count + 1 { return }
+            guard index >= 1, index <= APIService.allCases.count else {
+                print("Invalid choice".red)
+                continue
+            }
+
+            let service = APIService.allCases[index - 1]
+            if service == .ollama {
+                print("Ollama runs locally — no API key required.".yellow)
+                print("Use OLLAMA_HOST env var to point to a non-default host (default: http://localhost:11434)")
+                continue
+            }
+            print("Enter \(service.rawValue) API key (or press Enter to cancel): ", terminator: "")
+            if let key = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
+                do {
+                    try networkClient.updateApiKey(key, for: service)
+                    print("\(service.rawValue) API key updated successfully".green)
+                } catch {
+                    print("Failed to update API key: \(error.localizedDescription)".red)
+                }
+            }
+        }
+    }
+
+    static func updateMaxTokens() {
+        let current = UserDefaults.maxTokens == 0 ? "default" : String(UserDefaults.maxTokens)
+        print("\nCurrent max tokens: \(current)")
+        print("Enter new value (or press Enter to use default): ", terminator: "")
+
+        guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+
+        if input.isEmpty {
+            UserDefaults.maxTokens = 0
+            print("Max tokens reset to default".green)
+        } else if let value = Int(input), value > 0 {
+            UserDefaults.maxTokens = value
+            print("Max tokens set to \(value)".green)
+        } else {
+            print("Invalid value. Please enter a positive number.".red)
+        }
+    }
+
+    static func updateTemperature() {
+        print("\nCurrent temperature: \(UserDefaults.temperature)")
+        print("Enter new value (0.0-2.0): ", terminator: "")
+
+        guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let value = Double(input) else {
+            print("Invalid value".red)
+            return
+        }
+
+        if value >= 0.0 && value <= 2.0 {
+            UserDefaults.temperature = value
+            print("Temperature set to \(value)".green)
+        } else {
+            print("Value must be between 0.0 and 2.0".red)
+        }
+    }
+
+    static func showThemeMenu(_ config: inout Configuration) {
+        print("\n\("Themes".blue)")
+        print("─────────────────")
+        for (index, theme) in Theme.allCases.enumerated() {
+            let current = theme == config.theme ? " (current)" : ""
+            let recommended = theme == .default ? " (Recommended)" : ""
+            print("\(index + 1). \(theme.rawValue)\(recommended)\(current)")
+        }
+        print("\(Theme.allCases.count + 1). Back")
+
+        print("\nSelect theme (1-\(Theme.allCases.count + 1)): ", terminator: "")
+        guard let choice = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let index = Int(choice) else { return }
+
+        if index == Theme.allCases.count + 1 { return }
+        guard index >= 1, index <= Theme.allCases.count else {
+            print("Invalid choice".red)
+            return
+        }
+
+        config.theme = Theme.allCases[index - 1]
+        do {
+            try config.save()
+            print("Theme changed to \(config.theme.rawValue)".green)
+        } catch {
+            print("Failed to save theme: \(error.localizedDescription)".red)
+        }
+    }
+
+    static func toggleStreaming(_ config: inout Configuration) {
+        config.streamingEnabled.toggle()
+        do {
+            try config.save()
+            let status = config.streamingEnabled ? "enabled" : "disabled"
+            print("Streaming \(status)".green)
+        } catch {
+            print("Failed to save setting: \(error.localizedDescription)".red)
+        }
+    }
+
+    // MARK: - /ollama
+
+    static func handleOllamaCommand(_ command: SlashCommand) async {
+        let sub = command.arguments.first?.lowercased() ?? ""
+        switch sub {
+        case "list", "ls", "":
+            await ollamaList()
+        case "pull":
+            guard let name = command.arguments.dropFirst().first, !name.isEmpty else {
+                print("Usage: /ollama pull <model-name>".red)
+                return
+            }
+            await ollamaPull(name)
+        case "search":
+            let query = command.arguments.dropFirst().joined(separator: " ")
+            guard !query.isEmpty else {
+                print("Usage: /ollama search <query>".red)
+                return
+            }
+            await ollamaSearch(query)
+        case "delete", "rm", "remove":
+            guard let name = command.arguments.dropFirst().first, !name.isEmpty else {
+                print("Usage: /ollama delete <model-name>".red)
+                return
+            }
+            await ollamaDelete(name)
+        default:
+            print("Unknown subcommand '\(sub)'. Usage: /ollama <list|pull|search|delete> [name]".red)
+        }
+    }
+
+    /// List locally-pulled Ollama models.
+    static func ollamaList() async {
+        await networkClient.fetchOllamaModels()
+        let models = OllamaModel.allCases
+        if models.isEmpty {
+            print("No Ollama models found. Use \("/ollama pull <model>".cyan) to download one.".yellow)
+            print("Browse models at https://ollama.com/library".yellow)
+            return
+        }
+        print("\n\("Local Ollama models".blue)")
+        print("─────────────────")
+        for m in models {
+            let isCurrent: String = (UserDefaults.model == .ollama(m)) ? " (active)".green : ""
+            print("  \(m.rawValue)\(isCurrent)")
+        }
+        print("\nUse \("/model".cyan) to switch, \("/ollama pull <name>".cyan) to add more.")
+    }
+
+    /// Pull (download) an Ollama model, streaming progress to stdout.
+    static func ollamaPull(_ name: String) async {
+        guard let ollama = langToolchain.langTool(Ollama.self) else {
+            print("Ollama is not registered. Is the Ollama server running?".red)
+            return
+        }
+        print("Pulling \(name.cyan)…")
+        var lastStatus = ""
+        do {
+            for try await chunk in ollama.streamPullModel(name) {
+                let status = chunk.status
+                if status != lastStatus {
+                    // Print new status lines (e.g. "pulling manifest", "pulling layer …")
+                    print(status)
+                    lastStatus = status
+                }
+                // Show download progress on the same line when total is known
+                if let total = chunk.total, total > 0, let completed = chunk.completed {
+                    let pct = Int(Double(completed) / Double(total) * 100)
+                    let bar = String(repeating: "█", count: pct / 5) + String(repeating: "░", count: 20 - pct / 5)
+                    print("\r  [\(bar)] \(pct)%   ", terminator: "")
+                    fflush(stdout)
+                }
+            }
+            print("\nPull complete.".green)
+            // Refresh the model list so the new model is available immediately
+            await networkClient.fetchOllamaModels()
+            print("Use \("/model \(name)".cyan) to switch to it.")
+        } catch {
+            print("\nFailed to pull '\(name)': \(error.localizedDescription)".red)
+        }
+    }
+
+    /// Search the Ollama model library via the public API.
+    static func ollamaSearch(_ query: String) async {
+        print("Searching Ollama library for '\(query.cyan)'…")
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let urlString = "https://ollama.com/search?q=\(encoded)&format=json"
+        guard let url = URL(string: urlString) else {
+            print("Invalid search query.".red)
+            return
+        }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            // The endpoint returns HTML; parse <h2> model names as a simple fallback
+            // Try JSON first, fall back to scraping model name anchors
+            if let results = try? JSONDecoder().decode(OllamaSearchResults.self, from: data) {
+                printSearchResults(results.models, query: query)
+            } else if let html = String(data: data, encoding: .utf8) {
+                let names = scrapeOllamaModelNames(from: html)
+                if names.isEmpty {
+                    print("No results found for '\(query)'.".yellow)
+                    print("Browse manually: https://ollama.com/search?q=\(encoded)")
+                } else {
+                    print("\n\("Results for '\(query)'".blue)")
+                    print("─────────────────")
+                    for name in names {
+                        print("  \(name)")
+                    }
+                    print("\nUse \("/ollama pull <name>".cyan) to download a model.")
+                }
+            }
+        } catch {
+            print("Search failed: \(error.localizedDescription)".red)
+            print("Browse manually: https://ollama.com/search?q=\(encoded)")
+        }
+    }
+
+    /// Delete a local Ollama model.
+    static func ollamaDelete(_ name: String) async {
+        guard let ollama = langToolchain.langTool(Ollama.self) else {
+            print("Ollama is not registered. Is the Ollama server running?".red)
+            return
+        }
+        print("Delete model '\(name.cyan)'? This cannot be undone. (y/N): ", terminator: "")
+        guard let confirm = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              confirm == "y" || confirm == "yes" else {
+            print("Cancelled.".yellow)
+            return
+        }
+        do {
+            _ = try await ollama.deleteModel(name)
+            print("Deleted '\(name)'.".green)
+            await networkClient.fetchOllamaModels()
+            // If the deleted model was active, reset to default
+            if case .ollama(let m) = UserDefaults.model, m.rawValue == name {
+                UserDefaults.model = .anthropic(.claude46Sonnet)
+                print("Active model reset to \(UserDefaults.model.rawValue).".yellow)
+            }
+        } catch {
+            print("Failed to delete '\(name)': \(error.localizedDescription)".red)
+        }
+    }
+
+    // MARK: - Ollama search helpers
+
+    private struct OllamaSearchResults: Decodable {
+        let models: [OllamaSearchModel]
+    }
+
+    private struct OllamaSearchModel: Decodable {
+        let name: String
+        let description: String?
+        let pulls: Int?
+        let tags: Int?
+    }
+
+    private static func printSearchResults(_ models: [OllamaSearchModel], query: String) {
+        if models.isEmpty {
+            print("No results for '\(query)'.".yellow)
+            return
+        }
+        print("\n\("Results for '\(query)'".blue)")
+        print("─────────────────")
+        for m in models {
+            let pulls = m.pulls.map { "  \($0) pulls" } ?? ""
+            let desc  = m.description.map { "  \($0)" } ?? ""
+            print("  \(m.name.cyan)\(pulls)")
+            if !desc.isEmpty { print("  \(desc)") }
+        }
+        print("\nUse \("/ollama pull <name>".cyan) to download a model.")
+    }
+
+    /// Simple HTML scraper: extract model names from Ollama search page anchors.
+    private static func scrapeOllamaModelNames(from html: String) -> [String] {
+        // Ollama search results include links like href="/library/llama3" or href="/modelname"
+        var names: [String] = []
+        // Match href="/library/<name>" or data-model="<name>"
+        let patterns = [
+            #"href="/library/([a-zA-Z0-9._:-]+)""#,
+            #"data-model="([a-zA-Z0-9._:-]+)""#,
+            #""name"\s*:\s*"([a-zA-Z0-9._/:-]+)""#,
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(html.startIndex..., in: html)
+            let matches = regex.matches(in: html, range: range)
+            for match in matches {
+                if let r = Range(match.range(at: 1), in: html) {
+                    let name = String(html[r])
+                    if !names.contains(name) { names.append(name) }
+                }
+            }
+            if !names.isEmpty { break }
+        }
+        return names
+    }
+}
+
+typealias Colors = ANSIColor
+enum ANSIColor: String, CaseIterable {
+    case black = "\u{001B}[0;30m"
+    case red = "\u{001B}[0;31m"
+    case green = "\u{001B}[0;32m"
+    case yellow = "\u{001B}[0;33m"
+    case blue = "\u{001B}[0;34m"
+    case magenta = "\u{001B}[0;35m"
+    case cyan = "\u{001B}[0;36m"
+    case white = "\u{001B}[0;37m"
+    case `default` = "\u{001B}[0;0m"
+
+    static func + (lhs: ANSIColor, rhs: String) -> String {
+        return lhs.rawValue + rhs
+    }
+
+    static func + (lhs: String, rhs: ANSIColor) -> String {
+        return lhs + rhs.rawValue
+    }
+}
+
+extension String {
+    func colored(_ color: ANSIColor) -> String {
+        guard ansiColorsEnabled else { return self }
+        return color + self + ANSIColor.default
+    }
+    var black: String { return colored(.black) }
+    var red: String { return colored(.red) }
+    var green: String { return colored(.green) }
+    var yellow: String { return colored(.yellow) }
+    var blue: String { return colored(.blue) }
+    var magenta: String { return colored(.magenta) }
+    var cyan: String { return colored(.cyan) }
+    var white: String { return colored(.white) }
+}

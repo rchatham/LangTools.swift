@@ -10,9 +10,11 @@ import KeychainAccess
 public class KeychainService {
     public static let shared = KeychainService()
 
-    let keychain = Keychain(service: "com.reidchatham.LangTools_Example")
+    let keychain: Keychain
 
-    public init() {}
+    public init(keychain: Keychain = Keychain(service: "com.reidchatham.LangTools_Example")) {
+        self.keychain = keychain
+    }
 
     public func saveApiKey(apiKey: String, for service: APIService) {
         do { try keychain.set(apiKey, key: "\(service.rawValue):apiKey")}

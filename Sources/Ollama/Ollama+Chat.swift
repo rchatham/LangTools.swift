@@ -186,13 +186,31 @@ extension Ollama {
     public struct ChatToolCall: Codable, LangToolsToolSelection {
         public let id: String? = "ollama"
         public var name: String? { function.name }
-        public var arguments: String { function.arguments.string ?? "" }
+        public var arguments: String {
+            JSON.object(function.arguments).jsonString(formatting: []) ?? "{}"
+        }
 
         public let function: Function
 
+        enum CodingKeys: String, CodingKey {
+            case id, function
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            _ = try container.decodeIfPresent(String.self, forKey: .id)
+            function = try container.decode(Function.self, forKey: .function)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(id, forKey: .id)
+            try container.encode(function, forKey: .function)
+        }
+
         public struct Function: Codable {
             public let name: String
-            public let arguments: [String:String]
+            public let arguments: [String: JSON]
         }
     }
 

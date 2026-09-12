@@ -78,6 +78,20 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         UserDefaults.standard.set(modelNames, forKey: "ollamaModels")
     }
 
+    public var apiService: APIService {
+        switch self {
+        case .openAI: return .openAI
+        case .anthropic: return .anthropic
+        case .xAI: return .xAI
+        case .gemini: return .gemini
+        case .ollama: return .ollama
+        }
+    }
+
+    public static func availableChatModels(accessManager: ProviderAccessManager = .shared) -> [Model] {
+        accessManager.availableChatModels()
+    }
+
     public func hash(into hasher: inout Hasher) {
         hasher.combine(rawValue)
     }

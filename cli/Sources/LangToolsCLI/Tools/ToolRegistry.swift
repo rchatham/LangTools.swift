@@ -1,0 +1,262 @@
+//
+//  ToolRegistry.swift
+//  CLI
+//
+//  Central registry for all available tools
+//
+
+import Foundation
+import LangTools
+import OpenAI
+
+/// Protocol for tools that can be executed
+protocol ExecutableTool {
+    /// Tool name
+    static var name: String { get }
+
+    /// Tool description for LLM
+    static var description: String { get }
+
+    /// JSON schema for parameters
+    static var parametersSchema: OpenAI.Tool.FunctionSchema.Parameters { get }
+
+    /// Execute the tool with given parameters
+    static func execute(parameters: [String: Any]) async throws -> String
+}
+
+/// Central registry for all Claude Code-like tools
+final class ToolRegistry {
+    typealias ApprovalHandler = (_ toolName: String, _ parameters: [String: Any]) async -> Bool
+
+    /// Shared singleton instance. Interactive terminal sessions prompt for
+    /// dangerous operations; callers without a terminal fail closed.
+    static let shared = ToolRegistry { toolName, parameters in
+        await TerminalToolApproval.shared.request(
+            toolName: toolName,
+            operation: ToolApprovalPolicy.operationDescription(toolName: toolName, parameters: parameters)
+        )
+    }
+
+    private let approvalHandler: ApprovalHandler?
+
+    // MARK: - Parameter Extraction Helpers
+
+    /// Extract a string value from parameters
+    static func extractString(_ params: [String: Any], key: String) -> String? {
+        params[key] as? String
+    }
+
+    /// Extract an optional string value from parameters
+    static func extractOptionalString(_ params: [String: Any], key: String) -> String? {
+        params[key] as? String
+    }
+
+    /// Extract an integer value from parameters
+    static func extractInt(_ params: [String: Any], key: String) -> Int? {
+        if let int = params[key] as? Int { return int }
+        if let double = params[key] as? Double { return Int(double) }
+        if let string = params[key] as? String { return Int(string) }
+        return nil
+    }
+
+    /// Extract a boolean value from parameters
+    static func extractBool(_ params: [String: Any], key: String) -> Bool? {
+        if let bool = params[key] as? Bool { return bool }
+        if let string = params[key] as? String { return string.lowercased() == "true" }
+        if let int = params[key] as? Int { return int != 0 }
+        return nil
+    }
+
+    /// Registered tools by name
+    private var tools: [String: any ExecutableTool.Type] = [:]
+
+    /// Initialize with default tools.
+    init(approvalHandler: ApprovalHandler? = nil) {
+        self.approvalHandler = approvalHandler
+        registerDefaultTools()
+    }
+
+    /// Register default tools
+    private func registerDefaultTools() {
+        // Core file and shell tools
+        register(ReadTool.self)
+        register(WriteTool.self)
+        register(EditTool.self)
+        register(BashTool.self)
+        register(GlobTool.self)
+        register(GrepTool.self)
+
+        // Advanced tools
+        register(TaskTool.self)
+        register(TodoWriteTool.self)
+        register(WebFetchTool.self)
+        register(EnterPlanModeTool.self)
+        register(ExitPlanModeTool.self)
+        register(AskUserQuestionTool.self)
+    }
+
+    /// Register a new tool
+    func register<T: ExecutableTool>(_ tool: T.Type) {
+        tools[T.name] = tool
+    }
+
+    /// Get a tool by name
+    func tool(named name: String) -> (any ExecutableTool.Type)? {
+        if let tool = tools[name] {
+            return tool
+        }
+
+        let normalizedName = normalizeToolName(name)
+        return tools.first { normalizeToolName($0.key) == normalizedName }?.value
+    }
+
+    /// Execute a tool by name with parameters
+    func execute(toolName: String, parameters: [String: Any]) async throws -> String {
+        guard let tool = tool(named: toolName) else {
+            throw ToolError.toolNotFound(name: toolName)
+        }
+        if ToolApprovalPolicy.requiresApproval(toolName: tool.name, parameters: parameters) {
+            guard let approvalHandler, await approvalHandler(tool.name, parameters) else {
+                throw ToolExecutionError.approvalRequired(
+                    toolName: tool.name,
+                    operation: ToolApprovalPolicy.operationDescription(toolName: tool.name, parameters: parameters)
+                )
+            }
+        }
+        return try await tool.execute(parameters: parameters)
+    }
+
+    /// Execute parameters received through a model tool callback.
+    func executeModelCallback(toolName: String, parameters: [String: JSON]) async throws -> String {
+        try await execute(toolName: toolName, parameters: parameters.mapValues(\.foundationValue))
+    }
+
+    /// Get all registered tools as OpenAI function tools
+    func asOpenAITools() -> [OpenAI.Tool] {
+        return tools.values.map { tool in
+            .function(.init(
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parametersSchema,
+                callback: { _, parameters in
+                    try await self.executeModelCallback(toolName: tool.name, parameters: parameters)
+                }
+            ))
+        }
+    }
+
+    /// List all registered tool names
+    var toolNames: [String] {
+        return Array(tools.keys).sorted()
+    }
+
+    private func normalizeToolName(_ name: String) -> String {
+        name
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "_", with: "")
+    }
+}
+
+private actor TerminalToolApproval {
+    static let shared = TerminalToolApproval()
+
+    func request(toolName: String, operation: String) -> Bool {
+        guard CLIRunMode.current.isInteractive,
+              let terminal = FileHandle(forUpdatingAtPath: "/dev/tty") else {
+            return false
+        }
+
+        let prompt = "\nApprove tool '\(toolName)'?\n  \(operation)\nProceed? [y/N] "
+        do {
+            try terminal.write(contentsOf: Data(prompt.utf8))
+            guard let responseData = try terminal.read(upToCount: 32),
+                  let response = String(data: responseData, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased() else {
+                return false
+            }
+            return response == "y" || response == "yes"
+        } catch {
+            return false
+        }
+    }
+}
+
+private extension JSON {
+    var foundationValue: Any {
+        switch self {
+        case .string(let value):
+            return value
+        case .number(let value):
+            return value
+        case .bool(let value):
+            return value
+        case .null:
+            return NSNull()
+        case .array(let values):
+            return values.map(\.foundationValue)
+        case .object(let values):
+            return values.mapValues(\.foundationValue)
+        }
+    }
+}
+
+/// Tool execution errors
+enum ToolError: LocalizedError {
+    case toolNotFound(name: String)
+    case invalidParameters(tool: String, reason: String)
+    case executionFailed(tool: String, reason: String)
+    case missingRequiredParameter(tool: String, parameter: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .toolNotFound(let name):
+            return "Tool not found: \(name)"
+        case .invalidParameters(let tool, let reason):
+            return "Invalid parameters for tool '\(tool)': \(reason)"
+        case .executionFailed(let tool, let reason):
+            return "Tool '\(tool)' execution failed: \(reason)"
+        case .missingRequiredParameter(let tool, let parameter):
+            return "Missing required parameter '\(parameter)' for tool '\(tool)'"
+        }
+    }
+}
+
+// MARK: - Parameter Extraction Helpers
+
+extension Dictionary where Key == String, Value == Any {
+
+    /// Get required string parameter
+    func requiredString(_ key: String, tool: String) throws -> String {
+        guard let value = self[key] else {
+            throw ToolError.missingRequiredParameter(tool: tool, parameter: key)
+        }
+        guard let stringValue = value as? String else {
+            throw ToolError.invalidParameters(tool: tool, reason: "\(key) must be a string")
+        }
+        return stringValue
+    }
+
+    /// Get optional string parameter
+    func optionalString(_ key: String) -> String? {
+        return self[key] as? String
+    }
+
+    /// Get optional integer parameter
+    func optionalInt(_ key: String) -> Int? {
+        if let intValue = self[key] as? Int {
+            return intValue
+        }
+        if let doubleValue = self[key] as? Double {
+            return Int(doubleValue)
+        }
+        return nil
+    }
+
+    /// Get optional boolean parameter
+    func optionalBool(_ key: String) -> Bool? {
+        return self[key] as? Bool
+    }
+}

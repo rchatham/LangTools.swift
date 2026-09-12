@@ -219,6 +219,20 @@ public enum ContentType: Codable, Equatable, Hashable {
     }
 }
 
+public struct ContentCardsContent: Codable, Equatable, Hashable {
+    public let cardType: String
+    public let message: String?
+    public let cardsJSON: String
+    public let cardCount: Int
+
+    public init(cardType: String, message: String?, cardsJSON: String, cardCount: Int) {
+        self.cardType = cardType
+        self.message = message
+        self.cardsJSON = cardsJSON
+        self.cardCount = cardCount
+    }
+}
+
 public enum ImageDetail: String, Codable {
     case auto, high, low
 }
