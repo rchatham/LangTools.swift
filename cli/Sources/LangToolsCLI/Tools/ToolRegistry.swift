@@ -26,8 +26,13 @@ protocol ExecutableTool {
 
 /// Central registry for all Claude Code-like tools
 final class ToolRegistry {
-    /// Shared singleton instance
+    typealias ApprovalHandler = (_ toolName: String, _ parameters: [String: Any]) async -> Bool
+
+    /// Shared singleton instance. Approval-required tools are denied unless an
+    /// interactive caller installs an explicit approval handler.
     static let shared = ToolRegistry()
+
+    private let approvalHandler: ApprovalHandler?
 
     // MARK: - Parameter Extraction Helpers
 
@@ -60,8 +65,9 @@ final class ToolRegistry {
     /// Registered tools by name
     private var tools: [String: any ExecutableTool.Type] = [:]
 
-    /// Initialize with default tools
-    private init() {
+    /// Initialize with default tools.
+    init(approvalHandler: ApprovalHandler? = nil) {
+        self.approvalHandler = approvalHandler
         registerDefaultTools()
     }
 
@@ -101,10 +107,23 @@ final class ToolRegistry {
 
     /// Execute a tool by name with parameters
     func execute(toolName: String, parameters: [String: Any]) async throws -> String {
-        guard let tool = tools[toolName] else {
+        guard let tool = tool(named: toolName) else {
             throw ToolError.toolNotFound(name: toolName)
         }
+        if ToolApprovalPolicy.requiresApproval(toolName: tool.name, parameters: parameters) {
+            guard let approvalHandler, await approvalHandler(tool.name, parameters) else {
+                throw ToolExecutionError.approvalRequired(
+                    toolName: tool.name,
+                    operation: ToolApprovalPolicy.operationDescription(toolName: tool.name, parameters: parameters)
+                )
+            }
+        }
         return try await tool.execute(parameters: parameters)
+    }
+
+    /// Execute parameters received through a model tool callback.
+    func executeModelCallback(toolName: String, parameters: [String: JSON]) async throws -> String {
+        try await execute(toolName: toolName, parameters: parameters.mapValues(\.foundationValue))
     }
 
     /// Get all registered tools as OpenAI function tools
@@ -115,8 +134,7 @@ final class ToolRegistry {
                 description: tool.description,
                 parameters: tool.parametersSchema,
                 callback: { _, parameters in
-                    let swiftParameters = parameters.mapValues { $0.foundationValue }
-                    return try await tool.execute(parameters: swiftParameters)
+                    try await self.executeModelCallback(toolName: tool.name, parameters: parameters)
                 }
             ))
         }

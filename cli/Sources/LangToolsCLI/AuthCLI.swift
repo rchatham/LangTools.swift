@@ -186,20 +186,28 @@ private struct AuthStatusPayload: Codable {
 struct SessionStore {
     private let fileURL: URL
 
-    init() {
-        let base = FileManager.default.homeDirectoryForCurrentUser
+    init(fileURL: URL? = nil) {
+        let defaultBase = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".langtools", isDirectory: true)
             .appendingPathComponent("auth", isDirectory: true)
-        self.fileURL = base.appendingPathComponent("openai-session.json")
+        self.fileURL = fileURL ?? defaultBase.appendingPathComponent("openai-session.json")
     }
 
     func save(_ session: StoredAccountSession) throws {
-        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let directoryURL = fileURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directoryURL.path)
+
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(session)
-        try data.write(to: fileURL)
+        try data.write(to: fileURL, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
     }
 
     func load() throws -> StoredAccountSession {
@@ -757,7 +765,7 @@ private final class AuthDebugLogger {
                 }
                 guard let handle = try? FileHandle(forWritingTo: self.fileURL) else { return }
                 defer { try? handle.close() }
-                try? handle.seekToEnd()
+                _ = try? handle.seekToEnd()
                 try? handle.write(contentsOf: data)
             }
         }

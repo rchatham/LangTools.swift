@@ -167,7 +167,7 @@ actor ToolExecutor {
             return try await withThrowingTaskGroup(of: ToolExecutionResult.self) { group in
                 // Add the actual execution task
                 group.addTask {
-                    let output = try await tool.execute(parameters: parameters)
+                    let output = try await self.registry.execute(toolName: tool.name, parameters: parameters)
                     let duration = Date().timeIntervalSince(startTime)
                     let truncated = output.count > 30_000
                     let finalOutput = truncated ? String(output.prefix(30_000)) + "\n...(truncated)" : output
@@ -291,35 +291,13 @@ struct ToolApprovalPolicy {
         "bash"
     ]
 
-    /// Operations within tools that require approval
-    static let dangerousOperations: [String: Set<String>] = [
-        "bash": ["rm", "sudo", "chmod", "chown", "mv"],
-        "write": [],  // All writes need approval
-        "edit": []    // All edits need approval
-    ]
-
     /// Check if a tool execution requires approval
     /// - Parameters:
     ///   - toolName: The tool name
     ///   - parameters: The parameters being passed
     /// - Returns: True if approval is required
     static func requiresApproval(toolName: String, parameters: [String: Any]) -> Bool {
-        // Check if tool always requires approval
-        if alwaysApprove.contains(toolName) {
-            return true
-        }
-
-        // Check for dangerous operations in bash commands
-        if toolName == "bash", let command = parameters["command"] as? String {
-            let dangerous = dangerousOperations["bash"] ?? []
-            for op in dangerous {
-                if command.contains(op) {
-                    return true
-                }
-            }
-        }
-
-        return false
+        alwaysApprove.contains(toolName.lowercased())
     }
 
     /// Get a description of the operation requiring approval
@@ -328,7 +306,7 @@ struct ToolApprovalPolicy {
     ///   - parameters: The parameters
     /// - Returns: A human-readable description
     static func operationDescription(toolName: String, parameters: [String: Any]) -> String {
-        switch toolName {
+        switch toolName.lowercased() {
         case "write":
             let path = parameters["file_path"] as? String ?? "unknown"
             return "Write to file: \(path)"

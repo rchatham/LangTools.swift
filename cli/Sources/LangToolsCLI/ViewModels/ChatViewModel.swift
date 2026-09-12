@@ -290,16 +290,6 @@ class ChatViewModel: ObservableObject {
 
     /// Execute a tool by name with given parameters
     func executeTool(name: String, parameters: [String: Any]) async {
-        // Check if approval is required
-        if ToolApprovalPolicy.requiresApproval(toolName: name, parameters: parameters) {
-            // Show approval request in messages
-            let operation = ToolApprovalPolicy.operationDescription(toolName: name, parameters: parameters)
-            messages.append(ChatMessage(
-                role: .system,
-                content: "⚠️ Approval required for: \(operation)\n(Approval workflow not yet implemented - auto-approving)"
-            ))
-        }
-
         do {
             let _ = try await toolExecutor.execute(toolName: name, parameters: parameters)
         } catch {

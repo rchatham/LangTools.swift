@@ -261,6 +261,72 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertNotNil(tool?.callback)
     }
 
+    func testToolRegistryDeniesDirectWriteWithoutApproval() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let registry = ToolRegistry()
+
+        await XCTAssertThrowsErrorAsync(
+            try await registry.execute(
+                toolName: "Write",
+                parameters: ["file_path": fileURL.path, "content": "secret"]
+            )
+        ) { error in
+            XCTAssertTrue(error is ToolExecutionError)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
+    func testToolRegistryExecutesWriteAfterExplicitApproval() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let registry = ToolRegistry(approvalHandler: { _, _ in true })
+
+        _ = try await registry.execute(
+            toolName: "Write",
+            parameters: ["file_path": fileURL.path, "content": "approved"]
+        )
+
+        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), "approved")
+    }
+
+    func testToolRegistryDeniesModelCallbackWriteWithoutApproval() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let registry = ToolRegistry()
+
+        await XCTAssertThrowsErrorAsync(
+            try await registry.executeModelCallback(
+                toolName: "Write",
+                parameters: ["file_path": .string(fileURL.path), "content": .string("secret")]
+            )
+        ) { error in
+            XCTAssertTrue(error is ToolExecutionError)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
+    func testSessionStoreUsesPrivatePermissions() throws {
+        let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = rootURL.appendingPathComponent("auth", isDirectory: true).appendingPathComponent("openai-session.json")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let session = StoredAccountSession(
+            provider: "openai",
+            accountIdentifier: "user@example.com",
+            accessToken: "access-token",
+            refreshToken: "refresh-token",
+            idToken: "id-token",
+            tokenType: "Bearer",
+            expiresAt: Date().addingTimeInterval(3600),
+            accessibleModelIDs: [],
+            createdAt: Date(),
+            id: UUID()
+        )
+
+        try SessionStore(fileURL: fileURL).save(session)
+
+        XCTAssertEqual(try octalPermissions(at: fileURL.deletingLastPathComponent().path), 0o700)
+        XCTAssertEqual(try octalPermissions(at: fileURL.path), 0o600)
+    }
+
     func testAskUserQuestionToolRejectsNonInteractiveExecution() {
         XCTAssertThrowsError(try AskUserQuestionTool.validateInteractiveInput(isInteractive: false)) { error in
             guard let toolError = error as? ToolError else {
@@ -684,6 +750,18 @@ final class ChatFlowTests: XCTestCase {
     private func executablePath() -> String {
         let packageURL = URL(fileURLWithPath: packageDirectory())
         return packageURL.appendingPathComponent(".build/arm64-apple-macosx/debug/langtools").path
+    }
+
+    private func XCTAssertThrowsErrorAsync<T>(
+        _ expression: @autoclosure () async throws -> T,
+        _ errorHandler: (Error) -> Void
+    ) async {
+        do {
+            _ = try await expression()
+            XCTFail("Expected expression to throw")
+        } catch {
+            errorHandler(error)
+        }
     }
 
     private func octalPermissions(at path: String) throws -> Int {
