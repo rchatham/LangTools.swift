@@ -183,10 +183,10 @@ public struct ChatSettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    ForEach(viewModel.providerAccessStates, id: \.service) { state in
+                    ForEach(viewModel.providerAccessStates) { state in
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text(state.service.displayName)
+                                Text(state.displayName)
                                 Spacer()
                                 Text(state.badgeTitle)
                                     .font(.caption)
@@ -195,7 +195,7 @@ public struct ChatSettingsView: View {
                             Text(state.statusDescription)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                            if let reason = viewModel.unavailableReason(for: state.service) {
+                            if let reason = viewModel.unavailableReason(for: state) {
                                 Text(reason)
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
@@ -477,10 +477,10 @@ public struct ChatSettingsView: View {
                                 .font(.body)
                                 .foregroundColor(.secondary)
 
-                            ForEach(viewModel.providerAccessStates, id: \.service) { state in
+                            ForEach(viewModel.providerAccessStates) { state in
                                 VStack(alignment: .leading, spacing: 6) {
                                     HStack(alignment: .firstTextBaseline) {
-                                        Text(state.service.displayName)
+                                        Text(state.displayName)
                                             .font(.headline)
                                         Spacer()
                                         Text(state.badgeTitle)
@@ -492,7 +492,7 @@ public struct ChatSettingsView: View {
                                         .font(.subheadline)
                                         .foregroundColor(.secondary)
 
-                                    if let reason = viewModel.unavailableReason(for: state.service) {
+                                    if let reason = viewModel.unavailableReason(for: state) {
                                         Text(reason)
                                             .font(.caption)
                                             .foregroundColor(.secondary)
@@ -1128,8 +1128,8 @@ extension ChatSettingsView {
             accessManager.statesForAccessUI()
         }
 
-        func unavailableReason(for service: APIService) -> String? {
-            accessManager.unavailableReason(for: service)
+        func unavailableReason(for state: ProviderAccessState) -> String? {
+            accessManager.unavailableReason(for: state)
         }
 
         var accessButtonTitle: String {

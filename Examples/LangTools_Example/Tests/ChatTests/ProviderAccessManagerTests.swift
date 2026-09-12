@@ -52,7 +52,7 @@ final class ProviderAccessManagerTests: XCTestCase {
         XCTAssertEqual(models.first?.rawValue, "codex/gpt-5.5")
     }
 
-    func testOpenAIAccountSessionWithoutAccessibleModelIDsFallsBackToCodexModels() throws {
+    func testOpenAIAccountSessionWithoutAccessibleModelIDsExposesNoCodexModels() throws {
         let session = AccountSession(
             provider: .openAI,
             accountIdentifier: "openai-user",
@@ -64,7 +64,23 @@ final class ProviderAccessManagerTests: XCTestCase {
         accessManager.refresh()
 
         let modelIDs = accessManager.state(for: .openAI).availableModels.map(\.rawValue)
-        XCTAssertEqual(modelIDs, ["codex/gpt-5.5", "codex/gpt-5.4", "codex/gpt-5.4-mini", "codex/gpt-5.3-codex-spark"])
+        XCTAssertEqual(modelIDs, [])
+    }
+
+    func testAccessUIPresentsOpenAIPlatformAndCodexSeparately() throws {
+        keychainService.saveApiKey(apiKey: "sk-test", for: .openAI)
+        try sessionStore.save(AccountSession(
+            provider: .openAI,
+            accountIdentifier: "openai-user",
+            accessToken: "token",
+            accessibleModelIDs: ["gpt-5.5"]
+        ))
+        accessManager.refresh()
+
+        let openAIStates = accessManager.statesForAccessUI().filter { $0.service == .openAI }
+        XCTAssertEqual(openAIStates.map(\.displayName), ["OpenAI Platform", "Codex Subscription"])
+        XCTAssertEqual(openAIStates[0].availableModels.map(\.rawValue).filter { $0 == "openai/gpt-5.5" }, ["openai/gpt-5.5"])
+        XCTAssertEqual(openAIStates[1].availableModels.map(\.rawValue), ["codex/gpt-5.5"])
     }
 
     func testOpenAIAPIKeyAndCodexSessionShowSeparateModelEntries() throws {

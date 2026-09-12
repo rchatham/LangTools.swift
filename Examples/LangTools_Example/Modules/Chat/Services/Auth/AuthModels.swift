@@ -96,22 +96,35 @@ public enum ProviderAuthStatus: Equatable {
     case apiKeyAndAccount(AccountLoginProvider)
 }
 
-public struct ProviderAccessState: Equatable {
+public struct ProviderAccessState: Equatable, Identifiable {
     public let service: APIService
+    public let route: ModelRoute?
     public let authStatus: ProviderAuthStatus
     public let availableModels: [Model]
     public let accountIdentifier: String?
 
     public init(
         service: APIService,
+        route: ModelRoute? = nil,
         authStatus: ProviderAuthStatus,
         availableModels: [Model],
         accountIdentifier: String? = nil
     ) {
         self.service = service
+        self.route = route
         self.authStatus = authStatus
         self.availableModels = availableModels
         self.accountIdentifier = accountIdentifier
+    }
+
+    public var id: String { route?.rawValue ?? service.rawValue }
+
+    public var displayName: String {
+        switch route {
+        case .openAI: return "OpenAI Platform"
+        case .codex: return "Codex Subscription"
+        default: return service.displayName
+        }
     }
 
     public var hasAPIKey: Bool {

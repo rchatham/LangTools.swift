@@ -47,7 +47,7 @@ public final class CodexHelperClient: CodexHelperClientProtocol {
         request.setValue("Bearer \(configuration.codexHelperToken)", forHTTPHeaderField: "Authorization")
         request.httpBody = try encoder.encode(HelperAuthRequest(provider: .openAI))
 
-        let (data, response) = try await data(for: request)
+        let (data, _) = try await data(for: request)
         return try decoder.decode(AccountSession.self, from: data)
     }
 

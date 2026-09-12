@@ -90,21 +90,47 @@ public final class ProviderAccessManager: ObservableObject {
     }
 
     public func statesForAccessUI() -> [ProviderAccessState] {
-        APIService.allCases
-            .filter { $0 != .ollama && $0 != .serper }
+        let openAIState = state(for: .openAI)
+        let platform = ProviderAccessState(
+            service: .openAI,
+            route: .openAI,
+            authStatus: openAIState.hasAPIKey ? .apiKeyConfigured : .notConfigured,
+            availableModels: openAIState.availableModels.filter { $0.route == .openAI }
+        )
+        let session = self.session(for: .openAI)
+        let codex = ProviderAccessState(
+            service: .openAI,
+            route: .codex,
+            authStatus: session.map { .accountConnected($0.provider) } ?? .notConfigured,
+            availableModels: openAIState.availableModels.filter { $0.route == .codex },
+            accountIdentifier: session?.accountIdentifier
+        )
+        let otherProviders = APIService.allCases
+            .filter { $0 != .openAI && $0 != .ollama && $0 != .serper }
             .map(state(for:))
+        return [platform, codex] + otherProviders
+    }
+
+    public func unavailableReason(for state: ProviderAccessState) -> String? {
+        guard state.service != .ollama, state.service != .serper else { return nil }
+        if state.authStatus == .notConfigured {
+            switch state.route {
+            case .openAI:
+                return "Add an OpenAI API key to show Platform API models."
+            case .codex:
+                return "Connect the Codex helper and sign in to show subscription models."
+            default:
+                return "Connect \(state.displayName) to show its models."
+            }
+        }
+        if state.availableModels.isEmpty {
+            return "\(state.displayName) is connected, but no chat models are currently available."
+        }
+        return nil
     }
 
     public func unavailableReason(for service: APIService) -> String? {
-        let state = state(for: service)
-        guard service != .ollama, service != .serper else { return nil }
-        if state.authStatus == .notConfigured {
-            return "Connect \(service.displayName) with an API key or account to show its models."
-        }
-        if state.availableModels.isEmpty {
-            return "\(service.displayName) is connected, but no chat models are currently available."
-        }
-        return nil
+        unavailableReason(for: state(for: service))
     }
 
     private func authStatus(apiKey: String?, session: AccountSession?) -> ProviderAuthStatus {
@@ -142,18 +168,7 @@ public final class ProviderAccessManager: ObservableObject {
             case .anthropic, .xAI, .gemini, .ollama, .serper:
                 parsed = session.accessibleModelIDs.compactMap(Model.init(rawValue:))
             }
-            if parsed.isEmpty == false {
-                return parsed
-            }
-            if service == .openAI {
-                return [
-                    .codex(.gpt5_5),
-                    .codex(.gpt5_4),
-                    .codex(.gpt5_4_mini),
-                    .codex(.gpt53_codex_spark),
-                ]
-            }
-            return []
+            return parsed
         }()
 
         let platformModels: [Model] = {
