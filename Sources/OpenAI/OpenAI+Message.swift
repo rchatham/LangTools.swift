@@ -350,9 +350,9 @@ public extension OpenAI {
 
             public init(from decoder: Decoder) throws {
                 let container = try decoder.singleValueContainer()
-                if let str = try? container.decode(String.self) { self = .string(str) }
+                if container.decodeNil() { self = .null }
+                else if let str = try? container.decode(String.self) { self = .string(str) }
                 else if let arr = try? container.decode([ContentType].self) { self = .array(arr) }
-                else if container.decodeNil() { self = .null }
                 else { throw DecodingError.typeMismatch(Content.self, DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Unknown content type")) }
             }
 
