@@ -1,0 +1,755 @@
+{
+  "command": "LANGTOOLS_ENABLE_EXTENDED_TESTS=1 Scripts/run-extended-tests.sh --filter BenchmarkTests -v",
+  "environment": {
+    "note": "XCTest measure averages from a local debug SwiftPM run with optional competitor packages temporarily enabled. Lower is better. Values are wall-clock seconds per XCTest measure block, not per single operation; each benchmark test loops internally. MacPaw/OpenAI is imported through a SwiftPM module alias as MacPawOpenAI. OpenAISwift coverage reflects the public/internal models available from that package and is not feature-equivalent for tool call decoding.",
+    "platform": "arm64e-apple-macos14.0",
+    "swiftTestingLibraryVersion": "1501"
+  },
+  "generatedAt": "2026-09-12T18:59:16.346261+00:00",
+  "ratios": {
+    "Anthropic": {
+      "decodeResponse.LangToolsOverFoundation.JSONSerialization": 2.9119779081808774,
+      "decodeResponse.LangToolsOverSwiftAnthropic": 0.8897983292549152,
+      "decodeToolUseResponse.LangToolsOverSwiftAnthropic": 0.8810711709545563,
+      "encodeLargeConversation.LangToolsOverSwiftAnthropic": 1.2091104399539185,
+      "encodeRequest.LangToolsOverSwiftAnthropic": 0.9921061614610003,
+      "messageConstruction.LangToolsOverSwiftAnthropic": 1.0347277032359903
+    },
+    "OpenAI": {
+      "decodeResponse.LangToolsOverFoundation.JSONSerialization": 1.9918982668444263,
+      "decodeResponse.LangToolsOverMacPawOpenAI": 0.9703494616941024,
+      "decodeResponse.LangToolsOverOpenAISwift": 1.17658105161134,
+      "decodeResponse.LangToolsOverSwiftOpenAI": 0.8089209112490108,
+      "decodeStreamChunk.LangToolsOverMacPawOpenAI": 0.9132057042391091,
+      "decodeStreamChunk.LangToolsOverSwiftOpenAI": 0.9949980843727385,
+      "decodeToolCallResponse.LangToolsOverMacPawOpenAI": 0.9945453512377128,
+      "decodeToolCallResponse.LangToolsOverOpenAISwift": 1.7116826390247082,
+      "decodeToolCallResponse.LangToolsOverSwiftOpenAI": 0.9559969414506263,
+      "encodeLargeConversation.LangToolsOverMacPawOpenAI": 0.915766978155462,
+      "encodeLargeConversation.LangToolsOverOpenAISwift": 1.4752594228551938,
+      "encodeLargeConversation.LangToolsOverSwiftOpenAI": 1.1550980965580377,
+      "encodeRequest.LangToolsOverMacPawOpenAI": 0.8950948555802426,
+      "encodeRequest.LangToolsOverOpenAISwift": 1.2876671911880408,
+      "encodeRequest.LangToolsOverSwiftOpenAI": 0.9233427362482369,
+      "messageConstruction.LangToolsOverSwiftOpenAI": 0.5957446808510639
+    }
+  },
+  "results": {
+    "Anthropic": {
+      "decodeResponse": {
+        "Foundation.JSONSerialization": {
+          "averageSeconds": 0.0014485,
+          "medianSeconds": 0.001434,
+          "sampleCount": 10,
+          "stddevSeconds": 9.157101069661729e-05,
+          "valuesSeconds": [
+            0.001699,
+            0.0015,
+            0.001447,
+            0.001442,
+            0.001444,
+            0.001426,
+            0.00138,
+            0.001381,
+            0.001378,
+            0.001388
+          ],
+          "xctestPrintedAverageSeconds": 0.001
+        },
+        "LangTools": {
+          "averageSeconds": 0.004218,
+          "medianSeconds": 0.004097,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0003331579205121798,
+          "valuesSeconds": [
+            0.005036,
+            0.004516,
+            0.004371,
+            0.004263,
+            0.004095,
+            0.004012,
+            0.003936,
+            0.003877,
+            0.003975,
+            0.004099
+          ],
+          "xctestPrintedAverageSeconds": 0.004
+        },
+        "SwiftAnthropic": {
+          "averageSeconds": 0.0047404000000000005,
+          "medianSeconds": 0.004523,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0006220362047340974,
+          "valuesSeconds": [
+            0.006136,
+            0.005177,
+            0.005221,
+            0.005083,
+            0.004615,
+            0.004431,
+            0.004309,
+            0.004243,
+            0.004135,
+            0.004054
+          ],
+          "xctestPrintedAverageSeconds": 0.005
+        }
+      },
+      "decodeToolUseResponse": {
+        "LangTools": {
+          "averageSeconds": 0.0087945,
+          "medianSeconds": 0.008556999999999999,
+          "sampleCount": 10,
+          "stddevSeconds": 0.00044125463170373655,
+          "valuesSeconds": [
+            0.009517,
+            0.008598,
+            0.008451,
+            0.008516,
+            0.008459,
+            0.008431,
+            0.008497,
+            0.009438,
+            0.009433,
+            0.008605
+          ],
+          "xctestPrintedAverageSeconds": 0.009
+        },
+        "SwiftAnthropic": {
+          "averageSeconds": 0.0099816,
+          "medianSeconds": 0.0095495,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0009908997123826409,
+          "valuesSeconds": [
+            0.012314,
+            0.010723,
+            0.010456,
+            0.010557,
+            0.009898,
+            0.009189,
+            0.009158,
+            0.009162,
+            0.009201,
+            0.009158
+          ],
+          "xctestPrintedAverageSeconds": 0.01
+        }
+      },
+      "encodeLargeConversation": {
+        "LangTools": {
+          "averageSeconds": 0.0077666,
+          "medianSeconds": 0.0071874999999999994,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0010664685836910528,
+          "valuesSeconds": [
+            0.009908,
+            0.009424,
+            0.008534,
+            0.007665,
+            0.007323,
+            0.007052,
+            0.006939,
+            0.006966,
+            0.006939,
+            0.006916
+          ],
+          "xctestPrintedAverageSeconds": 0.008
+        },
+        "SwiftAnthropic": {
+          "averageSeconds": 0.0064234,
+          "medianSeconds": 0.0064285,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0004193011328389182,
+          "valuesSeconds": [
+            0.007309,
+            0.006799,
+            0.006515,
+            0.006203,
+            0.006049,
+            0.005893,
+            0.006342,
+            0.006576,
+            0.006648,
+            0.0059
+          ],
+          "xctestPrintedAverageSeconds": 0.006
+        }
+      },
+      "encodeRequest": {
+        "LangTools": {
+          "averageSeconds": 0.0023251,
+          "medianSeconds": 0.002293,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0001373808210777618,
+          "valuesSeconds": [
+            0.002613,
+            0.002481,
+            0.002395,
+            0.002383,
+            0.0023,
+            0.002286,
+            0.002268,
+            0.002189,
+            0.002169,
+            0.002167
+          ],
+          "xctestPrintedAverageSeconds": 0.002
+        },
+        "SwiftAnthropic": {
+          "averageSeconds": 0.0023436,
+          "medianSeconds": 0.0023395,
+          "sampleCount": 10,
+          "stddevSeconds": 0.00033956595824670053,
+          "valuesSeconds": [
+            0.003201,
+            0.0025,
+            0.002434,
+            0.002374,
+            0.00237,
+            0.002266,
+            0.002309,
+            0.002073,
+            0.001969,
+            0.00194
+          ],
+          "xctestPrintedAverageSeconds": 0.002
+        }
+      },
+      "messageConstruction": {
+        "LangTools": {
+          "averageSeconds": 0.0001311,
+          "medianSeconds": 0.00012849999999999998,
+          "sampleCount": 10,
+          "stddevSeconds": 7.7517739905134e-06,
+          "valuesSeconds": [
+            0.000154,
+            0.00013,
+            0.000129,
+            0.00013,
+            0.000131,
+            0.000128,
+            0.000127,
+            0.000127,
+            0.000128,
+            0.000127
+          ],
+          "xctestPrintedAverageSeconds": 0.0
+        },
+        "SwiftAnthropic": {
+          "averageSeconds": 0.00012670000000000002,
+          "medianSeconds": 0.000124,
+          "sampleCount": 10,
+          "stddevSeconds": 7.5239617223906695e-06,
+          "valuesSeconds": [
+            0.000148,
+            0.000122,
+            0.000122,
+            0.000122,
+            0.000131,
+            0.000125,
+            0.000124,
+            0.000124,
+            0.000125,
+            0.000124
+          ],
+          "xctestPrintedAverageSeconds": 0.0
+        }
+      },
+      "roundTrip": {
+        "LangTools": {
+          "averageSeconds": 0.001885,
+          "medianSeconds": 0.001815,
+          "sampleCount": 10,
+          "stddevSeconds": 0.00016358239514079742,
+          "valuesSeconds": [
+            0.002322,
+            0.002023,
+            0.001886,
+            0.001882,
+            0.001817,
+            0.001813,
+            0.001792,
+            0.001771,
+            0.001789,
+            0.001755
+          ],
+          "xctestPrintedAverageSeconds": 0.002
+        }
+      },
+      "streamLineDecode": {
+        "LangTools": {
+          "averageSeconds": 0.0425425,
+          "medianSeconds": 0.042308,
+          "sampleCount": 10,
+          "stddevSeconds": 0.001521270209397396,
+          "valuesSeconds": [
+            0.046575,
+            0.042024,
+            0.043362,
+            0.042145,
+            0.042572,
+            0.041227,
+            0.042694,
+            0.040792,
+            0.042471,
+            0.041563
+          ],
+          "xctestPrintedAverageSeconds": 0.043
+        }
+      }
+    },
+    "OpenAI": {
+      "decodeResponse": {
+        "Foundation.JSONSerialization": {
+          "averageSeconds": 0.0019501999999999998,
+          "medianSeconds": 0.0019495,
+          "sampleCount": 10,
+          "stddevSeconds": 0.00014737353900887363,
+          "valuesSeconds": [
+            0.00225,
+            0.002036,
+            0.002026,
+            0.002045,
+            0.001948,
+            0.001951,
+            0.001936,
+            0.001826,
+            0.001704,
+            0.00178
+          ],
+          "xctestPrintedAverageSeconds": 0.002
+        },
+        "LangTools": {
+          "averageSeconds": 0.0038845999999999998,
+          "medianSeconds": 0.0037935,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0003338455331436981,
+          "valuesSeconds": [
+            0.004582,
+            0.004318,
+            0.004061,
+            0.003968,
+            0.00385,
+            0.003737,
+            0.003663,
+            0.003616,
+            0.003533,
+            0.003518
+          ],
+          "xctestPrintedAverageSeconds": 0.004
+        },
+        "MacPawOpenAI": {
+          "averageSeconds": 0.0040033,
+          "medianSeconds": 0.0038120000000000003,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0004883660614743823,
+          "valuesSeconds": [
+            0.005414,
+            0.004138,
+            0.004026,
+            0.003839,
+            0.003785,
+            0.003682,
+            0.003736,
+            0.003876,
+            0.003784,
+            0.003753
+          ],
+          "xctestPrintedAverageSeconds": 0.004
+        },
+        "OpenAISwift": {
+          "averageSeconds": 0.0033015999999999996,
+          "medianSeconds": 0.003195,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0003633205746995345,
+          "valuesSeconds": [
+            0.004333,
+            0.003433,
+            0.003332,
+            0.003217,
+            0.003186,
+            0.003093,
+            0.003054,
+            0.003024,
+            0.00314,
+            0.003204
+          ],
+          "xctestPrintedAverageSeconds": 0.003
+        },
+        "SwiftOpenAI": {
+          "averageSeconds": 0.0048022,
+          "medianSeconds": 0.0047385,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0006143495421989016,
+          "valuesSeconds": [
+            0.006419,
+            0.005106,
+            0.00495,
+            0.004706,
+            0.004851,
+            0.004771,
+            0.004393,
+            0.004423,
+            0.004218,
+            0.004185
+          ],
+          "xctestPrintedAverageSeconds": 0.005
+        }
+      },
+      "decodeStreamChunk": {
+        "LangTools": {
+          "averageSeconds": 0.0046746999999999995,
+          "medianSeconds": 0.004608,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0003144461957155788,
+          "valuesSeconds": [
+            0.005355,
+            0.004955,
+            0.004789,
+            0.004928,
+            0.004635,
+            0.004581,
+            0.004392,
+            0.004398,
+            0.004384,
+            0.00433
+          ],
+          "xctestPrintedAverageSeconds": 0.005
+        },
+        "MacPawOpenAI": {
+          "averageSeconds": 0.005119,
+          "medianSeconds": 0.0050605,
+          "sampleCount": 10,
+          "stddevSeconds": 0.00017183596829534845,
+          "valuesSeconds": [
+            0.005633,
+            0.005091,
+            0.005053,
+            0.00504,
+            0.005053,
+            0.005062,
+            0.005074,
+            0.005059,
+            0.005069,
+            0.005056
+          ],
+          "xctestPrintedAverageSeconds": 0.005
+        },
+        "SwiftOpenAI": {
+          "averageSeconds": 0.0046982,
+          "medianSeconds": 0.004565,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0004153990370715849,
+          "valuesSeconds": [
+            0.005744,
+            0.005049,
+            0.00486,
+            0.00471,
+            0.004647,
+            0.004483,
+            0.004442,
+            0.004335,
+            0.004326,
+            0.004386
+          ],
+          "xctestPrintedAverageSeconds": 0.005
+        }
+      },
+      "decodeToolCallResponse": {
+        "LangTools": {
+          "averageSeconds": 0.0052511,
+          "medianSeconds": 0.0052365,
+          "sampleCount": 10,
+          "stddevSeconds": 0.00038220686807015916,
+          "valuesSeconds": [
+            0.006006,
+            0.005607,
+            0.005353,
+            0.005235,
+            0.005226,
+            0.00538,
+            0.005238,
+            0.005167,
+            0.004701,
+            0.004598
+          ],
+          "xctestPrintedAverageSeconds": 0.005
+        },
+        "MacPawOpenAI": {
+          "averageSeconds": 0.0052799,
+          "medianSeconds": 0.0049605,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0007246998620118538,
+          "valuesSeconds": [
+            0.006946,
+            0.006132,
+            0.005756,
+            0.005205,
+            0.005014,
+            0.004907,
+            0.00478,
+            0.004707,
+            0.004662,
+            0.00469
+          ],
+          "xctestPrintedAverageSeconds": 0.005
+        },
+        "OpenAISwift": {
+          "averageSeconds": 0.0030678,
+          "medianSeconds": 0.0029744999999999997,
+          "sampleCount": 10,
+          "stddevSeconds": 0.00028444640971543307,
+          "valuesSeconds": [
+            0.003817,
+            0.003239,
+            0.003155,
+            0.003107,
+            0.002999,
+            0.00295,
+            0.002918,
+            0.002834,
+            0.002835,
+            0.002824
+          ],
+          "xctestPrintedAverageSeconds": 0.003
+        },
+        "SwiftOpenAI": {
+          "averageSeconds": 0.0054928,
+          "medianSeconds": 0.0052105,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0006343695768241096,
+          "valuesSeconds": [
+            0.007068,
+            0.006176,
+            0.005737,
+            0.005382,
+            0.005279,
+            0.005142,
+            0.005057,
+            0.005035,
+            0.005015,
+            0.005037
+          ],
+          "xctestPrintedAverageSeconds": 0.005
+        }
+      },
+      "encodeLargeConversation": {
+        "LangTools": {
+          "averageSeconds": 0.009084499999999999,
+          "medianSeconds": 0.0091045,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0006078268256666532,
+          "valuesSeconds": [
+            0.009288,
+            0.009772,
+            0.009672,
+            0.008756,
+            0.008258,
+            0.008392,
+            0.008921,
+            0.009714,
+            0.00979,
+            0.008282
+          ],
+          "xctestPrintedAverageSeconds": 0.009
+        },
+        "MacPawOpenAI": {
+          "averageSeconds": 0.0099201,
+          "medianSeconds": 0.0095535,
+          "sampleCount": 10,
+          "stddevSeconds": 0.000600069237671787,
+          "valuesSeconds": [
+            0.011118,
+            0.009998,
+            0.009565,
+            0.009542,
+            0.009374,
+            0.009511,
+            0.010714,
+            0.010496,
+            0.009391,
+            0.009492
+          ],
+          "xctestPrintedAverageSeconds": 0.01
+        },
+        "OpenAISwift": {
+          "averageSeconds": 0.0061579,
+          "medianSeconds": 0.005881,
+          "sampleCount": 10,
+          "stddevSeconds": 0.000556857513193456,
+          "valuesSeconds": [
+            0.00764,
+            0.006633,
+            0.006268,
+            0.006062,
+            0.005903,
+            0.005796,
+            0.005859,
+            0.005822,
+            0.005792,
+            0.005804
+          ],
+          "xctestPrintedAverageSeconds": 0.006
+        },
+        "SwiftOpenAI": {
+          "averageSeconds": 0.007864699999999999,
+          "medianSeconds": 0.007801000000000001,
+          "sampleCount": 10,
+          "stddevSeconds": 0.00042349003530189465,
+          "valuesSeconds": [
+            0.008546,
+            0.008035,
+            0.007711,
+            0.007445,
+            0.007891,
+            0.008599,
+            0.008072,
+            0.007444,
+            0.007451,
+            0.007453
+          ],
+          "xctestPrintedAverageSeconds": 0.008
+        }
+      },
+      "encodeRequest": {
+        "LangTools": {
+          "averageSeconds": 0.0026186,
+          "medianSeconds": 0.002593,
+          "sampleCount": 10,
+          "stddevSeconds": 0.00013050226051682017,
+          "valuesSeconds": [
+            0.002878,
+            0.002762,
+            0.00269,
+            0.002688,
+            0.002645,
+            0.002541,
+            0.002535,
+            0.002523,
+            0.00248,
+            0.002444
+          ],
+          "xctestPrintedAverageSeconds": 0.003
+        },
+        "MacPawOpenAI": {
+          "averageSeconds": 0.0029255,
+          "medianSeconds": 0.002793,
+          "sampleCount": 10,
+          "stddevSeconds": 0.00039339757243785843,
+          "valuesSeconds": [
+            0.004092,
+            0.002908,
+            0.002882,
+            0.002746,
+            0.002744,
+            0.002833,
+            0.002753,
+            0.0028,
+            0.002786,
+            0.002711
+          ],
+          "xctestPrintedAverageSeconds": 0.003
+        },
+        "OpenAISwift": {
+          "averageSeconds": 0.0020336,
+          "medianSeconds": 0.0019605,
+          "sampleCount": 10,
+          "stddevSeconds": 0.00022848290964533872,
+          "valuesSeconds": [
+            0.002677,
+            0.0021,
+            0.002089,
+            0.002001,
+            0.001966,
+            0.001955,
+            0.001932,
+            0.001869,
+            0.001881,
+            0.001866
+          ],
+          "xctestPrintedAverageSeconds": 0.002
+        },
+        "SwiftOpenAI": {
+          "averageSeconds": 0.002836,
+          "medianSeconds": 0.0027495,
+          "sampleCount": 10,
+          "stddevSeconds": 0.00042266062035633265,
+          "valuesSeconds": [
+            0.003958,
+            0.002988,
+            0.002975,
+            0.002888,
+            0.002607,
+            0.002726,
+            0.002773,
+            0.002633,
+            0.002444,
+            0.002368
+          ],
+          "xctestPrintedAverageSeconds": 0.003
+        }
+      },
+      "messageConstruction": {
+        "LangTools": {
+          "averageSeconds": 0.00021280000000000002,
+          "medianSeconds": 0.000215,
+          "sampleCount": 10,
+          "stddevSeconds": 7.304792947099871e-06,
+          "valuesSeconds": [
+            0.000223,
+            0.000216,
+            0.00021,
+            0.000215,
+            0.000215,
+            0.000216,
+            0.000214,
+            0.000218,
+            0.000206,
+            0.000195
+          ],
+          "xctestPrintedAverageSeconds": 0.0
+        },
+        "SwiftOpenAI": {
+          "averageSeconds": 0.0003572,
+          "medianSeconds": 0.000353,
+          "sampleCount": 10,
+          "stddevSeconds": 1.3789851340750566e-05,
+          "valuesSeconds": [
+            0.00036,
+            0.000346,
+            0.000371,
+            0.000369,
+            0.000382,
+            0.000368,
+            0.000346,
+            0.000345,
+            0.000342,
+            0.000343
+          ],
+          "xctestPrintedAverageSeconds": 0.0
+        }
+      },
+      "roundTrip": {
+        "LangTools": {
+          "averageSeconds": 0.0023319,
+          "medianSeconds": 0.002324,
+          "sampleCount": 10,
+          "stddevSeconds": 0.0001137589117388172,
+          "valuesSeconds": [
+            0.002578,
+            0.002441,
+            0.002401,
+            0.00232,
+            0.002328,
+            0.002353,
+            0.002273,
+            0.002237,
+            0.002217,
+            0.002171
+          ],
+          "xctestPrintedAverageSeconds": 0.002
+        }
+      }
+    }
+  }
+}

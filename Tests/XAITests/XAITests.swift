@@ -26,13 +26,13 @@ class XAITests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
 
     func testXAIChatCompletion() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try OpenAI.ChatCompletionResponse(
                 id: "xai-test-id",
                 object: "chat.completion",
@@ -62,7 +62,7 @@ class XAITests: XCTestCase {
     }
 
     func testXAIChatStream() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try OpenAI.ChatCompletionResponse(
                 id: "xai-stream-id",
                 object: "chat.completion.chunk",
@@ -124,7 +124,7 @@ class XAITests: XCTestCase {
     }
 
     func testGrokVisionModel() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try OpenAI.ChatCompletionResponse(
                 id: "grok-vision-id",
                 object: "chat.completion",

@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LangTools Performance Snapshot</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --border: #374151;
+      --brand: #60a5fa;
+      --good: #34d399;
+      --warn: #fbbf24;
+      --bad: #fb7185;
+      --foundation: #94a3b8;
+      --shadow: rgba(0, 0, 0, 0.25);
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f8fafc;
+        --panel: #ffffff;
+        --panel-2: #f1f5f9;
+        --text: #0f172a;
+        --muted: #475569;
+        --border: #cbd5e1;
+        --shadow: rgba(15, 23, 42, 0.08);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top left, rgba(96, 165, 250, 0.20), transparent 36rem), var(--bg);
+      color: var(--text);
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 48px 0 72px;
+    }
+
+    header {
+      display: grid;
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { font-size: clamp(2.2rem, 5vw, 4.25rem); line-height: 1; letter-spacing: -0.05em; margin-bottom: 8px; }
+    h2 { font-size: 1.45rem; margin-bottom: 16px; }
+    h3 { font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+
+    .lede {
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 1.1rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+
+    .card, section {
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      box-shadow: 0 20px 48px var(--shadow);
+    }
+
+    .card { padding: 22px; }
+    section { padding: 24px; margin-top: 20px; }
+
+    .metric {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin: 8px 0;
+    }
+
+    .metric strong { font-size: 2.25rem; letter-spacing: -0.04em; }
+    .metric span { color: var(--muted); }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 4px 10px;
+      color: var(--muted);
+      background: var(--panel-2);
+      font-size: 0.85rem;
+    }
+
+    .badge.good { color: var(--good); }
+    .badge.warn { color: var(--warn); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 14px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: var(--panel-2);
+    }
+
+    tr:last-child td { border-bottom: 0; }
+    code { color: var(--brand); }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: minmax(190px, 260px) 1fr minmax(92px, max-content);
+      gap: 12px;
+      align-items: center;
+      margin: 14px 0;
+    }
+
+    @media (max-width: 720px) {
+      .bar-row { grid-template-columns: 1fr; }
+    }
+
+    .track {
+      height: 16px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .track::before {
+      content: "Foundation 1.0×";
+      position: absolute;
+      top: -1px;
+      bottom: -1px;
+      left: 15.625%;
+      width: 2px;
+      background: var(--foundation);
+      opacity: 0.9;
+    }
+
+    .bar {
+      height: 100%;
+      min-width: 2px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--brand), #818cf8);
+    }
+
+    .bar.fast { background: linear-gradient(90deg, var(--good), #22c55e); }
+    .bar.warn { background: linear-gradient(90deg, var(--warn), #fb923c); }
+
+    .note {
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin-bottom: 0;
+    }
+
+    .callout {
+      border-left: 4px solid var(--brand);
+      padding: 14px 16px;
+      background: var(--panel-2);
+      border-radius: 12px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="badge good">LangTools performance snapshot</span>
+      <h1>Current benchmark values and comparison coverage</h1>
+      <p class="lede">
+        This page summarizes the current ratio-gated performance values introduced by PR #32.
+        The ratios compare LangTools hot paths against a Foundation <code>JSONSerialization</code>
+        baseline over the same payload in the same run. Lower is better; <code>1.0×</code> means equal
+        to the Foundation baseline.
+      </p>
+    </header>
+
+    <div class="grid" aria-label="Headline performance values">
+      <article class="card">
+        <h3>OpenAI response combining</h3>
+        <div class="metric"><strong>0.17×</strong><span>observed</span></div>
+        <p class="note">About 5.9× faster than the Foundation parse baseline in the latest local gate run.</p>
+      </article>
+      <article class="card">
+        <h3>OpenAI many choices decode</h3>
+        <div class="metric"><strong>4.41×</strong><span>observed</span></div>
+        <p class="note">Typed decoding cost for a many-choice payload, compared with raw JSON parsing.</p>
+      </article>
+      <article class="card">
+        <h3>OpenAI large conversation encode</h3>
+        <div class="metric"><strong>3.54×</strong><span>observed</span></div>
+        <p class="note">Typed request encoding for a large conversation, compared with raw JSON generation.</p>
+      </article>
+    </div>
+
+    <section>
+      <h2>Current ratio gate values</h2>
+      <div class="bar-row">
+        <strong>OpenAI response combining</strong>
+        <div class="track" aria-label="0.17 times Foundation baseline"><div class="bar fast" style="width: 2.7%"></div></div>
+        <span><strong>0.17×</strong> / ceiling 0.50×</span>
+      </div>
+      <div class="bar-row">
+        <strong>OpenAI many choices decode</strong>
+        <div class="track" aria-label="4.41 times Foundation baseline"><div class="bar warn" style="width: 68.9%"></div></div>
+        <span><strong>4.41×</strong> / ceiling 6.22×</span>
+      </div>
+      <div class="bar-row">
+        <strong>OpenAI large conversation encode</strong>
+        <div class="track" aria-label="3.54 times Foundation baseline"><div class="bar" style="width: 55.3%"></div></div>
+        <span><strong>3.54×</strong> / ceiling 4.88×</span>
+      </div>
+      <p class="note">
+        Observed locally with <code>Scripts/run-extended-tests.sh --filter PerformanceRatioGateTests</code>
+        on arm64 macOS. Committed ceilings come from <code>Tests/PerformanceTestUtils/ratios.json</code>.
+      </p>
+    </section>
+
+    <section>
+      <h2>How LangTools compares</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Library / baseline</th>
+            <th>Role in benchmark suite</th>
+            <th>Current recorded value</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>LangTools</strong></td>
+            <td>Typed provider models and request/response encoding.</td>
+            <td>0.17×–4.41× vs Foundation for currently gated OpenAI hot paths.</td>
+            <td>Always runs in the ratio gate; benchmark suites also cover OpenAI and Anthropic operations.</td>
+          </tr>
+          <tr>
+            <td><strong>Foundation JSONSerialization</strong></td>
+            <td>Raw JSON baseline.</td>
+            <td>1.00× baseline.</td>
+            <td>No provider type safety; useful as a stable same-process normalization point.</td>
+          </tr>
+          <tr>
+            <td><strong>SwiftOpenAI</strong></td>
+            <td>Optional OpenAI competitor benchmark.</td>
+            <td>Recorded in <code>docs/benchmark-results.json</code>.</td>
+            <td>Temporarily enabled for the 2026-09-12 snapshot, then disabled again so competitor packages remain opt-in.</td>
+          </tr>
+          <tr>
+            <td><strong>SwiftAnthropic</strong></td>
+            <td>Optional Anthropic competitor benchmark.</td>
+            <td>Recorded in <code>docs/benchmark-results.json</code>.</td>
+            <td>Temporarily enabled for the 2026-09-12 snapshot, then disabled again so competitor packages remain opt-in.</td>
+          </tr>
+          <tr>
+            <td><strong>MacPaw/OpenAI</strong></td>
+            <td>Optional OpenAI competitor benchmark imported with a SwiftPM module alias.</td>
+            <td>Recorded in <code>docs/benchmark-results.json</code>.</td>
+            <td>Temporarily enabled for the 2026-09-12 snapshot, then disabled again so competitor packages remain opt-in.</td>
+          </tr>
+          <tr>
+            <td><strong>OpenAISwift</strong></td>
+            <td>Optional OpenAI competitor benchmark.</td>
+            <td>Recorded in <code>docs/benchmark-results.json</code>.</td>
+            <td>OpenAISwift models are not feature-equivalent for tool call decoding; use those numbers as limited-shape comparisons.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Competitor benchmark snapshot</h2>
+      <p class="note">
+        Local debug SwiftPM run from 2026-09-12 using <code>Scripts/run-extended-tests.sh --filter BenchmarkTests -v</code>.
+        Values are XCTest wall-clock averages per measure block; lower is better. Raw values and LangTools/competitor ratios are recorded in <code>docs/benchmark-results.json</code>.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Operation</th>
+            <th>LangTools</th>
+            <th>Competitor</th>
+            <th>Comparison</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>OpenAI</td><td>Decode response</td><td>3.885 ms</td><td>OpenAISwift 3.302 ms; MacPaw/OpenAI 4.003 ms; SwiftOpenAI 4.802 ms</td><td>OpenAISwift fastest; LangTools ahead of MacPaw/OpenAI and SwiftOpenAI</td></tr>
+          <tr><td>OpenAI</td><td>Decode tool call response</td><td>5.251 ms</td><td>OpenAISwift 3.068 ms; MacPaw/OpenAI 5.280 ms; SwiftOpenAI 5.493 ms</td><td>OpenAISwift fastest, but it does not model tool calls equivalently; LangTools roughly even with MacPaw/OpenAI and SwiftOpenAI</td></tr>
+          <tr><td>OpenAI</td><td>Decode stream chunk</td><td>4.675 ms</td><td>SwiftOpenAI 4.698 ms; MacPaw/OpenAI 5.119 ms</td><td>roughly even with SwiftOpenAI; faster than MacPaw/OpenAI</td></tr>
+          <tr><td>OpenAI</td><td>Encode request</td><td>2.619 ms</td><td>OpenAISwift 2.034 ms; SwiftOpenAI 2.836 ms; MacPaw/OpenAI 2.925 ms</td><td>OpenAISwift fastest; LangTools ahead of SwiftOpenAI and MacPaw/OpenAI</td></tr>
+          <tr><td>OpenAI</td><td>Encode large conversation</td><td>9.084 ms</td><td>OpenAISwift 6.158 ms; SwiftOpenAI 7.865 ms; MacPaw/OpenAI 9.920 ms</td><td>OpenAISwift and SwiftOpenAI faster; LangTools faster than MacPaw/OpenAI</td></tr>
+          <tr><td>OpenAI</td><td>Message construction</td><td>0.213 ms</td><td>SwiftOpenAI 0.357 ms</td><td>LangTools 40% faster</td></tr>
+          <tr><td>Anthropic</td><td>Decode response</td><td>4.218 ms</td><td>SwiftAnthropic 4.740 ms</td><td>LangTools 11% faster</td></tr>
+          <tr><td>Anthropic</td><td>Decode tool use response</td><td>8.795 ms</td><td>SwiftAnthropic 9.982 ms</td><td>LangTools 12% faster</td></tr>
+          <tr><td>Anthropic</td><td>Encode request</td><td>2.325 ms</td><td>SwiftAnthropic 2.344 ms</td><td>roughly even</td></tr>
+          <tr><td>Anthropic</td><td>Encode large conversation</td><td>7.767 ms</td><td>SwiftAnthropic 6.423 ms</td><td>SwiftAnthropic 17% faster</td></tr>
+          <tr><td>Anthropic</td><td>Message construction</td><td>0.131 ms</td><td>SwiftAnthropic 0.127 ms</td><td>roughly even</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Benchmark coverage matrix</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Operation</th>
+            <th>LangTools</th>
+            <th>Foundation baseline</th>
+            <th>SwiftOpenAI</th>
+            <th>SwiftAnthropic</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Decode chat/message response</td><td>OpenAI + Anthropic</td><td>Yes</td><td>Opt-in</td><td>Opt-in</td></tr>
+          <tr><td>Decode tool call / tool use response</td><td>OpenAI + Anthropic</td><td>Fixture validation</td><td>Opt-in</td><td>Opt-in</td></tr>
+          <tr><td>Decode stream chunk / stream line</td><td>OpenAI + Anthropic</td><td>OpenAI baseline</td><td>Opt-in</td><td>—</td></tr>
+          <tr><td>Encode simple request</td><td>OpenAI + Anthropic</td><td>Yes</td><td>Opt-in</td><td>Opt-in</td></tr>
+          <tr><td>Encode large conversation</td><td>OpenAI + Anthropic</td><td>Yes</td><td>Opt-in</td><td>Opt-in</td></tr>
+          <tr><td>Message construction</td><td>OpenAI + Anthropic</td><td>—</td><td>Opt-in</td><td>Opt-in</td></tr>
+          <tr><td>Round trip encode/decode</td><td>OpenAI + Anthropic</td><td>—</td><td>—</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Reproduce or update the numbers</h2>
+      <div class="callout">
+        <p><strong>Run ratio gates:</strong> <code>Scripts/run-extended-tests.sh --filter PerformanceRatioGateTests</code></p>
+        <p><strong>Run reporting benchmarks:</strong> <code>Scripts/run-extended-tests.sh --filter BenchmarkTests -v</code></p>
+        <p><strong>Record new ceilings after an intentional performance change:</strong> <code>RECORD_PERF_RATIOS=1 Scripts/run-extended-tests.sh --filter PerformanceRatioGateTests</code></p>
+        <p class="note">Performance values are machine- and toolchain-sensitive. Treat this page as a snapshot, not a universal benchmark claim.</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

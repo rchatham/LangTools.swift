@@ -25,13 +25,13 @@ class AnthropicTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
 
     func testChat() async throws {
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             return (.success(try Anthropic.MessageResponse(
                 content: .string("Hi! My name is Claude."),
                 id: "",
@@ -48,7 +48,7 @@ class AnthropicTests: XCTestCase {
     }
 
     func testChatStream() async throws {
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             return (.success(try Anthropic.MessageResponse(
                 content: .string("Hi! My name is Claude."),
                 id: "testid",
@@ -70,7 +70,7 @@ class AnthropicTests: XCTestCase {
     }
 
     func testChatStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { request in
             return (.success(try self.getData(filename: "message_stream_response", fileExtension: "txt")!), 200)
         }
         var results: [Anthropic.MessageResponse] = []
@@ -84,7 +84,7 @@ class AnthropicTests: XCTestCase {
     }
 
     func testToolCallStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { request in
             return (.success(try self.getData(filename: "message_stream_tool_use_response", fileExtension: "txt")!), 200)
         }
         let request = Anthropic.MessageRequest(model: .claude46Sonnet, messages: [.init(role: .user, content: "Hi")], stream: true)
@@ -100,7 +100,7 @@ class AnthropicTests: XCTestCase {
     }
 
     func testToolCallWithFunctionCallbackStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { request in
             return (.success(try self.getData(filename: "message_stream_tool_use_response", fileExtension: "txt")!), 200)
         }
         let tools: [Anthropic.Tool] = [.init(
@@ -118,7 +118,7 @@ class AnthropicTests: XCTestCase {
                 ],
                 required: ["location", "unit"]),
             callback: { _ in
-                MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { request in
+                MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { request in
                     return (.success(try self.getData(filename: "message_stream_response", fileExtension: "txt")!), 200)
                 }
                 return "27"
