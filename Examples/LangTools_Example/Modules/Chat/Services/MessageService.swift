@@ -11,7 +11,7 @@ import ToolKit
 
 
 @Observable
-public class MessageService: Sendable {
+public class MessageService {
     public let networkClient: NetworkClientProtocol
     public var messages: [Message] = [] {
         didSet {

@@ -8,8 +8,15 @@
 import Foundation
 import LangTools
 
-enum LangToolchainError: String, Error {
+enum LangToolchainError: String, LocalizedError {
     case toolchainCannotHandleRequest
+
+    var errorDescription: String? {
+        switch self {
+        case .toolchainCannotHandleRequest:
+            return "No registered provider can handle the selected model. Set an API key for the provider or choose another model with /model."
+        }
+    }
 }
 
 struct LangToolchain {

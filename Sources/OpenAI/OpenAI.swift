@@ -11,7 +11,6 @@ import FoundationNetworking
 #endif
 import LangTools
 
-
 final public class OpenAI: LangTools {
     public typealias Model = OpenAIModel
     public typealias ErrorResponse = OpenAIErrorResponse
@@ -35,6 +34,7 @@ final public class OpenAI: LangTools {
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
             { ($0 as? ChatCompletionRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
+            { String(reflecting: type(of: $0)).contains("ResponsesRequest") },
             { $0 is AudioSpeechRequest },
             { $0 is AudioTranscriptionRequest },
             { $0 is ListModelDataRequest },
@@ -59,7 +59,7 @@ final public class OpenAI: LangTools {
             }
             let queryItems = Mirror(reflecting: request).children
                 .filter { $0.label != nil && $0.label != "id" }
-                .map { URLQueryItem(name: $0.label!, value: String(describing: $0.value))}
+                .map { URLQueryItem(name: $0.label!, value: String(describing: $0.value)) }
             if !queryItems.isEmpty {
                 url = url.appending(queryItems: queryItems)
             }
@@ -103,13 +103,20 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static var allCases: [OpenAIModel] = openAIModels
     public static var chatModels: [OpenAIModel] { allCases.filter({ $0.type == .chat }) }
     public static var reasoning: [OpenAIModel] { [.o1, .o1_mini, .o3, .o3_pro, .o3_mini, .o4_mini] }
-    public static var codex: [OpenAIModel] { [.gpt51_codex] }
+    public static var codex: [OpenAIModel] { [.gpt5_5, .gpt5_4, .gpt5_4_mini, .gpt53_codex_spark] }
     public static var searchPreview: [OpenAIModel] { [.gpt4o_searchPreview, .gpt4o_mini_searchPreview] }
     static let openAIModels: [OpenAIModel] = ModelID.allCases.map { OpenAIModel(modelID: $0) }
 
     public init?(rawValue: String) {
-        if ModelID(rawValue: rawValue) != nil {
-            id = rawValue
+        let normalizedRawValue = switch rawValue {
+        case "gpt-5.1-codex", "gpt-5.3-codex":
+            "gpt-5.3-codex-spark"
+        default:
+            rawValue
+        }
+
+        if ModelID(rawValue: normalizedRawValue) != nil {
+            id = normalizedRawValue
         } else { return nil }
     }
 
@@ -133,7 +140,6 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         id.contains("audio") ? .audio : .chat
     }
 
-    // MARK: - Deprecated GPT-3.5 Models
     @available(*, deprecated, message: "GPT-3.5 models are deprecated. Use gpt4o_mini or newer models.")
     public static let gpt35Turbo = OpenAIModel(modelID: .gpt35Turbo)
     @available(*, deprecated, message: "GPT-3.5 models are deprecated. Use gpt4o_mini or newer models.")
@@ -145,7 +151,6 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     @available(*, deprecated, message: "GPT-3.5 models are deprecated. Use gpt4o_mini or newer models.")
     public static let gpt35TurboInstruct = OpenAIModel(modelID: .gpt35Turbo_Instruct)
 
-    // MARK: - GPT-4 Models
     public static let gpt4 = OpenAIModel(modelID: .gpt4)
     public static let gpt4Turbo = OpenAIModel(modelID: .gpt4Turbo)
     public static let gpt4_0613 = OpenAIModel(modelID: .gpt4_0613)
@@ -175,16 +180,13 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     @available(*, deprecated, message: "Preview model deprecated. Use o1 instead.")
     public static let o1_preview = OpenAIModel(modelID: .o1_preview)
 
-    // GPT-4o Search Preview
     public static let gpt4o_searchPreview = OpenAIModel(modelID: .gpt4o_searchPreview)
     public static let gpt4o_mini_searchPreview = OpenAIModel(modelID: .gpt4o_mini_searchPreview)
 
-    // GPT-4.1 Family
     public static let gpt41 = OpenAIModel(modelID: .gpt41)
     public static let gpt41_mini = OpenAIModel(modelID: .gpt41_mini)
     public static let gpt41_nano = OpenAIModel(modelID: .gpt41_nano)
 
-    // GPT-5 Family
     public static let gpt5 = OpenAIModel(modelID: .gpt5)
     public static let gpt5_mini = OpenAIModel(modelID: .gpt5_mini)
     public static let gpt5_nano = OpenAIModel(modelID: .gpt5_nano)
@@ -201,12 +203,8 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let gpt5_5 = OpenAIModel(modelID: .gpt5_5)
     public static let gpt5_5_pro = OpenAIModel(modelID: .gpt5_5_pro)
 
-    // Codex Models
-    public static let gpt51_codex = OpenAIModel(modelID: .gpt51_codex)
-    @available(*, deprecated, message: "Not listed in OpenAI's current public model catalog.")
-    public static let gpt53_codex = OpenAIModel(modelID: .gpt53_codex)
+    public static let gpt53_codex_spark = OpenAIModel(modelID: .gpt53_codex_spark)
 
-    // Realtime and Audio Models
     public static let gptRealtime2 = OpenAIModel(modelID: .gptRealtime2)
     public static let gptRealtime15 = OpenAIModel(modelID: .gptRealtime15)
     public static let gptRealtime = OpenAIModel(modelID: .gptRealtime)
@@ -223,7 +221,6 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let gpt4o_transcribe_diarize = OpenAIModel(modelID: .gpt4o_transcribe_diarize)
     public static let gptRealtimeWhisper = OpenAIModel(modelID: .gptRealtimeWhisper)
 
-    // Image Models
     public static let gptImage2 = OpenAIModel(modelID: .gptImage2)
     public static let gptImage15 = OpenAIModel(modelID: .gptImage15)
     public static let gptImage1 = OpenAIModel(modelID: .gptImage1)
@@ -233,14 +230,12 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let textEmbedding3Small = OpenAIModel(modelID: .textEmbedding3Small)
 
     public enum ModelID: String, Codable, CaseIterable {
-        // MARK: - GPT-3.5 Models (Legacy)
         case gpt35Turbo = "gpt-3.5-turbo"
         case gpt35Turbo_0301 = "gpt-3.5-turbo-0301"
         case gpt35Turbo_1106 = "gpt-3.5-turbo-1106"
         case gpt35Turbo_16k = "gpt-3.5-turbo-16k"
         case gpt35Turbo_Instruct = "gpt-3.5-turbo-instruct"
 
-        // MARK: - GPT-4 Models
         case gpt4 = "gpt-4"
         case gpt4Turbo = "gpt-4-turbo"
         case gpt4_0613 = "gpt-4-0613"
@@ -248,7 +243,6 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         case gpt4_VisionPreview = "gpt-4-vision-preview"
         case gpt4_32k_0613 = "gpt-4-32k-0613"
 
-        // MARK: - GPT-4o Models
         case gpt4o = "gpt-4o"
         case gpt4o_mini = "gpt-4o-mini"
         case gpt4o_2024_05_13 = "gpt-4o-2024-05-13"
@@ -261,16 +255,13 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         case gpt4o_audioPreview_2024_10_01 = "gpt-4o-audio-preview-2024-10-01"
         case chatGPT4o_latest = "chatgpt-4o-latest"
 
-        // MARK: - GPT-4o Search Preview Models
         case gpt4o_searchPreview = "gpt-4o-search-preview"
         case gpt4o_mini_searchPreview = "gpt-4o-mini-search-preview"
 
-        // MARK: - GPT-4.1 Models
         case gpt41 = "gpt-4.1"
         case gpt41_mini = "gpt-4.1-mini"
         case gpt41_nano = "gpt-4.1-nano"
 
-        // MARK: - GPT-5 Models
         case gpt5 = "gpt-5"
         case gpt5_mini = "gpt-5-mini"
         case gpt5_nano = "gpt-5-nano"
@@ -286,11 +277,8 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         case gpt5_5 = "gpt-5.5"
         case gpt5_5_pro = "gpt-5.5-pro"
 
-        // MARK: - Codex Models
-        case gpt51_codex = "gpt-5.1-codex"
-        case gpt53_codex = "gpt-5.3-codex"
+        case gpt53_codex_spark = "gpt-5.3-codex-spark"
 
-        // MARK: - Reasoning Models (o-series)
         case o1 = "o1"
         case o1_mini = "o1-mini"
         case o1_preview = "o1-preview"
@@ -299,7 +287,6 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         case o3_mini = "o3-mini"
         case o4_mini = "o4-mini"
 
-        // MARK: - Realtime and Audio Models
         case gptRealtime2 = "gpt-realtime-2"
         case gptRealtime15 = "gpt-realtime-1.5"
         case gptRealtime = "gpt-realtime"
@@ -307,24 +294,20 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         case gptAudio15 = "gpt-audio-1.5"
         case gptAudio = "gpt-audio"
 
-        // MARK: - Text-to-Speech Models
         case tts_1 = "tts-1"
         case tts_1_hd = "tts-1-hd"
         case gpt4o_mini_tts = "gpt-4o-mini-tts"
 
-        // MARK: - Speech-to-Text Models
         case whisper = "whisper-1"
         case gpt4o_transcribe = "gpt-4o-transcribe"
         case gpt4o_mini_transcribe = "gpt-4o-mini-transcribe"
         case gpt4o_transcribe_diarize = "gpt-4o-transcribe-diarize"
         case gptRealtimeWhisper = "gpt-realtime-whisper"
 
-        // MARK: - Image Models
         case gptImage2 = "gpt-image-2"
         case gptImage15 = "gpt-image-1.5"
         case gptImage1 = "gpt-image-1"
 
-        // MARK: - Embedding Models
         case textEmbeddingAda002 = "text-embedding-ada-002"
         case textEmbedding3Large = "text-embedding-3-large"
         case textEmbedding3Small = "text-embedding-3-small"
@@ -343,11 +326,10 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     }
 
     public static func ==(_ lhs: OpenAIModel, _ rhs: OpenAIModel) -> Bool {
-        return lhs.id == rhs.id
+        lhs.id == rhs.id
     }
 }
 
-// MARK: - Testing
 extension OpenAI {
     internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
         configuration.session = URLSession(configuration: testURLSessionConfiguration, delegate: session.delegate, delegateQueue: session.delegateQueue)

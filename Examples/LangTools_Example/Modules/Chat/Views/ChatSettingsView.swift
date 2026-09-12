@@ -3,6 +3,7 @@
 //
 
 import Combine
+import OpenAI
 import SwiftUI
 import ToolKit
 
@@ -152,7 +153,7 @@ public struct ChatSettingsView: View {
             OllamaSettingsView()
         }
         #endif
-        .enterAPIKeyAlert(isPresented: $viewModel.enterApiKey, apiKey: $viewModel.apiKeyInputText)
+        .manageAccessPrompts()
     }
 
     // iOS/iPadOS layout (unchanged)
@@ -165,11 +166,55 @@ public struct ChatSettingsView: View {
                 #endif
 
                 Picker("Chat Models", selection: $viewModel.model) {
-                    ForEach(Model.chatModels, id: \.self) { model in
-                        Text(model.rawValue).tag(model)
+                    ForEach(viewModel.availableModels, id: \.self) { model in
+                        Text(viewModel.modelPickerTitle(for: model)).tag(model)
                     }
                 }
                 .pickerStyle(.menu)
+
+                Text("Available models depend on which providers you have connected. If a provider is missing, add an API key or sign in from Manage Access.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            if viewModel.canManageAccess {
+                Section(header: Text("Model Access")) {
+                    Text("Models come from connected providers. API keys enable direct API requests, while account sign-in can unlock provider-specific access like Codex.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    ForEach(viewModel.providerAccessStates) { state in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(state.displayName)
+                                Spacer()
+                                Text(state.badgeTitle)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Text(state.statusDescription)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            if let reason = viewModel.unavailableReason(for: state) {
+                                Text(reason)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            Button(accessActionTitle(for: state.service)) {
+                                viewModel.presentManageAccess(for: state.service)
+                            }
+                        }
+                    }
+
+                    Text("For OpenAI account-backed Codex models, start the external helper and paste its URL/token below.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextField("Codex Helper URL", text: $viewModel.codexHelperBaseURLString)
+                    SecureField("Codex Helper Token", text: $viewModel.codexHelperToken)
+                    Text(viewModel.codexHelperCommand)
+                        .font(.system(.caption2, design: .monospaced))
+                        .textSelection(.enabled)
+                }
             }
 
             Section(header: Text("System Message")) {
@@ -201,7 +246,9 @@ public struct ChatSettingsView: View {
             #endif
 
             Button("Save Settings") { viewModel.saveSettings() }
-            Button("Update API Key") { viewModel.enterApiKey = true }
+            if viewModel.canManageAccess {
+                Button(viewModel.accessButtonTitle) { viewModel.presentManageAccess() }
+            }
             Button("Clear messages", role: .destructive) { viewModel.clearMessages() }
 
             Section(header: Text("AI Tools")) {
@@ -352,7 +399,7 @@ public struct ChatSettingsView: View {
         .sheet(isPresented: $showingOllamaSettings) {
             OllamaSettingsView()
         }
-        .enterAPIKeyAlert(isPresented: $viewModel.enterApiKey, apiKey: $viewModel.apiKeyInputText)
+        .manageAccessPrompts()
     }
 
     // MARK: - macOS Detail Views
@@ -377,8 +424,8 @@ public struct ChatSettingsView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 16) {
                         Picker("", selection: $viewModel.model) {
-                            ForEach(Model.chatModels, id: \.self) { model in
-                                Text(model.rawValue).tag(model)
+                            ForEach(viewModel.availableModels, id: \.self) { model in
+                                Text(viewModel.modelPickerTitle(for: model)).tag(model)
                             }
                         }
                         .pickerStyle(.menu)
@@ -394,13 +441,78 @@ public struct ChatSettingsView: View {
                             Text(modelDescription(for: viewModel.model))
                                 .font(.body)
                         }
+
+                        if viewModel.canManageAccess {
+                            Divider()
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Codex Helper")
+                                    .font(.headline)
+                                Text("Run this in Terminal before using OpenAI account-backed Codex models:")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                Text(viewModel.codexHelperCommand)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .textSelection(.enabled)
+                                TextField("Codex Helper URL", text: $viewModel.codexHelperBaseURLString)
+                                    .textFieldStyle(.roundedBorder)
+                                SecureField("Codex Helper Token", text: $viewModel.codexHelperToken)
+                                    .textFieldStyle(.roundedBorder)
+                                Text("OpenAI account-backed models use the external Codex helper. API-key-backed OpenAI Platform models continue to use the regular API path.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                     }
                     .padding(8)
                 }
 
-                Button("Update API Key") { viewModel.enterApiKey = true }
-                .buttonStyle(.bordered)
-                .padding(.top, 8)
+                if viewModel.canManageAccess {
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Model Access")
+                                .font(.headline)
+
+                            Text("Models appear here when their provider is configured. Add an API key for direct API requests, or sign in with an account for provider-specific access like Codex.")
+                                .font(.body)
+                                .foregroundColor(.secondary)
+
+                            ForEach(viewModel.providerAccessStates) { state in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack(alignment: .firstTextBaseline) {
+                                        Text(state.displayName)
+                                            .font(.headline)
+                                        Spacer()
+                                        Text(state.badgeTitle)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+
+                                    Text(state.statusDescription)
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+
+                                    if let reason = viewModel.unavailableReason(for: state) {
+                                        Text(reason)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+
+                                    Button(accessActionTitle(for: state.service)) {
+                                        viewModel.presentManageAccess(for: state.service)
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+
+                                if state.service != viewModel.providerAccessStates.last?.service {
+                                    Divider()
+                                }
+                            }
+                        }
+                        .padding(8)
+                    }
+                    .padding(.top, 8)
+                }
             }
 
             Divider()
@@ -789,22 +901,35 @@ public struct ChatSettingsView: View {
     }
 
     // Helper function to provide model descriptions
+    private func accessActionTitle(for service: APIService) -> String {
+        switch service {
+        case .anthropic:
+            return "Manage Claude / Anthropic Access"
+        default:
+            return "Manage \(service.displayName) Access"
+        }
+    }
+
     private func modelDescription(for model: Model) -> String {
         switch model {
-        case _ where model.rawValue.contains("gpt-3.5"):
+        case .codex:
+            return "This model runs through the Codex helper using your OpenAI account subscription instead of the OpenAI Platform API."
+        case .openAI where model.slug.contains("gpt-3.5"):
             return "GPT-3.5 is a fast and cost-effective model suitable for most everyday tasks. It offers a good balance between capabilities and response time, with good understanding of context and general knowledge up to its training cutoff date."
-        case _ where model.rawValue.contains("gpt-4o"):
+        case .openAI where model.slug.contains("gpt-4o"):
             return "GPT-4o is OpenAI's latest model offering the best balance of intelligence and speed. It has enhanced reasoning capabilities and multimodal understanding while providing faster responses than traditional GPT-4."
-        case _ where model.rawValue.contains("gpt-4"):
+        case .openAI where model.slug.contains("gpt-5.5") || model.slug.contains("gpt-5.4"):
+            return "This model runs through the OpenAI Platform API and requires an OpenAI API key."
+        case .openAI where model.slug.contains("gpt-4"):
             return "GPT-4 is OpenAI's most advanced model for complex reasoning and problem-solving. It excels at tasks requiring deep understanding, nuance, and specialized knowledge, though it may be slower than other models."
-        case _ where model.rawValue.contains("claude-3"):
-            return "Claude 3 is Anthropic's latest model with strong reasoning capabilities, nuanced understanding, and reliable outputs. It's designed to be helpful, harmless, and honest with particular strength in long-form content."
-        case _ where model.rawValue.contains("grok"):
-            return "Grok is xAI's model designed to be conversational and witty while still providing accurate information. It aims to strike a balance between helpfulness and personality."
-        case _ where model.rawValue.contains("gemini"):
-            return "Gemini is Google's multimodal AI model with strong reasoning and multimodal capabilities. It excels at understanding and generating content across text, code, images, and other modalities."
-        case _ where model.rawValue.contains("ollama"):
-            return "This is a locally-hosted model running through Ollama. Performance and capabilities will depend on the specific model you've downloaded and your local hardware specifications."
+        case .anthropic where model.slug.contains("claude"):
+            return "Claude models provide strong reasoning and long-context performance through Anthropic."
+        case .xAI where model.slug.contains("grok"):
+            return "Grok is xAI's model designed to be conversational and witty while still providing accurate information."
+        case .gemini where model.slug.contains("gemini"):
+            return "Gemini is Google's multimodal AI model with strong reasoning and multimodal capabilities."
+        case .ollama:
+            return "This is a locally-hosted model running through Ollama. Performance and capabilities depend on the model and your local hardware."
         default:
             return "Selected model"
         }
@@ -940,16 +1065,17 @@ struct SystemMessageEditor: View {
 
 extension ChatSettingsView {
     @MainActor public class ViewModel: ObservableObject {
-        @Published var enterApiKey = false
         @Published var model: Model = UserDefaults.model {
             didSet { UserDefaults.model = model }
         }
         @Published var maxTokens = UserDefaults.maxTokens
         @Published var temperature = UserDefaults.temperature
         @Published var systemMessage = UserDefaults.systemMessage
-        @Published var apiKeyInputText: String = ""
+        @Published var codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
+        @Published var codexHelperToken = UserDefaults.codexHelperToken
         @Published var toolSettings = ToolSettings.shared
         @Published public var toolManager = ToolManager.shared
+        public var accessManager = ProviderAccessManager.shared
 
         let clearMessages: () -> Void
 
@@ -974,24 +1100,73 @@ extension ChatSettingsView {
             ToolManager.shared.objectWillChange
                 .sink { [weak self] _ in self?.objectWillChange.send() }
                 .store(in: &cancellables)
+
+            ProviderAccessManager.shared.objectWillChange
+                .sink { [weak self] _ in self?.objectWillChange.send() }
+                .store(in: &cancellables)
+        }
+
+        var availableModels: [Model] {
+            accessManager.availableChatModels()
         }
 
         func loadSettings() {
-            model = UserDefaults.model
+            accessManager.refresh()
+            model = accessManager.validateSelectedModel(UserDefaults.model)
             maxTokens = UserDefaults.maxTokens
             temperature = UserDefaults.temperature
             systemMessage = UserDefaults.systemMessage
+            codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
+            codexHelperToken = UserDefaults.codexHelperToken
+        }
+
+        var canManageAccess: Bool {
+            model.apiService != .ollama
+        }
+
+        var providerAccessStates: [ProviderAccessState] {
+            accessManager.statesForAccessUI()
+        }
+
+        func unavailableReason(for state: ProviderAccessState) -> String? {
+            accessManager.unavailableReason(for: state)
+        }
+
+        var accessButtonTitle: String {
+            switch model.apiService {
+            case .anthropic:
+                return "Manage Claude / Anthropic Access"
+            default:
+                return "Manage \(model.apiService.displayName) Access"
+            }
         }
 
         func saveSettings() {
-            UserDefaults.model = model
+            UserDefaults.model = accessManager.validateSelectedModel(model)
             UserDefaults.maxTokens = maxTokens
             UserDefaults.temperature = temperature
             UserDefaults.systemMessage = systemMessage
+            if let url = URL(string: codexHelperBaseURLString), url.scheme?.isEmpty == false {
+                UserDefaults.codexHelperBaseURL = url
+            }
+            UserDefaults.codexHelperToken = codexHelperToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        func presentManageAccess(for service: APIService? = nil) {
+            let targetService = service ?? model.apiService
+            AuthPresentationCoordinator.shared.present(preferredService: targetService)
         }
 
         func saveToolSettings() {
             toolSettings.saveSettings()
+        }
+
+        var codexHelperCommand: String {
+            "cd /Users/reidchatham/Developer/App/LangTools-account-login/cli && swift run LangToolsCLI serve"
+        }
+
+        func modelPickerTitle(for model: Model) -> String {
+            model.rawValue
         }
 
         /// Trigger WhisperKit preload

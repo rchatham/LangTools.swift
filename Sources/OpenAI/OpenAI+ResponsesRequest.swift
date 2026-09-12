@@ -1,0 +1,601 @@
+import Foundation
+import LangTools
+
+public extension OpenAI {
+    func performResponsesRequest(
+        messages: [Message],
+        model: Model = .gpt4o_mini,
+        stream: Bool = false,
+        completion: @escaping (Result<OpenAI.ResponsesResponse, Error>) -> Void,
+        didCompleteStreaming: ((Error?) -> Void)? = nil
+    ) {
+        perform(
+            request: OpenAI.ResponsesRequest(model: model, messages: messages, stream: stream),
+            completion: completion,
+            didCompleteStreaming: didCompleteStreaming
+        )
+    }
+
+    static func responsesRequest(
+        model: any RawRepresentable,
+        messages: [any LangToolsMessage],
+        tools: [any LangToolsTool]? = nil,
+        responseSchema: JSONSchema? = nil,
+        toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }
+    ) throws -> ResponsesRequest {
+        guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
+        var request = ResponsesRequest(
+            model: model,
+            messages: messages.map { Message($0) },
+            tools: tools?.map { Tool($0) },
+            toolEventHandler: toolEventHandler
+        )
+        request.responseSchema = responseSchema
+        return request
+    }
+}
+
+extension OpenAI {
+    public struct ResponsesRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest, LangToolsStructuredOutputRequest {
+        public typealias LangTool = OpenAI
+        public typealias Response = ResponsesResponse
+        public static var endpoint: String { "responses" }
+
+        public let model: Model
+        public var messages: [Message]
+        public var stream: Bool?
+        public let instructions: String?
+        public let previous_response_id: String?
+        public let max_output_tokens: Int?
+        public let temperature: Double?
+        public let top_p: Double?
+        public let tools: [Tool]?
+        public let tool_choice: ToolChoice?
+        public let parallel_tool_calls: Bool?
+        public var text: TextConfig?
+        public let metadata: [String: String]?
+
+        @CodableIgnored
+        public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
+
+        public var responseSchema: JSONSchema? {
+            get { text?.format.schema }
+            set { text = newValue.map { TextConfig(schema: $0) } }
+        }
+
+        public var usesStructuredOutput: Bool { responseSchema != nil }
+
+        public init(model: OpenAIModel, messages: [any LangToolsMessage]) {
+            self.init(model: model, messages: messages.map { Message($0) })
+        }
+
+        public init(
+            model: Model,
+            messages: [Message],
+            stream: Bool? = nil,
+            instructions: String? = nil,
+            previous_response_id: String? = nil,
+            max_output_tokens: Int? = nil,
+            temperature: Double? = nil,
+            top_p: Double? = nil,
+            tools: [Tool]? = nil,
+            tool_choice: ToolChoice? = nil,
+            parallel_tool_calls: Bool? = nil,
+            text: TextConfig? = nil,
+            metadata: [String: String]? = nil,
+            toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }
+        ) {
+            self.model = model
+            self.messages = messages
+            self.stream = stream
+            self.instructions = instructions
+            self.previous_response_id = previous_response_id
+            self.max_output_tokens = max_output_tokens
+            self.temperature = temperature
+            self.top_p = top_p
+            self.tools = tools
+            self.tool_choice = tool_choice
+            self.parallel_tool_calls = parallel_tool_calls
+            self.text = text
+            self.metadata = metadata
+            self.toolEventHandler = toolEventHandler
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            model = try container.decode(Model.self, forKey: .model)
+            messages = []
+            stream = try container.decodeIfPresent(Bool.self, forKey: .stream)
+            instructions = try container.decodeIfPresent(String.self, forKey: .instructions)
+            previous_response_id = try container.decodeIfPresent(String.self, forKey: .previous_response_id)
+            max_output_tokens = try container.decodeIfPresent(Int.self, forKey: .max_output_tokens)
+            temperature = try container.decodeIfPresent(Double.self, forKey: .temperature)
+            top_p = try container.decodeIfPresent(Double.self, forKey: .top_p)
+            tools = nil
+            tool_choice = try container.decodeIfPresent(ToolChoice.self, forKey: .tool_choice)
+            parallel_tool_calls = try container.decodeIfPresent(Bool.self, forKey: .parallel_tool_calls)
+            text = try container.decodeIfPresent(TextConfig.self, forKey: .text)
+            metadata = try container.decodeIfPresent([String: String].self, forKey: .metadata)
+            toolEventHandler = nil
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(model, forKey: .model)
+            try container.encode(responsesInputItems, forKey: .input)
+            try container.encodeIfPresent(stream, forKey: .stream)
+            try container.encodeIfPresent(combinedInstructions, forKey: .instructions)
+            try container.encodeIfPresent(previous_response_id, forKey: .previous_response_id)
+            try container.encodeIfPresent(max_output_tokens, forKey: .max_output_tokens)
+            try container.encodeIfPresent(temperature, forKey: .temperature)
+            try container.encodeIfPresent(top_p, forKey: .top_p)
+            try container.encodeIfPresent(tools?.map(ResponsesTool.init), forKey: .tools)
+            try container.encodeIfPresent(tool_choice, forKey: .tool_choice)
+            try container.encodeIfPresent(parallel_tool_calls, forKey: .parallel_tool_calls)
+            try container.encodeIfPresent(text, forKey: .text)
+            try container.encodeIfPresent(metadata, forKey: .metadata)
+        }
+
+        private var combinedInstructions: String? {
+            let messageInstructions = messages
+                .filter { $0.role == .system || $0.role == .developer }
+                .map(\.content.text)
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
+            if let instructions, !instructions.isEmpty, !messageInstructions.isEmpty {
+                return instructions + "\n\n" + messageInstructions
+            }
+            return instructions ?? (messageInstructions.isEmpty ? nil : messageInstructions)
+        }
+
+        private var responsesInputItems: [InputItem] {
+            messages.flatMap(InputItem.items(for:))
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case model, input, stream, instructions, previous_response_id, max_output_tokens
+            case temperature, top_p, tools, tool_choice, parallel_tool_calls, text, metadata
+        }
+
+        public struct TextConfig: Codable {
+            public var format: TextFormat
+
+            public init(schema: JSONSchema) {
+                self.format = TextFormat(schema: schema)
+            }
+        }
+
+        public struct TextFormat: Codable {
+            public let type: String
+            public let name: String
+            public let schema: JSONSchema
+            public let strict: Bool
+
+            public init(schema: JSONSchema) {
+                self.type = "json_schema"
+                self.name = ChatCompletionRequest.ResponseFormat.JSONSchemaFormat.sanitize(name: schema.title ?? "structured_response")
+                self.schema = schema
+                self.strict = true
+            }
+        }
+
+        public enum ToolChoice: Codable {
+            case none, auto, required
+            case tool(String)
+
+            public func encode(to encoder: Encoder) throws {
+                var container = encoder.singleValueContainer()
+                switch self {
+                case .none:
+                    try container.encode("none")
+                case .auto:
+                    try container.encode("auto")
+                case .required:
+                    try container.encode("required")
+                case .tool(let name):
+                    try container.encode(ToolChoiceObject(type: "function", name: name))
+                }
+            }
+
+            public init(from decoder: Decoder) throws {
+                let container = try decoder.singleValueContainer()
+                if let stringValue = try? container.decode(String.self) {
+                    switch stringValue {
+                    case "none": self = .none
+                    case "auto": self = .auto
+                    case "required": self = .required
+                    default:
+                        throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid value for ToolChoice: \(stringValue)")
+                    }
+                } else {
+                    let object = try container.decode(ToolChoiceObject.self)
+                    guard object.type == "function" else {
+                        throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid tool choice type: \(object.type)")
+                    }
+                    self = .tool(object.name)
+                }
+            }
+
+            private struct ToolChoiceObject: Codable {
+                let type: String
+                let name: String
+            }
+        }
+
+        public struct ResponsesTool: Encodable {
+            public let type: String = "function"
+            public let name: String
+            public let description: String?
+            public let parameters: Tool.FunctionSchema.Parameters
+            public let strict: Bool?
+
+            public init(_ tool: Tool) {
+                self.name = tool.name
+                self.description = tool.description
+                self.parameters = tool.tool_schema
+                self.strict = nil
+            }
+        }
+
+        public enum InputItem: Encodable {
+            case message(role: Message.Role, content: [ContentItem])
+            case functionCall(callID: String, name: String, arguments: String)
+            case functionCallOutput(callID: String, output: String)
+
+            static func items(for message: Message) -> [InputItem] {
+                switch message.role {
+                case .system, .developer:
+                    return []
+                case .user, .assistant:
+                    var items: [InputItem] = []
+                    if let content = ContentItem.items(for: message.content, role: message.role), !content.isEmpty {
+                        items.append(.message(role: message.role, content: content))
+                    }
+                    items.append(contentsOf: (message.tool_calls ?? []).map {
+                        .functionCall(callID: $0.id ?? UUID().uuidString, name: $0.name ?? "", arguments: $0.arguments)
+                    })
+                    return items
+                case .tool:
+                    guard let toolResult = message.toolResult else { return [] }
+                    return [.functionCallOutput(callID: toolResult.tool_selection_id, output: toolResult.result)]
+                }
+            }
+
+            public func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                switch self {
+                case .message(let role, let content):
+                    try container.encode("message", forKey: .type)
+                    try container.encode(role, forKey: .role)
+                    try container.encode(content, forKey: .content)
+                case .functionCall(let callID, let name, let arguments):
+                    try container.encode("function_call", forKey: .type)
+                    try container.encode(callID, forKey: .call_id)
+                    try container.encode(name, forKey: .name)
+                    try container.encode(arguments, forKey: .arguments)
+                case .functionCallOutput(let callID, let output):
+                    try container.encode("function_call_output", forKey: .type)
+                    try container.encode(callID, forKey: .call_id)
+                    try container.encode(output, forKey: .output)
+                }
+            }
+
+            enum CodingKeys: String, CodingKey { case type, role, content, call_id, name, arguments, output }
+        }
+
+        public struct ContentItem: Encodable {
+            public let type: String
+            public let text: String?
+            public let image_url: Message.Content.ImageContent.ImageURL?
+
+            static func items(for content: Message.Content, role: Message.Role) -> [ContentItem]? {
+                let textType = role == .assistant ? "output_text" : "input_text"
+                switch content {
+                case .null:
+                    return nil
+                case .string(let text):
+                    return [ContentItem(type: textType, text: text, image_url: nil)]
+                case .array(let parts):
+                    return parts.compactMap { part in
+                        switch part {
+                        case .text(let text): return ContentItem(type: textType, text: text.text, image_url: nil)
+                        case .image(let image): return ContentItem(type: "input_image", text: nil, image_url: image.image_url)
+                        case .toolResult, .audio, .refusal: return nil
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    public struct ResponsesResponse: Decodable, LangToolsStreamableChatResponse, LangToolsToolCallingResponse, LangToolsStructuredOutputResponse {
+        public typealias Delta = OpenAI.Message.Delta
+        public typealias Message = OpenAI.Message
+        public typealias ToolSelection = Message.ToolCall
+
+        public var id: String?
+        public var object: String?
+        public var created_at: Int?
+        public var status: String?
+        public var model: String?
+        public var output: [OutputItem]
+        public var usage: Usage?
+
+        private var streamType: String?
+        private var outputIndex: Int?
+        private var contentIndex: Int?
+        private var item: OutputItem?
+        private var textDelta: String?
+        private var argumentsDelta: String?
+
+        public var message: OpenAI.Message? {
+            let text = output.compactMap { $0.messageText }.joined()
+            let toolCalls = output.enumerated().compactMap { index, item -> OpenAI.Message.ToolCall? in
+                guard item.type == "function_call" else { return nil }
+                return OpenAI.Message.ToolCall(
+                    index: index,
+                    id: item.call_id ?? item.id ?? UUID().uuidString,
+                    type: .function,
+                    function: .init(name: item.name ?? "", arguments: item.arguments ?? "")
+                )
+            }
+            if !toolCalls.isEmpty {
+                return try? OpenAI.Message(role: .assistant, content: text.isEmpty ? .null : .string(text), name: nil, tool_calls: toolCalls, audio: nil, refusal: nil)
+            }
+            guard !text.isEmpty else { return nil }
+            return OpenAI.Message(role: .assistant, content: text)
+        }
+
+        public var delta: OpenAI.Message.Delta? {
+            if let textDelta { return .init(role: .assistant, content: textDelta, tool_calls: nil, audio: nil, refusal: nil) }
+            if let argumentsDelta {
+                let index = outputIndex ?? 0
+                let existing = item
+                return .init(
+                    role: .assistant,
+                    content: nil,
+                    tool_calls: [OpenAI.Message.ToolCall(
+                        index: index,
+                        id: existing?.call_id ?? existing?.id ?? "",
+                        type: .function,
+                        function: .init(name: existing?.name ?? "", arguments: argumentsDelta)
+                    )],
+                    audio: nil,
+                    refusal: nil
+                )
+            }
+            return nil
+        }
+
+        public var jsonContent: String? { output.compactMap { $0.messageText }.first }
+
+        public static var empty: ResponsesResponse {
+            ResponsesResponse(id: nil, object: nil, created_at: nil, status: nil, model: nil, output: [], usage: nil)
+        }
+
+        public init(id: String?, object: String?, created_at: Int?, status: String?, model: String?, output: [OutputItem], usage: Usage?) {
+            self.id = id
+            self.object = object
+            self.created_at = created_at
+            self.status = status
+            self.model = model
+            self.output = output
+            self.usage = usage
+            self.streamType = nil
+            self.outputIndex = nil
+            self.contentIndex = nil
+            self.item = nil
+            self.textDelta = nil
+            self.argumentsDelta = nil
+        }
+
+        private init(streamType: String, outputIndex: Int?, contentIndex: Int?, item: OutputItem?, textDelta: String?, argumentsDelta: String?, response: ResponsesResponse?) {
+            self.id = response?.id
+            self.object = response?.object
+            self.created_at = response?.created_at
+            self.status = response?.status
+            self.model = response?.model
+            self.output = response?.output ?? []
+            self.usage = response?.usage
+            self.streamType = streamType
+            self.outputIndex = outputIndex
+            self.contentIndex = contentIndex
+            self.item = item
+            self.textDelta = textDelta
+            self.argumentsDelta = argumentsDelta
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let type = try container.decodeIfPresent(String.self, forKey: .type)
+            if type == "response.output_text.delta" || type == "response.refusal.delta" {
+                self.init(
+                    streamType: type ?? "",
+                    outputIndex: try container.decodeIfPresent(Int.self, forKey: .output_index),
+                    contentIndex: try container.decodeIfPresent(Int.self, forKey: .content_index),
+                    item: nil,
+                    textDelta: try container.decodeIfPresent(String.self, forKey: .delta),
+                    argumentsDelta: nil,
+                    response: nil
+                )
+                return
+            }
+            if type == "response.function_call_arguments.delta" {
+                self.init(
+                    streamType: type ?? "",
+                    outputIndex: try container.decodeIfPresent(Int.self, forKey: .output_index),
+                    contentIndex: nil,
+                    item: nil,
+                    textDelta: nil,
+                    argumentsDelta: try container.decodeIfPresent(String.self, forKey: .delta),
+                    response: nil
+                )
+                return
+            }
+            if type == "response.output_item.added" {
+                self.init(
+                    streamType: type ?? "",
+                    outputIndex: try container.decodeIfPresent(Int.self, forKey: .output_index),
+                    contentIndex: nil,
+                    item: try container.decodeIfPresent(OutputItem.self, forKey: .item),
+                    textDelta: nil,
+                    argumentsDelta: nil,
+                    response: nil
+                )
+                return
+            }
+            if type == "response.completed" {
+                self.init(
+                    streamType: type ?? "",
+                    outputIndex: nil,
+                    contentIndex: nil,
+                    item: nil,
+                    textDelta: nil,
+                    argumentsDelta: nil,
+                    response: try container.decodeIfPresent(ResponsesResponse.self, forKey: .response)
+                )
+                return
+            }
+
+            self.init(
+                id: try container.decodeIfPresent(String.self, forKey: .id),
+                object: try container.decodeIfPresent(String.self, forKey: .object),
+                created_at: try container.decodeIfPresent(Int.self, forKey: .created_at),
+                status: try container.decodeIfPresent(String.self, forKey: .status),
+                model: try container.decodeIfPresent(String.self, forKey: .model),
+                output: try container.decodeIfPresent([OutputItem].self, forKey: .output) ?? [],
+                usage: try container.decodeIfPresent(Usage.self, forKey: .usage)
+            )
+            streamType = type
+            outputIndex = try container.decodeIfPresent(Int.self, forKey: .output_index)
+            contentIndex = try container.decodeIfPresent(Int.self, forKey: .content_index)
+            item = try container.decodeIfPresent(OutputItem.self, forKey: .item)
+            textDelta = try container.decodeIfPresent(String.self, forKey: .delta)
+            argumentsDelta = nil
+        }
+
+        public func combining(with next: ResponsesResponse) -> ResponsesResponse {
+            if output.isEmpty, id == nil, next.streamType == nil { return next }
+            if next.streamType == "response.completed", !next.output.isEmpty { return next }
+
+            var combined = ResponsesResponse(
+                id: next.id ?? id,
+                object: next.object ?? object,
+                created_at: next.created_at ?? created_at,
+                status: next.status ?? status,
+                model: next.model ?? model,
+                output: output,
+                usage: next.usage ?? usage
+            )
+
+            if next.streamType == "response.output_item.added", let item = next.item {
+                let index = next.outputIndex ?? combined.output.count
+                combined.setOutputItem(item, at: index)
+            } else if let delta = next.textDelta {
+                let outputIndex = next.outputIndex ?? 0
+                let contentIndex = next.contentIndex ?? 0
+                combined.appendText(delta, outputIndex: outputIndex, contentIndex: contentIndex)
+            } else if let delta = next.argumentsDelta {
+                let outputIndex = next.outputIndex ?? 0
+                combined.appendArguments(delta, outputIndex: outputIndex)
+            }
+            return combined
+        }
+
+        private mutating func setOutputItem(_ item: OutputItem, at index: Int) {
+            while output.count <= index { output.append(.emptyMessage) }
+            output[index] = item
+        }
+
+        private mutating func appendText(_ text: String, outputIndex: Int, contentIndex: Int) {
+            while output.count <= outputIndex { output.append(.emptyMessage) }
+            output[outputIndex].appendText(text, contentIndex: contentIndex)
+        }
+
+        private mutating func appendArguments(_ arguments: String, outputIndex: Int) {
+            while output.count <= outputIndex { output.append(.emptyFunctionCall) }
+            output[outputIndex].appendArguments(arguments)
+        }
+
+        public struct Usage: Codable {
+            public let input_tokens: Int?
+            public let output_tokens: Int?
+            public let total_tokens: Int?
+        }
+
+        public struct OutputItem: Decodable {
+            public var id: String?
+            public var type: String
+            public var status: String?
+            public var role: OpenAI.Message.Role?
+            public var content: [ContentItem]?
+            public var call_id: String?
+            public var name: String?
+            public var arguments: String?
+            public var output: String?
+
+            static var emptyMessage: OutputItem {
+                OutputItem(id: nil, type: "message", status: nil, role: .assistant, content: [], call_id: nil, name: nil, arguments: nil, output: nil)
+            }
+
+            static var emptyFunctionCall: OutputItem {
+                OutputItem(id: nil, type: "function_call", status: nil, role: nil, content: nil, call_id: nil, name: nil, arguments: "", output: nil)
+            }
+
+            var messageText: String? {
+                guard type == "message" else { return nil }
+                return content?.compactMap(\.text).joined()
+            }
+
+            mutating func appendText(_ text: String, contentIndex: Int) {
+                if content == nil { content = [] }
+                while content!.count <= contentIndex { content!.append(.outputText("")) }
+                content![contentIndex].text = (content![contentIndex].text ?? "") + text
+            }
+
+            mutating func appendArguments(_ delta: String) {
+                type = "function_call"
+                arguments = (arguments ?? "") + delta
+            }
+        }
+
+        public struct ContentItem: Decodable {
+            public var type: String
+            public var text: String?
+
+            static func outputText(_ text: String) -> ContentItem {
+                ContentItem(type: "output_text", text: text)
+            }
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case id, object, created_at, status, model, output, usage, type
+            case output_index, content_index, item, delta, response
+        }
+    }
+}
+
+public extension OpenAI {
+    static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
+        if buffer.hasPrefix("event:") { return nil }
+        return if buffer.hasPrefix("data:"),
+                  !buffer.contains("[DONE]"),
+                  let data = buffer.dropFirst(5).trimmingCharacters(in: .whitespaces).data(using: .utf8) {
+            try Self.decodeResponse(data: data)
+        } else { nil }
+    }
+}
+
+private extension OpenAI.Message.Content {
+    var text: String {
+        switch self {
+        case .null: return ""
+        case .string(let text): return text
+        case .array(let parts):
+            return parts.compactMap { part in
+                if case .text(let text) = part { return text.text }
+                return nil
+            }.joined()
+        }
+    }
+}

@@ -8,7 +8,20 @@
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
 	<key>com.apple.security.personal-information.calendars</key>
 	<true/>
+	<key>com.apple.security.temporary-exception.files.absolute-path.read-only</key>
+	<array>
+		<string>/Users/reidchatham/.codex</string>
+		<string>/Users/reidchatham/.codex/auth.json</string>
+		<string>/Users/reidchatham/.codex/models_cache.json</string>
+		<string>/Users/reidchatham/.codex/config.toml</string>
+	</array>
+	<key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+	<array>
+		<string>/.codex/</string>
+	</array>
 </dict>
 </plist>
