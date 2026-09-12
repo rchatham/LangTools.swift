@@ -138,19 +138,10 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
     }
 
     private func commandFailureMessage(for result: CommandResult, action: String, executable: String) -> String {
-        let stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-        let stdout = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        let logHint = "See \(logger.logFilePath) for helper output."
-
-        if stderr.isEmpty == false {
-            return "\(stderr)\n\n\(logHint)"
-        }
-
-        if stdout.isEmpty == false {
-            return "\(stdout)\n\n\(logHint)"
-        }
-
-        return "\(action) failed: LangToolsCLI exited with status \(result.status) at \(executable). \(logHint)"
+        // Helper output may contain exported sessions, tokens, or provider error
+        // payloads. Keep it out of app-visible errors and direct users to the
+        // bridge log, where sensitive operations are redacted.
+        "\(action) failed: LangToolsCLI exited with status \(result.status) at \(executable). See \(logger.logFilePath) for helper output."
     }
 
     private func runLogged(

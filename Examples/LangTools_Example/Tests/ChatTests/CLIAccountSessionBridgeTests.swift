@@ -35,6 +35,29 @@ final class CLIAccountSessionBridgeTests: XCTestCase {
         XCTAssertTrue(logContents.contains("stdout:\n<redacted>"))
     }
 
+    func testExportFailureDoesNotExposeHelperOutput() async throws {
+        let logURL = tempLogURL()
+        let runner = StubCommandRunner { _, _ in
+            CommandResult(
+                status: 1,
+                stdout: #"{"accessToken":"secret-access-token"}"#,
+                stderr: "refresh token: secret-refresh-token"
+            )
+        }
+        let bridge = CLIAccountSessionBridge(runner: runner, logger: CLIBridgeLogger(fileURL: logURL))
+
+        do {
+            _ = try await bridge.exportOpenAISession()
+            XCTFail("Expected export to fail")
+        } catch {
+            let message = error.localizedDescription
+            XCTAssertFalse(message.contains("secret-access-token"))
+            XCTAssertFalse(message.contains("secret-refresh-token"))
+            XCTAssertTrue(message.contains("OpenAI session export failed"))
+            XCTAssertTrue(message.contains("See \(logURL.path) for helper output"))
+        }
+    }
+
     func testPerformOpenAIChatPreservesStructuredMessageContext() async throws {
         let requestCaptureURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
