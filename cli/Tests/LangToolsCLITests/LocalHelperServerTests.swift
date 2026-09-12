@@ -22,4 +22,23 @@ final class LocalHelperServerTests: XCTestCase {
     func testRequestLimitIsBounded() {
         XCTAssertEqual(LocalHelperServer.maximumRequestBytes, 4 * 1_048_576)
     }
+
+    func testServeOptionsRejectInvalidPort() {
+        XCTAssertThrowsError(try ServeOptions(arguments: ["--port", "not-a-port"]))
+        XCTAssertThrowsError(try ServeOptions(arguments: ["--port", "0"]))
+        XCTAssertThrowsError(try ServeOptions(arguments: ["--port", "70000"]))
+    }
+
+    func testCodexCatalogUsesConfiguredHomeAndPreservesFutureSlugs() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = #"{"models":[{"slug":"gpt-future-codex"},{"slug":"gpt-5.5"}]}"#
+        try Data(cache.utf8).write(to: root.appendingPathComponent("models_cache.json"))
+
+        XCTAssertEqual(
+            CodexModelCatalog.accessibleModelIDs(environment: ["LANGTOOLS_CODEX_HOME": root.path]),
+            ["gpt-future-codex", "gpt-5.5"]
+        )
+    }
 }

@@ -17,14 +17,21 @@ struct ServeCommand {
     }
 }
 
-private struct ServeOptions {
+struct ServeOptions {
     let host: String
     let port: UInt16
     let token: String?
 
     init(arguments: [String]) throws {
         self.host = Self.optionalValue(for: "--host", in: arguments) ?? "127.0.0.1"
-        self.port = UInt16(Self.optionalValue(for: "--port", in: arguments) ?? "8765") ?? 8765
+        if let portValue = Self.optionalValue(for: "--port", in: arguments) {
+            guard let port = UInt16(portValue), port > 0 else {
+                throw ServeOptionsError.invalidPort(portValue)
+            }
+            self.port = port
+        } else {
+            self.port = 8765
+        }
         self.token = Self.optionalValue(for: "--token", in: arguments)
     }
 
@@ -33,5 +40,16 @@ private struct ServeOptions {
             return nil
         }
         return arguments[index + 1]
+    }
+}
+
+enum ServeOptionsError: LocalizedError {
+    case invalidPort(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidPort(let value):
+            return "Invalid helper port: \(value)"
+        }
     }
 }

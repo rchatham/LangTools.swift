@@ -454,7 +454,7 @@ private enum CodexAccountSessionSynchronizer {
     }
 }
 
-private struct CodexModelCatalog {
+struct CodexModelCatalog {
     private struct CachedModelsPayload: Decodable {
         struct CachedModel: Decodable {
             let slug: String
@@ -463,9 +463,15 @@ private struct CodexModelCatalog {
         let models: [CachedModel]
     }
 
-    static func accessibleModelIDs() -> [String] {
-        let fileURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex", isDirectory: true)
+    static func accessibleModelIDs(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> [String] {
+        let configuredHome = ["LANGTOOLS_CODEX_HOME", "CODEX_HOME"]
+            .compactMap { environment[$0] }
+            .first { $0.isEmpty == false }
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let fileURL = (configuredHome ?? homeDirectory.appendingPathComponent(".codex", isDirectory: true))
             .appendingPathComponent("models_cache.json")
 
         guard let data = try? Data(contentsOf: fileURL),
@@ -475,7 +481,8 @@ private struct CodexModelCatalog {
         }
 
         return payload.models
-            .compactMap { OpenAI.Model(rawValue: $0.slug)?.rawValue }
+            .map(\.slug)
+            .filter { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
     }
 }
 
