@@ -7,8 +7,21 @@ struct LocalHelperServer {
     let bearerToken: String
     let queue = DispatchQueue(label: "LangToolsCLI.LocalHelperServer")
 
+    static let maximumRequestBytes = 4 * 1_048_576
+
     func run() async throws {
-        let listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port)!)
+        guard Self.loopbackHosts.contains(host.lowercased()) else {
+            throw HelperServerError.nonLoopbackHost(host)
+        }
+        guard bearerToken.isEmpty == false else {
+            throw HelperServerError.emptyBearerToken
+        }
+        guard let listenerPort = NWEndpoint.Port(rawValue: port) else {
+            throw HelperServerError.invalidPort(port)
+        }
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(host), port: listenerPort)
+        let listener = try NWListener(using: parameters)
         let startup = ServerStartup()
         listener.newConnectionHandler = { connection in
             self.handle(connection: connection)
@@ -31,27 +44,35 @@ struct LocalHelperServer {
         }
     }
 
+    private static let loopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
+
     private func handle(connection: NWConnection) {
         connection.start(queue: queue)
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 1_048_576) { data, _, _, _ in
-            guard let data, let requestText = String(data: data, encoding: .utf8) else {
-                self.respond(connection: connection, status: "400 Bad Request", body: Self.errorBody("Invalid request."))
+        receiveRequest(connection: connection, accumulated: Data())
+    }
+
+    private func receiveRequest(connection: NWConnection, accumulated: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, isComplete, error in
+            var requestData = accumulated
+            if let data { requestData.append(data) }
+
+            if requestData.count > Self.maximumRequestBytes {
+                self.respond(connection: connection, status: "413 Payload Too Large", body: Self.errorBody("Request exceeds the size limit."))
                 return
             }
-
-            guard let request = HTTPRequest.parse(from: requestText) else {
-                self.respond(connection: connection, status: "400 Bad Request", body: Self.errorBody("Malformed request."))
+            if let request = HTTPRequest.parseComplete(from: requestData) {
+                guard request.authorizationBearerToken == self.bearerToken else {
+                    self.respond(connection: connection, status: "401 Unauthorized", body: Self.errorBody("Unauthorized."))
+                    return
+                }
+                Task { await self.route(request: request, connection: connection) }
                 return
             }
-
-            guard request.authorizationBearerToken == self.bearerToken else {
-                self.respond(connection: connection, status: "401 Unauthorized", body: Self.errorBody("Unauthorized."))
+            if error != nil || isComplete {
+                self.respond(connection: connection, status: "400 Bad Request", body: Self.errorBody("Malformed or incomplete request."))
                 return
             }
-
-            Task {
-                await self.route(request: request, connection: connection)
-            }
+            self.receiveRequest(connection: connection, accumulated: requestData)
         }
     }
 
@@ -146,6 +167,23 @@ struct LocalHelperServer {
     }
 }
 
+enum HelperServerError: LocalizedError {
+    case nonLoopbackHost(String)
+    case emptyBearerToken
+    case invalidPort(UInt16)
+
+    var errorDescription: String? {
+        switch self {
+        case .nonLoopbackHost(let host):
+            return "Refusing to bind helper to non-loopback host: \(host)"
+        case .emptyBearerToken:
+            return "Helper bearer token must not be empty."
+        case .invalidPort(let port):
+            return "Invalid helper port: \(port)"
+        }
+    }
+}
+
 private final class ServerStartup: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Void, Error>?
@@ -193,7 +231,7 @@ private final class ServerStartup: @unchecked Sendable {
     }
 }
 
-private struct HTTPRequest {
+struct HTTPRequest {
     let method: String
     let path: String
     let headers: [String: String]
@@ -206,10 +244,11 @@ private struct HTTPRequest {
         return String(authorization.dropFirst(prefix.count))
     }
 
-    static func parse(from text: String) -> HTTPRequest? {
-        let parts = text.components(separatedBy: "\r\n\r\n")
-        guard let head = parts.first else { return nil }
-        let body = parts.dropFirst().joined(separator: "\r\n\r\n")
+    static func parseComplete(from data: Data) -> HTTPRequest? {
+        let separator = Data("\r\n\r\n".utf8)
+        guard let separatorRange = data.range(of: separator),
+              let head = String(data: data[..<separatorRange.lowerBound], encoding: .utf8)
+        else { return nil }
         let lines = head.components(separatedBy: "\r\n")
         guard let requestLine = lines.first else { return nil }
         let requestParts = requestLine.split(separator: " ")
@@ -223,11 +262,22 @@ private struct HTTPRequest {
             headers[key] = value
         }
 
+        let contentLength: Int
+        if let value = headers["content-length"] {
+            guard let parsed = Int(value), parsed >= 0 else { return nil }
+            contentLength = parsed
+        } else {
+            contentLength = 0
+        }
+        let bodyStart = separatorRange.upperBound
+        guard data.count >= bodyStart + contentLength else { return nil }
+        let body = data.subdata(in: bodyStart..<(bodyStart + contentLength))
+
         return HTTPRequest(
             method: String(requestParts[0]),
             path: String(requestParts[1]).components(separatedBy: "?").first ?? String(requestParts[1]),
             headers: headers,
-            body: Data(body.utf8)
+            body: body
         )
     }
 }

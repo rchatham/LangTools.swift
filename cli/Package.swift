@@ -25,6 +25,7 @@ let package = Package(
                 .product(name: "Gemini", package: "langtools.swift"),
                 .product(name: "Ollama", package: "langtools.swift"),
             ]
-        )
+        ),
+        .testTarget(name: "LangToolsCLITests", dependencies: ["LangToolsCLI"])
     ]
 )
