@@ -43,7 +43,7 @@ public extension OpenAI {
 }
 
 extension OpenAI {
-    public struct ResponsesRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest, LangToolsStructuredOutputRequest, LangToolsResponseUpdatingRequest {
+    public struct ResponsesRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest, LangToolsStructuredOutputRequest {
         public typealias LangTool = OpenAI
         public typealias Response = ResponsesResponse
         public static var endpoint: String { "responses" }
@@ -64,9 +64,6 @@ extension OpenAI {
 
         @CodableIgnored
         public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
-
-        @CodableIgnored
-        private var streamState: ResponsesStreamState?
 
         public var responseSchema: JSONSchema? {
             get { text?.format.schema }
@@ -109,7 +106,6 @@ extension OpenAI {
             self.text = text
             self.metadata = metadata
             self.toolEventHandler = toolEventHandler
-            self.streamState = ResponsesStreamState()
         }
 
         public init(from decoder: Decoder) throws {
@@ -131,12 +127,6 @@ extension OpenAI {
             // The Responses API input/tools wire format is intentionally not inflated
             // back into OpenAI.Message/OpenAI.Tool models here.
             toolEventHandler = nil
-            streamState = ResponsesStreamState()
-        }
-
-        public func updated(response: Decodable) throws -> Decodable {
-            guard let response = response as? ResponsesResponse else { return response }
-            return streamState?.updating(response) ?? response
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -562,6 +552,17 @@ extension OpenAI {
             argumentsDelta = nil
         }
 
+        public func updating(with accumulated: ResponsesResponse) -> ResponsesResponse {
+            var response = self
+            guard response.argumentsDelta != nil,
+                  let outputIndex = response.outputIndex,
+                  accumulated.output.indices.contains(outputIndex) else { return response }
+            let item = accumulated.output[outputIndex]
+            guard item.type == "function_call" else { return response }
+            response.item = item
+            return response
+        }
+
         public func combining(with next: ResponsesResponse) -> ResponsesResponse {
             if output.isEmpty, id == nil, next.streamType == nil { return next }
             if next.streamType == "response.completed", next.hasCompletedResponsePayload { return next }
@@ -709,61 +710,9 @@ extension OpenAI {
             streamType == "response.completed" && (id != nil || object != nil || created_at != nil || status != nil || model != nil || !output.isEmpty || usage != nil)
         }
 
-        fileprivate var startsNewOutputStream: Bool {
-            // Normal Responses streams begin with output_item.added at output_index 0.
-            streamType == "response.output_item.added" && outputIndex == 0
-        }
-
-        fileprivate var endsOutputStream: Bool {
-            streamType == "response.completed"
-        }
-
-        fileprivate var streamFunctionCallMetadata: (Int, OutputItem)? {
-            guard streamType == "response.output_item.added",
-                  let outputIndex,
-                  let item,
-                  item.type == "function_call" else { return nil }
-            return (outputIndex, item)
-        }
-
-        fileprivate var streamArgumentsOutputIndex: Int? {
-            guard argumentsDelta != nil else { return nil }
-            return outputIndex
-        }
-
-        fileprivate mutating func applyStreamFunctionCallMetadata(_ item: OutputItem) {
-            guard argumentsDelta != nil else { return }
-            self.item = item
-        }
-
         enum CodingKeys: String, CodingKey {
             case id, object, created_at, status, model, output, usage, type
             case output_index, content_index, item, delta, response
-        }
-    }
-
-    private final class ResponsesStreamState {
-        // Streaming updates are consumed sequentially through LangTools.stream();
-        // this cache carries function-call metadata between events in that stream.
-        private let lock = NSLock()
-        private var functionCallsByOutputIndex: [Int: ResponsesResponse.OutputItem] = [:]
-
-        func updating(_ response: ResponsesResponse) -> ResponsesResponse {
-            lock.lock()
-            defer { lock.unlock() }
-
-            var response = response
-            if response.startsNewOutputStream || response.endsOutputStream {
-                functionCallsByOutputIndex.removeAll()
-            }
-            if let (outputIndex, item) = response.streamFunctionCallMetadata {
-                functionCallsByOutputIndex[outputIndex] = item
-            }
-            if let outputIndex = response.streamArgumentsOutputIndex,
-               let item = functionCallsByOutputIndex[outputIndex] {
-                response.applyStreamFunctionCallMetadata(item)
-            }
-            return response
         }
     }
 }

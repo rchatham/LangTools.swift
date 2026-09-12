@@ -53,9 +53,12 @@ public protocol LangToolsStreamableResponse: Decodable {
     var delta: Delta? { get }
     static var empty: Self { get }
     func combining(with: Self) -> Self
+    func updating(with accumulated: Self) -> Self
 }
 
 extension LangToolsStreamableResponse {
+    public func updating(with accumulated: Self) -> Self { self }
+
     public var content: (any LangToolsContent)? { (self as? any LangToolsStreamableChatResponse)?.delta?.content.map { LangToolsTextContent(text: $0) }  ?? (self as? any LangToolsChatResponse)?.message?.content }
 }
 
@@ -95,16 +98,9 @@ extension LangToolsMultipleChoiceChatRequest {
     }
 }
 
-public protocol LangToolsResponseUpdatingRequest {
-    func updated(response: Decodable) throws -> Decodable
-}
-
 extension LangToolsRequest {
     func update<Response: Decodable>(response: Response) throws -> Response {
-        if let updated = try (self as? any LangToolsResponseUpdatingRequest)?.updated(response: response) as? Response {
-            return updated
-        }
-        return try (self as? (any LangToolsMultipleChoiceChatRequest))?.update(response: response) as? Response ?? response
+        try (self as? (any LangToolsMultipleChoiceChatRequest))?.update(response: response) as? Response ?? response
     }
 }
 

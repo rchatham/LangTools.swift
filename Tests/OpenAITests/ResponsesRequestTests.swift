@@ -398,8 +398,9 @@ final class ResponsesRequestTests: XCTestCase {
             let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
             if let response {
                 decodedCount += 1
-                if let delta = response.delta { deltas.append(delta) }
-                combined = combined.combining(with: response)
+                let updated = response.updating(with: combined)
+                if let delta = updated.delta { deltas.append(delta) }
+                combined = combined.combining(with: updated)
             }
         }
 
@@ -410,22 +411,19 @@ final class ResponsesRequestTests: XCTestCase {
         XCTAssertEqual(combined.message?.tool_selection?.first?.arguments, "{\"location\":\"Bangkok\"}")
     }
 
-    func testResponsesStreamArgumentDeltasIncludeToolMetadataAfterRequestUpdate() throws {
-        let request = OpenAI.ResponsesRequest(
-            model: OpenAI.Model.gpt4o_mini,
-            messages: [OpenAI.Message(role: .user, content: "Use a tool")],
-            stream: nil
-        )
+    func testResponsesStreamArgumentDeltasIncludeToolMetadataFromAccumulatedResponse() throws {
         let lines = [
             "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_123\",\"name\":\"get_weather\",\"arguments\":\"\"}}",
             "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{\"}",
             "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"}\"}"
         ]
 
+        var accumulated = OpenAI.ResponsesResponse.empty
         let argumentDeltas = try lines.compactMap { line -> OpenAI.Message.ToolCall? in
             let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
             guard let response else { return nil }
-            let updated = try XCTUnwrap(request.updated(response: response) as? OpenAI.ResponsesResponse)
+            let updated = response.updating(with: accumulated)
+            accumulated = accumulated.combining(with: updated)
             return updated.delta?.tool_calls?.first.flatMap { $0.arguments.isEmpty ? nil : $0 }
         }
 
@@ -443,30 +441,21 @@ final class ResponsesRequestTests: XCTestCase {
         XCTAssertEqual(toolCall.name, "get_weather")
     }
 
-    func testResponsesStreamStateResetsWhenRequestIsReusedForNewStream() throws {
-        let request = OpenAI.ResponsesRequest(
-            model: OpenAI.Model.gpt4o_mini,
-            messages: [OpenAI.Message(role: .user, content: "Use a tool")],
-            stream: nil
-        )
-        let firstStreamLines = [
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_old\",\"name\":\"old_tool\",\"arguments\":\"\"}}"
-        ]
-        let secondStreamLines = [
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}",
-            "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"delta\":\"{}\"}"
-        ]
+    func testResponsesStreamMetadataDoesNotLeakAcrossAccumulatedResponses() throws {
+        let oldMetadataLine = "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_old\",\"name\":\"old_tool\",\"arguments\":\"\"}}"
+        let oldMetadataResponse: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(oldMetadataLine)
+        let staleAccumulated = OpenAI.ResponsesResponse.empty.combining(with: try XCTUnwrap(oldMetadataResponse))
+        XCTAssertEqual(staleAccumulated.message?.tool_selection?.first?.id, "call_old")
 
-        for line in firstStreamLines + secondStreamLines {
-            let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
-            if let response {
-                let updated = try XCTUnwrap(request.updated(response: response) as? OpenAI.ResponsesResponse)
-                if updated.delta?.tool_calls?.first?.arguments == "{}" {
-                    XCTAssertEqual(updated.delta?.tool_calls?.first?.id, "")
-                    XCTAssertEqual(updated.delta?.tool_calls?.first?.name, "")
-                }
-            }
-        }
+        let freshAccumulated = OpenAI.ResponsesResponse.empty
+        let argumentLine = "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"delta\":\"{}\"}"
+        let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(argumentLine)
+        let updated = try XCTUnwrap(response).updating(with: freshAccumulated)
+        let toolCall = try XCTUnwrap(updated.delta?.tool_calls?.first)
+
+        XCTAssertEqual(toolCall.arguments, "{}")
+        XCTAssertEqual(toolCall.id, "")
+        XCTAssertEqual(toolCall.name, "")
     }
 
     func testResponsesLifecycleEventDecodesNestedResponseMetadata() throws {
