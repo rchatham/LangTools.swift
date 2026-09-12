@@ -1,0 +1,42 @@
+{
+  "generatedAt": "2026-09-12T09:33:37-07:00",
+  "command": "swift package clean && Scripts/run-extended-tests.sh --filter BenchmarkTests -v",
+  "environment": {
+    "platform": "arm64e-apple-macos14.0",
+    "swiftTestingLibraryVersion": "1501",
+    "note": "XCTest measure averages from a local debug SwiftPM run. Lower is better. Values are wall-clock seconds per XCTest measure block, not per single operation; each test loops internally as documented in BenchmarkTests."
+  },
+  "results": {
+    "Anthropic": {
+      "Foundation.JSONSerialization.decodeResponse": 0.001313,
+      "LangTools.decodeResponse": 0.003506,
+      "LangTools.decodeToolUseResponse": 0.015916,
+      "LangTools.encodeRequest": 0.001949,
+      "LangTools.encodeLargeConversation": 0.007067,
+      "LangTools.messageConstruction": 0.000092,
+      "LangTools.roundTrip": 0.001769,
+      "LangTools.streamLineDecode": 0.041359,
+      "SwiftAnthropic.decodeResponse": 0.004280,
+      "SwiftAnthropic.decodeToolUseResponse": 0.009271,
+      "SwiftAnthropic.encodeRequest": 0.001871,
+      "SwiftAnthropic.encodeLargeConversation": 0.006109,
+      "SwiftAnthropic.messageConstruction": 0.000137
+    },
+    "OpenAI": {
+      "Foundation.JSONSerialization.decodeResponse": 0.001623,
+      "LangTools.decodeResponse": 0.003926,
+      "LangTools.decodeStreamChunk": 0.004676,
+      "LangTools.decodeToolCallResponse": 0.006960,
+      "LangTools.encodeRequest": 0.002592,
+      "LangTools.encodeLargeConversation": 0.009119,
+      "LangTools.messageConstruction": 0.000238,
+      "LangTools.roundTrip": 0.002740,
+      "SwiftOpenAI.decodeResponse": 0.004553,
+      "SwiftOpenAI.decodeStreamChunk": 0.004549,
+      "SwiftOpenAI.decodeToolCallResponse": 0.005692,
+      "SwiftOpenAI.encodeRequest": 0.002467,
+      "SwiftOpenAI.encodeLargeConversation": 0.008061,
+      "SwiftOpenAI.messageConstruction": 0.000348
+    }
+  }
+}
