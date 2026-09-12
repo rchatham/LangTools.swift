@@ -21,6 +21,11 @@ final class ProviderAccessManagerTests: XCTestCase {
         super.tearDown()
     }
 
+    func testNoCredentialsKeepsRequestedSelectionWithoutInventingAccessibleFallback() {
+        let requested = Model.codex(.gpt5_5)
+        XCTAssertEqual(accessManager.validateSelectedModel(requested), requested)
+    }
+
     func testNoCredentialsHidesRemoteModels() {
         accessManager.refresh()
 
@@ -50,6 +55,18 @@ final class ProviderAccessManagerTests: XCTestCase {
         let models = accessManager.state(for: .openAI).availableModels
         XCTAssertEqual(models.map(\.rawValue), ["codex/gpt-5.5", "codex/gpt-5.3-codex-spark"])
         XCTAssertEqual(models.first?.rawValue, "codex/gpt-5.5")
+    }
+
+    func testOpenAIAccountSessionPreservesFutureCodexModelSlug() throws {
+        try sessionStore.save(AccountSession(
+            provider: .openAI,
+            accountIdentifier: "openai-user",
+            accessToken: "token",
+            accessibleModelIDs: ["gpt-future-codex"]
+        ))
+        accessManager.refresh()
+
+        XCTAssertEqual(accessManager.state(for: .openAI).availableModels.map(\.rawValue), ["codex/gpt-future-codex"])
     }
 
     func testOpenAIAccountSessionWithoutAccessibleModelIDsExposesNoCodexModels() throws {

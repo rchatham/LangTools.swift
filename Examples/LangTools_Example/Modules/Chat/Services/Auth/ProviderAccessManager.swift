@@ -82,7 +82,7 @@ public final class ProviderAccessManager: ObservableObject {
         if available.contains(model) {
             return model
         }
-        return available.first ?? .openAI(.gpt4o_mini)
+        return available.first ?? model
     }
 
     public func accessibleModelIDs(for service: APIService) -> [String] {
@@ -164,7 +164,11 @@ public final class ProviderAccessManager: ObservableObject {
             let parsed: [Model]
             switch service {
             case .openAI:
-                parsed = session.accessibleModelIDs.compactMap(OpenAI.Model.init(rawValue:)).map(Model.codex)
+                parsed = session.accessibleModelIDs.compactMap { slug in
+                    let trimmed = slug.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard trimmed.isEmpty == false else { return nil }
+                    return .codex(OpenAI.Model(rawValue: trimmed) ?? OpenAI.Model(customModelID: trimmed))
+                }
             case .anthropic, .xAI, .gemini, .ollama, .serper:
                 parsed = session.accessibleModelIDs.compactMap(Model.init(rawValue:))
             }
