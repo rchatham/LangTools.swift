@@ -78,7 +78,7 @@ public protocol AccountLoginBackendClientProtocol {
 }
 
 public final class BrowserAccountLoginService: AccountLoginService {
-    public static let shared = BrowserAccountLoginService()
+    @MainActor public static let shared = BrowserAccountLoginService(coordinator: AccountLoginCoordinator.shared)
 
     private let coordinator: AccountLoginCoordinating
     private let backendClient: AccountLoginBackendClientProtocol
@@ -97,7 +97,7 @@ public final class BrowserAccountLoginService: AccountLoginService {
     private var pendingLogin: PendingLogin?
 
     public init(
-        coordinator: AccountLoginCoordinating = AccountLoginCoordinator.shared,
+        coordinator: AccountLoginCoordinating,
         backendClient: AccountLoginBackendClientProtocol? = nil,
         sessionStore: AuthSessionStore = .shared,
         configuration: AccountBackendConfiguration = AccountBackendConfiguration(),

@@ -30,4 +30,19 @@ public class KeychainService {
         do { try keychain.remove("\(service.rawValue):apiKey")}
         catch { print("Error deleting API key from keychain: \(error)")}
     }
+
+    public func saveSecret(_ value: String, forKey key: String) {
+        do { try keychain.set(value, key: key) }
+        catch { print("Error saving secret to keychain: \(error)") }
+    }
+
+    public func secret(forKey key: String) -> String? {
+        do { return try keychain.getString(key) }
+        catch { print("Error fetching secret from keychain: \(error)"); return nil }
+    }
+
+    public func deleteSecret(forKey key: String) {
+        do { try keychain.remove(key) }
+        catch { print("Error deleting secret from keychain: \(error)") }
+    }
 }

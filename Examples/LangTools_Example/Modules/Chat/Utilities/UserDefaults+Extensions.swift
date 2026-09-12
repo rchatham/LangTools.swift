@@ -131,10 +131,24 @@ extension UserDefaults {
 
     public static var codexHelperToken: String {
         get {
-            standard.string(forKey: codexHelperTokenKey) ?? ""
+            let keychain = KeychainService.shared
+            if let token = keychain.secret(forKey: codexHelperTokenKey) {
+                return token
+            }
+            guard let legacyToken = standard.string(forKey: codexHelperTokenKey), legacyToken.isEmpty == false else {
+                return ""
+            }
+            keychain.saveSecret(legacyToken, forKey: codexHelperTokenKey)
+            standard.removeObject(forKey: codexHelperTokenKey)
+            return legacyToken
         }
         set {
-            standard.setValue(newValue, forKey: codexHelperTokenKey)
+            standard.removeObject(forKey: codexHelperTokenKey)
+            if newValue.isEmpty {
+                KeychainService.shared.deleteSecret(forKey: codexHelperTokenKey)
+            } else {
+                KeychainService.shared.saveSecret(newValue, forKey: codexHelperTokenKey)
+            }
         }
     }
 }
