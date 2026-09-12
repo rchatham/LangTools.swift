@@ -10,7 +10,10 @@ import KeychainAccess
 public class KeychainService {
     public static let shared = KeychainService()
 
-    let keychain = Keychain(service: "com.reidchatham.LangTools_Example")
+    /// Stable service identifier retained so existing credentials remain accessible.
+    static let serviceIdentifier = "com.reidchatham.LangTools_Example"
+
+    let keychain = Keychain(service: serviceIdentifier)
 
     public init() {}
 
