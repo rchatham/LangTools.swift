@@ -48,3 +48,22 @@ jobs:
       run: Scripts/run-extended-tests.sh --filter AgentsTests -v --no-parallel
     - name: Run Integration extended tests
       run: Scripts/run-extended-tests.sh --filter IntegrationTests -v --no-parallel
+
+  # Non-blocking performance visibility. The measure/reporting suites and the
+  # ratios.json regression gate run here so a perf regression surfaces in CI
+  # instead of only on manual runs — but continue-on-error keeps them from
+  # gating merges, since wall-clock-sensitive assertions can flake on shared
+  # runners even with the ratio normalization (see the comments in the build job).
+  performance-tests:
+
+    runs-on: macos-latest
+    continue-on-error: true
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run performance ratio gates
+      run: Scripts/run-extended-tests.sh --filter PerformanceRatioGateTests -v --no-parallel
+    - name: Run performance tests
+      run: Scripts/run-extended-tests.sh --filter PerformanceTests -v --no-parallel
+    - name: Run benchmark tests
+      run: Scripts/run-extended-tests.sh --filter BenchmarkTests -v --no-parallel
