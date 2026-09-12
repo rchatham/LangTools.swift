@@ -299,10 +299,8 @@ public struct CLIBridgeLogger {
             "environment:",
             environmentSummary,
             "status: \(result.status)",
-            "stdout:",
-            result.stdout.isEmpty ? "<empty>" : result.stdout,
-            "stderr:",
-            result.stderr.isEmpty ? "<empty>" : result.stderr,
+            "stdout: \(result.stdout.isEmpty ? "<empty>" : "<redacted; \(result.stdout.utf8.count) bytes>")",
+            "stderr: \(result.stderr.isEmpty ? "<empty>" : "<redacted; \(result.stderr.utf8.count) bytes>")",
             String(repeating: "-", count: 80)
         ]
         let entry = lines.joined(separator: "\n") + "\n"

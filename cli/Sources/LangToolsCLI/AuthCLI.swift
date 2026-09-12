@@ -262,7 +262,7 @@ private struct OpenAICLIAuthFlow {
         logger.log("opening browser authURL=\(authURL.absoluteString)")
         try openBrowser(url: authURL)
         let callback = try await listener.waitForCallback()
-        logger.log("received callback url=\(callback.absoluteString)")
+        logger.log("received OAuth callback host=\(callback.host ?? "<unknown>") path=\(callback.path)")
         let payload = try parseCallback(callback, expectedState: state)
         logger.log("parsed callback successfully state matched")
         let token = try await exchangeCode(code: payload.code, codeVerifier: pkce.codeVerifier, redirectURI: redirectURL.absoluteString)
@@ -471,21 +471,12 @@ private struct CodexModelCatalog {
         guard let data = try? Data(contentsOf: fileURL),
               let payload = try? JSONDecoder().decode(CachedModelsPayload.self, from: data)
         else {
-            return defaultModelIDs
+            return []
         }
 
-        let supported = payload.models
+        return payload.models
             .compactMap { OpenAI.Model(rawValue: $0.slug)?.rawValue }
-
-        return supported.isEmpty ? defaultModelIDs : supported
     }
-
-    private static let defaultModelIDs = [
-        OpenAI.Model.gpt5_5.rawValue,
-        OpenAI.Model.gpt5_4.rawValue,
-        OpenAI.Model.gpt5_4_mini.rawValue,
-        OpenAI.Model.gpt53_codex_spark.rawValue,
-    ]
 }
 
 private extension StoredAccountSession {
@@ -606,7 +597,7 @@ private final class LocalCallbackListener {
                 return
             }
 
-            self.logger.log("requestLine=\(requestLine) parsedURL=\(url.absoluteString)")
+            self.logger.log("parsed callback request method=GET host=\(url.host ?? "<unknown>") path=\(url.path)")
 
             guard url.path == self.path else {
                 self.respond(connection: connection, status: "404 Not Found", body: Self.callbackHTML(title: "Authentication failed", message: "The callback path was not recognized. You can close this tab and return to LangToolsCLI.", success: false, showsReturnButton: false)) {
@@ -897,7 +888,7 @@ private final class AuthDebugLogger {
                 }
                 guard let handle = try? FileHandle(forWritingTo: self.fileURL) else { return }
                 defer { try? handle.close() }
-                try? handle.seekToEnd()
+                _ = try? handle.seekToEnd()
                 try? handle.write(contentsOf: data)
             }
         }
