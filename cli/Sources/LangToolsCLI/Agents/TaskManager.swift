@@ -223,7 +223,9 @@ actor TaskManager {
         let agent = createAgent(for: task.agentType)
 
         // Get the tool registry and select tools for this agent type
-        let registry = ToolRegistry.shared
+        // Background agents cannot safely ask the foreground user for approval.
+        // Use a fail-closed registry rather than the interactive shared registry.
+        let registry = ToolRegistry()
 
         // Create tools with callbacks that execute via the registry
         let langToolsTools: [OpenAI.Tool] = task.agentType.tools.compactMap { toolName -> OpenAI.Tool? in

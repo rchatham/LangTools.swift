@@ -28,9 +28,14 @@ protocol ExecutableTool {
 final class ToolRegistry {
     typealias ApprovalHandler = (_ toolName: String, _ parameters: [String: Any]) async -> Bool
 
-    /// Shared singleton instance. Approval-required tools are denied unless an
-    /// interactive caller installs an explicit approval handler.
-    static let shared = ToolRegistry()
+    /// Shared singleton instance. Interactive terminal sessions prompt for
+    /// dangerous operations; callers without a terminal fail closed.
+    static let shared = ToolRegistry { toolName, parameters in
+        await TerminalToolApproval.shared.request(
+            toolName: toolName,
+            operation: ToolApprovalPolicy.operationDescription(toolName: toolName, parameters: parameters)
+        )
+    }
 
     private let approvalHandler: ApprovalHandler?
 
@@ -151,6 +156,31 @@ final class ToolRegistry {
             .lowercased()
             .replacingOccurrences(of: " ", with: "")
             .replacingOccurrences(of: "_", with: "")
+    }
+}
+
+private actor TerminalToolApproval {
+    static let shared = TerminalToolApproval()
+
+    func request(toolName: String, operation: String) -> Bool {
+        guard CLIRunMode.current.isInteractive,
+              let terminal = FileHandle(forUpdatingAtPath: "/dev/tty") else {
+            return false
+        }
+
+        let prompt = "\nApprove tool '\(toolName)'?\n  \(operation)\nProceed? [y/N] "
+        do {
+            try terminal.write(contentsOf: Data(prompt.utf8))
+            guard let responseData = try terminal.read(upToCount: 32),
+                  let response = String(data: responseData, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased() else {
+                return false
+            }
+            return response == "y" || response == "yes"
+        } catch {
+            return false
+        }
     }
 }
 
