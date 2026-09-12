@@ -7,6 +7,11 @@
 
 import Foundation
 import OpenAI
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// Tool for fetching web content
 struct WebFetchTool: ExecutableTool {
@@ -76,11 +81,15 @@ struct WebFetchTool: ExecutableTool {
         }
 
         do {
+            try NetworkDestinationValidator.validate(url: url)
             var request = URLRequest(url: url)
             request.timeoutInterval = 30
             request.setValue("Mozilla/5.0 (compatible; LangTools-CLI/1.0)", forHTTPHeaderField: "User-Agent")
 
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let redirectDelegate = SafeRedirectDelegate()
+            let session = URLSession(configuration: .ephemeral, delegate: redirectDelegate, delegateQueue: nil)
+            defer { session.invalidateAndCancel() }
+            let (data, response) = try await session.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw ToolError.executionFailed(tool: name, reason: "Invalid response")
@@ -191,5 +200,93 @@ struct WebFetchTool: ExecutableTool {
         result += "\n\n---\nPrompt: \(prompt)"
 
         return result
+    }
+}
+
+final class SafeRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard let url = request.url,
+              (try? NetworkDestinationValidator.validate(url: url)) != nil else {
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
+    }
+}
+
+enum NetworkDestinationValidator {
+    static func validate(url: URL) throws {
+        guard url.scheme?.lowercased() == "https", let host = url.host, !host.isEmpty else {
+            throw ToolError.invalidParameters(tool: WebFetchTool.name, reason: "Only HTTPS URLs are allowed")
+        }
+        let normalizedHost = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard normalizedHost != "localhost", !normalizedHost.hasSuffix(".localhost") else { throw blocked(host) }
+
+        if isIPAddress(normalizedHost) {
+            guard isPublicIPAddress(normalizedHost) else { throw blocked(host) }
+            return
+        }
+
+        var addresses: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(normalizedHost, nil, nil, &addresses) == 0, let first = addresses else {
+            throw ToolError.executionFailed(tool: WebFetchTool.name, reason: "Could not resolve host: \(host)")
+        }
+        defer { freeaddrinfo(first) }
+
+        var current: UnsafeMutablePointer<addrinfo>? = first
+        var resolvedAny = false
+        while let address = current {
+            var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            if getnameinfo(address.pointee.ai_addr, address.pointee.ai_addrlen, &buffer, socklen_t(buffer.count), nil, 0, NI_NUMERICHOST) == 0 {
+                resolvedAny = true
+                guard isPublicIPAddress(String(cString: buffer)) else { throw blocked(host) }
+            }
+            current = address.pointee.ai_next
+        }
+        guard resolvedAny else {
+            throw ToolError.executionFailed(tool: WebFetchTool.name, reason: "Could not resolve host: \(host)")
+        }
+    }
+
+    static func isIPAddress(_ value: String) -> Bool {
+        var ipv4 = in_addr()
+        var ipv6 = in6_addr()
+        return value.withCString { inet_pton(AF_INET, $0, &ipv4) == 1 || inet_pton(AF_INET6, $0, &ipv6) == 1 }
+    }
+
+    static func isPublicIPAddress(_ value: String) -> Bool {
+        if let octets = ipv4Octets(value) {
+            let a = octets[0], b = octets[1]
+            if a == 0 || a == 10 || a == 127 || a >= 224 { return false }
+            if a == 100 && (64...127).contains(b) { return false }
+            if a == 169 && b == 254 { return false }
+            if a == 172 && (16...31).contains(b) { return false }
+            if a == 192 && (b == 0 || b == 168) { return false }
+            if a == 198 && (b == 18 || b == 19 || b == 51) { return false }
+            if a == 203 && b == 0 { return false }
+            return true
+        }
+
+        var address = in6_addr()
+        guard value.withCString({ inet_pton(AF_INET6, $0, &address) }) == 1 else { return false }
+        let bytes = withUnsafeBytes(of: &address) { Array($0) }
+        return (bytes[0] & 0xE0) == 0x20
+    }
+
+    private static func ipv4Octets(_ value: String) -> [UInt8]? {
+        let parts = value.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return nil }
+        let octets = parts.compactMap { UInt8($0) }
+        return octets.count == 4 ? octets : nil
+    }
+
+    private static func blocked(_ host: String) -> ToolError {
+        .invalidParameters(tool: WebFetchTool.name, reason: "Blocked non-public destination: \(host)")
     }
 }
