@@ -27,6 +27,7 @@ MEASURE_RE = re.compile(
 SUITE_PROVIDER = {
     "AnthropicBenchmarkTests": "Anthropic",
     "OpenAIBenchmarkTests": "OpenAI",
+    "OpenAIAdditionalCompetitorBenchmarkTests": "OpenAI",
 }
 
 OPERATION_NAMES = {

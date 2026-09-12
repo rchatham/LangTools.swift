@@ -32,6 +32,8 @@ let package = Package(
         // To run competitor benchmarks: uncomment these and the BenchmarkTests product deps below.
         // .package(url: "https://github.com/jamesrochabrun/SwiftOpenAI.git", from: "4.4.0"),
         // .package(url: "https://github.com/jamesrochabrun/SwiftAnthropic.git", from: "2.2.0"),
+        // .package(url: "https://github.com/MacPaw/OpenAI.git", from: "0.5.1"),
+        // .package(url: "https://github.com/adamrushy/OpenAISwift.git", branch: "main"),
     ],
     targets: [
         // Targets
@@ -69,6 +71,8 @@ let package = Package(
             // Uncomment when benchmark deps are enabled above:
             // .product(name: "SwiftOpenAI", package: "SwiftOpenAI"),
             // .product(name: "SwiftAnthropic", package: "SwiftAnthropic"),
+            // .product(name: "OpenAI", package: "OpenAI", moduleAliases: ["OpenAI": "MacPawOpenAI"]),
+            // .product(name: "OpenAISwift", package: "OpenAISwift"),
         ]),
     ] : []) + [
         // Executable target
