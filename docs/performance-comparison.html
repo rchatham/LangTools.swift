@@ -289,8 +289,8 @@
     <section>
       <h2>Competitor benchmark snapshot</h2>
       <p class="note">
-        Local debug SwiftPM run from 2026-09-12 using <code>swift package clean && Scripts/run-extended-tests.sh --filter BenchmarkTests -v</code>.
-        Values are XCTest wall-clock averages per measure block; lower is better. Raw values are recorded in <code>docs/benchmark-results.json</code>.
+        Local debug SwiftPM run from 2026-09-12 using <code>Scripts/run-extended-tests.sh --filter BenchmarkTests -v</code>.
+        Values are XCTest wall-clock averages per measure block; lower is better. Raw values and LangTools/competitor ratios are recorded in <code>docs/benchmark-results.json</code>.
       </p>
       <table>
         <thead>
@@ -303,17 +303,17 @@
           </tr>
         </thead>
         <tbody>
-          <tr><td>OpenAI</td><td>Decode response</td><td>3.926 ms</td><td>SwiftOpenAI 4.553 ms</td><td>LangTools 14% faster</td></tr>
-          <tr><td>OpenAI</td><td>Decode tool call response</td><td>6.960 ms</td><td>SwiftOpenAI 5.692 ms</td><td>SwiftOpenAI 18% faster</td></tr>
-          <tr><td>OpenAI</td><td>Decode stream chunk</td><td>4.676 ms</td><td>SwiftOpenAI 4.549 ms</td><td>roughly even</td></tr>
-          <tr><td>OpenAI</td><td>Encode request</td><td>2.592 ms</td><td>SwiftOpenAI 2.467 ms</td><td>roughly even</td></tr>
-          <tr><td>OpenAI</td><td>Encode large conversation</td><td>9.119 ms</td><td>SwiftOpenAI 8.061 ms</td><td>SwiftOpenAI 12% faster</td></tr>
-          <tr><td>OpenAI</td><td>Message construction</td><td>0.238 ms</td><td>SwiftOpenAI 0.348 ms</td><td>LangTools 32% faster</td></tr>
-          <tr><td>Anthropic</td><td>Decode response</td><td>3.506 ms</td><td>SwiftAnthropic 4.280 ms</td><td>LangTools 18% faster</td></tr>
-          <tr><td>Anthropic</td><td>Decode tool use response</td><td>15.916 ms</td><td>SwiftAnthropic 9.271 ms</td><td>SwiftAnthropic 42% faster</td></tr>
-          <tr><td>Anthropic</td><td>Encode request</td><td>1.949 ms</td><td>SwiftAnthropic 1.871 ms</td><td>roughly even</td></tr>
-          <tr><td>Anthropic</td><td>Encode large conversation</td><td>7.067 ms</td><td>SwiftAnthropic 6.109 ms</td><td>SwiftAnthropic 14% faster</td></tr>
-          <tr><td>Anthropic</td><td>Message construction</td><td>0.092 ms</td><td>SwiftAnthropic 0.137 ms</td><td>LangTools 33% faster</td></tr>
+          <tr><td>OpenAI</td><td>Decode response</td><td>4.990 ms</td><td>SwiftOpenAI 5.159 ms</td><td>LangTools 3% faster</td></tr>
+          <tr><td>OpenAI</td><td>Decode tool call response</td><td>5.651 ms</td><td>SwiftOpenAI 6.559 ms</td><td>LangTools 14% faster</td></tr>
+          <tr><td>OpenAI</td><td>Decode stream chunk</td><td>4.642 ms</td><td>SwiftOpenAI 6.176 ms</td><td>LangTools 25% faster</td></tr>
+          <tr><td>OpenAI</td><td>Encode request</td><td>3.043 ms</td><td>SwiftOpenAI 3.168 ms</td><td>LangTools 4% faster</td></tr>
+          <tr><td>OpenAI</td><td>Encode large conversation</td><td>10.314 ms</td><td>SwiftOpenAI 9.276 ms</td><td>SwiftOpenAI 10% faster</td></tr>
+          <tr><td>OpenAI</td><td>Message construction</td><td>0.249 ms</td><td>SwiftOpenAI 0.521 ms</td><td>LangTools 52% faster</td></tr>
+          <tr><td>Anthropic</td><td>Decode response</td><td>4.949 ms</td><td>SwiftAnthropic 4.891 ms</td><td>roughly even</td></tr>
+          <tr><td>Anthropic</td><td>Decode tool use response</td><td>10.162 ms</td><td>SwiftAnthropic 10.432 ms</td><td>LangTools 3% faster</td></tr>
+          <tr><td>Anthropic</td><td>Encode request</td><td>2.976 ms</td><td>SwiftAnthropic 2.726 ms</td><td>SwiftAnthropic 8% faster</td></tr>
+          <tr><td>Anthropic</td><td>Encode large conversation</td><td>8.044 ms</td><td>SwiftAnthropic 7.238 ms</td><td>SwiftAnthropic 10% faster</td></tr>
+          <tr><td>Anthropic</td><td>Message construction</td><td>0.200 ms</td><td>SwiftAnthropic 0.212 ms</td><td>LangTools 6% faster</td></tr>
         </tbody>
       </table>
     </section>
