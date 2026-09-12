@@ -716,9 +716,17 @@ private struct PKCEChallenge {
     }
 
     static func randomURLSafeString(length: Int) -> String {
-        let bytes = (0..<length).map { _ in UInt8.random(in: 0...255) }
         let allowed = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
-        return String(bytes.map { allowed[Int($0) % allowed.count] })
+        let upperBound = UInt8.max - (UInt8.max % UInt8(allowed.count))
+        var result = ""
+        result.reserveCapacity(length)
+
+        while result.count < length {
+            let byte = UInt8.random(in: 0...255)
+            guard byte < upperBound else { continue }
+            result.append(allowed[Int(byte) % allowed.count])
+        }
+        return result
     }
 
     static func sha256Base64URL(_ value: String) -> String {
