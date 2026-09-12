@@ -54,11 +54,18 @@ existing preferences, app-container identity, and credential lookup. The test bu
 IDs, signing team, deployment versions, and sandbox entitlements are also retained.
 A future identifier change needs an explicit migration/distribution decision.
 
-The ChatUI gitlink revision and submodule section name are retained; only its path
-changes. A fresh recursive clone initializes it at `Apps/LangTools/ChatUI`.
-For existing checkouts, save any submodule changes before switching across the move,
-then initialize the new path. Do not delete a leftover old submodule directory
-without checking its work. Existing Xcode bookmarks/scheme selections may need updating.
+The ChatUI gitlink revision is retained while its submodule section and checkout path
+move to `Apps/LangTools/ChatUI`. For existing checkouts, save any submodule changes
+before switching across the move, then synchronize and initialize the new path:
+
+```bash
+git submodule sync -- Apps/LangTools/ChatUI
+git submodule update --init --recursive Apps/LangTools/ChatUI
+```
+
+An obsolete local `submodule.Examples/LangTools_Example/ChatUI` configuration entry may
+remain harmlessly after migration. Do not delete a leftover old submodule directory
+without checking it for work. Existing Xcode bookmarks/scheme selections may need updating.
 
 The Xcode dependency lock now matches the app's already-declared JSON.swift `main`
 dependency and existing SPM lock. No dependency requirement or ChatUI revision changes.

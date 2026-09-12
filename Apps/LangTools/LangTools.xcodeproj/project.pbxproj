@@ -60,7 +60,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		B10000000000000000000001 /* Exceptions for "Tests" folder in "LangToolsAppTests" target */ = {
+		11CE7E549E354B2EA0F6540E /* Exceptions for "Tests" folder in "LangToolsAppTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				LangToolsAppTests/LangToolsAppTests.swift,
@@ -99,7 +99,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				B1D63BC22F7C866E009253F2 /* Exceptions for "Tests" folder in "LangToolsAppUITests" target */,
-				B10000000000000000000001 /* Exceptions for "Tests" folder in "LangToolsAppTests" target */,
+				11CE7E549E354B2EA0F6540E /* Exceptions for "Tests" folder in "LangToolsAppTests" target */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
