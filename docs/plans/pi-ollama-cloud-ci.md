@@ -43,6 +43,16 @@ Both direct Cloud APIs advertise the untagged `glm-5.2`. The `glm-5.2:cloud` tag
 - Primary sources fetched directly: https://ollama.com/api/tags and https://ollama.com/v1/models both list `glm-5.2`; https://ollama.com/library/glm-5.2 documents local `:cloud` routing and 976K context; https://docs.ollama.com/cloud documents native host/Bearer auth. https://docs.ollama.com/api/openai-compatibility checked for API compatibility.
 - Read installed Pi `models.md`, `providers.md`, `environment-variables.md`, `usage.md`, `security.md`, and linked `containerization.md` in full. Confirmed environment interpolation, model IDs passed through to API, isolation flags, stdin print mode, and trust-not-a-sandbox semantics.
 
+## Independent-review follow-up
+
+- Fixed P2 missing issue/PR context: comment requests now include the event's issue title and description in a separate untrusted block, capped at 32768 bytes with an explicit truncation warning. Context remains data passed through jq/files, never interpolated into shell source.
+- Added workflow-controlled visible AI-generated/untrusted/not-an-approval notices to coding and review comments (review marker remains first).
+- Added `.github/pi/tests/prompt_test.rb` and issue/PR JSON fixtures. The check executes actual workflow shell blocks with stubbed `gh` and `pi`, without network or real secrets. Covers issue problem context, PR description plus diff, null body, truncation boundaries, literal shell payloads, and both posted notices.
+- `ruby .github/pi/tests/prompt_test.rb`: 4 tests, 45 assertions, 0 failures/errors/skips.
+- Actionlint on the three changed workflows, all-workflow YAML parsing and `bash -n`, recursive Pi JSON parsing, and `git diff --check`: passed.
+- Rerun `swift test`: 291 tests, 1 intentional skip, 0 failures. The worktree HEAD changed externally during this follow-up to `f3c77ce` (merge of origin/main), accounting for the expanded suite; this worker ran no git mutation commands.
+- Parent reports independent security review PASS. Remaining low risks: top-level npm tarball verification is not a complete independently audited transitive dependency lock; optional Swift bearer authentication permits arbitrary caller-selected hosts/HTTP (callers must choose a trusted HTTPS endpoint; live test enforces HTTPS). These remain documented, not expanded into a dependency-vendoring or transport-policy refactor.
+
 ## Explicit blockers / handoff
 
 - No real `OLLAMA_API_KEY` was available. No successful live generation or GitHub Actions run is claimed. A temporary fetch-mocking attempt did not intercept the pinned CLI transport and received HTTP 401 using a deliberately fake key; this is not a successful transport/inference test.

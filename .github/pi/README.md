@@ -16,4 +16,6 @@ The workflows run only trusted same-repository or write-access-collaborator-requ
 
 The coding assistant proposes guidance or patches in comments; it does not autonomously apply patches. Both assistants treat model output as untrusted advice, not approvals or executable code. Prompt injection can still corrupt that advice. Large diffs are explicitly marked as partial context. Pi's API key is scoped to the inference step; the GitHub token is blanked there. The blank `auth.json` intentionally contains no credentials.
 
+Run the fixture-based workflow prompt/posting regression check with `ruby .github/pi/tests/prompt_test.rb` (requires Ruby, jq, and bash; stubs Pi/GitHub, no credentials or network).
+
 When upgrading Pi, update both workflow version pins and verify the downloaded npm tarball SHA-256 before changing the recorded checksum.
