@@ -21,10 +21,16 @@ public final class Ollama: LangTools {
 
     public struct OllamaConfiguration {
         public var baseURL: URL
+        public var apiKey: String?
         public var session: URLSession
 
-        public init(baseURL: URL = URL(string: "http://localhost:11434")!, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
+        public init(
+            baseURL: URL = URL(string: "http://localhost:11434")!,
+            apiKey: String? = nil,
+            session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
+        ) {
             self.baseURL = baseURL
+            self.apiKey = apiKey
             self.session = session
         }
     }
@@ -45,8 +51,12 @@ public final class Ollama: LangTools {
         ]
     }
 
-    public init(baseURL: URL = URL(string: "http://localhost:11434")!, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
-        configuration = OllamaConfiguration(baseURL: baseURL, session: session)
+    public init(
+        baseURL: URL = URL(string: "http://localhost:11434")!,
+        apiKey: String? = nil,
+        session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
+    ) {
+        configuration = OllamaConfiguration(baseURL: baseURL, apiKey: apiKey, session: session)
     }
 
     public init(configuration: OllamaConfiguration) {
@@ -69,6 +79,9 @@ public final class Ollama: LangTools {
 
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = Request.httpMethod.rawValue
+        if let apiKey = configuration.apiKey, !apiKey.isEmpty {
+            urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
 
         if Request.httpMethod == .get { return urlRequest }
 

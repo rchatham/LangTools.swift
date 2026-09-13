@@ -25,6 +25,29 @@ class OllamaTests: XCTestCase {
     }
 
 
+    func testPrepareAddsBearerAuthorizationWhenConfigured() throws {
+        let authenticatedAPI = Ollama(
+            baseURL: URL(string: "https://ollama.com")!,
+            apiKey: "test-api-key"
+        )
+
+        let request = try authenticatedAPI.prepare(request: Ollama.VersionRequest())
+
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-api-key")
+    }
+
+    func testPrepareOmitsEmptyAuthorization() throws {
+        let request = try Ollama(apiKey: "").prepare(request: Ollama.VersionRequest())
+
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testPrepareOmitsAuthorizationByDefault() throws {
+        let request = try api.prepare(request: Ollama.VersionRequest())
+
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+    }
+
     func testGenerate() async throws {
         MockURLProtocol.mockNetworkHandlers[Ollama.GenerateRequest.endpoint] = { request in
             XCTAssertEqual(request.httpMethod, "POST")
