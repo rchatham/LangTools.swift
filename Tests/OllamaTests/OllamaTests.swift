@@ -25,6 +25,16 @@ class OllamaTests: XCTestCase {
     }
 
 
+    func testOriginalInitializerFunctionTypesRemainAvailable() {
+        let configurationInitializer: (URL, URLSession) -> Ollama.OllamaConfiguration = Ollama.OllamaConfiguration.init
+        let ollamaInitializer: (URL, URLSession) -> Ollama = Ollama.init
+        let baseURL = URL(string: "http://localhost:11434")!
+        let session = URLSession(configuration: .ephemeral)
+
+        XCTAssertEqual(configurationInitializer(baseURL, session).baseURL, baseURL)
+        XCTAssertEqual(ollamaInitializer(baseURL, session).configuration.baseURL, baseURL)
+    }
+
     func testPrepareAddsBearerAuthorizationWhenConfigured() throws {
         let authenticatedAPI = Ollama(
             baseURL: URL(string: "https://ollama.com")!,

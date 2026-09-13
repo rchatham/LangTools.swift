@@ -26,7 +26,16 @@ public final class Ollama: LangTools {
 
         public init(
             baseURL: URL = URL(string: "http://localhost:11434")!,
-            apiKey: String? = nil,
+            session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
+        ) {
+            self.baseURL = baseURL
+            self.apiKey = nil
+            self.session = session
+        }
+
+        public init(
+            baseURL: URL = URL(string: "http://localhost:11434")!,
+            apiKey: String,
             session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
         ) {
             self.baseURL = baseURL
@@ -53,7 +62,14 @@ public final class Ollama: LangTools {
 
     public init(
         baseURL: URL = URL(string: "http://localhost:11434")!,
-        apiKey: String? = nil,
+        session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
+    ) {
+        configuration = OllamaConfiguration(baseURL: baseURL, session: session)
+    }
+
+    public init(
+        baseURL: URL = URL(string: "http://localhost:11434")!,
+        apiKey: String,
         session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
     ) {
         configuration = OllamaConfiguration(baseURL: baseURL, apiKey: apiKey, session: session)
