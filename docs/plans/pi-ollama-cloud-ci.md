@@ -33,7 +33,7 @@ Both direct Cloud APIs advertise the untagged `glm-5.2`. The `glm-5.2:cloud` tag
 
 - `swift test`: 294 tests, 1 intentional live-test skip, 0 failures.
 - `swift test --filter OllamaCloudIntegrationTests`: 3 tests, 1 skipped without explicit opt-in, 0 failures.
-- `ruby .github/pi/tests/prompt_test.rb`: 6 tests, 61 assertions, 0 failures. These fixture-based prompt, trust-boundary, and posting checks require no credentials or network and also run in pull-request and main CI.
+- `ruby .github/pi/tests/prompt_test.rb`: 6 tests, 73 assertions, 0 failures. These fixture-based prompt, trust-boundary, and posting checks require no credentials or network and also run in pull-request and main CI.
 - Actionlint, workflow YAML parsing, Pi JSON parsing, shell syntax validation, and `git diff --check` pass.
 - The pinned Pi package tarball checksum matches `1f498729649bdce647d1160993b4d92bf3c614cc819213bee2f91dd34f2a7af4`. Its exact runtime dependencies are installed with `npm ci --ignore-scripts` from the committed integrity-bearing lockfile before the verified top-level package is extracted. The isolated model configuration resolves `ollama-cloud/glm-5.2`.
 - Independent code and security reviews found no unresolved code-level security issues. Review follow-ups added source-compatible authenticated initializers, explicit context truncation warnings, bounded GitHub comments, regression coverage, and locked Pi dependency installation.

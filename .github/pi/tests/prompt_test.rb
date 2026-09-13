@@ -60,7 +60,9 @@ class PromptTest < Minitest::Test
       end
       run_step('pi-coding.yml', 'Run Pi coding assistant', env, dir)
       run_step('pi-coding.yml', 'Post response', env, dir)
-      assert File.read(File.join(dir, 'posted-comment')).start_with?(NOTICE)
+      posted_comment = File.read(File.join(dir, 'posted-comment'))
+      assert posted_comment.start_with?(NOTICE)
+      assert_includes posted_comment, 'Suggested fix'
       refute File.exist?(File.join(dir, 'injected'))
       yield File.read(File.join(dir, 'captured-prompt')), env, dir
     end
@@ -83,7 +85,9 @@ class PromptTest < Minitest::Test
       assert_includes prompt, "[BEGIN UNTRUSTED PULL REQUEST DIFF]\ndiff --git"
       File.write(File.join(dir, 'review.md'), 'Model advice')
       run_step('pi-review.yml', 'Upsert review comment', env.merge('PR_NUMBER' => '456'), dir)
-      assert File.read(File.join(dir, 'posted-comment')).start_with?("<!-- pi-code-review -->\n\n#{NOTICE}")
+      posted_comment = File.read(File.join(dir, 'posted-comment'))
+      assert posted_comment.start_with?("<!-- pi-code-review -->\n\n#{NOTICE}")
+      assert_includes posted_comment, 'Model advice'
     end
   end
 
