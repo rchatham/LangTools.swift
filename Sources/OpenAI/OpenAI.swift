@@ -34,7 +34,7 @@ final public class OpenAI: LangTools {
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
             { ($0 as? ChatCompletionRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
-            { String(reflecting: type(of: $0)).contains("ResponsesRequest") },
+            { ($0 as? ResponsesRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
             { $0 is AudioSpeechRequest },
             { $0 is AudioTranscriptionRequest },
             { $0 is ListModelDataRequest },
