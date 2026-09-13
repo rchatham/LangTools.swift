@@ -84,7 +84,6 @@ public final class BrowserAccountLoginService: AccountLoginService {
     private let backendClient: AccountLoginBackendClientProtocol
     private let sessionStore: AuthSessionStore
     private let configuration: AccountBackendConfiguration
-    private let cliBridge: CLIAccountSessionBridge
     private let codexHelperClient: CodexHelperClientProtocol
 
     private struct PendingLogin {
@@ -101,13 +100,11 @@ public final class BrowserAccountLoginService: AccountLoginService {
         backendClient: AccountLoginBackendClientProtocol? = nil,
         sessionStore: AuthSessionStore = .shared,
         configuration: AccountBackendConfiguration = AccountBackendConfiguration(),
-        cliBridge: CLIAccountSessionBridge = CLIAccountSessionBridge(),
         codexHelperClient: CodexHelperClientProtocol = CodexHelperClient()
     ) {
         self.coordinator = coordinator
         self.sessionStore = sessionStore
         self.configuration = configuration
-        self.cliBridge = cliBridge
         self.codexHelperClient = codexHelperClient
         self.backendClient = backendClient ?? AccountLoginBackendClient(configuration: configuration)
     }
@@ -154,25 +151,34 @@ public final class BrowserAccountLoginService: AccountLoginService {
     }
 
     public func refreshSession(_ session: AccountSession) async throws -> AccountSession {
-        let refreshedSession: AccountSession
-        if session.provider == .openAI, session.needsRefresh {
-            refreshedSession = try await backendClient.refresh(session: session)
-        } else {
-            refreshedSession = session
+        if session.provider == .openAI {
+            let status = try await codexHelperClient.statusOpenAI()
+            guard status.authenticated else {
+                throw AccountLoginError.missingStoredSession(.openAI)
+            }
+            let models = try await codexHelperClient.listOpenAIModels()
+            return AccountSession(
+                id: session.id,
+                provider: .openAI,
+                accountIdentifier: status.accountIdentifier ?? session.accountIdentifier,
+                accessToken: CodexSessionMarker.value,
+                accessibleModelIDs: models,
+                createdAt: session.createdAt
+            )
         }
 
-        let models = try await backendClient.fetchAccessibleModels(for: refreshedSession.provider, session: refreshedSession)
+        let models = try await backendClient.fetchAccessibleModels(for: session.provider, session: session)
         return AccountSession(
-            id: refreshedSession.id,
-            provider: refreshedSession.provider,
-            accountIdentifier: refreshedSession.accountIdentifier,
-            accessToken: refreshedSession.accessToken,
-            refreshToken: refreshedSession.refreshToken,
-            idToken: refreshedSession.idToken,
-            tokenType: refreshedSession.tokenType,
-            expiresAt: refreshedSession.expiresAt,
+            id: session.id,
+            provider: session.provider,
+            accountIdentifier: session.accountIdentifier,
+            accessToken: session.accessToken,
+            refreshToken: session.refreshToken,
+            idToken: session.idToken,
+            tokenType: session.tokenType,
+            expiresAt: session.expiresAt,
             accessibleModelIDs: models,
-            createdAt: refreshedSession.createdAt
+            createdAt: session.createdAt
         )
     }
 
@@ -188,12 +194,7 @@ public final class BrowserAccountLoginService: AccountLoginService {
 
     public func fetchAccessibleModels(for provider: AccountLoginProvider) async throws -> [String] {
         if provider == .openAI {
-            let models = try await codexHelperClient.listOpenAIModels()
-            if models.isEmpty == false {
-                return models
-            }
-            let status = try await codexHelperClient.statusOpenAI()
-            return status.accessibleModelIDs ?? []
+            return try await codexHelperClient.listOpenAIModels()
         }
 
         let session = try sessionStore.session(for: provider)
@@ -620,12 +621,7 @@ public final class StubAccountLoginService: AccountLoginService {
     public func fetchAccessibleModels(for provider: AccountLoginProvider) async throws -> [String] {
         switch provider {
         case .openAI:
-            return [
-                OpenAI.Model.gpt5_5.rawValue,
-                OpenAI.Model.gpt5_4.rawValue,
-                OpenAI.Model.gpt5_4_mini.rawValue,
-                OpenAI.Model.gpt53_codex_spark.rawValue,
-            ]
+            return []
         case .claudeCode:
             return Anthropic.Model.activeCases.map(\.rawValue)
         }

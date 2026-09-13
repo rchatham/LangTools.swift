@@ -86,7 +86,7 @@ final class NetworkClientAuthTests: XCTestCase {
         XCTAssertEqual(proxyTransport.lastSession?.accountIdentifier, "claude-user")
     }
 
-    func testDisconnectClearsLocalSessionWhenRemoteLogoutRejectsToken() async throws {
+    func testDisconnectClearsLocalSessionWhenRemoteLogoutFails() async throws {
         try sessionStore.save(AccountSession(
             provider: .openAI,
             accountIdentifier: "openai-user",
@@ -97,6 +97,27 @@ final class NetworkClientAuthTests: XCTestCase {
         let client = NetworkClient(
             keychainService: keychainService,
             accountLoginService: FailingLogoutAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager
+        )
+
+        try await client.disconnectAccount(.openAI)
+
+        XCTAssertNil(accessManager.session(for: .openAI))
+        XCTAssertFalse(accessManager.statesForAccessUI().first { $0.accessDestination == .codex }?.hasAccountSession ?? true)
+    }
+
+    func testDisconnectClearsLocalSessionWhenAlreadyLoggedOutHelperReturnsSuccess() async throws {
+        try sessionStore.save(AccountSession(
+            provider: .openAI,
+            accountIdentifier: "openai-user",
+            accessToken: "access-token",
+            accessibleModelIDs: ["gpt-5.5"]
+        ))
+        accessManager.refresh()
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
             accountProxyTransport: TestAccountProxyTransport(),
             providerAccessManager: accessManager
         )
@@ -128,7 +149,35 @@ final class NetworkClientAuthTests: XCTestCase {
         }
     }
 
-    func testOpenAIAccountChatBridgeErrorsPropagate() async throws {
+    func testCodexAccountTransportRejectsToolChoiceBeforeSending() async throws {
+        let transport = AccountProxyTransport(
+            configuration: AccountBackendConfiguration(
+                codexHelperBaseURL: URL(string: "http://127.0.0.1:9999")!,
+                codexHelperToken: "helper-token"
+            )
+        )
+        let session = AccountSession(
+            provider: .openAI,
+            accountIdentifier: "openai-user",
+            accessToken: CodexSessionMarker.value,
+            accessibleModelIDs: ["gpt-5.5"]
+        )
+
+        do {
+            _ = try await transport.performChatCompletionRequest(
+                messages: [Message(text: "Hello", role: .user)],
+                model: .codex(.gpt5_5),
+                session: session,
+                tools: nil,
+                toolChoice: OpenAI.ChatCompletionRequest.ToolChoice.none
+            )
+            XCTFail("Expected Codex tool choice to be rejected")
+        } catch let error as NetworkClient.NetworkError {
+            XCTAssertEqual(error, .accountProxyTransportFailed("Codex account chat does not support tools or tool choice."))
+        }
+    }
+
+    func testCodexAccountProxyErrorsPropagate() async throws {
         let session = AccountSession(
             provider: .openAI,
             accountIdentifier: "openai-user",

@@ -48,12 +48,23 @@ public final class CodexHelperClient: CodexHelperClientProtocol {
 
         var request = URLRequest(url: configuration.codexHelperBaseURL.appending(path: "/v1/auth/login"))
         request.httpMethod = "POST"
+        request.timeoutInterval = 330
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(configuration.codexHelperToken)", forHTTPHeaderField: "Authorization")
         request.httpBody = try encoder.encode(HelperAuthRequest(provider: .openAI))
 
         let (data, _) = try await data(for: request)
-        return try decoder.decode(AccountSession.self, from: data)
+        let session = try decoder.decode(AccountSession.self, from: data)
+        guard session.provider == .openAI,
+              session.accessToken == CodexSessionMarker.value,
+              session.refreshToken == nil,
+              session.idToken == nil,
+              session.tokenType == nil,
+              session.expiresAt == nil
+        else {
+            throw AccountLoginError.sessionExchangeFailed("Codex helper returned an unsafe account session.")
+        }
+        return session.canonicalized
     }
 
     public func logoutOpenAI() async throws {
@@ -97,10 +108,20 @@ public final class CodexHelperClient: CodexHelperClientProtocol {
                 throw AccountLoginError.sessionExchangeFailed("Invalid Codex helper response.")
             }
             guard (200..<300).contains(http.statusCode) else {
-                if http.statusCode == 401 {
-                    throw AccountLoginError.sessionExchangeFailed("Codex helper rejected the request. Check the helper token in Settings.")
+                let helperMessage = (try? decoder.decode(HelperErrorPayload.self, from: data).error)
+                let message: String
+                switch http.statusCode {
+                case 400:
+                    message = helperMessage ?? "Codex helper rejected the request as invalid."
+                case 401:
+                    message = "Codex helper rejected the request. Check the helper token in Settings."
+                case 409:
+                    message = helperMessage ?? "A Codex sign-in is already in progress."
+                case 504:
+                    message = helperMessage ?? "Codex helper timed out. Try again."
+                default:
+                    message = helperMessage ?? "Codex helper returned status \(http.statusCode)."
                 }
-                let message = String(data: data, encoding: .utf8) ?? "Codex helper returned status \(http.statusCode)."
                 throw AccountLoginError.sessionExchangeFailed(message)
             }
             return (data, http)
@@ -108,13 +129,17 @@ public final class CodexHelperClient: CodexHelperClientProtocol {
             throw error
         } catch let error as URLError {
             if error.code == .cannotConnectToHost || error.code == .networkConnectionLost || error.code == .timedOut {
-                throw AccountLoginError.sessionExchangeFailed("Codex helper is not running. Start it with: cd /Users/reidchatham/Developer/App/LangTools-account-login/cli && swift run LangToolsCLI serve")
+                throw AccountLoginError.sessionExchangeFailed("Codex helper is not running. From the cli package, run: swift run LangToolsCLI serve")
             }
             throw AccountLoginError.sessionExchangeFailed(error.localizedDescription)
         } catch {
             throw AccountLoginError.sessionExchangeFailed(error.localizedDescription)
         }
     }
+}
+
+private struct HelperErrorPayload: Decodable {
+    let error: String
 }
 
 private struct HelperAuthRequest: Codable {

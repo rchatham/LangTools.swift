@@ -243,40 +243,9 @@ extension MessageService: @retroactive ChatMessageService {
                 message: error.errorDescription ?? "Update provider access settings."
             )
 
-        case let error as CLIAccountSessionBridgeError:
-            return handleCLIAccountError(error)
-
         default:
             return nil
         }
-    }
-
-    private func handleCLIAccountError(_ error: CLIAccountSessionBridgeError) -> ChatAlertInfo {
-        let message = normalizedCLIErrorMessage(error)
-        let lowercasedMessage = message.lowercased()
-
-        if lowercasedMessage.contains("status 429") || lowercasedMessage.contains("quota") || lowercasedMessage.contains("billing") {
-            return ChatAlertInfo(
-                title: "OpenAI Account Quota Exceeded",
-                button: ButtonInfo(text: "Manage Access", action: { _ in
-                    AuthPresentationCoordinator.shared.present(preferredDestination: .codex)
-                }),
-                message: "Your OpenAI account-backed session could not complete this request because its quota is exhausted. Add an OpenAI API key, switch to another provider, or update your OpenAI billing/quota settings.\n\n\(message)"
-            )
-        }
-
-        if lowercasedMessage.contains("rate limit") {
-            return ChatAlertInfo(title: "OpenAI Rate Limited", button: ButtonInfo(text: "OK", role: .cancel), message: message)
-        }
-
-        return ChatAlertInfo(title: "OpenAI Account Error", button: ButtonInfo(text: "OK", role: .cancel), message: message)
-    }
-
-    private func normalizedCLIErrorMessage(_ error: CLIAccountSessionBridgeError) -> String {
-        let rawMessage = error.errorDescription ?? "LangToolsCLI request failed."
-        let withoutPrefix = rawMessage.replacingOccurrences(of: "Error: ", with: "")
-        let components = withoutPrefix.components(separatedBy: "\n\nSee ")
-        return components.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? withoutPrefix
     }
 
     func handleApiError(_ error: Error) -> ChatAlertInfo? {
@@ -324,8 +293,8 @@ private struct UITestNetworkClient: NetworkClientProtocol {
         case .codexSuccess:
             return Message(text: "OK", role: .assistant)
         case .codexNotLoggedIn:
-            throw CLIAccountSessionBridgeError.commandFailed(
-                "Codex is not logged in. Checked /Users/reidchatham/.codex/auth.json. Run `codex login` and sign in with your OpenAI account, then try again."
+            throw NetworkClient.NetworkError.accountProxyTransportFailed(
+                "Codex helper reports that ChatGPT is not signed in."
             )
         }
     }
@@ -337,8 +306,8 @@ private struct UITestNetworkClient: NetworkClientProtocol {
                 continuation.yield("OK")
                 continuation.finish()
             case .codexNotLoggedIn:
-                continuation.finish(throwing: CLIAccountSessionBridgeError.commandFailed(
-                    "Codex is not logged in. Checked /Users/reidchatham/.codex/auth.json. Run `codex login` and sign in with your OpenAI account, then try again."
+                continuation.finish(throwing: NetworkClient.NetworkError.accountProxyTransportFailed(
+                    "Codex helper reports that ChatGPT is not signed in."
                 ))
             }
         }

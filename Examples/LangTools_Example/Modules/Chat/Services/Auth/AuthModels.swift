@@ -104,6 +104,10 @@ public enum ProviderCredential: Codable, Equatable {
     case accountSession(provider: AccountLoginProvider)
 }
 
+public enum CodexSessionMarker {
+    public static let value = "langtools-codex-app-server-session-v1"
+}
+
 public struct AccountSession: Codable, Equatable, Identifiable {
     public let id: UUID
     public let provider: AccountLoginProvider
@@ -138,6 +142,22 @@ public struct AccountSession: Codable, Equatable, Identifiable {
         self.expiresAt = expiresAt
         self.accessibleModelIDs = accessibleModelIDs
         self.createdAt = createdAt
+    }
+
+    public var canonicalized: AccountSession {
+        guard provider == .openAI else { return self }
+        return AccountSession(
+            id: id,
+            provider: provider,
+            accountIdentifier: accountIdentifier,
+            accessToken: CodexSessionMarker.value,
+            refreshToken: nil,
+            idToken: nil,
+            tokenType: nil,
+            expiresAt: nil,
+            accessibleModelIDs: accessibleModelIDs,
+            createdAt: createdAt
+        )
     }
 
     public var isExpired: Bool {

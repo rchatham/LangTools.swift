@@ -48,15 +48,16 @@ final class CodexHelperClientTests: XCTestCase {
             }
             XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:9999/v1/auth/login")
             XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.timeoutInterval, 330)
             let body = """
             {
               "id": "00000000-0000-0000-0000-000000000001",
               "provider": "openAI",
               "accountIdentifier": "acct",
-              "accessToken": "token",
+              "accessToken": "langtools-codex-app-server-session-v1",
               "refreshToken": null,
               "idToken": null,
-              "tokenType": "Bearer",
+              "tokenType": null,
               "expiresAt": null,
               "accessibleModelIDs": ["gpt-5.5", "gpt-5.3-codex-spark"],
               "createdAt": "2026-04-28T16:00:00Z"
@@ -77,6 +78,8 @@ final class CodexHelperClientTests: XCTestCase {
         let accountSession = try await client.loginOpenAI()
         XCTAssertEqual(accountSession.provider, .openAI)
         XCTAssertEqual(accountSession.accountIdentifier, "acct")
+        XCTAssertEqual(accountSession.accessToken, CodexSessionMarker.value)
+        XCTAssertNil(accountSession.refreshToken)
     }
 
     func testLoginRejectsEmptyHelperTokenBeforeSendingRequest() async {
@@ -123,6 +126,29 @@ final class CodexHelperClientTests: XCTestCase {
             XCTFail("Expected health-check error")
         } catch let error as AccountLoginError {
             XCTAssertEqual(error, .sessionExchangeFailed("Codex helper rejected the request. Check the helper token in Settings."))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testConflictDecodesStructuredHelperError() async {
+        let session = makeURLSession { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 409, httpVersion: nil, headerFields: nil)!
+            return (response, Data(#"{"error":"A ChatGPT login is already in progress."}"#.utf8))
+        }
+        let client = CodexHelperClient(
+            configuration: AccountBackendConfiguration(
+                codexHelperBaseURL: URL(string: "http://127.0.0.1:9999")!,
+                codexHelperToken: "helper-token"
+            ),
+            urlSession: session
+        )
+
+        do {
+            _ = try await client.loginOpenAI()
+            XCTFail("Expected conflict error")
+        } catch let error as AccountLoginError {
+            XCTAssertEqual(error, .sessionExchangeFailed("A ChatGPT login is already in progress."))
         } catch {
             XCTFail("Unexpected error: \(error)")
         }

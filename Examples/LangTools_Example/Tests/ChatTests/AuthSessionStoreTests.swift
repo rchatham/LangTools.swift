@@ -31,7 +31,14 @@ final class AuthSessionStoreTests: XCTestCase {
         try store.save(session)
         let loaded = try store.session(for: .openAI)
 
-        XCTAssertEqual(loaded, session)
+        XCTAssertEqual(loaded?.id, session.id)
+        XCTAssertEqual(loaded?.accountIdentifier, session.accountIdentifier)
+        XCTAssertEqual(loaded?.accessibleModelIDs, session.accessibleModelIDs)
+        XCTAssertEqual(loaded?.accessToken, CodexSessionMarker.value)
+        XCTAssertNil(loaded?.refreshToken)
+        XCTAssertNil(loaded?.idToken)
+        XCTAssertNil(loaded?.tokenType)
+        XCTAssertNil(loaded?.expiresAt)
     }
 
     func testLoadOlderSessionPayloadWithoutNewOptionalFields() throws {
@@ -52,8 +59,29 @@ final class AuthSessionStoreTests: XCTestCase {
         let loaded = try store.session(for: .openAI)
 
         XCTAssertEqual(loaded?.accountIdentifier, "user@example.com")
+        XCTAssertEqual(loaded?.accessToken, CodexSessionMarker.value)
+        XCTAssertNil(loaded?.refreshToken)
         XCTAssertNil(loaded?.idToken)
         XCTAssertNil(loaded?.tokenType)
+
+        let rewritten = try XCTUnwrap(keychain.getString("openAI:accountSession"))
+        XCTAssertFalse(rewritten.contains("refresh-token"))
+        XCTAssertFalse(rewritten.contains("\"accessToken\":\"token\""))
+    }
+
+    func testClaudeCodeCredentialsArePreserved() throws {
+        let session = AccountSession(
+            provider: .claudeCode,
+            accountIdentifier: "claude-user",
+            accessToken: "claude-access",
+            refreshToken: "claude-refresh",
+            idToken: "claude-id",
+            tokenType: "Bearer"
+        )
+
+        try store.save(session)
+
+        XCTAssertEqual(try store.session(for: .claudeCode), session)
     }
 
     func testRemoveSession() throws {

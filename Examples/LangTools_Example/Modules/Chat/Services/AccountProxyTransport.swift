@@ -42,6 +42,10 @@ public final class AccountProxyTransport: AccountProxyTransportProtocol {
     }
 
     private func send(messages: [Message], model: Model, session: AccountSession, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> AccountChatResponse {
+        if session.provider == .openAI, tools != nil || toolChoice != nil {
+            throw NetworkClient.NetworkError.accountProxyTransportFailed("Codex account chat does not support tools or tool choice.")
+        }
+
         let payload = AccountChatRequest(
             provider: session.provider,
             model: model.slug,
@@ -75,7 +79,7 @@ public final class AccountProxyTransport: AccountProxyTransportProtocol {
 
         if let urlError = error as? URLError,
            urlError.code == .cannotConnectToHost || urlError.code == .networkConnectionLost || urlError.code == .timedOut {
-            return .accountProxyTransportFailed("Codex helper is not running. Start it with: cd /Users/reidchatham/Developer/App/LangTools-account-login/cli && swift run LangToolsCLI serve")
+            return .accountProxyTransportFailed("Codex helper is not running. From the cli package, run: swift run LangToolsCLI serve")
         }
 
         return .accountProxyTransportFailed(error.localizedDescription)

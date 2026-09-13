@@ -164,46 +164,6 @@ final class AccountLoginServiceTests: XCTestCase {
         XCTAssertEqual(refreshedSession.idToken, "old-id-token")
     }
 
-    func testCLIBridgeLoggerScrubsLegacyCredentials() throws {
-        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: fileURL) }
-        try #"{"accessToken":"secret","refreshToken":"refresh","idToken":"identity"}"#
-            .write(to: fileURL, atomically: true, encoding: .utf8)
-
-        _ = CLIBridgeLogger(fileURL: fileURL)
-        let scrubbed = try String(contentsOf: fileURL, encoding: .utf8)
-        XCTAssertFalse(scrubbed.contains("secret"))
-        XCTAssertFalse(scrubbed.contains("refresh\""))
-        XCTAssertFalse(scrubbed.contains("identity"))
-        XCTAssertTrue(scrubbed.contains("<redacted>"))
-    }
-
-    func testCLIAccountSessionBridgeExportsOpenAISession() async throws {
-        let runner = TestCommandRunner(results: [
-            CommandResult(status: 0, stdout: """
-            {
-              "provider": "openAI",
-              "accountIdentifier": "chatgpt-account",
-              "accessToken": "access-token",
-              "refreshToken": "refresh-token",
-              "idToken": "id-token",
-              "tokenType": "Bearer",
-              "expiresAt": "2026-04-28T17:00:00Z",
-              "accessibleModelIDs": ["gpt-5.3-codex-spark"],
-              "createdAt": "2026-04-28T16:00:00Z",
-              "id": "00000000-0000-0000-0000-000000000001"
-            }
-            """, stderr: "")
-        ])
-        let bridge = CLIAccountSessionBridge(runner: runner)
-
-        let session = try await bridge.exportOpenAISession()
-
-        XCTAssertEqual(session.provider, .openAI)
-        XCTAssertEqual(session.accountIdentifier, "chatgpt-account")
-        XCTAssertEqual(session.accessToken, "access-token")
-    }
-
     @MainActor
     func testBeginLoginUsesCodexHelperForOpenAI() async throws {
         let helperClient = TestCodexHelperClient(
@@ -211,10 +171,10 @@ final class AccountLoginServiceTests: XCTestCase {
                 id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
                 provider: .openAI,
                 accountIdentifier: "chatgpt-account",
-                accessToken: "access-token",
-                refreshToken: "refresh-token",
+                accessToken: CodexSessionMarker.value,
+                refreshToken: nil,
                 idToken: nil,
-                tokenType: "Bearer",
+                tokenType: nil,
                 expiresAt: nil,
                 accessibleModelIDs: [],
                 createdAt: Date(timeIntervalSince1970: 0)
@@ -227,7 +187,6 @@ final class AccountLoginServiceTests: XCTestCase {
             ),
             sessionStore: AuthSessionStore(keychain: .init(service: "AccountLoginServiceTests.\(UUID().uuidString)")),
             configuration: AccountBackendConfiguration(baseURL: URL(string: "http://localhost:8080")!),
-            cliBridge: CLIAccountSessionBridge(runner: TestCommandRunner(results: [])),
             codexHelperClient: helperClient
         )
 
@@ -396,21 +355,6 @@ private final class TestCodexHelperClient: CodexHelperClientProtocol {
 
     func healthCheck() async throws -> HelperHealthStatus {
         HelperHealthStatus(status: "ok", version: 1)
-    }
-}
-
-private final class TestCommandRunner: CommandRunning {
-    private var results: [CommandResult]
-
-    init(results: [CommandResult]) {
-        self.results = results
-    }
-
-    func run(executable: String, arguments: [String], environment: [String : String]?) async throws -> CommandResult {
-        _ = executable
-        _ = arguments
-        _ = environment
-        return results.removeFirst()
     }
 }
 

@@ -50,7 +50,6 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
     private let keychainService: KeychainService
     private let accountLoginService: AccountLoginService
     private let accountProxyTransport: AccountProxyTransportProtocol
-    private let openAIAccountChatBridge: OpenAIAccountChatBridging
     public let providerAccessManager: ProviderAccessManager
 
     private var userDefaults: UserDefaults { .standard }
@@ -60,13 +59,11 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         keychainService: KeychainService = .shared,
         accountLoginService: AccountLoginService = BrowserAccountLoginService.shared,
         accountProxyTransport: AccountProxyTransportProtocol = AccountProxyTransport(),
-        openAIAccountChatBridge: OpenAIAccountChatBridging = CLIAccountSessionBridge(),
         providerAccessManager: ProviderAccessManager = .shared
     ) {
         self.keychainService = keychainService
         self.accountLoginService = accountLoginService
         self.accountProxyTransport = accountProxyTransport
-        self.openAIAccountChatBridge = openAIAccountChatBridge
         self.providerAccessManager = providerAccessManager
         super.init()
         APIService.llms.forEach { llm in keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) } }
@@ -177,8 +174,6 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         do {
             try await accountLoginService.logout(provider: provider)
         } catch {
-            // A stale or changed helper token must not trap the app in a local
-            // connected state. Remote helper sessions can be replaced on login.
             NSLog("Remote %@ logout failed; clearing the local session: %@", provider.displayName, error.localizedDescription)
         }
         try await MainActor.run {

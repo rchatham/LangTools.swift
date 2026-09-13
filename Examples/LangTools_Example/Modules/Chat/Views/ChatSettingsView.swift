@@ -1157,7 +1157,7 @@ extension ChatSettingsView {
         }
 
         var codexHelperCommand: String {
-            "cd /Users/reidchatham/Developer/App/LangTools-account-login/cli && swift run LangToolsCLI serve"
+            "swift run LangToolsCLI serve"
         }
 
         func modelPickerTitle(for model: Model) -> String {
