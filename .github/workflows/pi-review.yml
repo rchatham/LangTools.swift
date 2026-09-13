@@ -83,9 +83,16 @@ jobs:
           set -euo pipefail
           marker='<!-- pi-code-review -->'
           body_file="$RUNNER_TEMP/review-comment.md"
+          jq -Rs '
+            if length > 60000 then
+              .[:60000] + "\n\n_Output truncated to fit GitHub’s comment limit._"
+            else
+              .
+            end
+          ' "$RUNNER_TEMP/review.md" | jq -r > "$RUNNER_TEMP/review-truncated.md"
           printf '%s\n\n%s\n\n' "$marker" \
             '> **AI-generated, untrusted advice — not a review approval. Verify all suggestions before use.**' > "$body_file"
-          cat "$RUNNER_TEMP/review.md" >> "$body_file"
+          cat "$RUNNER_TEMP/review-truncated.md" >> "$body_file"
 
           comment_id="$(gh api --paginate "repos/$REPOSITORY/issues/$PR_NUMBER/comments" \
             | jq -s --arg marker "$marker" '

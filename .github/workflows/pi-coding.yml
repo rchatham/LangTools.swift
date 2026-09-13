@@ -135,9 +135,16 @@ jobs:
         run: |
           set -euo pipefail
           number="$(<"$RUNNER_TEMP/number.txt")"
+          jq -Rs '
+            if length > 60000 then
+              .[:60000] + "\n\n_Output truncated to fit GitHub’s comment limit._"
+            else
+              .
+            end
+          ' "$RUNNER_TEMP/pi-response.md" | jq -r > "$RUNNER_TEMP/pi-response-truncated.md"
           {
             printf '%s\n\n' '> **AI-generated, untrusted advice — not a review approval. Verify all suggestions before use.**'
-            cat "$RUNNER_TEMP/pi-response.md"
+            cat "$RUNNER_TEMP/pi-response-truncated.md"
           } > "$RUNNER_TEMP/pi-comment.md"
           if [[ "$(<"$RUNNER_TEMP/is-pr.txt")" == "true" ]]; then
             gh pr comment "$number" --repo "$REPOSITORY" --body-file "$RUNNER_TEMP/pi-comment.md"
