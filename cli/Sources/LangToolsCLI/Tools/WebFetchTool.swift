@@ -81,31 +81,11 @@ struct WebFetchTool: ExecutableTool {
         }
 
         do {
-            try NetworkDestinationValidator.validate(url: url)
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 30
-            request.setValue("Mozilla/5.0 (compatible; LangTools-CLI/1.0)", forHTTPHeaderField: "User-Agent")
-
-            let redirectDelegate = SafeRedirectDelegate()
-            let session = URLSession(configuration: .ephemeral, delegate: redirectDelegate, delegateQueue: nil)
-            defer { session.invalidateAndCancel() }
-            let (data, response) = try await session.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw ToolError.executionFailed(tool: name, reason: "Invalid response")
-            }
-
-            // Check for redirect
-            if httpResponse.statusCode >= 300 && httpResponse.statusCode < 400,
-               let location = httpResponse.value(forHTTPHeaderField: "Location") {
-                return """
-                Redirect detected.
-                Original URL: \(urlString)
-                Redirect URL: \(location)
-
-                Please make a new request with the redirect URL to fetch the content.
-                """
-            }
+            let (data, httpResponse) = try await fetchData(
+                from: url,
+                resolver: SystemNetworkAddressResolver(),
+                transport: CurlPinnedHTTPSTransport()
+            )
 
             guard httpResponse.statusCode == 200 else {
                 throw ToolError.executionFailed(tool: name, reason: "HTTP \(httpResponse.statusCode)")
@@ -127,6 +107,31 @@ struct WebFetchTool: ExecutableTool {
         } catch {
             throw ToolError.executionFailed(tool: name, reason: error.localizedDescription)
         }
+    }
+
+    static func fetchData(
+        from initialURL: URL,
+        resolver: NetworkAddressResolving,
+        transport: PinnedHTTPSTransport,
+        maximumRedirects: Int = 5
+    ) async throws -> (Data, HTTPURLResponse) {
+        var url = initialURL
+        for redirectCount in 0...maximumRedirects {
+            let destination = try NetworkDestinationValidator.resolveAndValidate(url: url, resolver: resolver)
+            let (data, response) = try await transport.fetch(url: url, pinnedAddress: destination.address)
+
+            guard (300..<400).contains(response.statusCode),
+                  let location = response.value(forHTTPHeaderField: "Location"),
+                  let redirectedURL = URL(string: location, relativeTo: url)?.absoluteURL else {
+                return (data, response)
+            }
+            guard redirectCount < maximumRedirects else {
+                throw ToolError.executionFailed(tool: name, reason: "Too many redirects")
+            }
+            // The next loop validates and pins the redirect before connecting to it.
+            url = redirectedURL
+        }
+        throw ToolError.executionFailed(tool: name, reason: "Too many redirects")
     }
 
     private static func stripHtml(_ html: String) -> String {
@@ -203,55 +208,102 @@ struct WebFetchTool: ExecutableTool {
     }
 }
 
-final class SafeRedirectDelegate: NSObject, URLSessionTaskDelegate {
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        willPerformHTTPRedirection response: HTTPURLResponse,
-        newRequest request: URLRequest,
-        completionHandler: @escaping (URLRequest?) -> Void
-    ) {
-        guard let url = request.url,
-              (try? NetworkDestinationValidator.validate(url: url)) != nil else {
-            completionHandler(nil)
-            return
+protocol NetworkAddressResolving {
+    func addresses(for host: String) throws -> [String]
+}
+
+struct SystemNetworkAddressResolver: NetworkAddressResolving {
+    func addresses(for host: String) throws -> [String] {
+        if NetworkDestinationValidator.isIPAddress(host) { return [host] }
+        var result: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, nil, &result) == 0, let first = result else { return [] }
+        defer { freeaddrinfo(first) }
+
+        var values: [String] = []
+        var current: UnsafeMutablePointer<addrinfo>? = first
+        while let item = current {
+            var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            if getnameinfo(item.pointee.ai_addr, item.pointee.ai_addrlen, &buffer, socklen_t(buffer.count), nil, 0, NI_NUMERICHOST) == 0 {
+                let value = String(cString: buffer)
+                if !values.contains(value) { values.append(value) }
+            }
+            current = item.pointee.ai_next
         }
-        completionHandler(request)
+        return values
+    }
+}
+
+struct ResolvedNetworkDestination {
+    let address: String
+}
+
+protocol PinnedHTTPSTransport {
+    func fetch(url: URL, pinnedAddress: String) async throws -> (Data, HTTPURLResponse)
+}
+
+struct CurlPinnedHTTPSTransport: PinnedHTTPSTransport {
+    func fetch(url: URL, pinnedAddress: String) async throws -> (Data, HTTPURLResponse) {
+        guard let host = url.host else { throw URLError(.badURL) }
+        let port = url.port ?? 443
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let bodyURL = directory.appendingPathComponent("body")
+        let headersURL = directory.appendingPathComponent("headers")
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+        let curlAddress = pinnedAddress.contains(":") ? "[\(pinnedAddress)]" : pinnedAddress
+        process.arguments = [
+            "--silent", "--show-error", "--noproxy", "*", "--max-time", "30",
+            "--max-redirs", "0", "--resolve", "\(host):\(port):\(curlAddress)",
+            "--user-agent", "Mozilla/5.0 (compatible; LangTools-CLI/1.0)",
+            "--dump-header", headersURL.path, "--output", bodyURL.path,
+            "--write-out", "%{http_code}", url.absoluteString
+        ]
+        let output = Pipe()
+        let errors = Pipe()
+        process.standardOutput = output
+        process.standardError = errors
+        try process.run()
+        process.waitUntilExit()
+        let statusText = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let errorText = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        guard process.terminationStatus == 0, let status = Int(statusText) else {
+            throw ToolError.executionFailed(tool: WebFetchTool.name, reason: errorText.isEmpty ? "HTTPS request failed" : errorText)
+        }
+        let body = try Data(contentsOf: bodyURL)
+        let headerText = (try? String(contentsOf: headersURL, encoding: .utf8)) ?? ""
+        var headers: [String: String] = [:]
+        for line in headerText.components(separatedBy: "\r\n").dropFirst() {
+            guard let separator = line.firstIndex(of: ":") else { continue }
+            headers[String(line[..<separator])] = String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces)
+        }
+        guard let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers) else {
+            throw ToolError.executionFailed(tool: WebFetchTool.name, reason: "Invalid response")
+        }
+        return (body, response)
     }
 }
 
 enum NetworkDestinationValidator {
     static func validate(url: URL) throws {
+        _ = try resolveAndValidate(url: url, resolver: SystemNetworkAddressResolver())
+    }
+
+    static func resolveAndValidate(url: URL, resolver: NetworkAddressResolving) throws -> ResolvedNetworkDestination {
         guard url.scheme?.lowercased() == "https", let host = url.host, !host.isEmpty else {
             throw ToolError.invalidParameters(tool: WebFetchTool.name, reason: "Only HTTPS URLs are allowed")
         }
         let normalizedHost = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
         guard normalizedHost != "localhost", !normalizedHost.hasSuffix(".localhost") else { throw blocked(host) }
 
-        if isIPAddress(normalizedHost) {
-            guard isPublicIPAddress(normalizedHost) else { throw blocked(host) }
-            return
-        }
-
-        var addresses: UnsafeMutablePointer<addrinfo>?
-        guard getaddrinfo(normalizedHost, nil, nil, &addresses) == 0, let first = addresses else {
+        let addresses = try resolver.addresses(for: normalizedHost)
+        guard !addresses.isEmpty else {
             throw ToolError.executionFailed(tool: WebFetchTool.name, reason: "Could not resolve host: \(host)")
         }
-        defer { freeaddrinfo(first) }
-
-        var current: UnsafeMutablePointer<addrinfo>? = first
-        var resolvedAny = false
-        while let address = current {
-            var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-            if getnameinfo(address.pointee.ai_addr, address.pointee.ai_addrlen, &buffer, socklen_t(buffer.count), nil, 0, NI_NUMERICHOST) == 0 {
-                resolvedAny = true
-                guard isPublicIPAddress(String(cString: buffer)) else { throw blocked(host) }
-            }
-            current = address.pointee.ai_next
-        }
-        guard resolvedAny else {
-            throw ToolError.executionFailed(tool: WebFetchTool.name, reason: "Could not resolve host: \(host)")
-        }
+        guard addresses.allSatisfy(isPublicIPAddress) else { throw blocked(host) }
+        return ResolvedNetworkDestination(address: addresses[0])
     }
 
     static func isIPAddress(_ value: String) -> Bool {

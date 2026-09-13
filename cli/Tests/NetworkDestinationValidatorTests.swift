@@ -33,23 +33,62 @@ final class NetworkDestinationValidatorTests: XCTestCase {
         )
     }
 
-    func testRedirectDelegateRejectsPrivateDestination() throws {
-        let delegate = SafeRedirectDelegate()
-        let originalURL = try XCTUnwrap(URL(string: "https://8.8.8.8"))
-        let response = try XCTUnwrap(HTTPURLResponse(
-            url: originalURL,
-            statusCode: 302,
-            httpVersion: nil,
-            headerFields: nil
-        ))
-        let request = URLRequest(url: try XCTUnwrap(URL(string: "https://169.254.169.254/latest/meta-data")))
-        let expectation = expectation(description: "redirect decision")
+    func testFetchPinsConnectionToAddressFromValidationPass() async throws {
+        let resolver = StubResolver(results: [["93.184.216.34"], ["127.0.0.1"]])
+        let transport = RecordingTransport(responses: [(Data("ok".utf8), try response(url: "https://example.com", status: 200))])
 
-        delegate.urlSession(URLSession.shared, task: URLSession.shared.dataTask(with: originalURL), willPerformHTTPRedirection: response, newRequest: request) { redirectedRequest in
-            XCTAssertNil(redirectedRequest)
-            expectation.fulfill()
+        _ = try await WebFetchTool.fetchData(
+            from: XCTUnwrap(URL(string: "https://example.com")),
+            resolver: resolver,
+            transport: transport
+        )
+
+        XCTAssertEqual(resolver.callCount, 1)
+        XCTAssertEqual(transport.pinnedAddresses, ["93.184.216.34"])
+    }
+
+    func testRedirectIsValidatedBeforeSecondConnection() async throws {
+        let resolver = StubResolver(results: [["93.184.216.34"], ["169.254.169.254"]])
+        let redirect = try response(url: "https://example.com", status: 302, headers: ["Location": "https://metadata.example/latest"])
+        let transport = RecordingTransport(responses: [(Data(), redirect)])
+
+        do {
+            _ = try await WebFetchTool.fetchData(
+                from: XCTUnwrap(URL(string: "https://example.com")),
+                resolver: resolver,
+                transport: transport
+            )
+            XCTFail("Expected private redirect to be rejected")
+        } catch {
+            XCTAssertEqual(transport.pinnedAddresses, ["93.184.216.34"])
         }
+    }
 
-        wait(for: [expectation], timeout: 1)
+    private func response(url: String, status: Int, headers: [String: String]? = nil) throws -> HTTPURLResponse {
+        try XCTUnwrap(HTTPURLResponse(url: XCTUnwrap(URL(string: url)), statusCode: status, httpVersion: nil, headerFields: headers))
+    }
+}
+
+private final class StubResolver: NetworkAddressResolving {
+    private let results: [[String]]
+    private(set) var callCount = 0
+
+    init(results: [[String]]) { self.results = results }
+
+    func addresses(for host: String) throws -> [String] {
+        defer { callCount += 1 }
+        return results[min(callCount, results.count - 1)]
+    }
+}
+
+private final class RecordingTransport: PinnedHTTPSTransport {
+    private let responses: [(Data, HTTPURLResponse)]
+    private(set) var pinnedAddresses: [String] = []
+
+    init(responses: [(Data, HTTPURLResponse)]) { self.responses = responses }
+
+    func fetch(url: URL, pinnedAddress: String) async throws -> (Data, HTTPURLResponse) {
+        pinnedAddresses.append(pinnedAddress)
+        return responses[min(pinnedAddresses.count - 1, responses.count - 1)]
     }
 }
