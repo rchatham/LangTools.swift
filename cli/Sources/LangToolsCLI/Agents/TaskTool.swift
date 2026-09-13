@@ -114,12 +114,13 @@ struct TaskTool: ExecutableTool {
             agentType: subagentType,
             prompt: prompt,
             description: description,
+            model: UserDefaults.model,
             status: .pending
         )
 
         if runInBackground {
-            // Launch in background and return immediately
-            await taskManager.launchBackgroundTask(task)
+            // Resolve the selected provider before reporting a successful launch.
+            try await taskManager.launchBackgroundTask(task)
             return """
             Agent '\(subagentType.rawValue)' launched in background.
             Task ID: \(task.id)
@@ -139,12 +140,39 @@ struct AgentTask: Identifiable, Codable {
     let agentType: AgentType
     let prompt: String
     let description: String
+    let model: Model
     var status: TaskStatus
     var result: String?
     var error: String?
     var startTime: Date?
     var endTime: Date?
     var outputFile: String?
+
+    init(
+        id: String,
+        agentType: AgentType,
+        prompt: String,
+        description: String,
+        model: Model = UserDefaults.model,
+        status: TaskStatus,
+        result: String? = nil,
+        error: String? = nil,
+        startTime: Date? = nil,
+        endTime: Date? = nil,
+        outputFile: String? = nil
+    ) {
+        self.id = id
+        self.agentType = agentType
+        self.prompt = prompt
+        self.description = description
+        self.model = model
+        self.status = status
+        self.result = result
+        self.error = error
+        self.startTime = startTime
+        self.endTime = endTime
+        self.outputFile = outputFile
+    }
 
     enum TaskStatus: String, Codable {
         case pending

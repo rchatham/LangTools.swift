@@ -8,10 +8,30 @@
 import Foundation
 import LangTools
 import OpenAI
+import Anthropic
+import Gemini
+import Ollama
+import XAI
 import Agents
 
 /// Manages agent task execution and lifecycle
 actor TaskManager {
+    struct ProviderContext {
+        let langTool: any LangTools
+        let model: any RawRepresentable
+    }
+
+    enum ProviderError: LocalizedError {
+        case unavailable(Model)
+
+        var errorDescription: String? {
+            switch self {
+            case .unavailable(let model):
+                return "The selected \(model.provider.rawValue) provider for model '\(model.rawValue)' is not configured or available."
+            }
+        }
+    }
+
     /// Shared singleton instance
     static let shared = TaskManager()
 
@@ -109,7 +129,10 @@ actor TaskManager {
     }
 
     /// Launch a task in the background
-    func launchBackgroundTask(_ task: AgentTask) {
+    func launchBackgroundTask(_ task: AgentTask) throws {
+        // Resolve up front so callers never report a launch that cannot use the
+        // foreground model's configured provider.
+        let provider = try resolveProvider(for: task.model)
         var task = task
         task.status = .running
         task.startTime = Date()
@@ -126,7 +149,7 @@ actor TaskManager {
             emit(.started(taskId: task.id, agentType: task.agentType))
 
             do {
-                let result = try await runAgent(task: task)
+                let result = try await runAgent(task: task, provider: provider)
 
                 // Write result to output file
                 try? result.write(toFile: outputPath, atomically: true, encoding: .utf8)
@@ -137,6 +160,7 @@ actor TaskManager {
                 updatedTask.endTime = Date()
 
                 activeTasks.removeValue(forKey: task.id)
+                runningTasks.removeValue(forKey: task.id)
                 addToHistory(updatedTask)
 
                 emit(.completed(taskId: task.id, result: result))
@@ -149,6 +173,7 @@ actor TaskManager {
                 updatedTask.endTime = Date()
 
                 activeTasks.removeValue(forKey: task.id)
+                runningTasks.removeValue(forKey: task.id)
                 addToHistory(updatedTask)
 
                 emit(.failed(taskId: task.id, error: error))
@@ -218,7 +243,9 @@ actor TaskManager {
 
     // MARK: - Agent Execution
 
-    private func runAgent(task: AgentTask) async throws -> String {
+    private func runAgent(task: AgentTask, provider: ProviderContext? = nil) async throws -> String {
+        let provider = try provider ?? resolveProvider(for: task.model)
+
         // Create the agent based on type
         let agent = createAgent(for: task.agentType)
 
@@ -245,16 +272,9 @@ actor TaskManager {
             ))
         }
 
-        // Create OpenAI instance for agent execution
-        let langTool = OpenAI(apiKey: ProcessInfo.processInfo.environment["OPENAI_API_KEY"] ?? "")
-
-        // Default to GPT-4o for agent tasks
-        let openAIModel: OpenAIModel = .gpt4o
-
         var progressMessages: [String] = []
 
-        // Use the generic initializer with explicit types
-        let messages: [any LangToolsMessage] = [langTool.userMessage(task.prompt)]
+        let messages: [any LangToolsMessage] = [provider.langTool.userMessage(task.prompt)]
         let eventHandler: (AgentEvent) -> Void = { [weak self] event in
             Task {
                 await self?.handleAgentEvent(event, taskId: task.id)
@@ -263,8 +283,8 @@ actor TaskManager {
         }
 
         let context = AgentContext(
-            langTool: langTool as any LangTools,
-            model: openAIModel as any RawRepresentable,
+            langTool: provider.langTool,
+            model: provider.model,
             messages: messages,
             eventHandler: eventHandler,
             parent: nil,
@@ -276,6 +296,28 @@ actor TaskManager {
 
         return result
     }
+
+    func resolveProvider(for model: Model, toolchain: LangToolchain = langToolchain) throws -> ProviderContext {
+        switch model {
+        case .openAI(let providerModel):
+            guard let provider = toolchain.langTool(OpenAI.self) else { throw ProviderError.unavailable(model) }
+            return ProviderContext(langTool: provider, model: providerModel)
+        case .anthropic(let providerModel):
+            guard let provider = toolchain.langTool(Anthropic.self) else { throw ProviderError.unavailable(model) }
+            return ProviderContext(langTool: provider, model: providerModel)
+        case .xAI(let providerModel):
+            guard let provider = toolchain.langTool(XAI.self) else { throw ProviderError.unavailable(model) }
+            return ProviderContext(langTool: provider, model: providerModel)
+        case .gemini(let providerModel):
+            guard let provider = toolchain.langTool(Gemini.self) else { throw ProviderError.unavailable(model) }
+            return ProviderContext(langTool: provider, model: providerModel)
+        case .ollama(let providerModel):
+            guard let provider = toolchain.langTool(Ollama.self) else { throw ProviderError.unavailable(model) }
+            return ProviderContext(langTool: provider, model: providerModel)
+        }
+    }
+
+    var runningTaskCount: Int { runningTasks.count }
 
     private func createAgent(for type: AgentType) -> CLIAgent {
         CLIAgent(agentType: type)

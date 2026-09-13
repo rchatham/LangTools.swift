@@ -6,6 +6,8 @@
 //
 
 import XCTest
+import LangTools
+import Ollama
 @testable import CLI
 
 final class AgentTests: XCTestCase {
@@ -72,6 +74,53 @@ final class AgentTests: XCTestCase {
         XCTAssertEqual(task.status, .pending)
         XCTAssertNil(task.result)
         XCTAssertNil(task.error)
+    }
+
+    func testAgentTaskCapturesSelectedModel() {
+        let ollamaModel = Ollama.Model(rawValue: "qwen3:8b")!
+        let task = AgentTask(
+            id: "ollama-task",
+            agentType: .bash,
+            prompt: "Run a command",
+            description: "Ollama task",
+            model: .ollama(ollamaModel),
+            status: .pending
+        )
+
+        XCTAssertEqual(task.model, .ollama(ollamaModel))
+    }
+
+    func testTaskManagerResolvesRegisteredOllamaProviderAndModel() async throws {
+        let baseURL = URL(string: "http://127.0.0.1:22445")!
+        let ollama = Ollama(baseURL: baseURL)
+        let ollamaModel = Ollama.Model(rawValue: "qwen3:8b")!
+        var toolchain = LangToolchain()
+        toolchain.register(ollama)
+
+        let context = try await TaskManager.shared.resolveProvider(
+            for: .ollama(ollamaModel),
+            toolchain: toolchain
+        )
+
+        let resolvedProvider = try XCTUnwrap(context.langTool as? Ollama)
+        XCTAssertTrue(resolvedProvider === ollama)
+        XCTAssertEqual(resolvedProvider.configuration.baseURL, baseURL)
+        XCTAssertEqual(context.model as? Ollama.Model, ollamaModel)
+    }
+
+    func testTaskManagerRejectsUnavailableSelectedProvider() async {
+        let ollamaModel = Ollama.Model(rawValue: "qwen3:8b")!
+
+        do {
+            _ = try await TaskManager.shared.resolveProvider(
+                for: .ollama(ollamaModel),
+                toolchain: LangToolchain()
+            )
+            XCTFail("Expected unavailable provider error")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Ollama"))
+            XCTAssertTrue(error.localizedDescription.contains("qwen3:8b"))
+        }
     }
 
     func testAgentTaskStatusValues() {
