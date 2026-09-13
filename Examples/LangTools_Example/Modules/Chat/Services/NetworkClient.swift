@@ -174,7 +174,13 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
     }
 
     public func disconnectAccount(_ provider: AccountLoginProvider) async throws {
-        try await accountLoginService.logout(provider: provider)
+        do {
+            try await accountLoginService.logout(provider: provider)
+        } catch {
+            // A stale or changed helper token must not trap the app in a local
+            // connected state. Remote helper sessions can be replaced on login.
+            NSLog("Remote %@ logout failed; clearing the local session: %@", provider.displayName, error.localizedDescription)
+        }
         try await MainActor.run {
             try providerAccessManager.removeAccountSession(for: provider)
         }

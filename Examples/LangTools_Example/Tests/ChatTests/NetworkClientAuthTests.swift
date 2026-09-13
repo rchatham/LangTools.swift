@@ -86,6 +86,27 @@ final class NetworkClientAuthTests: XCTestCase {
         XCTAssertEqual(proxyTransport.lastSession?.accountIdentifier, "claude-user")
     }
 
+    func testDisconnectClearsLocalSessionWhenRemoteLogoutRejectsToken() async throws {
+        try sessionStore.save(AccountSession(
+            provider: .openAI,
+            accountIdentifier: "openai-user",
+            accessToken: "access-token",
+            accessibleModelIDs: ["gpt-5.5"]
+        ))
+        accessManager.refresh()
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: FailingLogoutAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager
+        )
+
+        try await client.disconnectAccount(.openAI)
+
+        XCTAssertNil(accessManager.session(for: .openAI))
+        XCTAssertFalse(accessManager.statesForAccessUI().first { $0.accessDestination == .codex }?.hasAccountSession ?? true)
+    }
+
     func testMissingAuthThrowsMissingApiKey() async throws {
         let client = NetworkClient(
             keychainService: keychainService,
@@ -137,6 +158,24 @@ final class NetworkClientAuthTests: XCTestCase {
             XCTAssertEqual(error, expectedError)
         }
     }
+}
+
+private struct FailingLogoutAccountLoginService: AccountLoginService {
+    func beginLogin(for provider: AccountLoginProvider) async throws -> AccountSession {
+        throw AccountLoginError.sessionExchangeFailed("Not implemented")
+    }
+
+    func handleRedirect(_ url: URL) async throws -> AccountSession {
+        throw AccountLoginError.sessionExchangeFailed("Not implemented")
+    }
+
+    func refreshSession(_ session: AccountSession) async throws -> AccountSession { session }
+
+    func logout(provider: AccountLoginProvider) async throws {
+        throw AccountLoginError.sessionExchangeFailed("Codex helper rejected the request.")
+    }
+
+    func fetchAccessibleModels(for provider: AccountLoginProvider) async throws -> [String] { [] }
 }
 
 private final class TestAccountProxyTransport: AccountProxyTransportProtocol {
