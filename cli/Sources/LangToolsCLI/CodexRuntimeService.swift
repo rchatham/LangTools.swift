@@ -180,16 +180,8 @@ actor CodexRuntimeService {
                 cwd: directory.path,
                 approvalPolicy: "never",
                 sandbox: "read-only",
-                config: [
-                    "web_search": .string("disabled"),
-                    "features": .object([
-                        "apps": .bool(false),
-                        "browser_use": .bool(false),
-                        "computer_use": .bool(false),
-                        "plugins": .bool(false)
-                    ])
-                ],
-                developerInstructions: "Reply to the conversation without invoking tools, commands, file access, network access, apps, plugins, or subagents.",
+                config: nil,
+                developerInstructions: nil,
                 multiAgentMode: nil,
                 ephemeral: true,
                 environments: nil,
@@ -392,7 +384,7 @@ actor CodexRuntimeService {
             "[\(message.role.capitalized)]\n\(message.content)"
         }.joined(separator: "\n\n")
         return """
-        Continue this conversation and reply as the assistant. Return only the assistant's next message with no extra framing. Do not use tools.
+        Continue this conversation and reply as the assistant. Return only the assistant's next message with no extra framing.
 
         \(transcript)
         """
