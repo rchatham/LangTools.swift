@@ -200,8 +200,8 @@ public struct ChatSettingsView: View {
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
                             }
-                            Button(accessActionTitle(for: state.service)) {
-                                viewModel.presentManageAccess(for: state.service)
+                            Button(accessActionTitle(for: state)) {
+                                viewModel.presentManageAccess(for: state.accessDestination)
                             }
                         }
                     }
@@ -498,8 +498,8 @@ public struct ChatSettingsView: View {
                                             .foregroundColor(.secondary)
                                     }
 
-                                    Button(accessActionTitle(for: state.service)) {
-                                        viewModel.presentManageAccess(for: state.service)
+                                    Button(accessActionTitle(for: state)) {
+                                        viewModel.presentManageAccess(for: state.accessDestination)
                                     }
                                     .buttonStyle(.bordered)
                                 }
@@ -901,13 +901,8 @@ public struct ChatSettingsView: View {
     }
 
     // Helper function to provide model descriptions
-    private func accessActionTitle(for service: APIService) -> String {
-        switch service {
-        case .anthropic:
-            return "Manage Claude / Anthropic Access"
-        default:
-            return "Manage \(service.displayName) Access"
-        }
+    private func accessActionTitle(for state: ProviderAccessState) -> String {
+        "Manage \(state.displayName) Access"
     }
 
     private func modelDescription(for model: Model) -> String {
@@ -1152,9 +1147,9 @@ extension ChatSettingsView {
             UserDefaults.codexHelperToken = codexHelperToken.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        func presentManageAccess(for service: APIService? = nil) {
-            let targetService = service ?? model.apiService
-            AuthPresentationCoordinator.shared.present(preferredService: targetService)
+        func presentManageAccess(for destination: AccessDestination? = nil) {
+            let targetDestination = destination ?? AccessDestination.destination(for: model)
+            AuthPresentationCoordinator.shared.present(preferredDestination: targetDestination)
         }
 
         func saveToolSettings() {

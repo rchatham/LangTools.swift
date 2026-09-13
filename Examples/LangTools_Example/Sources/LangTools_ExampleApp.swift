@@ -223,21 +223,22 @@ extension MessageService: @retroactive ChatMessageService {
             }
 
         case is LangToolchainError:
-            let service = UserDefaults.model.apiService
+            let model = UserDefaults.model
+            let service = model.apiService
             return ChatAlertInfo(
                 title: "Provider Access Required",
                 button: ButtonInfo(text: "Manage Access", action: { _ in
-                    AuthPresentationCoordinator.shared.present(preferredService: service)
+                    AuthPresentationCoordinator.shared.present(preferredDestination: AccessDestination.destination(for: model))
                 }),
                 message: "Configure \(service.displayName) access to use this model. You can add an API key or connect an account from Manage Access."
             )
 
         case let error as NetworkClient.NetworkError:
-            let service = UserDefaults.model.apiService
+            let model = UserDefaults.model
             return ChatAlertInfo(
                 title: "Access Configuration",
                 button: ButtonInfo(text: "Manage Access", action: { _ in
-                    AuthPresentationCoordinator.shared.present(preferredService: service)
+                    AuthPresentationCoordinator.shared.present(preferredDestination: AccessDestination.destination(for: model))
                 }),
                 message: error.errorDescription ?? "Update provider access settings."
             )
@@ -258,7 +259,7 @@ extension MessageService: @retroactive ChatMessageService {
             return ChatAlertInfo(
                 title: "OpenAI Account Quota Exceeded",
                 button: ButtonInfo(text: "Manage Access", action: { _ in
-                    AuthPresentationCoordinator.shared.present(preferredService: .openAI)
+                    AuthPresentationCoordinator.shared.present(preferredDestination: .codex)
                 }),
                 message: "Your OpenAI account-backed session could not complete this request because its quota is exhausted. Add an OpenAI API key, switch to another provider, or update your OpenAI billing/quota settings.\n\n\(message)"
             )
