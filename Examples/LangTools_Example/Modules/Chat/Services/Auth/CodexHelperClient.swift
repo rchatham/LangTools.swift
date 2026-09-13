@@ -41,6 +41,11 @@ public final class CodexHelperClient: CodexHelperClientProtocol {
     }
 
     public func loginOpenAI() async throws -> AccountSession {
+        guard configuration.codexHelperToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            throw AccountLoginError.sessionExchangeFailed("Enter the Codex helper token in Settings before signing in.")
+        }
+        _ = try await healthCheck()
+
         var request = URLRequest(url: configuration.codexHelperBaseURL.appending(path: "/v1/auth/login"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

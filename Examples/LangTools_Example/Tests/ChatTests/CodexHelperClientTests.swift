@@ -41,9 +41,13 @@ final class CodexHelperClientTests: XCTestCase {
 
     func testLoginDecodesAccountSession() async throws {
         let session = makeURLSession { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            if request.url?.path == "/health" {
+                XCTAssertEqual(request.httpMethod, "GET")
+                return (response, Data(#"{"status":"ok","version":1}"#.utf8))
+            }
             XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:9999/v1/auth/login")
             XCTAssertEqual(request.httpMethod, "POST")
-            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             let body = """
             {
               "id": "00000000-0000-0000-0000-000000000001",
@@ -73,6 +77,55 @@ final class CodexHelperClientTests: XCTestCase {
         let accountSession = try await client.loginOpenAI()
         XCTAssertEqual(accountSession.provider, .openAI)
         XCTAssertEqual(accountSession.accountIdentifier, "acct")
+    }
+
+    func testLoginRejectsEmptyHelperTokenBeforeSendingRequest() async {
+        let session = makeURLSession { _ in
+            XCTFail("Login must not send a request without a helper token")
+            throw URLError(.badServerResponse)
+        }
+        let client = CodexHelperClient(
+            configuration: AccountBackendConfiguration(
+                baseURL: URL(string: "http://localhost:8080")!,
+                codexHelperBaseURL: URL(string: "http://127.0.0.1:9999")!,
+                codexHelperToken: "  "
+            ),
+            urlSession: session
+        )
+
+        do {
+            _ = try await client.loginOpenAI()
+            XCTFail("Expected missing-token error")
+        } catch let error as AccountLoginError {
+            XCTAssertEqual(error, .sessionExchangeFailed("Enter the Codex helper token in Settings before signing in."))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testLoginStopsWhenHealthCheckFails() async {
+        let session = makeURLSession { request in
+            XCTAssertEqual(request.url?.path, "/health")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
+            return (response, Data("unauthorized".utf8))
+        }
+        let client = CodexHelperClient(
+            configuration: AccountBackendConfiguration(
+                baseURL: URL(string: "http://localhost:8080")!,
+                codexHelperBaseURL: URL(string: "http://127.0.0.1:9999")!,
+                codexHelperToken: "wrong-token"
+            ),
+            urlSession: session
+        )
+
+        do {
+            _ = try await client.loginOpenAI()
+            XCTFail("Expected health-check error")
+        } catch let error as AccountLoginError {
+            XCTAssertEqual(error, .sessionExchangeFailed("Codex helper rejected the request. Check the helper token in Settings."))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
     }
 
     func testUnauthorizedStatusReturnsHelpfulError() async {
