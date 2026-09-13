@@ -62,8 +62,10 @@ while True:
         assert params["approvalPolicy"] == "never"
         assert params["sandbox"] == "read-only"
         assert params["ephemeral"] is True
-        assert params["dynamicTools"] == []
-        assert params["environments"] == []
+        assert "dynamicTools" not in params
+        assert "environments" not in params
+        assert "multiAgentMode" not in params
+        assert "selectedCapabilityRoots" not in params
         assert params["config"]["web_search"] == "disabled"
         assert params["config"]["tools"]["web_search"] is None
         write({"id":request["id"], "result":{"thread":{"id":"thread-1"},"model":"codex-one","modelProvider":"openai"}})

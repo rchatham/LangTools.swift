@@ -191,11 +191,11 @@ actor CodexRuntimeService {
                     ])
                 ],
                 developerInstructions: "Reply to the conversation without invoking tools, commands, file access, network access, apps, plugins, or subagents.",
-                multiAgentMode: "none",
+                multiAgentMode: nil,
                 ephemeral: true,
-                environments: [],
-                dynamicTools: [],
-                selectedCapabilityRoots: []
+                environments: nil,
+                dynamicTools: nil,
+                selectedCapabilityRoots: nil
             )
         )
 
@@ -213,8 +213,8 @@ actor CodexRuntimeService {
                     approvalPolicy: "never",
                     sandboxPolicy: ReadOnlySandboxPolicy(),
                     model: slug,
-                    environments: [],
-                    multiAgentMode: "none"
+                    environments: nil,
+                    multiAgentMode: nil
                 ),
                 cancelOnTaskCancellation: false
             )
