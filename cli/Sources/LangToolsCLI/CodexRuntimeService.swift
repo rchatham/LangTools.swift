@@ -182,7 +182,6 @@ actor CodexRuntimeService {
                 sandbox: "read-only",
                 config: [
                     "web_search": .string("disabled"),
-                    "tools": .object(["web_search": .null]),
                     "features": .object([
                         "apps": .bool(false),
                         "browser_use": .bool(false),

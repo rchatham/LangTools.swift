@@ -67,7 +67,7 @@ while True:
         assert "multiAgentMode" not in params
         assert "selectedCapabilityRoots" not in params
         assert params["config"]["web_search"] == "disabled"
-        assert params["config"]["tools"]["web_search"] is None
+        assert "tools" not in params["config"]
         write({"id":request["id"], "result":{"thread":{"id":"thread-1"},"model":"codex-one","modelProvider":"openai"}})
     elif method == "turn/start":
         params = request["params"]
