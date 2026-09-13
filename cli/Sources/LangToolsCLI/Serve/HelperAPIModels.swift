@@ -32,7 +32,7 @@ struct HelperChatRequest: Decodable {
     let stream: Bool
 }
 
-struct HelperChatMessage: Decodable {
+struct HelperChatMessage: Codable, Sendable {
     let role: String
     let content: String
 }

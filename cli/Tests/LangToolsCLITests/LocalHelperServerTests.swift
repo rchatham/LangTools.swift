@@ -29,16 +29,55 @@ final class LocalHelperServerTests: XCTestCase {
         XCTAssertThrowsError(try ServeOptions(arguments: ["--port", "70000"]))
     }
 
-    func testCodexCatalogUsesConfiguredHomeAndPreservesFutureSlugs() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let cache = #"{"models":[{"slug":"gpt-future-codex"},{"slug":"gpt-5.5"}]}"#
-        try Data(cache.utf8).write(to: root.appendingPathComponent("models_cache.json"))
-
-        XCTAssertEqual(
-            CodexModelCatalog.accessibleModelIDs(environment: ["LANGTOOLS_CODEX_HOME": root.path]),
-            ["gpt-future-codex", "gpt-5.5"]
+    func testSessionUsesCanonicalOpaqueMarkerWithoutCredentials() throws {
+        XCTAssertEqual(CodexRuntimeService.sessionMarker, "langtools-codex-app-server-session-v1")
+        let session = StoredAccountSession(
+            provider: "openAI",
+            accountIdentifier: "person@example.com",
+            accessToken: CodexRuntimeService.sessionMarker,
+            refreshToken: nil,
+            idToken: nil,
+            tokenType: nil,
+            expiresAt: nil,
+            accessibleModelIDs: ["gpt-5.5"],
+            createdAt: Date(timeIntervalSince1970: 0),
+            id: UUID()
         )
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(session)) as? [String: Any])
+        XCTAssertEqual(object["accessToken"] as? String, CodexRuntimeService.sessionMarker)
+        XCTAssertNil(object["refreshToken"])
+        XCTAssertNil(object["idToken"])
+    }
+
+    func testChatThreadWireConfigurationIsEphemeralAndReadOnly() throws {
+        let params = CodexThreadStartParams(
+            model: "gpt-5.5",
+            modelProvider: nil,
+            cwd: "/tmp/isolated",
+            approvalPolicy: "never",
+            sandbox: "read-only",
+            config: nil,
+            developerInstructions: "Do not use tools.",
+            multiAgentMode: "none",
+            ephemeral: true,
+            environments: [],
+            dynamicTools: [],
+            selectedCapabilityRoots: []
+        )
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(params)) as? [String: Any])
+        XCTAssertEqual(object["approvalPolicy"] as? String, "never")
+        XCTAssertEqual(object["sandbox"] as? String, "read-only")
+        XCTAssertEqual(object["ephemeral"] as? Bool, true)
+        XCTAssertEqual((object["dynamicTools"] as? [Any])?.count, 0)
+    }
+
+    func testHTTPErrorMappingCoversWireStatuses() {
+        XCTAssertEqual(LocalHelperServer.httpStatus(for: CodexRuntimeError.badRequest("bad")), "400 Bad Request")
+        XCTAssertEqual(LocalHelperServer.httpStatus(for: CancellationError()), "400 Bad Request")
+        XCTAssertEqual(LocalHelperServer.httpStatus(for: CodexRuntimeError.authentication("auth")), "401 Unauthorized")
+        XCTAssertEqual(LocalHelperServer.httpStatus(for: CodexRuntimeError.accountConflict("conflict")), "409 Conflict")
+        XCTAssertEqual(LocalHelperServer.httpStatus(for: CodexAppServerError.timeout("request")), "504 Gateway Timeout")
+        XCTAssertEqual(LocalHelperServer.httpStatus(for: CodexRuntimeError.timeout("turn")), "504 Gateway Timeout")
+        XCTAssertEqual(LocalHelperServer.httpStatus(for: CodexRuntimeError.runtime("failed")), "500 Internal Server Error")
     }
 }

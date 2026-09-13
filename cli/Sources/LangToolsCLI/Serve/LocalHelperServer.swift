@@ -83,10 +83,10 @@ struct LocalHelperServer {
                 let body = try Self.jsonBody(HelperHealthResponse(status: "ok", version: 1))
                 respond(connection: connection, status: "200 OK", body: body)
             case ("GET", "/v1/auth/status"):
-                let body = try Self.jsonBody(authStatusResponse())
+                let body = try Self.jsonBody(try await authStatusResponse())
                 respond(connection: connection, status: "200 OK", body: body)
             case ("GET", "/v1/models/codex"):
-                let body = try Self.jsonBody(HelperModelsResponse(models: AuthCLI.openAIAccessibleModelIDs()))
+                let body = try Self.jsonBody(HelperModelsResponse(models: try await AuthCLI.openAIAccessibleModelIDs()))
                 respond(connection: connection, status: "200 OK", body: body)
             case ("POST", "/v1/auth/login"):
                 let payload = try JSONDecoder().decode(HelperAuthRequest.self, from: request.body)
@@ -103,7 +103,7 @@ struct LocalHelperServer {
                     respond(connection: connection, status: "400 Bad Request", body: Self.errorBody("Only openAI is currently supported."))
                     return
                 }
-                try AuthCLI.logoutOpenAI()
+                try await AuthCLI.logoutOpenAI()
                 let body = try Self.jsonBody(HelperHealthResponse(status: "ok", version: 1))
                 respond(connection: connection, status: "200 OK", body: body)
             case ("POST", "/v1/account/chat/completions"):
@@ -111,6 +111,13 @@ struct LocalHelperServer {
                 guard payload.provider == "openAI" || payload.provider == "openai" else {
                     respond(connection: connection, status: "400 Bad Request", body: Self.errorBody("Only openAI is currently supported."))
                     return
+                }
+                let supportedRoles: Set<String> = ["system", "user", "assistant", "tool"]
+                guard payload.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+                      payload.messages.isEmpty == false,
+                      payload.messages.allSatisfy({ supportedRoles.contains($0.role.lowercased()) })
+                else {
+                    throw CodexRuntimeError.badRequest("A model and valid chat messages are required.")
                 }
                 let content = try await OpenAIAccountChatCommand.performChat(
                     modelID: payload.model,
@@ -123,7 +130,11 @@ struct LocalHelperServer {
                 respond(connection: connection, status: "404 Not Found", body: Self.errorBody("Not found."))
             }
         } catch {
-            respond(connection: connection, status: "500 Internal Server Error", body: Self.errorBody(error.localizedDescription))
+            respond(
+                connection: connection,
+                status: Self.httpStatus(for: error),
+                body: Self.errorBody(error.localizedDescription)
+            )
         }
     }
 
@@ -134,24 +145,54 @@ struct LocalHelperServer {
         })
     }
 
-    private func authStatusResponse() -> HelperAuthStatusResponse {
-        guard let session = try? AuthCLI.exportOpenAISession() else {
+    private func authStatusResponse() async throws -> HelperAuthStatusResponse {
+        do {
+            let status = try await CodexRuntimeService.shared.accountStatus()
             return HelperAuthStatusResponse(
                 provider: "openAI",
-                authenticated: false,
-                accountIdentifier: nil,
+                authenticated: status.authenticated,
+                accountIdentifier: status.accountIdentifier,
                 expiresAt: nil,
-                accessibleModelIDs: nil
+                accessibleModelIDs: status.authenticated ? try await AuthCLI.openAIAccessibleModelIDs() : nil
             )
+        } catch CodexAppServerError.unavailable {
+            return unauthenticatedStatusResponse()
+        } catch CodexAppServerError.exited {
+            return unauthenticatedStatusResponse()
         }
+    }
 
-        return HelperAuthStatusResponse(
+    private func unauthenticatedStatusResponse() -> HelperAuthStatusResponse {
+        HelperAuthStatusResponse(
             provider: "openAI",
-            authenticated: true,
-            accountIdentifier: session.accountIdentifier,
-            expiresAt: session.expiresAt?.ISO8601Format(),
-            accessibleModelIDs: session.accessibleModelIDs
+            authenticated: false,
+            accountIdentifier: nil,
+            expiresAt: nil,
+            accessibleModelIDs: nil
         )
+    }
+
+    static func httpStatus(for error: Error) -> String {
+        if error is DecodingError || error is CancellationError { return "400 Bad Request" }
+        if let runtimeError = error as? CodexRuntimeError {
+            switch runtimeError {
+            case .badRequest: return "400 Bad Request"
+            case .authentication: return "401 Unauthorized"
+            case .quotaExceeded: return "429 Too Many Requests"
+            case .overloaded: return "503 Service Unavailable"
+            case .accountConflict: return "409 Conflict"
+            case .timeout: return "504 Gateway Timeout"
+            case .browserOpenFailed, .invalidResponse, .runtime: return "500 Internal Server Error"
+            }
+        }
+        if let appServerError = error as? CodexAppServerError {
+            switch appServerError {
+            case .invalidRequest: return "400 Bad Request"
+            case .timeout: return "504 Gateway Timeout"
+            default: break
+            }
+        }
+        return "500 Internal Server Error"
     }
 
     private static func jsonBody<T: Encodable>(_ payload: T) throws -> String {

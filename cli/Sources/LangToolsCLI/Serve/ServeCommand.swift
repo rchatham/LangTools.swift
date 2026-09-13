@@ -5,7 +5,11 @@ struct ServeCommand {
         let options = try ServeOptions(arguments: arguments)
         let token = options.token ?? randomToken()
         let server = LocalHelperServer(host: options.host, port: options.port, bearerToken: token)
-        try await server.run()
+        try await withTaskCancellationHandler {
+            try await server.run()
+        } onCancel: {
+            Task { await CodexRuntimeService.shared.shutdown() }
+        }
     }
 
     private static func randomToken() -> String {
