@@ -23,7 +23,6 @@ typealias Role = OpenAI.Message.Role
 class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     static let shared = NetworkClient()
 
-    private let sessionStore = SessionStore()
     private var userDefaults: UserDefaults { .standard }
 
     override init() {
@@ -38,10 +37,6 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
             }
         }
 
-        if UserDefaults.getApiKey(for: .openAI) == nil,
-           let session = try? sessionStore.load() {
-            register(session.accessToken, for: .openAI)
-        }
     }
 
     func request(messages: [Message], model: Model, stream: Bool = false, tools: [OpenAI.Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) -> any LangToolsChatRequest & LangToolsStreamableRequest {

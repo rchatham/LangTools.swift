@@ -5,7 +5,9 @@ struct LangToolsCLI {
     static func main() async {
         do {
             try await CommandRouter().run(arguments: Array(CommandLine.arguments.dropFirst()))
+            await CodexRuntimeService.shared.shutdown()
         } catch {
+            await CodexRuntimeService.shared.shutdown()
             fputs("Error: \(error.localizedDescription)\n", stderr)
             exit(1)
         }
