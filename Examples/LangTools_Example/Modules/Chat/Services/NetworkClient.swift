@@ -125,7 +125,7 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
 
     func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) -> any LangToolsChatRequest & LangToolsStreamableRequest {
         switch model {
-        case .anthropic(let model): return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.convertTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
+        case .anthropic(let model), .claudeCode(let model): return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.convertTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
         case .openAI(let model), .codex(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), /*n: 3,*/ stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice/*, choose: {_ in 2}*/)
         case .xAI(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice)
         case .gemini(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream/*, tools: tools?.convertTools(), tool_choice: toolChoice*/)
@@ -139,7 +139,7 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
             throw NetworkError.accountProxyTransportFailed("Account-backed agent execution is not supported. Use an API key for agent runs.")
         }
         switch model {
-        case .anthropic(let model): return AgentContext(langTool: try requiredLangTool(Anthropic.self), model: model, messages: messages.toAnthropicMessages(), eventHandler: eventHandler)
+        case .anthropic(let model), .claudeCode(let model): return AgentContext(langTool: try requiredLangTool(Anthropic.self), model: model, messages: messages.toAnthropicMessages(), eventHandler: eventHandler)
         case .gemini(let model): return AgentContext(langTool: try requiredLangTool(Gemini.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
         case .openAI(let model), .codex(let model): return AgentContext(langTool: try requiredLangTool(OpenAI.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
         case .xAI(let model): return AgentContext(langTool: try requiredLangTool(XAI.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
@@ -213,7 +213,7 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
             throw NetworkError.missingApiKey
         }
 
-        if !state.availableModels.isEmpty, state.availableModels.contains(model) == false {
+        guard state.availableModels.contains(model) else {
             throw NetworkError.modelAccessUnavailable(model.rawValue)
         }
     }
@@ -224,16 +224,12 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         }
 
         switch model {
-        case .codex:
+        case .codex, .claudeCode:
             return providerAccessManager.session(for: provider)
-        case .openAI:
+        case .openAI, .anthropic:
             return nil
         default:
-            let state = providerAccessManager.state(for: model.apiService)
-            guard state.hasAccountSession, state.hasAPIKey == false else {
-                return nil
-            }
-            return providerAccessManager.session(for: provider)
+            return nil
         }
     }
 }

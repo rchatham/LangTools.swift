@@ -15,6 +15,7 @@ public enum ModelRoute: String, Codable, Hashable {
     case openAI = "openai"
     case codex = "codex"
     case anthropic = "anthropic"
+    case claudeCode = "claude-code"
     case xAI = "xai"
     case gemini = "gemini"
     case ollama = "ollama"
@@ -24,6 +25,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
     case openAI(OpenAI.Model)
     case codex(OpenAI.Model)
     case anthropic(Anthropic.Model)
+    case claudeCode(Anthropic.Model)
     case xAI(XAI.Model)
     case gemini(Gemini.Model)
     case ollama(Ollama.Model)
@@ -43,6 +45,9 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             case ModelRoute.anthropic.rawValue:
                 guard let model = Anthropic.Model(rawValue: slug) else { return nil }
                 self = .anthropic(model)
+            case ModelRoute.claudeCode.rawValue:
+                guard let model = Anthropic.Model(rawValue: slug) else { return nil }
+                self = .claudeCode(model)
             case ModelRoute.xAI.rawValue:
                 guard let model = XAI.Model(rawValue: slug) else { return nil }
                 self = .xAI(model)
@@ -74,7 +79,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         switch self {
         case .openAI(let model), .codex(let model):
             return model.rawValue
-        case .anthropic(let model):
+        case .anthropic(let model), .claudeCode(let model):
             return model.rawValue
         case .xAI(let model):
             return model.rawValue
@@ -93,6 +98,8 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             return .codex
         case .anthropic:
             return .anthropic
+        case .claudeCode:
+            return .claudeCode
         case .xAI:
             return .xAI
         case .gemini:
@@ -143,7 +150,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
     public var apiService: APIService {
         switch self {
         case .openAI, .codex: return .openAI
-        case .anthropic: return .anthropic
+        case .anthropic, .claudeCode: return .anthropic
         case .xAI: return .xAI
         case .gemini: return .gemini
         case .ollama: return .ollama

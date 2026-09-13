@@ -76,12 +76,13 @@ final class NetworkClientAuthTests: XCTestCase {
 
         let message = try await client.performChatCompletionRequest(
             messages: [Message(text: "Hello", role: .user)],
-            model: .anthropic(anthropicModel),
+            model: .claudeCode(anthropicModel),
             tools: nil,
             toolChoice: nil
         )
 
         XCTAssertEqual(message.text, "proxied response")
+        XCTAssertEqual(proxyTransport.lastModel, .claudeCode(anthropicModel))
         XCTAssertEqual(proxyTransport.lastSession?.accountIdentifier, "claude-user")
     }
 

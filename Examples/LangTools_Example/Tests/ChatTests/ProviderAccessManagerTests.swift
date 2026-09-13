@@ -1,5 +1,6 @@
 import XCTest
 import KeychainAccess
+import Anthropic
 @testable import Chat
 
 final class ProviderAccessManagerTests: XCTestCase {
@@ -98,6 +99,31 @@ final class ProviderAccessManagerTests: XCTestCase {
         XCTAssertEqual(openAIStates.map(\.displayName), ["OpenAI Platform", "Codex Subscription"])
         XCTAssertEqual(openAIStates[0].availableModels.map(\.rawValue).filter { $0 == "openai/gpt-5.5" }, ["openai/gpt-5.5"])
         XCTAssertEqual(openAIStates[1].availableModels.map(\.rawValue), ["codex/gpt-5.5"])
+    }
+
+    func testAccessUIPresentsAnthropicPlatformAndClaudeCodeSeparately() throws {
+        let anthropicModel = try XCTUnwrap(Anthropic.Model.allCases.first)
+        keychainService.saveApiKey(apiKey: "sk-ant-test", for: .anthropic)
+        try sessionStore.save(AccountSession(
+            provider: .claudeCode,
+            accountIdentifier: "claude-user",
+            accessToken: "token",
+            accessibleModelIDs: [anthropicModel.rawValue]
+        ))
+        accessManager.refresh()
+
+        let states = accessManager.statesForAccessUI().filter { $0.service == .anthropic }
+        XCTAssertEqual(states.map(\.accessDestination), [.anthropic, .claudeCode])
+        XCTAssertEqual(states.map(\.displayName), ["Anthropic Platform", "Claude Code"])
+        XCTAssertTrue(states[0].availableModels.allSatisfy { $0.route == .anthropic })
+        XCTAssertEqual(states[1].availableModels.map(\.rawValue), ["claude-code/\(anthropicModel.rawValue)"])
+    }
+
+    func testAccessUIDestinationsAreIndependent() {
+        XCTAssertEqual(
+            accessManager.statesForAccessUI().compactMap(\.accessDestination),
+            [.openAI, .codex, .anthropic, .claudeCode, .xAI, .gemini]
+        )
     }
 
     func testOpenAIAPIKeyAndCodexSessionShowSeparateModelEntries() throws {

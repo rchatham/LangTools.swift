@@ -30,6 +30,75 @@ public enum AccountLoginProvider: String, Codable, CaseIterable, Identifiable, E
     }
 }
 
+public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
+    case openAI
+    case codex
+    case anthropic
+    case claudeCode
+    case xAI
+    case gemini
+
+    public var id: String { rawValue }
+
+    public var service: APIService {
+        switch self {
+        case .openAI, .codex: return .openAI
+        case .anthropic, .claudeCode: return .anthropic
+        case .xAI: return .xAI
+        case .gemini: return .gemini
+        }
+    }
+
+    public var route: ModelRoute? {
+        switch self {
+        case .openAI: return .openAI
+        case .codex: return .codex
+        default: return nil
+        }
+    }
+
+    public var accountProvider: AccountLoginProvider? {
+        switch self {
+        case .codex: return .openAI
+        case .claudeCode: return .claudeCode
+        default: return nil
+        }
+    }
+
+    public var displayName: String {
+        switch self {
+        case .openAI: return "OpenAI Platform"
+        case .codex: return "Codex Subscription"
+        case .anthropic: return "Anthropic Platform"
+        case .claudeCode: return "Claude Code"
+        case .xAI: return "xAI"
+        case .gemini: return "Gemini"
+        }
+    }
+
+    public static func destination(for model: Model) -> AccessDestination? {
+        switch model.route {
+        case .openAI: return .openAI
+        case .codex: return .codex
+        case .anthropic: return .anthropic
+        case .claudeCode: return .claudeCode
+        case .xAI: return .xAI
+        case .gemini: return .gemini
+        case .ollama: return nil
+        }
+    }
+
+    public static func platform(for service: APIService) -> AccessDestination? {
+        switch service {
+        case .openAI: return .openAI
+        case .anthropic: return .anthropic
+        case .xAI: return .xAI
+        case .gemini: return .gemini
+        case .ollama, .serper: return nil
+        }
+    }
+}
+
 public enum ProviderCredential: Codable, Equatable {
     case apiKey(service: APIService)
     case accountSession(provider: AccountLoginProvider)
@@ -99,6 +168,7 @@ public enum ProviderAuthStatus: Equatable {
 public struct ProviderAccessState: Equatable, Identifiable {
     public let service: APIService
     public let route: ModelRoute?
+    public let accessDestination: AccessDestination?
     public let authStatus: ProviderAuthStatus
     public let availableModels: [Model]
     public let accountIdentifier: String?
@@ -106,25 +176,23 @@ public struct ProviderAccessState: Equatable, Identifiable {
     public init(
         service: APIService,
         route: ModelRoute? = nil,
+        accessDestination: AccessDestination? = nil,
         authStatus: ProviderAuthStatus,
         availableModels: [Model],
         accountIdentifier: String? = nil
     ) {
         self.service = service
         self.route = route
+        self.accessDestination = accessDestination
         self.authStatus = authStatus
         self.availableModels = availableModels
         self.accountIdentifier = accountIdentifier
     }
 
-    public var id: String { route?.rawValue ?? service.rawValue }
+    public var id: String { accessDestination?.rawValue ?? route?.rawValue ?? service.rawValue }
 
     public var displayName: String {
-        switch route {
-        case .openAI: return "OpenAI Platform"
-        case .codex: return "Codex Subscription"
-        default: return service.displayName
-        }
+        accessDestination?.displayName ?? service.displayName
     }
 
     public var hasAPIKey: Bool {

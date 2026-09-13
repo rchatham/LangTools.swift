@@ -91,34 +91,66 @@ public final class ProviderAccessManager: ObservableObject {
 
     public func statesForAccessUI() -> [ProviderAccessState] {
         let openAIState = state(for: .openAI)
-        let platform = ProviderAccessState(
-            service: .openAI,
-            route: .openAI,
-            authStatus: openAIState.hasAPIKey ? .apiKeyConfigured : .notConfigured,
-            availableModels: openAIState.availableModels.filter { $0.route == .openAI }
+        let anthropicState = state(for: .anthropic)
+        let codexSession = session(for: .openAI)
+        let claudeCodeSession = session(for: .claudeCode)
+
+        return [
+            ProviderAccessState(
+                service: .openAI,
+                route: .openAI,
+                accessDestination: .openAI,
+                authStatus: openAIState.hasAPIKey ? .apiKeyConfigured : .notConfigured,
+                availableModels: openAIState.availableModels.filter { $0.route == .openAI }
+            ),
+            ProviderAccessState(
+                service: .openAI,
+                route: .codex,
+                accessDestination: .codex,
+                authStatus: codexSession.map { .accountConnected($0.provider) } ?? .notConfigured,
+                availableModels: openAIState.availableModels.filter { $0.route == .codex },
+                accountIdentifier: codexSession?.accountIdentifier
+            ),
+            ProviderAccessState(
+                service: .anthropic,
+                accessDestination: .anthropic,
+                authStatus: anthropicState.hasAPIKey ? .apiKeyConfigured : .notConfigured,
+                availableModels: anthropicState.availableModels.filter { $0.route == .anthropic }
+            ),
+            ProviderAccessState(
+                service: .anthropic,
+                accessDestination: .claudeCode,
+                authStatus: claudeCodeSession.map { .accountConnected($0.provider) } ?? .notConfigured,
+                availableModels: anthropicState.availableModels.filter { $0.route == .claudeCode },
+                accountIdentifier: claudeCodeSession?.accountIdentifier
+            ),
+            accessState(for: .xAI),
+            accessState(for: .gemini)
+        ]
+    }
+
+    private func accessState(for destination: AccessDestination) -> ProviderAccessState {
+        let providerState = state(for: destination.service)
+        return ProviderAccessState(
+            service: destination.service,
+            accessDestination: destination,
+            authStatus: providerState.hasAPIKey ? .apiKeyConfigured : .notConfigured,
+            availableModels: providerState.availableModels
         )
-        let session = self.session(for: .openAI)
-        let codex = ProviderAccessState(
-            service: .openAI,
-            route: .codex,
-            authStatus: session.map { .accountConnected($0.provider) } ?? .notConfigured,
-            availableModels: openAIState.availableModels.filter { $0.route == .codex },
-            accountIdentifier: session?.accountIdentifier
-        )
-        let otherProviders = APIService.allCases
-            .filter { $0 != .openAI && $0 != .ollama && $0 != .serper }
-            .map(state(for:))
-        return [platform, codex] + otherProviders
     }
 
     public func unavailableReason(for state: ProviderAccessState) -> String? {
         guard state.service != .ollama, state.service != .serper else { return nil }
         if state.authStatus == .notConfigured {
-            switch state.route {
+            switch state.accessDestination {
             case .openAI:
                 return "Add an OpenAI API key to show Platform API models."
             case .codex:
-                return "Connect the Codex helper and sign in to show subscription models."
+                return "Connect the Codex helper and sign in with your ChatGPT subscription to show Codex models."
+            case .anthropic:
+                return "Add an Anthropic API key to show Anthropic Platform models."
+            case .claudeCode:
+                return "Sign in with Claude Code to show account-backed models."
             default:
                 return "Connect \(state.displayName) to show its models."
             }
@@ -169,7 +201,13 @@ public final class ProviderAccessManager: ObservableObject {
                     guard trimmed.isEmpty == false else { return nil }
                     return .codex(OpenAI.Model(rawValue: trimmed) ?? OpenAI.Model(customModelID: trimmed))
                 }
-            case .anthropic, .xAI, .gemini, .ollama, .serper:
+            case .anthropic:
+                parsed = session.accessibleModelIDs.compactMap { identifier in
+                    let slug = identifier.split(separator: "/", maxSplits: 1).last.map(String.init) ?? identifier
+                    guard let model = Anthropic.Model(rawValue: slug) else { return nil }
+                    return .claudeCode(model)
+                }
+            case .xAI, .gemini, .ollama, .serper:
                 parsed = session.accessibleModelIDs.compactMap(Model.init(rawValue:))
             }
             return parsed
@@ -209,15 +247,15 @@ public final class AuthPresentationCoordinator: ObservableObject {
     public static let shared = AuthPresentationCoordinator()
 
     @Published public var isPresented = false
-    @Published public var preferredService: APIService?
+    @Published public var preferredDestination: AccessDestination?
 
-    public func present(preferredService: APIService? = nil) {
-        self.preferredService = preferredService
+    public func present(preferredDestination: AccessDestination? = nil) {
+        self.preferredDestination = preferredDestination
         isPresented = true
     }
 
     public func dismiss() {
         isPresented = false
-        preferredService = nil
+        preferredDestination = nil
     }
 }
