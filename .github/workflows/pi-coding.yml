@@ -37,9 +37,22 @@ jobs:
           set -euo pipefail
           permission="$(gh api "repos/$REPOSITORY/collaborators/$REQUESTER/permission" --jq '.permission')"
           case "$permission" in
-            admin|maintain|write) ;;
+            admin|maintain|push|write) ;;
             *) echo 'Requester must have repository write access'; exit 1 ;;
           esac
+
+      - name: Verify pull request source is trusted
+        if: github.event_name == 'issue_comment' && github.event.issue.pull_request != null
+        env:
+          PR_NUMBER: ${{ github.event.issue.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          head_repository="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --jq '.head.repo.full_name')"
+          test "$head_repository" = "$REPOSITORY" || {
+            echo 'Fork pull requests are not eligible for secret-bearing Pi automation'
+            exit 1
+          }
 
       - name: Check out trusted default branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -62,8 +75,11 @@ jobs:
             '1f498729649bdce647d1160993b4d92bf3c614cc819213bee2f91dd34f2a7af4' \
             "$RUNNER_TEMP/earendil-works-pi-coding-agent-0.85.1.tgz" \
             | sha256sum --check
-          npm install --global --ignore-scripts \
-            "$RUNNER_TEMP/earendil-works-pi-coding-agent-0.85.1.tgz"
+          npm ci --prefix "$PI_CODING_AGENT_DIR/runtime" --omit=dev --ignore-scripts
+          package_dir="$PI_CODING_AGENT_DIR/runtime/node_modules/@earendil-works/pi-coding-agent"
+          mkdir "$package_dir"
+          tar -xzf "$RUNNER_TEMP/earendil-works-pi-coding-agent-0.85.1.tgz" \
+            --directory "$package_dir" --strip-components=1
 
       - name: Build request context
         id: context
@@ -110,6 +126,9 @@ jobs:
 
           [BEGIN UNTRUSTED REQUEST]
           PROMPT
+            if [[ $(wc -c < "$RUNNER_TEMP/request.txt") -gt 32768 ]]; then
+              printf 'WARNING: Request truncated to 32768 bytes; context is incomplete.\n'
+            fi
             head -c 32768 "$RUNNER_TEMP/request.txt"
             printf '\n[END UNTRUSTED REQUEST]\n'
             printf '\n[BEGIN UNTRUSTED ISSUE OR PR TITLE AND DESCRIPTION]\n'
@@ -126,7 +145,8 @@ jobs:
               head -c 262144 "$RUNNER_TEMP/pr.diff"
               printf '\n[END UNTRUSTED PULL REQUEST DIFF]\n'
             fi
-          } | pi --provider ollama-cloud --model 'glm-5.2' --thinking off \
+          } | node "$PI_CODING_AGENT_DIR/runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" \
+            --provider ollama-cloud --model 'glm-5.2' --thinking off \
             --no-tools --no-extensions --no-skills --no-prompt-templates --no-themes \
             --no-context-files --no-session --no-approve --print > "$RUNNER_TEMP/pi-response.md"
 

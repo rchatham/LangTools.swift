@@ -14,6 +14,10 @@ on:
         description: Run the paid live Ollama Cloud smoke test (main only)
         type: boolean
         default: false
+      run_pi_cloud_test:
+        description: Run the pinned Pi Ollama Cloud smoke test (main only)
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -27,6 +31,70 @@ jobs:
       run: swift build -v
     - name: Run tests
       run: swift test -v
+
+  pi-workflow-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+    - name: Run Pi workflow regression tests
+      run: ruby .github/pi/tests/prompt_test.rb
+
+  pi-cloud-smoke:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.run_pi_cloud_test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      PI_CODING_AGENT_DIR: ${{ github.workspace }}/.github/pi
+      PI_SKIP_VERSION_CHECK: "1"
+      PI_TELEMETRY: "0"
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+    - name: Set up Node.js
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version: "22"
+    - name: Install verified Pi package
+      shell: bash
+      run: |
+        set -euo pipefail
+        npm pack @earendil-works/pi-coding-agent@0.85.1 \
+          --ignore-scripts --pack-destination "$RUNNER_TEMP" > /dev/null
+        printf '%s  %s\n' \
+          '1f498729649bdce647d1160993b4d92bf3c614cc819213bee2f91dd34f2a7af4' \
+          "$RUNNER_TEMP/earendil-works-pi-coding-agent-0.85.1.tgz" \
+          | sha256sum --check
+        npm ci --prefix "$PI_CODING_AGENT_DIR/runtime" --omit=dev --ignore-scripts
+        package_dir="$PI_CODING_AGENT_DIR/runtime/node_modules/@earendil-works/pi-coding-agent"
+        mkdir "$package_dir"
+        tar -xzf "$RUNNER_TEMP/earendil-works-pi-coding-agent-0.85.1.tgz" \
+          --directory "$package_dir" --strip-components=1
+    - name: Run Pi Ollama Cloud smoke test
+      env:
+        OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        GH_TOKEN: ""
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -n "$OLLAMA_API_KEY"
+        response="$(printf 'Reply with exactly: pong\n' \
+          | node "$PI_CODING_AGENT_DIR/runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" \
+            --provider ollama-cloud --model 'glm-5.2' --thinking off \
+            --no-tools --no-extensions --no-skills --no-prompt-templates --no-themes \
+            --no-context-files --no-session --no-approve --print)"
+        test -n "$response"
 
   ollama-cloud-smoke:
     if: >-
