@@ -171,16 +171,37 @@ private actor TerminalToolApproval {
         let prompt = "\nApprove tool '\(toolName)'?\n  \(operation)\nProceed? [y/N] "
         do {
             try terminal.write(contentsOf: Data(prompt.utf8))
-            guard let responseData = try terminal.read(upToCount: 32),
-                  let response = String(data: responseData, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .lowercased() else {
+            guard let response = try TerminalLineReader.readLine(from: terminal)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() else {
                 return false
             }
             return response == "y" || response == "yes"
         } catch {
             return false
         }
+    }
+}
+
+/// Reads one terminal line without waiting for an arbitrary fixed-size buffer
+/// to fill. This matters for `/dev/tty`, where approval replies are normally
+/// only a few bytes long.
+enum TerminalLineReader {
+    static func readLine(from handle: FileHandle, maximumBytes: Int = 32) throws -> String? {
+        var data = Data()
+
+        while data.count < maximumBytes {
+            guard let byte = try handle.read(upToCount: 1), !byte.isEmpty else {
+                break
+            }
+            if byte.first == 0x0A || byte.first == 0x0D {
+                break
+            }
+            data.append(byte)
+        }
+
+        guard !data.isEmpty else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 }
 

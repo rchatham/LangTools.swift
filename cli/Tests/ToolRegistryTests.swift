@@ -9,6 +9,7 @@ import XCTest
 import Foundation
 import OpenAI
 import LangTools
+@testable import CLI
 
 final class ToolRegistryTests: XCTestCase {
 
@@ -61,6 +62,37 @@ final class ToolRegistryTests: XCTestCase {
             XCTAssertFalse(tool.name.isEmpty)
             XCTAssertNotNil(tool.description)
         }
+    }
+
+    func testTerminalLineReaderReturnsAfterNewlineWithoutWaitingForEOF() throws {
+        let pipe = Pipe()
+        defer {
+            try? pipe.fileHandleForWriting.close()
+            try? pipe.fileHandleForReading.close()
+        }
+
+        try pipe.fileHandleForWriting.write(contentsOf: Data("y\n".utf8))
+
+        let response = try TerminalLineReader.readLine(from: pipe.fileHandleForReading)
+
+        XCTAssertEqual(response, "y")
+    }
+
+    func testTerminalLineReaderLimitsInputLength() throws {
+        let pipe = Pipe()
+        defer {
+            try? pipe.fileHandleForWriting.close()
+            try? pipe.fileHandleForReading.close()
+        }
+
+        try pipe.fileHandleForWriting.write(contentsOf: Data("123456789\n".utf8))
+
+        let response = try TerminalLineReader.readLine(
+            from: pipe.fileHandleForReading,
+            maximumBytes: 4
+        )
+
+        XCTAssertEqual(response, "1234")
     }
 
     // MARK: - Parameter Extraction Tests
