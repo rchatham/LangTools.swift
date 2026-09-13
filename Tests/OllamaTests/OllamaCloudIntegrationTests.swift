@@ -25,9 +25,8 @@ final class OllamaCloudIntegrationTests: XCTestCase {
             return
         }
 
-        let modelID = environment["OLLAMA_CLOUD_MODEL"] ?? "glm-5.2"
-        guard let model = OllamaModel(rawValue: modelID) else {
-            XCTFail("OLLAMA_CLOUD_MODEL is not a valid Ollama model identifier")
+        guard let model = cloudModel(from: environment) else {
+            XCTFail("OLLAMA_CLOUD_MODEL must not be empty")
             return
         }
 
@@ -44,5 +43,20 @@ final class OllamaCloudIntegrationTests: XCTestCase {
 
         XCTAssertTrue(response.done)
         XCTAssertFalse(response.message?.content.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+
+    func testCloudModelRejectsEmptyOverride() {
+        XCTAssertNil(cloudModel(from: ["OLLAMA_CLOUD_MODEL": " \n\t "]))
+    }
+
+    func testCloudModelUsesDefault() {
+        XCTAssertEqual(cloudModel(from: [:]), OllamaModel(rawValue: "glm-5.2"))
+    }
+
+    private func cloudModel(from environment: [String: String]) -> OllamaModel? {
+        let modelID = (environment["OLLAMA_CLOUD_MODEL"] ?? "glm-5.2")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !modelID.isEmpty else { return nil }
+        return OllamaModel(rawValue: modelID)
     }
 }
