@@ -42,17 +42,14 @@ public final class AccountProxyTransport: AccountProxyTransportProtocol {
     }
 
     private func send(messages: [Message], model: Model, session: AccountSession, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> AccountChatResponse {
-        if session.provider == .openAI, tools != nil || toolChoice != nil {
-            throw NetworkClient.NetworkError.accountProxyTransportFailed("Codex account chat does not support tools or tool choice.")
-        }
-
+        let supportsTools = session.provider != .openAI
         let payload = AccountChatRequest(
             provider: session.provider,
             model: model.slug,
             messages: messages.map(AccountChatMessage.init),
             stream: stream,
-            toolChoice: toolChoice.map(AccountToolChoice.init),
-            tools: tools
+            toolChoice: supportsTools ? toolChoice.map(AccountToolChoice.init) : nil,
+            tools: supportsTools ? tools : nil
         )
 
         var request = URLRequest(url: configuration.accountChatURL(for: session.provider))

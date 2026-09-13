@@ -149,12 +149,25 @@ final class NetworkClientAuthTests: XCTestCase {
         }
     }
 
-    func testCodexAccountTransportRejectsToolChoiceBeforeSending() async throws {
+    func testCodexAccountTransportOmitsUnsupportedTools() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AccountProxyURLProtocol.self]
+        let urlSession = URLSession(configuration: configuration)
+        AccountProxyURLProtocol.requestHandler = { request in
+            let body = try AccountProxyURLProtocol.requestBody(request)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertNil(object["tools"])
+            XCTAssertNil(object["toolChoice"])
+            let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(#"{"content":"Codex response"}"#.utf8))
+        }
+        defer { AccountProxyURLProtocol.requestHandler = nil }
         let transport = AccountProxyTransport(
             configuration: AccountBackendConfiguration(
                 codexHelperBaseURL: URL(string: "http://127.0.0.1:9999")!,
                 codexHelperToken: "helper-token"
-            )
+            ),
+            urlSession: urlSession
         )
         let session = AccountSession(
             provider: .openAI,
@@ -163,18 +176,15 @@ final class NetworkClientAuthTests: XCTestCase {
             accessibleModelIDs: ["gpt-5.5"]
         )
 
-        do {
-            _ = try await transport.performChatCompletionRequest(
-                messages: [Message(text: "Hello", role: .user)],
-                model: .codex(.gpt5_5),
-                session: session,
-                tools: nil,
-                toolChoice: OpenAI.ChatCompletionRequest.ToolChoice.none
-            )
-            XCTFail("Expected Codex tool choice to be rejected")
-        } catch let error as NetworkClient.NetworkError {
-            XCTAssertEqual(error, .accountProxyTransportFailed("Codex account chat does not support tools or tool choice."))
-        }
+        let response = try await transport.performChatCompletionRequest(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .codex(.gpt5_5),
+            session: session,
+            tools: [Tool(name: "example", description: "Example", tool_schema: ToolSchema())],
+            toolChoice: OpenAI.ChatCompletionRequest.ToolChoice.none
+        )
+
+        XCTAssertEqual(response.text, "Codex response")
     }
 
     func testCodexAccountProxyErrorsPropagate() async throws {
@@ -206,6 +216,43 @@ final class NetworkClientAuthTests: XCTestCase {
         } catch let error as NetworkClient.NetworkError {
             XCTAssertEqual(error, expectedError)
         }
+    }
+}
+
+private final class AccountProxyURLProtocol: URLProtocol {
+    static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        do {
+            let handler = try XCTUnwrap(Self.requestHandler)
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+
+    static func requestBody(_ request: URLRequest) throws -> Data {
+        if let body = request.httpBody { return body }
+        let stream = try XCTUnwrap(request.httpBodyStream)
+        stream.open()
+        defer { stream.close() }
+        var body = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count >= 0 else { throw stream.streamError ?? URLError(.cannotDecodeContentData) }
+            if count == 0 { break }
+            body.append(buffer, count: count)
+        }
+        return body
     }
 }
 
