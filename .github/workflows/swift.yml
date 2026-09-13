@@ -8,15 +8,48 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      run_ollama_cloud_tests:
+        description: Run the paid live Ollama Cloud smoke test (main only)
+        type: boolean
+        default: false
 
 jobs:
   build:
-
     runs-on: macos-latest
+    permissions:
+      contents: read
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
     - name: Build
       run: swift build -v
     - name: Run tests
       run: swift test -v
+
+  ollama-cloud-smoke:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'push' && vars.RUN_OLLAMA_CLOUD_TESTS == 'true') ||
+       (github.event_name == 'workflow_dispatch' && inputs.run_ollama_cloud_tests))
+    runs-on: macos-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      LANGTOOLS_RUN_OLLAMA_CLOUD_TESTS: "1"
+      OLLAMA_CLOUD_MODEL: ${{ vars.OLLAMA_CLOUD_MODEL || 'glm-5.2' }}
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+    - name: Run live Ollama Cloud smoke test
+      env:
+        OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -n "$OLLAMA_API_KEY"
+        swift test --filter OllamaCloudIntegrationTests
