@@ -42,11 +42,14 @@ struct UserMessageView: View {
     let content: String
 
     var body: some View {
+        // Rely on HStack's default spacing for the single separator between the
+        // label and the content; a leading space in the Text itself would stack
+        // on top of that spacing and produce stray double indentation.
         HStack(alignment: .top) {
             Text("You:")
                 .foregroundColor(.green)
                 .bold()
-            Text(" \(content)")
+            Text(content)
                 .foregroundColor(.white)
         }
     }
@@ -60,15 +63,17 @@ struct AssistantMessageView: View {
             Text("Assistant:")
                 .foregroundColor(.yellow)
                 .bold()
-            ForEach(contentLines.indices, id: \.self) { index in
-                Text(contentLines[index])
+            ForEach(bodyLines.indices, id: \.self) { index in
+                Text(bodyLines[index])
                     .foregroundColor(.white)
             }
         }
     }
 
-    private var contentLines: [String] {
-        content.components(separatedBy: .newlines)
+    /// Dedented body lines so continuation lines align consistently under the
+    /// "Assistant:" header without stray leading indentation.
+    private var bodyLines: [String] {
+        MessageLineBuilder.assistantBodyLines(for: content)
     }
 }
 
@@ -77,15 +82,15 @@ struct SystemMessageView: View {
 
     var body: some View {
         VStack(alignment: .leading) {
-            ForEach(contentLines.indices, id: \.self) { index in
-                Text(contentLines[index])
+            ForEach(bodyLines.indices, id: \.self) { index in
+                Text(bodyLines[index])
                     .foregroundColor(.cyan)
             }
         }
     }
 
-    private var contentLines: [String] {
-        content.components(separatedBy: .newlines)
+    private var bodyLines: [String] {
+        MessageLineBuilder.systemLines(for: content)
     }
 }
 
@@ -108,15 +113,29 @@ struct CompactToolMessageView: View {
                 Text(prefix)
                     .foregroundColor(headerColor)
                     .bold()
-                Text(" \(toolName)")
+                Text(toolName)
                     .foregroundColor(headerColor)
             }
 
+            // Body lines align directly under their own header: the call body
+            // sits at the same column as `↳ Call`, and the result body sits under
+            // the nested `  ✓ Result` header — preserving the call→result
+            // hierarchy without redundant extra leading spaces.
             ForEach(previewLines.indices, id: \.self) { index in
-                Text("  \(previewLines[index])")
+                Text("\(bodyIndent)\(previewLines[index])")
                     .foregroundColor(.white)
             }
         }
+    }
+
+    /// Indentation matching the header prefix so the body aligns under it.
+    private var bodyIndent: String {
+        MessageLineBuilder.bodyIndent(forPrefix: prefix)
+    }
+
+    private var isResult: Bool {
+        if case .result = kind { return true }
+        return false
     }
 
     private var prefix: String {
@@ -138,21 +157,7 @@ struct CompactToolMessageView: View {
     }
 
     private var previewLines: [String] {
-        ToolMessagePreview.lines(for: content, limit: lineLimit, characterLimit: characterLimit)
-    }
-
-    private var lineLimit: Int {
-        switch kind {
-        case .call: return 2
-        case .result: return 3
-        }
-    }
-
-    private var characterLimit: Int {
-        switch kind {
-        case .call: return 240
-        case .result: return 500
-        }
+        MessageLineBuilder.toolPreviewLines(content: content, isResult: isResult)
     }
 }
 
