@@ -51,11 +51,15 @@ jobs:
       run: swift test -v --no-parallel --skip AppleSpeechTests --skip WhisperKitLangToolsTests
 
   extended-tests:
-
     runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
     - name: Run Agents extended tests
       run: Scripts/run-extended-tests.sh --filter AgentsTests -v --no-parallel
     - name: Run Integration extended tests
@@ -67,17 +71,23 @@ jobs:
   # gating merges, since wall-clock-sensitive assertions can flake on shared
   # runners even with the ratio normalization (see the comments in the build job).
   performance-tests:
-
     runs-on: macos-latest
+    timeout-minutes: 30
     continue-on-error: true
+    permissions:
+      contents: read
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
     - name: Run performance ratio gates
       run: Scripts/run-extended-tests.sh --filter PerformanceRatioGateTests -v --no-parallel
     - name: Run performance tests
+      if: ${{ !cancelled() }}
       run: Scripts/run-extended-tests.sh --filter PerformanceTests -v --no-parallel
     - name: Run benchmark tests
+      if: ${{ !cancelled() }}
       run: Scripts/run-extended-tests.sh --filter BenchmarkTests -v --no-parallel
 
   pi-workflow-tests:
