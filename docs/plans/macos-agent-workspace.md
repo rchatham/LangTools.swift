@@ -101,7 +101,7 @@ confirmed; tests cover missing executables, failures, spaces, quotes, and concur
 
 - [x] Promote the app and preserve bundle/keychain identities.
 - [x] Build macOS/iOS; run core, app-package, and iOS identity/UI smoke tests.
-- [ ] Resolve local macOS hosted-test launch timeouts and verify signed credential access.
+- [x] Resolve local macOS hosted-test launch timeouts and verify signed credential access.
 - [ ] Complete sandbox/independent-terminal spike and record the decision.
 - [ ] Implement/test project matching and live tmux discovery.
 - [ ] Implement workspace UI without disrupting existing chat.
@@ -109,6 +109,7 @@ confirmed; tests cover missing executables, failures, spaces, quotes, and concur
 - [ ] Run reviewer + security review, integration tests on a disposable tmux server,
       and capture visual evidence before merging each implementation slice.
 
-Phase 1's delegated review was blocked by the Claude subscription session limit;
-independent review remains required. No tmux implementation should start until Gate 1
+Phase 1's independent general and security reviews completed without a security blocker.
+The final fix patch was manually audited after delegated re-review was unavailable because
+of the Claude subscription session limit. No tmux implementation should start until Gate 1
 has a tested, approved approach.
