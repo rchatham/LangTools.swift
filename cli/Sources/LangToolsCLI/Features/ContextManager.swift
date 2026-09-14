@@ -120,7 +120,7 @@ final class ContextManager {
                     assistantActions.append(truncated)
                 }
 
-            case .tool:
+            case .toolCall, .toolResult:
                 // Note tool execution
                 let truncated = String(message.content.prefix(50))
                 toolResults.append("Tool: \(truncated)...")

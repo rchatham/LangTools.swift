@@ -68,7 +68,7 @@ final class ToolRegistryTests: XCTestCase {
         XCTAssertEqual(ToolApprovalInput(text: "y"), .approve)
         XCTAssertEqual(ToolApprovalInput(text: "YES"), .approve)
         XCTAssertEqual(ToolApprovalInput(text: "n"), .deny)
-        XCTAssertEqual(ToolApprovalInput(text: ""), .deny)
+        XCTAssertEqual(ToolApprovalInput(text: ""), .invalid)
         XCTAssertEqual(ToolApprovalInput(text: "maybe"), .invalid)
     }
 

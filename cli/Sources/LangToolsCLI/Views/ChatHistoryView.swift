@@ -8,7 +8,11 @@
 import SwiftTUI
 import Foundation
 
-/// Scrollable chat history view
+/// Scrollable chat history view.
+///
+/// SwiftTUI's ScrollView only follows focused controls and does not expose a
+/// programmatic scroll position. Chat messages deliberately remain non-selectable
+/// so keyboard input stays in the message/approval field.
 struct ChatHistoryView: View {
     let messages: [ChatMessage]
     let isStreaming: Bool
@@ -36,7 +40,6 @@ struct ChatHistoryView: View {
         VStack(alignment: .leading) {
             Text("Welcome to LangTools CLI!")
                 .foregroundColor(.cyan)
-            Text("")
             Text("Type a message to start chatting, or /help for commands.")
                 .foregroundColor(.white)
         }
@@ -52,8 +55,6 @@ struct ChatHistoryView: View {
         }
     }
 }
-
-// MARK: - Preview
 
 #if DEBUG
 extension ChatHistoryView {

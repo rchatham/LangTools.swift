@@ -111,8 +111,7 @@ struct ToolResultDisplayView: View {
 @MainActor
 struct ApprovalRequestView: @preconcurrency View {
     let request: ApprovalRequest
-    let onApprove: () -> Void
-    let onDeny: () -> Void
+    let onSubmit: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -132,10 +131,13 @@ struct ApprovalRequestView: @preconcurrency View {
             // Parameters preview
             parameterPreview
 
-            // Action prompt
+            // This replaces the normal message input while approval is pending.
             HStack {
-                Text("  Approve? [y/n]: ")
+                Text("  Approve? [y/n]:")
                     .foregroundColor(.cyan)
+                    .bold()
+                Text(" ")
+                TextField(placeholder: "y / n", action: onSubmit)
             }
         }
     }

@@ -218,7 +218,7 @@ extension ThemeManager {
         case .user: return colors.userMessage
         case .assistant: return colors.assistantMessage
         case .system: return colors.systemMessage
-        case .tool: return colors.toolResult
+        case .toolCall, .toolResult: return colors.toolResult
         }
     }
 

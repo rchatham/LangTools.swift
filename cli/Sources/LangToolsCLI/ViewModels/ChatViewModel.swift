@@ -81,26 +81,18 @@ class ChatViewModel: ObservableObject {
             // Could stream output to UI
             break
 
-        case .completed(let toolName, let result):
-            // Add tool result to messages
-            var toolMessage = ChatMessage(role: .tool, content: result.output)
-            toolMessage.toolName = toolName
-            messages.append(toolMessage)
+        case .completed:
+            // Display messages are added from MessageService after the request
+            // so calls and results remain paired in model-event order.
             currentTool = nil
             statusMessage = "Ready"
 
-        case .failed(let toolName, let error):
-            var toolMessage = ChatMessage(role: .tool, content: "Error: \(error.localizedDescription)")
-            toolMessage.toolName = toolName
-            messages.append(toolMessage)
+        case .failed(_, let error):
             currentTool = nil
             errorMessage = error.localizedDescription
             statusMessage = "Error"
 
-        case .cancelled(let toolName):
-            var toolMessage = ChatMessage(role: .tool, content: "Cancelled")
-            toolMessage.toolName = toolName
-            messages.append(toolMessage)
+        case .cancelled:
             currentTool = nil
             statusMessage = "Cancelled"
         }
@@ -127,6 +119,7 @@ class ChatViewModel: ObservableObject {
 
         do {
             let existingMessageCount = messageService.messages.count
+            let existingToolEventCount = messageService.toolDisplayEvents.count
 
             // Create assistant message placeholder
             let assistantMessage = ChatMessage(role: .assistant, content: "")
@@ -139,7 +132,11 @@ class ChatViewModel: ObservableObject {
                 messages.removeLast()
             }
 
+            let toolMessages = messageService.toolDisplayEvents
+                .dropFirst(existingToolEventCount)
+                .map(ChatMessage.init(toolEvent:))
             let newMessages = messageService.messages.dropFirst(existingMessageCount).compactMap(Self.chatMessage(from:))
+            messages.append(contentsOf: toolMessages)
             messages.append(contentsOf: newMessages)
 
             statusMessage = "Ready"
@@ -239,7 +236,7 @@ class ChatViewModel: ObservableObject {
 
     func clearMessages() {
         messages.removeAll()
-        messageService.messages.removeAll()
+        messageService.clearMessages()
         statusMessage = "Cleared"
     }
 
@@ -332,7 +329,7 @@ class ChatViewModel: ObservableObject {
         case .system, .developer:
             return ChatMessage(role: .system, content: text)
         case .tool:
-            return ChatMessage(role: .tool, content: text)
+            return ChatMessage(role: .toolResult, content: text)
         }
     }
 }
@@ -341,18 +338,49 @@ class ChatViewModel: ObservableObject {
 
 /// Message for display in the chat interface
 struct ChatMessage: Identifiable, Equatable {
-    let id = UUID()
+    let id: UUID
     let role: Role
     var content: String
-    let timestamp: Date = Date()
-    var toolName: String? = nil
-    var isCollapsed: Bool = false
+    let timestamp: Date
+    var toolName: String?
+    var toolFailed: Bool
+
+    init(
+        id: UUID = UUID(),
+        role: Role,
+        content: String,
+        timestamp: Date = Date(),
+        toolName: String? = nil,
+        toolFailed: Bool = false
+    ) {
+        self.id = id
+        self.role = role
+        self.content = content
+        self.timestamp = timestamp
+        self.toolName = toolName
+        self.toolFailed = toolFailed
+    }
+
+    init(toolEvent: MessageService.ToolDisplayEvent) {
+        switch toolEvent.kind {
+        case .call:
+            self.init(role: .toolCall, content: toolEvent.detail, toolName: toolEvent.toolName)
+        case .result(let isError):
+            self.init(
+                role: .toolResult,
+                content: toolEvent.detail,
+                toolName: toolEvent.toolName,
+                toolFailed: isError
+            )
+        }
+    }
 
     enum Role: Equatable {
         case user
         case assistant
         case system
-        case tool
+        case toolCall
+        case toolResult
     }
 
     static func == (lhs: ChatMessage, rhs: ChatMessage) -> Bool {

@@ -22,6 +22,18 @@ class MessageService: ObservableObject {
         let warning: String?
     }
 
+    struct ToolDisplayEvent: Equatable {
+        enum Kind: Equatable {
+            case call
+            case result(isError: Bool)
+        }
+
+        let kind: Kind
+        let toolName: String
+        let detail: String
+        let selectionID: String?
+    }
+
     final class ToolCallTrace {
         struct ToolEventRecord {
             let kind: Kind
@@ -39,6 +51,8 @@ class MessageService: ObservableObject {
         var completionResults: [String] = []
         var errorResults: [String] = []
         var events: [ToolEventRecord] = []
+        var displayEvents: [ToolDisplayEvent] = []
+        var toolNamesByID: [String: String] = [:]
 
         var sawToolCall: Bool {
             !calledToolNames.isEmpty
@@ -46,6 +60,7 @@ class MessageService: ObservableObject {
     }
 
     var messages: [Message] = []
+    private(set) var toolDisplayEvents: [ToolDisplayEvent] = []
     private var emittedToolWarnings: Set<String> = []
 
     /// All registered tools wired to ToolRegistry for execution
@@ -110,8 +125,11 @@ class MessageService: ObservableObject {
             upsertAssistantMessage(id: uuid, text: content.trimingTrailingNewlines())
         }
 
-        if silent, let toolSummary = toolEventSummaryMessage(toolTrace: toolTrace, model: model) {
-            messages.append(Message(text: toolSummary, role: .system))
+        if silent {
+            toolDisplayEvents.append(contentsOf: Self.hierarchicalToolEvents(toolTrace.displayEvents))
+            if let toolSummary = toolEventSummaryMessage(toolTrace: toolTrace, model: model) {
+                messages.append(Message(text: toolSummary, role: .system))
+            }
         }
 
         let finalContent = resolvedAssistantContent(content: content, toolTrace: toolTrace, model: model)
@@ -284,16 +302,32 @@ class MessageService: ObservableObject {
                 if let name = toolSelection.name {
                     toolTrace.calledToolNames.append(name)
                     toolTrace.events.append(.init(kind: .called, name: name, message: nil))
+                    if let id = toolSelection.id {
+                        toolTrace.toolNamesByID[id] = name
+                    }
+                    toolTrace.displayEvents.append(.init(
+                        kind: .call,
+                        toolName: name,
+                        detail: toolSelection.arguments,
+                        selectionID: toolSelection.id
+                    ))
                 }
             case .toolCompleted(let toolResult):
                 guard let toolResult else { return }
+                let toolName = toolTrace.toolNamesByID[toolResult.tool_selection_id] ?? "Tool"
                 if toolResult.is_error {
                     toolTrace.errorResults.append(toolResult.result)
-                    toolTrace.events.append(.init(kind: .failed, name: nil, message: toolResult.result))
+                    toolTrace.events.append(.init(kind: .failed, name: toolName, message: toolResult.result))
                 } else {
                     toolTrace.completionResults.append(toolResult.result)
-                    toolTrace.events.append(.init(kind: .completed, name: nil, message: toolResult.result))
+                    toolTrace.events.append(.init(kind: .completed, name: toolName, message: toolResult.result))
                 }
+                toolTrace.displayEvents.append(.init(
+                    kind: .result(isError: toolResult.is_error),
+                    toolName: toolName,
+                    detail: toolResult.result,
+                    selectionID: toolResult.tool_selection_id
+                ))
             }
         }
     }
@@ -412,8 +446,37 @@ class MessageService: ObservableObject {
         messages.removeAll(where: { $0.uuid == id })
     }
 
+    static func hierarchicalToolEvents(_ events: [ToolDisplayEvent]) -> [ToolDisplayEvent] {
+        let calls = events.filter {
+            if case .call = $0.kind { return true }
+            return false
+        }
+        let results = events.filter {
+            if case .result = $0.kind { return true }
+            return false
+        }
+
+        var consumedResultIndexes = Set<Int>()
+        var ordered: [ToolDisplayEvent] = []
+        for call in calls {
+            ordered.append(call)
+            if let selectionID = call.selectionID,
+               let resultIndex = results.indices.first(where: {
+                   !consumedResultIndexes.contains($0) && results[$0].selectionID == selectionID
+               }) {
+                ordered.append(results[resultIndex])
+                consumedResultIndexes.insert(resultIndex)
+            }
+        }
+        ordered.append(contentsOf: results.indices.compactMap {
+            consumedResultIndexes.contains($0) ? nil : results[$0]
+        })
+        return ordered
+    }
+
     /// Clear all messages from the conversation history
     func clearMessages() {
         messages.removeAll()
+        toolDisplayEvents.removeAll()
     }
 }

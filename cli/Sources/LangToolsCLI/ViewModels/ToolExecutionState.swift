@@ -187,7 +187,7 @@ enum ToolApprovalInput: Equatable {
         switch text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "y", "yes":
             self = .approve
-        case "", "n", "no":
+        case "n", "no":
             self = .deny
         default:
             self = .invalid

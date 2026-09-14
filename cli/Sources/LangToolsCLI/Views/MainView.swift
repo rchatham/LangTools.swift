@@ -57,9 +57,6 @@ struct MainView: @preconcurrency View {
                 settingsOverlay
             }
 
-            if let request = toolExecutionState.pendingApproval {
-                approvalOverlay(request)
-            }
         }
         .padding(2)
     }
@@ -87,28 +84,27 @@ struct MainView: @preconcurrency View {
                 config: Configuration.load().infoLine
             )
 
-            // Autocomplete dropdown (above input when active)
-            if showAutocomplete && !autocompleteSuggestions.isEmpty {
-                AutocompleteDropdown(
-                    suggestions: autocompleteSuggestions,
-                    selectedIndex: selectedSuggestionIndex,
-                    onSelect: applyAutocomplete
-                )
+            if let request = toolExecutionState.pendingApproval {
+                ApprovalRequestView(request: request) { text in
+                    handleInput(text)
+                }
+            } else {
+                // Autocomplete dropdown (above input when active)
+                if showAutocomplete && !autocompleteSuggestions.isEmpty {
+                    AutocompleteDropdown(
+                        suggestions: autocompleteSuggestions,
+                        selectedIndex: selectedSuggestionIndex,
+                        onSelect: applyAutocomplete
+                    )
+                }
+
+                InputView(
+                    hint: inputHint,
+                    isDisabled: showSettingsOverlay
+                ) { text in
+                    handleInput(text)
+                }
             }
-
-            // Visual spacer before input
-            Text("")
-
-            // Input field
-            InputView(
-                hint: inputHint,
-                isDisabled: showSettingsOverlay
-            ) { text in
-                handleInput(text)
-            }
-
-            // Visual spacer before status line
-            Text("")
 
             // Status line - status indicator and errors (bottom)
             StatusLineView(
@@ -122,26 +118,7 @@ struct MainView: @preconcurrency View {
     }
 
     private var inputHint: String? {
-        if toolExecutionState.pendingApproval != nil {
-            return "Approve tool? Enter y or n"
-        }
-        return showAutocomplete ? "Select command or type to filter" : nil
-    }
-
-    private func approvalOverlay(_ request: ApprovalRequest) -> some View {
-        VStack {
-            Spacer()
-            HStack {
-                Spacer()
-                ApprovalRequestView(
-                    request: request,
-                    onApprove: toolExecutionState.approveRequest,
-                    onDeny: toolExecutionState.denyRequest
-                )
-                Spacer()
-            }
-            Spacer()
-        }
+        showAutocomplete ? "Select command or type to filter" : nil
     }
 
     // MARK: - Settings Overlay
@@ -230,6 +207,7 @@ struct MainView: @preconcurrency View {
         Task {
             do {
                 let existingMessageCount = messageService.messages.count
+                let existingToolEventCount = messageService.toolDisplayEvents.count
 
                 try await messageService.performMessageCompletionRequest(
                     message: trimmed,
@@ -241,7 +219,11 @@ struct MainView: @preconcurrency View {
                     messages.removeLast()
                 }
 
+                let toolMessages = messageService.toolDisplayEvents
+                    .dropFirst(existingToolEventCount)
+                    .map(ChatMessage.init(toolEvent:))
                 let newMessages = messageService.messages.dropFirst(existingMessageCount).compactMap(Self.chatMessage(from:))
+                messages.append(contentsOf: toolMessages)
                 messages.append(contentsOf: newMessages)
 
                 statusMessage = "Ready"
@@ -577,7 +559,7 @@ struct MainView: @preconcurrency View {
         case .system, .developer:
             return ChatMessage(role: .system, content: text)
         case .tool:
-            return ChatMessage(role: .tool, content: text)
+            return ChatMessage(role: .toolResult, content: text)
         }
     }
 }

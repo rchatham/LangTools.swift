@@ -212,7 +212,7 @@ final class SessionManager {
         switch role {
         case .user: return .user
         case .assistant: return .assistant
-        case .tool: return .tool
+        case .toolCall, .toolResult: return .tool
         case .system: return .system
         }
     }
