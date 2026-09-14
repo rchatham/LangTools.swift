@@ -103,7 +103,8 @@ class MessageService: ObservableObject {
             stream: stream,
             tools: toolDecision.tools,
             toolChoice: toolDecision.toolChoice,
-            toolTrace: toolTrace
+            toolTrace: toolTrace,
+            silent: silent
         )
         for try await chunk in stream {
             if let displayableChunk = displayableAssistantChunk(from: chunk) {
@@ -156,7 +157,8 @@ class MessageService: ObservableObject {
         stream: Bool = true,
         tools: [OpenAI.Tool]? = nil,
         toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil,
-        toolTrace: ToolCallTrace? = nil
+        toolTrace: ToolCallTrace? = nil,
+        silent: Bool = false
     ) throws -> AsyncThrowingStream<String, Error> {
         let request = networkClient.request(
             messages: messages,
@@ -164,7 +166,7 @@ class MessageService: ObservableObject {
             stream: stream,
             tools: tools,
             toolChoice: toolChoice,
-            toolEventHandler: makeToolEventHandler(for: toolTrace)
+            toolEventHandler: makeToolEventHandler(for: toolTrace, silent: silent)
         )
         return try langToolchain.stream(request: request).compactMapAsyncThrowingStream { $0.content?.text }
     }
@@ -291,7 +293,7 @@ class MessageService: ObservableObject {
         }
     }
 
-    func makeToolEventHandler(for toolTrace: ToolCallTrace?) -> (LangToolsToolEvent) -> Void {
+    func makeToolEventHandler(for toolTrace: ToolCallTrace?, silent: Bool = false) -> (LangToolsToolEvent) -> Void {
         guard let toolTrace else {
             return { _ in }
         }
@@ -311,6 +313,9 @@ class MessageService: ObservableObject {
                         detail: toolSelection.arguments,
                         selectionID: toolSelection.id
                     ))
+                    if !silent {
+                        self.printToolEventLine(.call, toolName: name, detail: toolSelection.arguments)
+                    }
                 }
             case .toolCompleted(let toolResult):
                 guard let toolResult else { return }
@@ -328,7 +333,38 @@ class MessageService: ObservableObject {
                     detail: toolResult.result,
                     selectionID: toolResult.tool_selection_id
                 ))
+                if !silent {
+                    self.printToolEventLine(.result(isError: toolResult.is_error), toolName: toolName, detail: toolResult.result)
+                }
             }
+        }
+    }
+
+    /// Print a compact tool call/result line to the terminal for the standard
+    /// (non-TUI) CLI, mirroring the TUI's compact hierarchy. Bounded previews
+    /// keep verbose tool output from flooding the terminal.
+    private func printToolEventLine(_ kind: MessageService.ToolDisplayEvent.Kind, toolName: String, detail: String) {
+        let isResult: Bool
+        let isError: Bool
+        switch kind {
+        case .call: isResult = false; isError = false
+        case .result(let err): isResult = true; isError = err
+        }
+        let prefix: String
+        let headerColor: ANSIColor
+        if isResult {
+            prefix = isError ? "  ✗ Result" : "  ✓ Result"
+            headerColor = isError ? .red : .magenta
+        } else {
+            prefix = "↳ Call"
+            headerColor = .magenta
+        }
+        print("")
+        let header = "\(prefix) \(toolName)"
+        print(header.colored(headerColor))
+        let lines = MessageLineBuilder.toolPreviewLines(content: detail, isResult: isResult)
+        for line in lines {
+            print("  \(line)")
         }
     }
 
