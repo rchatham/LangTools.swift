@@ -46,7 +46,7 @@ struct UserMessageView: View {
             Text("You:")
                 .foregroundColor(.green)
                 .bold()
-            Text(" \(content)")
+            Text(content)
                 .foregroundColor(.white)
         }
     }
@@ -60,15 +60,17 @@ struct AssistantMessageView: View {
             Text("Assistant:")
                 .foregroundColor(.yellow)
                 .bold()
-            ForEach(contentLines.indices, id: \.self) { index in
-                Text(contentLines[index])
+            ForEach(bodyLines.indices, id: \.self) { index in
+                Text(bodyLines[index])
                     .foregroundColor(.white)
             }
         }
     }
 
-    private var contentLines: [String] {
-        content.components(separatedBy: .newlines)
+    /// Dedented body lines so continuation lines align consistently under the
+    /// "Assistant:" header without stray leading indentation.
+    private var bodyLines: [String] {
+        MessageLineBuilder.assistantBodyLines(for: content)
     }
 }
 
@@ -77,15 +79,15 @@ struct SystemMessageView: View {
 
     var body: some View {
         VStack(alignment: .leading) {
-            ForEach(contentLines.indices, id: \.self) { index in
-                Text(contentLines[index])
+            ForEach(lines.indices, id: \.self) { index in
+                Text(lines[index])
                     .foregroundColor(.cyan)
             }
         }
     }
 
-    private var contentLines: [String] {
-        content.components(separatedBy: .newlines)
+    private var lines: [String] {
+        MessageLineBuilder.systemLines(for: content)
     }
 }
 
