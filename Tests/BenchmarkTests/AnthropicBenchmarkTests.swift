@@ -91,7 +91,8 @@ final class AnthropicBenchmarkTests: XCTestCase {
     func testLangTools_EncodeRequest() {
         let request = Anthropic.MessageRequest(
             model: .claude46Sonnet,
-            messages: [.init(role: .user, content: "What's the weather in SF?")]
+            messages: [.init(role: .user, content: "What's the weather in SF?")],
+            stream: false
         )
         let encoder = JSONEncoder()
         XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
@@ -107,7 +108,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
             Anthropic.Message(role: i % 2 == 0 ? .user : .assistant,
                               content: "Message \(i) with realistic content for benchmarking.")
         }
-        let request = Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages)
+        let request = Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages, stream: false)
         let encoder = JSONEncoder()
         XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
         measure {
@@ -127,6 +128,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
             maxTokens: 4096
         )
         let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
         measure {
             for _ in 0..<500 {
                 _ = try! encoder.encode(params)
@@ -145,6 +147,7 @@ final class AnthropicBenchmarkTests: XCTestCase {
             maxTokens: 4096
         )
         let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
         measure {
             for _ in 0..<100 {
                 _ = try! encoder.encode(params)

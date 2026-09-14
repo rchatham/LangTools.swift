@@ -16,7 +16,7 @@ import FoundationNetworking
 @testable import LangTools
 @testable import OpenAI
 #if canImport(SwiftOpenAI)
-import SwiftOpenAI
+@testable import SwiftOpenAI
 #endif
 
 final class OpenAIBenchmarkTests: XCTestCase {
@@ -112,7 +112,8 @@ final class OpenAIBenchmarkTests: XCTestCase {
     func testLangTools_EncodeRequest() {
         let request = OpenAI.ChatCompletionRequest(
             model: .gpt4o,
-            messages: [.init(role: .user, content: "What's the weather in SF?")]
+            messages: [.init(role: .user, content: "What's the weather in SF?")],
+            stream: false
         )
         let encoder = JSONEncoder()
         XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
@@ -128,7 +129,7 @@ final class OpenAIBenchmarkTests: XCTestCase {
             OpenAI.Message(role: i % 2 == 0 ? .user : .assistant,
                            content: "Message \(i) with realistic content for benchmarking.")
         }
-        let request = OpenAI.ChatCompletionRequest(model: .gpt4o, messages: messages)
+        let request = OpenAI.ChatCompletionRequest(model: .gpt4o, messages: messages, stream: false)
         let encoder = JSONEncoder()
         XCTAssertNoThrow(try encoder.encode(request), "Fixture validation")
         measure {
@@ -142,10 +143,11 @@ final class OpenAIBenchmarkTests: XCTestCase {
 
     #if canImport(SwiftOpenAI)
     func testSwiftOpenAI_EncodeRequest() {
-        let params = ChatCompletionParameters(
+        var params = ChatCompletionParameters(
             messages: [.init(role: .user, content: .text("What's the weather in SF?"))],
             model: .gpt4o
         )
+        params.stream = false
         let encoder = JSONEncoder()
         measure {
             for _ in 0..<500 {
@@ -159,7 +161,8 @@ final class OpenAIBenchmarkTests: XCTestCase {
             .init(role: i % 2 == 0 ? .user : .assistant,
                   content: .text("Message \(i) with realistic content for benchmarking."))
         }
-        let params = ChatCompletionParameters(messages: messages, model: .gpt4o)
+        var params = ChatCompletionParameters(messages: messages, model: .gpt4o)
+        params.stream = false
         let encoder = JSONEncoder()
         measure {
             for _ in 0..<100 {

@@ -3,6 +3,7 @@
 
 Usage:
   Scripts/parse-benchmark-results.py /path/to/swift-test.log
+  set -o pipefail  # Required when capturing a producer through a pipeline.
   Scripts/run-extended-tests.sh --filter BenchmarkTests -v 2>&1 | Scripts/parse-benchmark-results.py -
 """
 
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import statistics
 import sys
@@ -19,9 +21,9 @@ from typing import Any
 
 MEASURE_RE = re.compile(
     r"Test Case '-\[BenchmarkTests\.(?P<suite>\w+) (?P<test>[^\]]+)\]' "
-    r"measured \[Time, seconds\] average: (?P<printed_average>[0-9.]+).*?"
-    r"values: \[(?P<values>[^\]]+)\]",
-    re.DOTALL,
+    r"measured \[Time, seconds\] average: (?P<printed_average>[^,\s]+)[^\n]*?"
+    r"values: \[(?P<values>[^\]\n]*)\]",
+
 )
 
 SUITE_PROVIDER = {
@@ -64,25 +66,65 @@ def parse_test_name(name: str) -> tuple[str, str]:
     return SUBJECT_NAMES.get(subject, subject), OPERATION_NAMES.get(operation, operation)
 
 
+def validate_run(log: str, last_record_end: int) -> None:
+    """Require one completed XCTest invocation, not a stale success in a bad log."""
+    if re.search(r"\b(?:failed|failure)\b|\b(?:fatal error|error:)", log, re.IGNORECASE):
+        raise ValueError("log contains a failure or error")
+    if re.search(r"Executed \d+ tests?, with [1-9]\d* failures?", log):
+        raise ValueError("log contains test failures")
+    events = list(re.finditer(r"Test (?:Suite|Case) ['\"].+?['\"] (started|passed|failed|skipped)\b", log))
+    summaries = list(re.finditer(r"Test Suite '(?:Selected tests|All tests)' passed\b", log))
+    if len(summaries) != 1:
+        raise ValueError("expected one final successful Selected tests or All tests summary")
+    final = summaries[0]
+    if final.start() < last_record_end or not events or events[-1].start() != final.start():
+        raise ValueError("missing final successful test run summary")
+    counts = re.findall(r"Executed (\d+) tests?, with (\d+) failures?", log)
+    if counts and int(counts[-1][0]) == 0:
+        raise ValueError("final run executed no tests")
+
+
 def parse_results(log: str) -> dict[str, Any]:
     results: dict[str, dict[str, dict[str, Any]]] = {}
     ratios: dict[str, dict[str, float]] = {}
 
-    for match in MEASURE_RE.finditer(log):
+    matches = list(MEASURE_RE.finditer(log))
+    candidates = re.findall(r"^.*Test Case .*BenchmarkTests\..*measured.*$", log, re.MULTILINE)
+    if not matches:
+        raise ValueError("no benchmark measurements")
+    if len(candidates) != len(matches):
+        raise ValueError("malformed benchmark measurement")
+    validate_run(log, matches[-1].end())
+    identities: set[tuple[str, str]] = set()
+    for match in matches:
+        identity = (match.group("suite"), match.group("test"))
+        if identity in identities:
+            raise ValueError(f"duplicate measurement: {identity}")
+        identities.add(identity)
         provider = SUITE_PROVIDER.get(match.group("suite"), match.group("suite"))
         subject, operation = parse_test_name(match.group("test"))
         values = [float(value.strip()) for value in match.group("values").split(",")]
+        if not values or any(not math.isfinite(value) or value <= 0 for value in values):
+            raise ValueError(f"samples must be finite and positive: {identity}")
+        printed_average = float(match.group("printed_average"))
+        # XCTest rounds small averages to 0.000; raw samples remain authoritative.
+        if not math.isfinite(printed_average) or printed_average < 0:
+            raise ValueError(f"invalid printed average: {identity}")
         average = statistics.fmean(values)
         median = statistics.median(values)
         stddev = statistics.pstdev(values) if len(values) > 1 else 0.0
 
         provider_results = results.setdefault(provider, {})
         operation_results = provider_results.setdefault(operation, {})
+        if subject in operation_results:
+            raise ValueError(f"duplicate normalized measurement: {provider}.{operation}.{subject}")
+        if not all(math.isfinite(value) for value in (average, median, stddev)):
+            raise ValueError(f"nonfinite derived statistics: {identity}")
         operation_results[subject] = {
             "averageSeconds": average,
             "medianSeconds": median,
             "stddevSeconds": stddev,
-            "xctestPrintedAverageSeconds": float(match.group("printed_average")),
+            "xctestPrintedAverageSeconds": printed_average,
             "sampleCount": len(values),
             "valuesSeconds": values,
         }
@@ -98,7 +140,10 @@ def parse_results(log: str) -> dict[str, Any]:
                     continue
                 average = metrics.get("averageSeconds")
                 if isinstance(average, float) and average > 0:
-                    provider_ratios[f"{operation}.LangToolsOver{subject}"] = langtools / average
+                    ratio = langtools / average
+                    if not math.isfinite(ratio) or ratio <= 0:
+                        raise ValueError(f"invalid derived ratio: {provider}.{operation}.{subject}")
+                    provider_ratios[f"{operation}.LangToolsOver{subject}"] = ratio
         if provider_ratios:
             ratios[provider] = provider_ratios
 
@@ -115,9 +160,13 @@ def main() -> int:
     parser.add_argument("--compact", action="store_true", help="Emit compact JSON output")
     args = parser.parse_args()
 
-    parsed = parse_results(read_input(args.log))
-    indent = None if args.compact else 2
-    print(json.dumps(parsed, indent=indent, sort_keys=True))
+    try:
+        parsed = parse_results(read_input(args.log))
+        indent = None if args.compact else 2
+        output = json.dumps(parsed, indent=indent, sort_keys=True, allow_nan=False)
+    except (ValueError, OSError, OverflowError) as error:
+        parser.error(str(error))
+    print(output)
     return 0
 
 
