@@ -84,7 +84,11 @@ struct CodexSeatbeltProfile: Sendable {
             "(deny default)",
             "(import \"system.sb\")",
             "(allow process-exec process-fork signal)",
-            "(allow network*)"
+            "(allow network*)",
+            // Allow stat/metadata of any path (low-risk: exposes existence only,
+            // not contents) so the sandboxed process can resolve absolute path
+            // components. Content reads remain denied-by-default below.
+            "(allow file-read-metadata)"
         ]
         // System runtime roots Codex and its native tools need to exec/load.
         for root in Self.systemReadRoots {
