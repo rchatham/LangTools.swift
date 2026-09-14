@@ -155,9 +155,60 @@ public struct AccountSession: Codable, Equatable, Identifiable {
             idToken: nil,
             tokenType: nil,
             expiresAt: nil,
-            accessibleModelIDs: accessibleModelIDs,
+            accessibleModelIDs: Self.normalizedModelIDs(accessibleModelIDs),
             createdAt: createdAt
         )
+    }
+
+    public func reconcilingOpenAIHelperSession(_ helperSession: AccountSession) -> AccountSession {
+        precondition(provider == .openAI && helperSession.provider == .openAI)
+        return AccountSession(
+            id: id,
+            provider: .openAI,
+            accountIdentifier: helperSession.accountIdentifier,
+            accessToken: CodexSessionMarker.value,
+            refreshToken: nil,
+            idToken: nil,
+            tokenType: nil,
+            expiresAt: nil,
+            accessibleModelIDs: Self.normalizedModelIDs(helperSession.accessibleModelIDs),
+            createdAt: createdAt
+        )
+    }
+
+    public func reconcilingOpenAIHelperStatus(_ status: CodexHelperStatus) -> AccountSession {
+        precondition(provider == .openAI)
+        return AccountSession(
+            id: id,
+            provider: .openAI,
+            accountIdentifier: Self.normalizedAccountIdentifier(status.accountIdentifier) ?? accountIdentifier,
+            accessToken: CodexSessionMarker.value,
+            refreshToken: nil,
+            idToken: nil,
+            tokenType: nil,
+            expiresAt: nil,
+            accessibleModelIDs: Self.normalizedModelIDs(status.accessibleModelIDs ?? []),
+            createdAt: createdAt
+        )
+    }
+
+    public static func normalizedModelIDs(_ modelIDs: [String]) -> [String] {
+        var seen = Set<String>()
+        return modelIDs.compactMap { identifier in
+            var normalized = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            if normalized.hasPrefix("codex/") {
+                normalized.removeFirst("codex/".count)
+            }
+            guard normalized.isEmpty == false, seen.insert(normalized).inserted else { return nil }
+            return normalized
+        }
+    }
+
+    private static func normalizedAccountIdentifier(_ identifier: String?) -> String? {
+        guard let normalized = identifier?.trimmingCharacters(in: .whitespacesAndNewlines), normalized.isEmpty == false else {
+            return nil
+        }
+        return normalized
     }
 
     public var isExpired: Bool {

@@ -234,6 +234,150 @@ final class NetworkClientAuthTests: XCTestCase {
         await fulfillment(of: [cleanup], timeout: 1)
     }
 
+    func testInvalidCodexDestinationFailsBeforeStartingURLSession() async {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AccountProxyURLProtocol.self]
+        let urlSession = URLSession(configuration: configuration)
+        AccountProxyURLProtocol.requestHandler = { _ in
+            XCTFail("Invalid routing must fail before URLSession starts")
+            throw URLError(.badURL)
+        }
+        defer { AccountProxyURLProtocol.requestHandler = nil }
+        let transport = AccountProxyTransport(
+            configuration: AccountBackendConfiguration(
+                codexHelperBaseURL: URL(string: "https://example.com:8765")!,
+                codexHelperToken: "helper-token"
+            ),
+            urlSession: urlSession
+        )
+        let session = AccountSession(provider: .openAI, accountIdentifier: "acct", accessToken: CodexSessionMarker.value)
+
+        do {
+            _ = try await transport.performChatCompletionRequest(
+                messages: [Message(text: "Hello", role: .user)],
+                model: .codex(.gpt5_5),
+                session: session,
+                tools: nil,
+                toolChoice: nil
+            )
+            XCTFail("Expected invalid destination error")
+        } catch let error as NetworkClient.NetworkError {
+            guard case .accountProxyTransportFailed = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testAccountProxyStreamParsesStrictNDJSONIncrementally() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AccountProxyURLProtocol.self]
+        let urlSession = URLSession(configuration: configuration)
+        AccountProxyURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/x-ndjson"])!
+            let body = """
+            {"type":"delta","delta":"Hello ","content":null,"error":null}
+            {"type":"delta","delta":"world","content":null,"error":null}
+            {"type":"complete","delta":null,"content":"Hello world","error":null}
+
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { AccountProxyURLProtocol.requestHandler = nil }
+        let transport = AccountProxyTransport(
+            configuration: AccountBackendConfiguration(
+                codexHelperBaseURL: URL(string: "http://127.0.0.1:9999")!,
+                codexHelperToken: "helper-token"
+            ),
+            urlSession: urlSession
+        )
+        let session = AccountSession(provider: .openAI, accountIdentifier: "acct", accessToken: CodexSessionMarker.value)
+        let stream = try transport.streamChatCompletionRequest(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .codex(.gpt5_5),
+            session: session,
+            stream: true,
+            tools: nil,
+            toolChoice: nil
+        )
+
+        var chunks: [String] = []
+        for try await chunk in stream { chunks.append(chunk) }
+
+        XCTAssertEqual(chunks, ["Hello ", "world"])
+    }
+
+    func testCancellingStreamConsumerCancelsUnderlyingURLSessionRequest() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DelayedAccountProxyURLProtocol.self]
+        let urlSession = URLSession(configuration: configuration)
+        let stopped = expectation(description: "URLSession request stopped")
+        DelayedAccountProxyURLProtocol.stopHandler = { stopped.fulfill() }
+        defer { DelayedAccountProxyURLProtocol.stopHandler = nil }
+        let transport = AccountProxyTransport(
+            configuration: AccountBackendConfiguration(
+                codexHelperBaseURL: URL(string: "http://127.0.0.1:9999")!,
+                codexHelperToken: "helper-token"
+            ),
+            urlSession: urlSession
+        )
+        let stream = try transport.streamChatCompletionRequest(
+            messages: [],
+            model: .codex(.gpt5_5),
+            session: AccountSession(provider: .openAI, accountIdentifier: "acct", accessToken: CodexSessionMarker.value),
+            stream: true,
+            tools: nil,
+            toolChoice: nil
+        )
+        let receivedFirstDelta = expectation(description: "first delta")
+        let consumer = Task {
+            var iterator = stream.makeAsyncIterator()
+            let first = try await iterator.next()
+            XCTAssertEqual(first, "first")
+            receivedFirstDelta.fulfill()
+            _ = try await iterator.next()
+        }
+
+        await fulfillment(of: [receivedFirstDelta], timeout: 1)
+        consumer.cancel()
+        _ = await consumer.result
+        await fulfillment(of: [stopped], timeout: 1)
+    }
+
+    func testAccountProxyStreamRejectsMalformedNDJSON() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AccountProxyURLProtocol.self]
+        let urlSession = URLSession(configuration: configuration)
+        AccountProxyURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data("{not-json}\n".utf8))
+        }
+        defer { AccountProxyURLProtocol.requestHandler = nil }
+        let transport = AccountProxyTransport(
+            configuration: AccountBackendConfiguration(
+                codexHelperBaseURL: URL(string: "http://127.0.0.1:9999")!,
+                codexHelperToken: "helper-token"
+            ),
+            urlSession: urlSession
+        )
+        let stream = try transport.streamChatCompletionRequest(
+            messages: [],
+            model: .codex(.gpt5_5),
+            session: AccountSession(provider: .openAI, accountIdentifier: "acct", accessToken: CodexSessionMarker.value),
+            stream: true,
+            tools: nil,
+            toolChoice: nil
+        )
+
+        do {
+            for try await _ in stream {}
+            XCTFail("Expected malformed NDJSON error")
+        } catch {
+            XCTAssertFalse(error.localizedDescription.isEmpty)
+        }
+    }
+
     func testCodexAccountProxyErrorsPropagate() async throws {
         let session = AccountSession(
             provider: .openAI,
@@ -300,6 +444,32 @@ private final class AccountProxyURLProtocol: URLProtocol {
             body.append(buffer, count: count)
         }
         return body
+    }
+}
+
+private final class DelayedAccountProxyURLProtocol: URLProtocol {
+    static var stopHandler: (() -> Void)?
+    private var completion: DispatchWorkItem?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/x-ndjson"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data("{\"type\":\"delta\",\"delta\":\"first\",\"content\":null,\"error\":null}\n".utf8))
+        let completion = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.client?.urlProtocol(self, didLoad: Data("{\"type\":\"complete\",\"delta\":null,\"content\":\"first\",\"error\":null}\n".utf8))
+            self.client?.urlProtocolDidFinishLoading(self)
+        }
+        self.completion = completion
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: completion)
+    }
+
+    override func stopLoading() {
+        completion?.cancel()
+        Self.stopHandler?()
     }
 }
 

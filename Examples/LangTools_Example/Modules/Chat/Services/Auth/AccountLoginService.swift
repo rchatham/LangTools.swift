@@ -70,7 +70,7 @@ public protocol AccountLoginService {
 }
 
 public protocol AccountLoginBackendClientProtocol {
-    func loginStartURL(for provider: AccountLoginProvider, state: String, codeChallenge: String?, redirectURI: String?) -> URL
+    func loginStartURL(for provider: AccountLoginProvider, state: String, codeChallenge: String?, redirectURI: String?) throws -> URL
     func exchange(provider: AccountLoginProvider, payload: AuthRedirectPayload, codeVerifier: String?, redirectURI: String?) async throws -> AccountSession
     func refresh(session: AccountSession) async throws -> AccountSession
     func logout(provider: AccountLoginProvider, session: AccountSession?) async throws
@@ -94,6 +94,8 @@ public final class BrowserAccountLoginService: AccountLoginService {
     }
 
     private var pendingLogin: PendingLogin?
+    private let loginLock = NSLock()
+    private var loginInProgress = false
 
     public init(
         coordinator: AccountLoginCoordinating,
@@ -110,12 +112,18 @@ public final class BrowserAccountLoginService: AccountLoginService {
     }
 
     public func beginLogin(for provider: AccountLoginProvider) async throws -> AccountSession {
-        if pendingLogin != nil {
-            throw AccountLoginError.loginAlreadyInProgress
-        }
+        try reserveLoginSlot()
+        defer { releaseLoginSlot() }
 
         if provider == .openAI {
-            return try await codexHelperClient.loginOpenAI()
+            let helperSession = try await codexHelperClient.loginOpenAI()
+            guard helperSession.accountIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                throw AccountLoginError.sessionExchangeFailed("Codex helper returned an invalid OpenAI account session.")
+            }
+            if let localSession = try sessionStore.session(for: .openAI) {
+                return localSession.reconcilingOpenAIHelperSession(helperSession)
+            }
+            return helperSession.canonicalized
         }
 
         let pkce = provider == .openAI ? PKCEChallenge() : nil
@@ -127,7 +135,7 @@ public final class BrowserAccountLoginService: AccountLoginService {
             pendingLogin = nil
         }
 
-        let loginURL = backendClient.loginStartURL(for: provider, state: state, codeChallenge: pkce?.codeChallenge, redirectURI: nil)
+        let loginURL = try backendClient.loginStartURL(for: provider, state: state, codeChallenge: pkce?.codeChallenge, redirectURI: nil)
         let callbackURL = try await coordinator.startLogin(
             at: loginURL,
             callbackScheme: AccountBackendConfiguration.callbackScheme,
@@ -152,19 +160,8 @@ public final class BrowserAccountLoginService: AccountLoginService {
 
     public func refreshSession(_ session: AccountSession) async throws -> AccountSession {
         if session.provider == .openAI {
-            let status = try await codexHelperClient.statusOpenAI()
-            guard status.authenticated else {
-                throw AccountLoginError.missingStoredSession(.openAI)
-            }
-            let models = try await codexHelperClient.listOpenAIModels()
-            return AccountSession(
-                id: session.id,
-                provider: .openAI,
-                accountIdentifier: status.accountIdentifier ?? session.accountIdentifier,
-                accessToken: CodexSessionMarker.value,
-                accessibleModelIDs: models,
-                createdAt: session.createdAt
-            )
+            let status = try await validatedOpenAIStatus()
+            return session.reconcilingOpenAIHelperStatus(status)
         }
 
         let models = try await backendClient.fetchAccessibleModels(for: session.provider, session: session)
@@ -194,11 +191,41 @@ public final class BrowserAccountLoginService: AccountLoginService {
 
     public func fetchAccessibleModels(for provider: AccountLoginProvider) async throws -> [String] {
         if provider == .openAI {
-            return try await codexHelperClient.listOpenAIModels()
+            let status = try await validatedOpenAIStatus()
+            return AccountSession.normalizedModelIDs(status.accessibleModelIDs ?? [])
         }
 
         let session = try sessionStore.session(for: provider)
         return try await backendClient.fetchAccessibleModels(for: provider, session: session)
+    }
+
+    private func reserveLoginSlot() throws {
+        loginLock.lock()
+        defer { loginLock.unlock() }
+        guard loginInProgress == false else {
+            throw AccountLoginError.loginAlreadyInProgress
+        }
+        loginInProgress = true
+    }
+
+    private func releaseLoginSlot() {
+        loginLock.lock()
+        loginInProgress = false
+        loginLock.unlock()
+    }
+
+    private func validatedOpenAIStatus() async throws -> CodexHelperStatus {
+        let status = try await codexHelperClient.statusOpenAI()
+        guard status.authenticated else {
+            throw AccountLoginError.missingStoredSession(.openAI)
+        }
+        guard status.provider == AccountLoginProvider.openAI.rawValue,
+              let accountIdentifier = status.accountIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+              accountIdentifier.isEmpty == false
+        else {
+            throw AccountLoginError.sessionExchangeFailed("Codex helper returned an invalid OpenAI account status.")
+        }
+        return status
     }
 
     public static func parseRedirect(_ url: URL, expectedProvider: AccountLoginProvider, expectedState: String) throws -> AuthRedirectPayload {
@@ -302,7 +329,7 @@ public final class AccountLoginBackendClient: AccountLoginBackendClientProtocol 
         self.urlSession = urlSession
     }
 
-    public func loginStartURL(for provider: AccountLoginProvider, state: String, codeChallenge: String?, redirectURI: String?) -> URL {
+    public func loginStartURL(for provider: AccountLoginProvider, state: String, codeChallenge: String?, redirectURI: String?) throws -> URL {
         switch provider {
         case .openAI:
             return OpenAIOAuthConfiguration.authorizeURL(
@@ -311,7 +338,7 @@ public final class AccountLoginBackendClient: AccountLoginBackendClientProtocol 
                 redirectURI: redirectURI ?? configuration.callbackURL(for: provider).absoluteString
             )
         case .claudeCode:
-            return configuration.loginStartURL(for: provider, state: state)
+            return try configuration.loginStartURL(for: provider, state: state)
         }
     }
 
@@ -345,7 +372,7 @@ public final class AccountLoginBackendClient: AccountLoginBackendClientProtocol 
                 redirectURI: configuration.callbackURL(for: provider).absoluteString
             )
 
-            var request = URLRequest(url: configuration.exchangeURL(for: provider))
+            var request = URLRequest(url: try validatedClaudeURL(path: "/auth/\(provider.startPathComponent)/exchange"))
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try encoder.encode(requestBody)
@@ -405,12 +432,14 @@ public final class AccountLoginBackendClient: AccountLoginBackendClientProtocol 
         case .openAI:
             return
         case .claudeCode:
-            var request = URLRequest(url: configuration.logoutURL(for: provider))
+            guard let session else {
+                throw AccountLoginError.missingStoredSession(provider)
+            }
+            let route = try validatedClaudeRoute(session: session)
+            var request = URLRequest(url: route.endpoint("/auth/\(provider.startPathComponent)/logout"))
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            if let session {
-                request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
-            }
+            request.setValue("Bearer \(route.credential.value)", forHTTPHeaderField: "Authorization")
 
             let (_, response) = try await urlSession.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse,
@@ -435,13 +464,30 @@ public final class AccountLoginBackendClient: AccountLoginBackendClientProtocol 
                 throw AccountLoginError.missingStoredSession(provider)
             }
 
-            var request = URLRequest(url: configuration.baseURL.appending(path: "/auth/\(provider.startPathComponent)/models"))
+            let route = try validatedClaudeRoute(session: session)
+            var request = URLRequest(url: route.endpoint("/auth/\(provider.startPathComponent)/models"))
             request.httpMethod = "GET"
-            request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+            request.setValue("Bearer \(route.credential.value)", forHTTPHeaderField: "Authorization")
 
             let (data, response) = try await urlSession.data(for: request)
             try validate(response: response, data: data)
             return try decoder.decode(AccessibleModelsResponse.self, from: data).models
+        }
+    }
+
+    private func validatedClaudeURL(path: String) throws -> URL {
+        do {
+            return try configuration.claudeCodeURL(path: path)
+        } catch let error as AccountBackendConfigurationError {
+            throw AccountLoginError.sessionExchangeFailed(error.localizedDescription)
+        }
+    }
+
+    private func validatedClaudeRoute(session: AccountSession) throws -> AccountBackendRoute {
+        do {
+            return try configuration.route(for: .claudeCode, session: session)
+        } catch let error as AccountBackendConfigurationError {
+            throw AccountLoginError.sessionExchangeFailed(error.localizedDescription)
         }
     }
 

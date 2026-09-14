@@ -21,7 +21,7 @@ public final class AccountProxyTransport: ConversationAwareAccountProxyTransport
 
     public init(
         configuration: AccountBackendConfiguration = AccountBackendConfiguration(),
-        urlSession: URLSession = .shared
+        urlSession: URLSession = LoopbackURLSession.shared
     ) {
         self.configuration = configuration
         self.urlSession = urlSession
@@ -33,18 +33,7 @@ public final class AccountProxyTransport: ConversationAwareAccountProxyTransport
     }
 
     public func streamChatCompletionRequest(messages: [Message], model: Model, session: AccountSession, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let response = try await send(messages: messages, model: model, session: session, conversationID: nil, stream: stream, tools: tools, toolChoice: toolChoice)
-                    continuation.yield(response.content)
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
+        makeStream(messages: messages, model: model, session: session, conversationID: nil, stream: stream, tools: tools, toolChoice: toolChoice)
     }
 
     public func performChatCompletionRequest(messages: [Message], model: Model, session: AccountSession, conversationID: UUID, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message {
@@ -53,25 +42,15 @@ public final class AccountProxyTransport: ConversationAwareAccountProxyTransport
     }
 
     public func streamChatCompletionRequest(messages: [Message], model: Model, session: AccountSession, conversationID: UUID, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let response = try await send(messages: messages, model: model, session: session, conversationID: conversationID, stream: stream, tools: tools, toolChoice: toolChoice)
-                    continuation.yield(response.content)
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
+        makeStream(messages: messages, model: model, session: session, conversationID: conversationID, stream: stream, tools: tools, toolChoice: toolChoice)
     }
 
     public func endConversation(id: UUID) async {
-        var request = URLRequest(url: configuration.codexHelperBaseURL.appending(path: "/v1/account/conversations/\(id.uuidString.lowercased())"))
-        request.httpMethod = "DELETE"
-        request.setValue("Bearer \(configuration.codexHelperToken)", forHTTPHeaderField: "Authorization")
         do {
+            let route = try configuration.codexHelperRoute()
+            var request = URLRequest(url: route.endpoint("/v1/account/conversations/\(id.uuidString.lowercased())"))
+            request.httpMethod = "DELETE"
+            request.setValue("Bearer \(route.credential.value)", forHTTPHeaderField: "Authorization")
             let (data, response) = try await urlSession.data(for: request)
             try validate(response: response, data: data)
         } catch {
@@ -92,11 +71,7 @@ public final class AccountProxyTransport: ConversationAwareAccountProxyTransport
             tools: isCodex ? nil : tools
         )
 
-        var request = URLRequest(url: configuration.accountChatURL(for: session.provider))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(configuration.authorizationToken(for: session.provider, session: session))", forHTTPHeaderField: "Authorization")
-        request.httpBody = try encoder.encode(payload)
+        let request = try makeChatRequest(payload: payload, session: session)
 
         do {
             let (data, response) = try await urlSession.data(for: request)
@@ -106,6 +81,117 @@ public final class AccountProxyTransport: ConversationAwareAccountProxyTransport
             throw error
         } catch {
             throw mapTransportError(error, provider: session.provider)
+        }
+    }
+
+    private func makeStream(messages: [Message], model: Model, session: AccountSession, conversationID: UUID?, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    if stream {
+                        try await streamSend(messages: messages, model: model, session: session, conversationID: conversationID, tools: tools, toolChoice: toolChoice, continuation: continuation)
+                    } else {
+                        let response = try await send(messages: messages, model: model, session: session, conversationID: conversationID, stream: false, tools: tools, toolChoice: toolChoice)
+                        continuation.yield(response.content)
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    private func streamSend(messages: [Message], model: Model, session: AccountSession, conversationID: UUID?, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, continuation: AsyncThrowingStream<String, Error>.Continuation) async throws {
+        let isCodex: Bool
+        if case .codex = model { isCodex = true } else { isCodex = false }
+        let payload = AccountChatRequest(
+            provider: session.provider,
+            model: model.slug,
+            messages: messages.map(AccountChatMessage.init),
+            stream: true,
+            conversationID: isCodex ? conversationID : nil,
+            toolChoice: isCodex ? nil : toolChoice.map(AccountToolChoice.init),
+            tools: isCodex ? nil : tools
+        )
+        let request = try makeChatRequest(payload: payload, session: session)
+
+        do {
+            let (bytes, response) = try await urlSession.bytes(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw NetworkClient.NetworkError.accountProxyTransportFailed("Invalid proxy response.")
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                var data = Data()
+                for try await byte in bytes { data.append(byte) }
+                try validate(response: response, data: data)
+                return
+            }
+
+            var accumulated = ""
+            var completed = false
+            for try await line in bytes.lines {
+                try Task.checkCancellation()
+                guard line.isEmpty == false, completed == false,
+                      let data = line.data(using: .utf8)
+                else {
+                    throw NetworkClient.NetworkError.accountProxyTransportFailed("Codex helper returned malformed NDJSON.")
+                }
+                let event = try decoder.decode(AccountChatStreamEvent.self, from: data)
+                switch event.type {
+                case .delta:
+                    guard let delta = event.delta, event.content == nil, event.error == nil else {
+                        throw NetworkClient.NetworkError.accountProxyTransportFailed("Codex helper returned an invalid delta event.")
+                    }
+                    accumulated += delta
+                    continuation.yield(delta)
+                case .complete:
+                    guard let content = event.content, event.delta == nil, event.error == nil,
+                          accumulated.isEmpty || content == accumulated
+                    else {
+                        throw NetworkClient.NetworkError.accountProxyTransportFailed("Codex helper returned an invalid completion event.")
+                    }
+                    if accumulated.isEmpty, content.isEmpty == false {
+                        continuation.yield(content)
+                        accumulated = content
+                    }
+                    completed = true
+                case .error:
+                    guard let message = event.error?.trimmingCharacters(in: .whitespacesAndNewlines),
+                          message.isEmpty == false, event.delta == nil, event.content == nil
+                    else {
+                        throw NetworkClient.NetworkError.accountProxyTransportFailed("Codex helper returned an invalid error event.")
+                    }
+                    throw NetworkClient.NetworkError.accountProxyTransportFailed(message)
+                }
+            }
+            guard completed else {
+                throw NetworkClient.NetworkError.accountProxyTransportFailed("Codex helper ended the stream before a completion event.")
+            }
+        } catch let error as NetworkClient.NetworkError {
+            throw error
+        } catch {
+            throw mapTransportError(error, provider: session.provider)
+        }
+    }
+
+    private func makeChatRequest(payload: AccountChatRequest, session: AccountSession) throws -> URLRequest {
+        do {
+            let route = try configuration.route(for: session.provider, session: session)
+            var request = URLRequest(url: route.endpoint("/account/chat/completions"))
+            if route.destination == .codexHelper {
+                request.url = route.endpoint("/v1/account/chat/completions")
+            }
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(route.credential.value)", forHTTPHeaderField: "Authorization")
+            request.httpBody = try encoder.encode(payload)
+            return request
+        } catch let error as AccountBackendConfigurationError {
+            throw NetworkClient.NetworkError.accountProxyTransportFailed(error.localizedDescription)
         }
     }
 
@@ -184,4 +270,17 @@ private struct AccountToolChoice: Codable {
 
 private struct AccountChatResponse: Codable {
     let content: String
+}
+
+private struct AccountChatStreamEvent: Decodable {
+    enum Kind: String, Decodable {
+        case delta
+        case complete
+        case error
+    }
+
+    let type: Kind
+    let delta: String?
+    let content: String?
+    let error: String?
 }

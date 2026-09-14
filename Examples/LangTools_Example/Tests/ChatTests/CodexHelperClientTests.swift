@@ -54,12 +54,12 @@ final class CodexHelperClientTests: XCTestCase {
               "id": "00000000-0000-0000-0000-000000000001",
               "provider": "openAI",
               "accountIdentifier": "acct",
-              "accessToken": "langtools-codex-app-server-session-v1",
-              "refreshToken": null,
-              "idToken": null,
-              "tokenType": null,
-              "expiresAt": null,
-              "accessibleModelIDs": ["gpt-5.5", "gpt-5.3-codex-spark"],
+              "accessToken": "unsafe-helper-access-token",
+              "refreshToken": "unsafe-helper-refresh-token",
+              "idToken": "unsafe-helper-id-token",
+              "tokenType": "Bearer",
+              "expiresAt": "2026-04-28T17:00:00Z",
+              "accessibleModelIDs": [" gpt-5.5 ", "gpt-5.5", "codex/gpt-5.3-codex-spark"],
               "createdAt": "2026-04-28T16:00:00Z"
             }
             """.data(using: .utf8)!
@@ -80,6 +80,10 @@ final class CodexHelperClientTests: XCTestCase {
         XCTAssertEqual(accountSession.accountIdentifier, "acct")
         XCTAssertEqual(accountSession.accessToken, CodexSessionMarker.value)
         XCTAssertNil(accountSession.refreshToken)
+        XCTAssertNil(accountSession.idToken)
+        XCTAssertNil(accountSession.tokenType)
+        XCTAssertNil(accountSession.expiresAt)
+        XCTAssertEqual(accountSession.accessibleModelIDs, ["gpt-5.5", "gpt-5.3-codex-spark"])
     }
 
     func testLoginRejectsEmptyHelperTokenBeforeSendingRequest() async {
@@ -149,6 +153,31 @@ final class CodexHelperClientTests: XCTestCase {
             XCTFail("Expected conflict error")
         } catch let error as AccountLoginError {
             XCTAssertEqual(error, .sessionExchangeFailed("A ChatGPT login is already in progress."))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testInvalidHelperDestinationFailsBeforeRequest() async {
+        let session = makeURLSession { _ in
+            XCTFail("Invalid helper destination must fail before URLSession starts")
+            throw URLError(.badURL)
+        }
+        let client = CodexHelperClient(
+            configuration: AccountBackendConfiguration(
+                codexHelperBaseURL: URL(string: "http://example.com:9999")!,
+                codexHelperToken: "helper-token"
+            ),
+            urlSession: session
+        )
+
+        do {
+            _ = try await client.statusOpenAI()
+            XCTFail("Expected invalid destination error")
+        } catch let error as AccountLoginError {
+            guard case .sessionExchangeFailed = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
         } catch {
             XCTFail("Unexpected error: \(error)")
         }

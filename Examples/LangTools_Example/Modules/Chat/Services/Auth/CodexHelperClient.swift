@@ -33,7 +33,7 @@ public final class CodexHelperClient: CodexHelperClientProtocol {
 
     public init(
         configuration: AccountBackendConfiguration = AccountBackendConfiguration(),
-        urlSession: URLSession = .shared
+        urlSession: URLSession = LoopbackURLSession.shared
     ) {
         self.configuration = configuration
         self.urlSession = urlSession
@@ -41,64 +41,67 @@ public final class CodexHelperClient: CodexHelperClientProtocol {
     }
 
     public func loginOpenAI() async throws -> AccountSession {
-        guard configuration.codexHelperToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-            throw AccountLoginError.sessionExchangeFailed("Enter the Codex helper token in Settings before signing in.")
-        }
         _ = try await healthCheck()
 
-        var request = URLRequest(url: configuration.codexHelperBaseURL.appending(path: "/v1/auth/login"))
+        var request = try helperRequest(path: "/v1/auth/login")
         request.httpMethod = "POST"
         request.timeoutInterval = 330
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(configuration.codexHelperToken)", forHTTPHeaderField: "Authorization")
         request.httpBody = try encoder.encode(HelperAuthRequest(provider: .openAI))
 
         let (data, _) = try await data(for: request)
         let session = try decoder.decode(AccountSession.self, from: data)
-        guard session.provider == .openAI,
-              session.accessToken == CodexSessionMarker.value,
-              session.refreshToken == nil,
-              session.idToken == nil,
-              session.tokenType == nil,
-              session.expiresAt == nil
-        else {
+        guard session.provider == .openAI else {
             throw AccountLoginError.sessionExchangeFailed("Codex helper returned an unsafe account session.")
         }
         return session.canonicalized
     }
 
     public func logoutOpenAI() async throws {
-        var request = URLRequest(url: configuration.codexHelperBaseURL.appending(path: "/v1/auth/logout"))
+        var request = try helperRequest(path: "/v1/auth/logout")
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(configuration.codexHelperToken)", forHTTPHeaderField: "Authorization")
         request.httpBody = try encoder.encode(HelperAuthRequest(provider: .openAI))
         _ = try await data(for: request)
     }
 
     public func statusOpenAI() async throws -> CodexHelperStatus {
-        var request = URLRequest(url: configuration.codexHelperBaseURL.appending(path: "/v1/auth/status"))
+        var request = try helperRequest(path: "/v1/auth/status")
         request.httpMethod = "GET"
-        request.setValue("Bearer \(configuration.codexHelperToken)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await data(for: request)
-        _ = response
+        let (data, _) = try await data(for: request)
         return try decoder.decode(CodexHelperStatus.self, from: data)
     }
 
     public func listOpenAIModels() async throws -> [String] {
-        var request = URLRequest(url: configuration.codexHelperBaseURL.appending(path: "/v1/models/codex"))
+        var request = try helperRequest(path: "/v1/models/codex")
         request.httpMethod = "GET"
-        request.setValue("Bearer \(configuration.codexHelperToken)", forHTTPHeaderField: "Authorization")
         let (data, _) = try await data(for: request)
-        return try decoder.decode(CodexHelperModelsResponse.self, from: data).models
+        let response = try decoder.decode(CodexHelperModelsResponse.self, from: data)
+        return AccountSession.normalizedModelIDs(response.models)
     }
 
     public func healthCheck() async throws -> HelperHealthStatus {
-        var request = URLRequest(url: configuration.codexHelperBaseURL.appending(path: "/health"))
+        var request = try helperRequest(path: "/health")
         request.httpMethod = "GET"
-        request.setValue("Bearer \(configuration.codexHelperToken)", forHTTPHeaderField: "Authorization")
         let (data, _) = try await data(for: request)
         return try decoder.decode(HelperHealthStatus.self, from: data)
+    }
+
+    private func helperRequest(path: String) throws -> URLRequest {
+        do {
+            let route = try configuration.codexHelperRoute()
+            var request = URLRequest(url: route.endpoint(path))
+            request.setValue("Bearer \(route.credential.value)", forHTTPHeaderField: "Authorization")
+            return request
+        } catch let error as AccountBackendConfigurationError {
+            let message: String
+            if error == .missingCredential(.codexHelper) {
+                message = "Enter the Codex helper token in Settings before signing in."
+            } else {
+                message = error.localizedDescription
+            }
+            throw AccountLoginError.sessionExchangeFailed(message)
+        }
     }
 
     private func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {

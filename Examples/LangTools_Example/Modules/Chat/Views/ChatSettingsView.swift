@@ -211,6 +211,11 @@ public struct ChatSettingsView: View {
                         .foregroundColor(.secondary)
                     TextField("Codex Helper URL", text: $viewModel.codexHelperBaseURLString)
                     SecureField("Codex Helper Token", text: $viewModel.codexHelperToken)
+                    if let tokenError = viewModel.codexHelperTokenSaveError {
+                        Text(tokenError)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
                     Text(viewModel.codexHelperCommand)
                         .font(.system(.caption2, design: .monospaced))
                         .textSelection(.enabled)
@@ -1068,6 +1073,7 @@ extension ChatSettingsView {
         @Published var systemMessage = UserDefaults.systemMessage
         @Published var codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
         @Published var codexHelperToken = UserDefaults.codexHelperToken
+        @Published var codexHelperTokenSaveError: String?
         @Published var toolSettings = ToolSettings.shared
         @Published public var toolManager = ToolManager.shared
         public var accessManager = ProviderAccessManager.shared
@@ -1144,7 +1150,14 @@ extension ChatSettingsView {
             if let url = URL(string: codexHelperBaseURLString), url.scheme?.isEmpty == false {
                 UserDefaults.codexHelperBaseURL = url
             }
-            UserDefaults.codexHelperToken = codexHelperToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            do {
+                try CodexHelperTokenStore().setToken(codexHelperToken.trimmingCharacters(in: .whitespacesAndNewlines))
+                codexHelperTokenSaveError = nil
+            } catch {
+                // Surface Keychain persistence failures instead of silently
+                // retaining the prior credential.
+                codexHelperTokenSaveError = error.localizedDescription
+            }
         }
 
         func presentManageAccess(for destination: AccessDestination? = nil) {

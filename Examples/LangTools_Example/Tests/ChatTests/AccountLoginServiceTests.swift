@@ -50,12 +50,12 @@ final class AccountLoginServiceTests: XCTestCase {
         XCTAssertEqual(payload.state, "test-state")
     }
 
-    func testOpenAILoginStartURLUsesDirectOAuthAuthorizeEndpoint() {
+    func testOpenAILoginStartURLUsesDirectOAuthAuthorizeEndpoint() throws {
         let client = AccountLoginBackendClient(
             configuration: AccountBackendConfiguration(baseURL: URL(string: "http://localhost:8080")!)
         )
 
-        let url = client.loginStartURL(for: .openAI, state: "test-state", codeChallenge: "test-challenge", redirectURI: "http://127.0.0.1:1455/auth/callback")
+        let url = try client.loginStartURL(for: .openAI, state: "test-state", codeChallenge: "test-challenge", redirectURI: "http://127.0.0.1:1455/auth/callback")
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let queryItems = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
 
@@ -198,6 +198,124 @@ final class AccountLoginServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testOpenAIReconnectPreservesLocalIdentityAndAdoptsCanonicalHelperData() async throws {
+        let localID = UUID()
+        let localCreatedAt = Date(timeIntervalSince1970: 123)
+        let sessionStore = AuthSessionStore(keychain: .init(service: "AccountLoginServiceTests.\(UUID().uuidString)"))
+        try sessionStore.save(AccountSession(
+            id: localID,
+            provider: .openAI,
+            accountIdentifier: "old-account",
+            accessToken: CodexSessionMarker.value,
+            accessibleModelIDs: ["old-model"],
+            createdAt: localCreatedAt
+        ))
+        let helperClient = TestCodexHelperClient(loginSession: AccountSession(
+            provider: .openAI,
+            accountIdentifier: "new-account",
+            accessToken: "unsafe-access",
+            refreshToken: "unsafe-refresh",
+            idToken: "unsafe-id",
+            tokenType: "Bearer",
+            expiresAt: Date(),
+            accessibleModelIDs: [" gpt-5.5 ", "gpt-5.5"]
+        ))
+        let service = BrowserAccountLoginService(
+            coordinator: TestAccountLoginCoordinator(),
+            sessionStore: sessionStore,
+            codexHelperClient: helperClient
+        )
+
+        let session = try await service.beginLogin(for: .openAI)
+
+        XCTAssertEqual(session.id, localID)
+        XCTAssertEqual(session.createdAt, localCreatedAt)
+        XCTAssertEqual(session.accountIdentifier, "new-account")
+        XCTAssertEqual(session.accessibleModelIDs, ["gpt-5.5"])
+        XCTAssertEqual(session.accessToken, CodexSessionMarker.value)
+        XCTAssertNil(session.refreshToken)
+        XCTAssertNil(session.idToken)
+        XCTAssertNil(session.tokenType)
+        XCTAssertNil(session.expiresAt)
+    }
+
+    @MainActor
+    func testOpenAIRefreshReconcilesStatusWithoutModelFallback() async throws {
+        let originalID = UUID()
+        let createdAt = Date(timeIntervalSince1970: 123)
+        let helperClient = TestCodexHelperClient(
+            loginSession: AccountSession(
+                provider: .openAI,
+                accountIdentifier: "helper-account",
+                accessToken: "unsafe-helper-token",
+                refreshToken: "unsafe-refresh",
+                idToken: "unsafe-id",
+                tokenType: "Bearer",
+                expiresAt: Date(timeIntervalSince1970: 999),
+                accessibleModelIDs: [" gpt-5.5 ", "gpt-5.5", "codex/future-model"]
+            )
+        )
+        let service = BrowserAccountLoginService(
+            coordinator: TestAccountLoginCoordinator(),
+            sessionStore: AuthSessionStore(keychain: .init(service: "AccountLoginServiceTests.\(UUID().uuidString)")),
+            codexHelperClient: helperClient
+        )
+        let stale = AccountSession(
+            id: originalID,
+            provider: .openAI,
+            accountIdentifier: "stale-account",
+            accessToken: "legacy-access",
+            refreshToken: "legacy-refresh",
+            idToken: "legacy-id",
+            tokenType: "Bearer",
+            expiresAt: Date(),
+            accessibleModelIDs: ["stale-model"],
+            createdAt: createdAt
+        )
+
+        let refreshed = try await service.refreshSession(stale)
+
+        XCTAssertEqual(refreshed.id, originalID)
+        XCTAssertEqual(refreshed.createdAt, createdAt)
+        XCTAssertEqual(refreshed.accountIdentifier, "helper-account")
+        XCTAssertEqual(refreshed.accessToken, CodexSessionMarker.value)
+        XCTAssertNil(refreshed.refreshToken)
+        XCTAssertNil(refreshed.idToken)
+        XCTAssertNil(refreshed.tokenType)
+        XCTAssertNil(refreshed.expiresAt)
+        XCTAssertEqual(refreshed.accessibleModelIDs, ["gpt-5.5", "future-model"])
+        XCTAssertEqual(helperClient.listCallCount, 0)
+    }
+
+    @MainActor
+    func testOpenAIRefreshRejectsUnauthenticatedStatusWithStaleModels() async {
+        let helperClient = TestCodexHelperClient(
+            loginSession: AccountSession(provider: .openAI, accountIdentifier: "acct", accessToken: CodexSessionMarker.value),
+            authenticated: false
+        )
+        let service = BrowserAccountLoginService(
+            coordinator: TestAccountLoginCoordinator(),
+            sessionStore: AuthSessionStore(keychain: .init(service: "AccountLoginServiceTests.\(UUID().uuidString)")),
+            codexHelperClient: helperClient
+        )
+
+        do {
+            _ = try await service.refreshSession(AccountSession(
+                provider: .openAI,
+                accountIdentifier: "stale",
+                accessToken: CodexSessionMarker.value,
+                accessibleModelIDs: ["stale-model"]
+            ))
+            XCTFail("Expected unauthenticated status to be rejected")
+        } catch let error as AccountLoginError {
+            XCTAssertEqual(error, .missingStoredSession(.openAI))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertEqual(helperClient.listCallCount, 0)
+    }
+
+    @MainActor
     func testBeginLoginReturnsSessionAfterBrowserCallbackForClaudeCode() async throws {
         let coordinator = TestAccountLoginCoordinator()
         let backendClient = TestAccountLoginBackendClient(
@@ -332,10 +450,13 @@ private extension URLRequest {
 
 private final class TestCodexHelperClient: CodexHelperClientProtocol {
     let loginSession: AccountSession
+    let authenticated: Bool
     private(set) var loginCallCount = 0
+    private(set) var listCallCount = 0
 
-    init(loginSession: AccountSession) {
+    init(loginSession: AccountSession, authenticated: Bool = true) {
         self.loginSession = loginSession
+        self.authenticated = authenticated
     }
 
     func loginOpenAI() async throws -> AccountSession {
@@ -346,11 +467,12 @@ private final class TestCodexHelperClient: CodexHelperClientProtocol {
     func logoutOpenAI() async throws {}
 
     func statusOpenAI() async throws -> CodexHelperStatus {
-        CodexHelperStatus(provider: "openAI", authenticated: true, accountIdentifier: loginSession.accountIdentifier, expiresAt: nil, accessibleModelIDs: loginSession.accessibleModelIDs)
+        CodexHelperStatus(provider: "openAI", authenticated: authenticated, accountIdentifier: loginSession.accountIdentifier, expiresAt: nil, accessibleModelIDs: loginSession.accessibleModelIDs)
     }
 
     func listOpenAIModels() async throws -> [String] {
-        loginSession.accessibleModelIDs
+        listCallCount += 1
+        return loginSession.accessibleModelIDs
     }
 
     func healthCheck() async throws -> HelperHealthStatus {
