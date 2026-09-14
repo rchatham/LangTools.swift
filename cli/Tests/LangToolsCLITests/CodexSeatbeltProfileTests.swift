@@ -61,9 +61,12 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             0,
             "Reading system files must remain permitted."
         )
-        // Native tool execution must work (preserves Codex-native tools).
+        // Native tool execution must work (preserves Codex-native tools). Use a
+        // self-contained shell binary rather than `/usr/bin/python3`, which is an
+        // `xcrun` shim on some macOS hosts and pulls in Xcode libraries outside
+        // the containment allowlist.
         XCTAssertEqual(
-            runSandboxed(sandboxExec: sandboxExec, profile: profileURL, argv: ["/usr/bin/python3", "-c", "print(1+1)"]),
+            runSandboxed(sandboxExec: sandboxExec, profile: profileURL, argv: ["/bin/sh", "-c", "echo ok"]),
             0,
             "Native tool execution must remain available."
         )

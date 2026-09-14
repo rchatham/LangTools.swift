@@ -393,6 +393,11 @@ actor CodexAppServerClient {
         ) {
             process.executableURL = URL(fileURLWithPath: seatbelt.sandboxExec)
             process.arguments = ["-f", seatbelt.profilePath, command.executable] + codexArguments
+            // Run the Codex app-server with its working directory inside the
+            // allowlisted workspace root, so it never reads the arbitrary
+            // helper launch directory (e.g. the user's repo/home) to load
+            // project config.
+            process.currentDirectoryURL = seatbelt.workspaceURL
             seatbeltProfileURL = seatbelt.profileURL
         } else {
             process.executableURL = URL(fileURLWithPath: command.executable)
@@ -469,17 +474,19 @@ actor CodexAppServerClient {
         let sandboxExec: String
         let profilePath: String
         let profileURL: URL
+        let workspaceURL: URL
     }
 
     private func makeSeatbeltLaunch(executable: String, arguments: [String]) throws -> SeatbeltLaunch? {
         guard let sandboxExec = CodexSeatbeltProfile.sandboxExecPath(),
               let workspaceRoot = workspaceRootProvider()
         else { return nil }
+        let resolvedWorkspace = workspaceRoot.resolvingSymlinksInPath()
         let inputs = CodexSeatbeltProfile.Inputs(
             codexExecutable: executable,
             codexExecutableArguments: Array(arguments.dropLast(3)),
             codexHome: codexHomeProvider(),
-            workspaceRoot: workspaceRoot.resolvingSymlinksInPath().path
+            workspaceRoot: resolvedWorkspace.path
         )
         // A profile-write failure throws so the caller never launches the
         // Codex runtime without the intended OS-level read boundary.
@@ -487,7 +494,8 @@ actor CodexAppServerClient {
         return SeatbeltLaunch(
             sandboxExec: sandboxExec,
             profilePath: profileURL.path,
-            profileURL: profileURL
+            profileURL: profileURL,
+            workspaceURL: resolvedWorkspace
         )
     }
 
@@ -831,8 +839,12 @@ enum CodexAppServerError: LocalizedError, Sendable {
         case .invalidResponse(let message): return "Codex app-server returned an invalid response: \(message)"
         case .invalidRequest(let message), .server(_, let message): return message
         case .timeout(let method): return "Codex app-server timed out while waiting for \(method)."
-        case .exited(let status, _):
-            return "Codex app-server exited with status \(status)."
+        case .exited(let status, let stderr):
+            let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            if detail.isEmpty {
+                return "Codex app-server exited with status \(status)."
+            }
+            return "Codex app-server exited with status \(status): \(detail)"
         case .restarted: return "Codex app-server restarted."
         case .shutdown: return "Codex app-server shut down."
         }
