@@ -38,8 +38,13 @@ extension Anthropic {
 
         public func encode(to encoder: any Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(role, forKey: .role)
-            try container.encode(content, forKey: .content)
+            try container.encode(role.rawValue, forKey: .role)
+            switch content {
+            case .string(let text):
+                try container.encode(text, forKey: .content)
+            case .array(let blocks):
+                try container.encode(blocks, forKey: .content)
+            }
         }
 
         enum CodingKeys: String, CodingKey {
@@ -238,9 +243,15 @@ extension Anthropic {
                 public let id: String?
                 public let name: String?
                 private let inputString: String?
-                public let inputJSON: JSON?
+                private let decodedInputJSON: JSON?
 
-                public var input: String { inputString ?? inputJSON?.jsonString ?? "" }
+                /// Parsed input, evaluated on demand for string-backed streaming arguments.
+                public var inputJSON: JSON? {
+                    if let decodedInputJSON { return decodedInputJSON }
+                    return inputString.flatMap { try? JSON(string: $0) }
+                }
+
+                public var input: String { inputString ?? decodedInputJSON?.jsonString ?? "" }
                 public var arguments: String { input }
 
                 public init(_ contentType: any LangToolsContentType) throws {
@@ -251,7 +262,7 @@ extension Anthropic {
                     self.id = id
                     self.name = name
                     self.inputString = input
-                    self.inputJSON = try? JSON(string: input)
+                    self.decodedInputJSON = nil
                 }
 
                 enum CodingKeys: String, CodingKey {
@@ -262,10 +273,11 @@ extension Anthropic {
                     let container = try decoder.container(keyedBy: CodingKeys.self)
                     self.id = try container.decodeIfPresent(String.self, forKey: .id)
                     self.name = try container.decodeIfPresent(String.self, forKey: .name)
-                    if let inputObject = try container.decodeIfPresent([String: JSON].self, forKey: .input) {
-                        self.inputJSON = .object(inputObject)
+                    // Object probing is an optimization, not a restriction on valid JSON input.
+                    if let inputObject = try? container.decode([String: JSON].self, forKey: .input) {
+                        self.decodedInputJSON = .object(inputObject)
                     } else {
-                        self.inputJSON = try container.decodeIfPresent(JSON.self, forKey: .input)
+                        self.decodedInputJSON = try container.decodeIfPresent(JSON.self, forKey: .input)
                     }
                     self.inputString = nil
                 }
@@ -275,8 +287,8 @@ extension Anthropic {
                     try container.encode(type, forKey: .type)
                     try container.encodeIfPresent(id, forKey: .id)
                     try container.encodeIfPresent(name, forKey: .name)
-                    if let inputJSON {
-                        try container.encode(inputJSON, forKey: .input)
+                    if let decodedInputJSON {
+                        try container.encode(decodedInputJSON, forKey: .input)
                     } else if let inputString, !inputString.isEmpty {
                         try container.encode(try JSON(string: inputString), forKey: .input)
                     }
