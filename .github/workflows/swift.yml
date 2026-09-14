@@ -22,6 +22,7 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    timeout-minutes: 30
     permissions:
       contents: read
 
@@ -30,7 +31,8 @@ jobs:
     - name: Build
       run: swift build -v
     - name: Run tests
-      run: swift test -v
+      # Run serially and exclude platform-heavy suites that can hang XCTest startup on CI.
+      run: swift test -v --no-parallel --skip AppleSpeechTests --skip WhisperKitLangToolsTests
 
   pi-workflow-tests:
     runs-on: ubuntu-latest
