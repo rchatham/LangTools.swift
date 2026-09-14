@@ -126,6 +126,7 @@ class ToolExecutionState: ObservableObject {
         operation: String,
         parameters: [String: Any]
     ) -> ApprovalRequest {
+        pendingApproval?.deny()
         let request = ApprovalRequest(
             id: UUID(),
             toolName: toolName,
@@ -152,6 +153,11 @@ class ToolExecutionState: ObservableObject {
         pendingApproval = nil
     }
 
+    /// Deny any unresolved request before the TUI releases its approval handler.
+    func cancelPendingApproval() {
+        denyRequest()
+    }
+
     // MARK: - Tool Control
 
     /// Cancel the currently executing tool
@@ -171,6 +177,23 @@ class ToolExecutionState: ObservableObject {
 }
 
 // MARK: - Supporting Types
+
+enum ToolApprovalInput: Equatable {
+    case approve
+    case deny
+    case invalid
+
+    init(text: String) {
+        switch text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "y", "yes":
+            self = .approve
+        case "", "n", "no":
+            self = .deny
+        default:
+            self = .invalid
+        }
+    }
+}
 
 /// Record of a tool execution
 struct ToolExecutionRecord: Identifiable {
@@ -209,6 +232,7 @@ struct ToolExecutionRecord: Identifiable {
 }
 
 /// Request for tool operation approval
+@MainActor
 class ApprovalRequest: Identifiable {
     let id: UUID
     let toolName: String
@@ -216,7 +240,7 @@ class ApprovalRequest: Identifiable {
     let parameters: [String: Any]
 
     private var continuation: CheckedContinuation<Bool, Never>?
-    private var resolved = false
+    private var decision: Bool?
 
     init(id: UUID, toolName: String, operation: String, parameters: [String: Any]) {
         self.id = id
@@ -227,29 +251,36 @@ class ApprovalRequest: Identifiable {
 
     /// Wait for user decision
     func waitForDecision() async -> Bool {
-        guard !resolved else { return false }
+        if let decision { return decision }
 
         return await withCheckedContinuation { continuation in
-            self.continuation = continuation
+            if let decision {
+                continuation.resume(returning: decision)
+            } else {
+                self.continuation = continuation
+            }
         }
     }
 
     /// Approve the request
     func approve() {
-        guard !resolved else { return }
-        resolved = true
-        continuation?.resume(returning: true)
+        resolve(with: true)
     }
 
     /// Deny the request
     func deny() {
-        guard !resolved else { return }
-        resolved = true
-        continuation?.resume(returning: false)
+        resolve(with: false)
+    }
+
+    private func resolve(with decision: Bool) {
+        guard self.decision == nil else { return }
+        self.decision = decision
+        continuation?.resume(returning: decision)
+        continuation = nil
     }
 
     /// Description of the operation
     var description: String {
-        ToolApprovalPolicy.operationDescription(toolName: toolName, parameters: parameters)
+        operation
     }
 }

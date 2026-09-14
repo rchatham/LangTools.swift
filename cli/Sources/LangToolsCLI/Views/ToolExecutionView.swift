@@ -108,7 +108,8 @@ struct ToolResultDisplayView: View {
 }
 
 /// View for approval requests
-struct ApprovalRequestView: View {
+@MainActor
+struct ApprovalRequestView: @preconcurrency View {
     let request: ApprovalRequest
     let onApprove: () -> Void
     let onDeny: () -> Void
@@ -142,7 +143,7 @@ struct ApprovalRequestView: View {
     @ViewBuilder
     private var parameterPreview: some View {
         // Show relevant parameters based on tool type
-        switch request.toolName {
+        switch request.toolName.lowercased() {
         case "write":
             if let path = request.parameters["file_path"] as? String {
                 Text("  File: \(path)")

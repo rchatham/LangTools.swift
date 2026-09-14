@@ -82,12 +82,31 @@ struct CLI {
         let useTUI = args.contains("--tui")
 
         if useTUI {
+            let toolExecutionState = await MainActor.run { ToolExecutionState() }
+            await ToolApprovalRouter.shared.installTUIHandler { toolName, parameters in
+                let request = await MainActor.run {
+                    toolExecutionState.requestApproval(
+                        toolName: toolName,
+                        operation: ToolApprovalPolicy.operationDescription(
+                            toolName: toolName,
+                            parameters: parameters
+                        ),
+                        parameters: parameters
+                    )
+                }
+                return await request.waitForDecision()
+            }
+
+            let rootView = await MainActor.run {
+                MainView(toolExecutionState: toolExecutionState)
+            }
+
             #if os(macOS)
             // Async `@main` already runs on libdispatch's main loop. Calling
             // `dispatchMain()` again traps, so let AppKit own the TUI loop.
-            Application(rootView: MainView(), runLoopType: .cocoa).start()
+            Application(rootView: rootView, runLoopType: .cocoa).start()
             #else
-            Application(rootView: MainView()).start()
+            Application(rootView: rootView).start()
             #endif
         } else {
             try await runTraditionalCLI(runMode: runMode)

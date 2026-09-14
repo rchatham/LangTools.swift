@@ -64,6 +64,30 @@ final class ToolRegistryTests: XCTestCase {
         }
     }
 
+    func testToolApprovalInputRecognizesDecisions() {
+        XCTAssertEqual(ToolApprovalInput(text: "y"), .approve)
+        XCTAssertEqual(ToolApprovalInput(text: "YES"), .approve)
+        XCTAssertEqual(ToolApprovalInput(text: "n"), .deny)
+        XCTAssertEqual(ToolApprovalInput(text: ""), .deny)
+        XCTAssertEqual(ToolApprovalInput(text: "maybe"), .invalid)
+    }
+
+    @MainActor
+    func testApprovalRequestPreservesDecisionMadeBeforeWaiting() async {
+        let request = ApprovalRequest(
+            id: UUID(),
+            toolName: "Bash",
+            operation: "Execute command: pwd",
+            parameters: ["command": "pwd"]
+        )
+
+        request.approve()
+        request.deny()
+
+        let approved = await request.waitForDecision()
+        XCTAssertTrue(approved)
+    }
+
     func testTerminalLineReaderReturnsAfterNewlineWithoutWaitingForEOF() throws {
         let pipe = Pipe()
         defer {

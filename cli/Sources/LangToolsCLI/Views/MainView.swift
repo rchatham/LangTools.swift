@@ -23,7 +23,9 @@ enum SettingsMode: Equatable {
 }
 
 /// Main application view containing the entire chat interface
-struct MainView: View {
+@MainActor
+struct MainView: @preconcurrency View {
+    @ObservedObject private var toolExecutionState: ToolExecutionState
     @State private var messages: [ChatMessage] = []
     @State private var isStreaming: Bool = false
     @State private var currentTool: String? = nil
@@ -41,6 +43,10 @@ struct MainView: View {
 
     private let environment = AppEnvironment.detect()
 
+    init(toolExecutionState: ToolExecutionState) {
+        _toolExecutionState = ObservedObject(wrappedValue: toolExecutionState)
+    }
+
     var body: some View {
         ZStack {
             // Main content layer
@@ -49,6 +55,10 @@ struct MainView: View {
             // Settings overlay (centered)
             if showSettingsOverlay {
                 settingsOverlay
+            }
+
+            if let request = toolExecutionState.pendingApproval {
+                approvalOverlay(request)
             }
         }
         .padding(2)
@@ -91,7 +101,7 @@ struct MainView: View {
 
             // Input field
             InputView(
-                hint: showAutocomplete ? "Select command or type to filter" : nil,
+                hint: inputHint,
                 isDisabled: showSettingsOverlay
             ) { text in
                 handleInput(text)
@@ -108,6 +118,29 @@ struct MainView: View {
                 errorMessage: errorMessage,
                 config: Configuration.load().statusLine
             )
+        }
+    }
+
+    private var inputHint: String? {
+        if toolExecutionState.pendingApproval != nil {
+            return "Approve tool? Enter y or n"
+        }
+        return showAutocomplete ? "Select command or type to filter" : nil
+    }
+
+    private func approvalOverlay(_ request: ApprovalRequest) -> some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                ApprovalRequestView(
+                    request: request,
+                    onApprove: toolExecutionState.approveRequest,
+                    onDeny: toolExecutionState.denyRequest
+                )
+                Spacer()
+            }
+            Spacer()
         }
     }
 
@@ -139,6 +172,21 @@ struct MainView: View {
 
     private func handleInput(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if toolExecutionState.pendingApproval != nil {
+            switch ToolApprovalInput(text: trimmed) {
+            case .approve:
+                toolExecutionState.approveRequest()
+                statusMessage = "Running approved tool..."
+            case .deny:
+                toolExecutionState.denyRequest()
+                statusMessage = "Tool denied"
+            case .invalid:
+                statusMessage = "Awaiting tool approval: enter y or n"
+            }
+            return
+        }
+
         guard !trimmed.isEmpty else { return }
 
         // Clear any previous errors
@@ -539,7 +587,7 @@ struct MainView: View {
 #if DEBUG
 extension MainView {
     static var preview: MainView {
-        MainView()
+        MainView(toolExecutionState: ToolExecutionState())
     }
 }
 #endif

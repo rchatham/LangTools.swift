@@ -31,10 +31,7 @@ final class ToolRegistry {
     /// Shared singleton instance. Interactive terminal sessions prompt for
     /// dangerous operations; callers without a terminal fail closed.
     static let shared = ToolRegistry { toolName, parameters in
-        await TerminalToolApproval.shared.request(
-            toolName: toolName,
-            operation: ToolApprovalPolicy.operationDescription(toolName: toolName, parameters: parameters)
-        )
+        await ToolApprovalRouter.shared.request(toolName: toolName, parameters: parameters)
     }
 
     private let approvalHandler: ApprovalHandler?
@@ -156,6 +153,31 @@ final class ToolRegistry {
             .lowercased()
             .replacingOccurrences(of: " ", with: "")
             .replacingOccurrences(of: "_", with: "")
+    }
+}
+
+actor ToolApprovalRouter {
+    static let shared = ToolApprovalRouter()
+
+    private var tuiHandler: ToolRegistry.ApprovalHandler?
+
+    func installTUIHandler(_ handler: @escaping ToolRegistry.ApprovalHandler) {
+        tuiHandler = handler
+    }
+
+    func removeTUIHandler() {
+        tuiHandler = nil
+    }
+
+    func request(toolName: String, parameters: [String: Any]) async -> Bool {
+        if let tuiHandler {
+            return await tuiHandler(toolName, parameters)
+        }
+
+        return await TerminalToolApproval.shared.request(
+            toolName: toolName,
+            operation: ToolApprovalPolicy.operationDescription(toolName: toolName, parameters: parameters)
+        )
     }
 }
 
