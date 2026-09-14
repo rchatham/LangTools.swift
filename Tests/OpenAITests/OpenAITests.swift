@@ -61,7 +61,7 @@ class OpenAITests: XCTestCase {
     }
 
     func testResponsesStreamUsesResponsesEndpointAndUpdatesToolMetadata() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ResponsesRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ResponsesRequest.endpoint) { request in
             XCTAssertEqual(request.url?.path, "/v1/responses")
 
             let data = Data("""
