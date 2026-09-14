@@ -26,6 +26,12 @@ public protocol NetworkClientProtocol {
     func disconnectAccount(_ provider: AccountLoginProvider) async throws
 }
 
+public protocol ConversationAwareNetworkClientProtocol: NetworkClientProtocol {
+    func performChatCompletionRequest(messages: [Message], model: Model, conversationID: UUID, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message
+    func streamChatCompletionRequest(messages: [Message], model: Model, conversationID: UUID, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error>
+    func endConversation(id: UUID) async
+}
+
 extension NetworkClientProtocol {
     public func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
         try await performChatCompletionRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice)
@@ -44,7 +50,7 @@ extension NetworkClientProtocol {
     }
 }
 
-public class NetworkClient: NSObject, NetworkClientProtocol {
+public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     public static let shared: NetworkClientProtocol = NetworkClient()
 
     private let keychainService: KeychainService
@@ -54,6 +60,8 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
 
     private var userDefaults: UserDefaults { .standard }
     private var langToolchain = LangToolchain()
+    private let conversationLock = NSLock()
+    private var codexConversationIDs = Set<UUID>()
 
     public init(
         keychainService: KeychainService = .shared,
@@ -111,6 +119,77 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         }
 
         return try langToolchain.stream(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { $0.content?.text }
+    }
+
+    public func performChatCompletionRequest(
+        messages: [Message],
+        model: Model,
+        conversationID: UUID,
+        tools: [Tool]?,
+        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?
+    ) async throws -> Message {
+        try ensureModelAccess(for: model)
+        guard case .codex = model,
+              let session = accountSession(for: model),
+              let transport = accountProxyTransport as? ConversationAwareAccountProxyTransportProtocol
+        else {
+            return try await performChatCompletionRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice)
+        }
+        rememberCodexConversation(conversationID)
+        return try await transport.performChatCompletionRequest(
+            messages: messages,
+            model: model,
+            session: session,
+            conversationID: conversationID,
+            tools: tools,
+            toolChoice: toolChoice
+        )
+    }
+
+    public func streamChatCompletionRequest(
+        messages: [Message],
+        model: Model,
+        conversationID: UUID,
+        stream: Bool,
+        tools: [Tool]?,
+        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?
+    ) throws -> AsyncThrowingStream<String, Error> {
+        try ensureModelAccess(for: model)
+        guard case .codex = model,
+              let session = accountSession(for: model),
+              let transport = accountProxyTransport as? ConversationAwareAccountProxyTransportProtocol
+        else {
+            return try streamChatCompletionRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)
+        }
+        rememberCodexConversation(conversationID)
+        return try transport.streamChatCompletionRequest(
+            messages: messages,
+            model: model,
+            session: session,
+            conversationID: conversationID,
+            stream: stream,
+            tools: tools,
+            toolChoice: toolChoice
+        )
+    }
+
+    public func endConversation(id: UUID) async {
+        guard takeCodexConversation(id),
+              let transport = accountProxyTransport as? ConversationAwareAccountProxyTransportProtocol
+        else { return }
+        await transport.endConversation(id: id)
+    }
+
+    private func rememberCodexConversation(_ id: UUID) {
+        conversationLock.lock()
+        codexConversationIDs.insert(id)
+        conversationLock.unlock()
+    }
+
+    private func takeCodexConversation(_ id: UUID) -> Bool {
+        conversationLock.lock()
+        defer { conversationLock.unlock() }
+        return codexConversationIDs.remove(id) != nil
     }
 
     public func playAudio(for text: String) async throws {

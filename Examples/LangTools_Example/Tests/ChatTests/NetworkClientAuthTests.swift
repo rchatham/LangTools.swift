@@ -158,6 +158,7 @@ final class NetworkClientAuthTests: XCTestCase {
             let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             XCTAssertNil(object["tools"])
             XCTAssertNil(object["toolChoice"])
+            XCTAssertNil(object["conversationID"])
             let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, Data(#"{"content":"Codex response"}"#.utf8))
         }
@@ -185,6 +186,52 @@ final class NetworkClientAuthTests: XCTestCase {
         )
 
         XCTAssertEqual(response.text, "Codex response")
+    }
+
+    func testCodexConversationPayloadAndCleanupUseHelperCredentials() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AccountProxyURLProtocol.self]
+        let urlSession = URLSession(configuration: configuration)
+        let conversationID = UUID()
+        let cleanup = expectation(description: "cleanup request")
+        AccountProxyURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer helper-token")
+            if request.httpMethod == "DELETE" {
+                XCTAssertEqual(request.url?.path, "/v1/account/conversations/\(conversationID.uuidString.lowercased())")
+                cleanup.fulfill()
+                return (HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 204, httpVersion: nil, headerFields: nil)!, Data())
+            }
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: try AccountProxyURLProtocol.requestBody(request)) as? [String: Any])
+            XCTAssertEqual(object["conversationID"] as? String, conversationID.uuidString)
+            XCTAssertNil(object["tools"])
+            XCTAssertNil(object["toolChoice"])
+            return (HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 200, httpVersion: nil, headerFields: nil)!, Data(#"{"content":"Codex response"}"#.utf8))
+        }
+        defer { AccountProxyURLProtocol.requestHandler = nil }
+        let transport = AccountProxyTransport(
+            configuration: AccountBackendConfiguration(
+                codexHelperBaseURL: URL(string: "http://127.0.0.1:9999")!,
+                codexHelperToken: "helper-token"
+            ),
+            urlSession: urlSession
+        )
+        let session = AccountSession(
+            provider: .openAI,
+            accountIdentifier: "openai-user",
+            accessToken: CodexSessionMarker.value,
+            accessibleModelIDs: ["gpt-5.5"]
+        )
+
+        _ = try await transport.performChatCompletionRequest(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .codex(.gpt5_5),
+            session: session,
+            conversationID: conversationID,
+            tools: [Tool(name: "example", description: "Example", tool_schema: ToolSchema())],
+            toolChoice: .auto
+        )
+        await transport.endConversation(id: conversationID)
+        await fulfillment(of: [cleanup], timeout: 1)
     }
 
     func testCodexAccountProxyErrorsPropagate() async throws {

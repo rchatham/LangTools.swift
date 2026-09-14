@@ -7,7 +7,13 @@ public protocol AccountProxyTransportProtocol {
     func streamChatCompletionRequest(messages: [Message], model: Model, session: AccountSession, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error>
 }
 
-public final class AccountProxyTransport: AccountProxyTransportProtocol {
+public protocol ConversationAwareAccountProxyTransportProtocol: AccountProxyTransportProtocol {
+    func performChatCompletionRequest(messages: [Message], model: Model, session: AccountSession, conversationID: UUID, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message
+    func streamChatCompletionRequest(messages: [Message], model: Model, session: AccountSession, conversationID: UUID, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error>
+    func endConversation(id: UUID) async
+}
+
+public final class AccountProxyTransport: ConversationAwareAccountProxyTransportProtocol {
     private let configuration: AccountBackendConfiguration
     private let urlSession: URLSession
     private let encoder = JSONEncoder()
@@ -22,7 +28,7 @@ public final class AccountProxyTransport: AccountProxyTransportProtocol {
     }
 
     public func performChatCompletionRequest(messages: [Message], model: Model, session: AccountSession, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message {
-        let response = try await send(messages: messages, model: model, session: session, stream: false, tools: tools, toolChoice: toolChoice)
+        let response = try await send(messages: messages, model: model, session: session, conversationID: nil, stream: false, tools: tools, toolChoice: toolChoice)
         return Message(text: response.content, role: .assistant)
     }
 
@@ -30,7 +36,7 @@ public final class AccountProxyTransport: AccountProxyTransportProtocol {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let response = try await send(messages: messages, model: model, session: session, stream: stream, tools: tools, toolChoice: toolChoice)
+                    let response = try await send(messages: messages, model: model, session: session, conversationID: nil, stream: stream, tools: tools, toolChoice: toolChoice)
                     continuation.yield(response.content)
                     continuation.finish()
                 } catch {
@@ -41,15 +47,49 @@ public final class AccountProxyTransport: AccountProxyTransportProtocol {
         }
     }
 
-    private func send(messages: [Message], model: Model, session: AccountSession, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> AccountChatResponse {
-        let supportsTools = session.provider != .openAI
+    public func performChatCompletionRequest(messages: [Message], model: Model, session: AccountSession, conversationID: UUID, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message {
+        let response = try await send(messages: messages, model: model, session: session, conversationID: conversationID, stream: false, tools: tools, toolChoice: toolChoice)
+        return Message(text: response.content, role: .assistant)
+    }
+
+    public func streamChatCompletionRequest(messages: [Message], model: Model, session: AccountSession, conversationID: UUID, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let response = try await send(messages: messages, model: model, session: session, conversationID: conversationID, stream: stream, tools: tools, toolChoice: toolChoice)
+                    continuation.yield(response.content)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    public func endConversation(id: UUID) async {
+        var request = URLRequest(url: configuration.codexHelperBaseURL.appending(path: "/v1/account/conversations/\(id.uuidString.lowercased())"))
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(configuration.codexHelperToken)", forHTTPHeaderField: "Authorization")
+        do {
+            let (data, response) = try await urlSession.data(for: request)
+            try validate(response: response, data: data)
+        } catch {
+            NSLog("Unable to end Codex conversation %@: %@", id.uuidString, error.localizedDescription)
+        }
+    }
+
+    private func send(messages: [Message], model: Model, session: AccountSession, conversationID: UUID?, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> AccountChatResponse {
+        let isCodex: Bool
+        if case .codex = model { isCodex = true } else { isCodex = false }
         let payload = AccountChatRequest(
             provider: session.provider,
             model: model.slug,
             messages: messages.map(AccountChatMessage.init),
             stream: stream,
-            toolChoice: supportsTools ? toolChoice.map(AccountToolChoice.init) : nil,
-            tools: supportsTools ? tools : nil
+            conversationID: isCodex ? conversationID : nil,
+            toolChoice: isCodex ? nil : toolChoice.map(AccountToolChoice.init),
+            tools: isCodex ? nil : tools
         )
 
         var request = URLRequest(url: configuration.accountChatURL(for: session.provider))
@@ -102,6 +142,7 @@ private struct AccountChatRequest: Encodable {
     let model: String
     let messages: [AccountChatMessage]
     let stream: Bool
+    let conversationID: UUID?
     let toolChoice: AccountToolChoice?
     let tools: [Tool]?
 }
