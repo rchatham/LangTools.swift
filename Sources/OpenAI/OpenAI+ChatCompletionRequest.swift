@@ -130,6 +130,50 @@ extension OpenAI {
             self.toolEventHandler = toolEventHandler
         }
 
+        /// Encodes required fields and present options without dispatching absent values.
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(model, forKey: .model)
+            try container.encode(messages, forKey: .messages)
+            // Check presence before container dispatch: most request options are absent.
+            if let temperature { try container.encode(temperature, forKey: .temperature) }
+            if let top_p { try container.encode(top_p, forKey: .top_p) }
+            if let n { try container.encode(n, forKey: .n) }
+            if let stream { try container.encode(stream, forKey: .stream) }
+            if let stream_options { try container.encode(stream_options, forKey: .stream_options) }
+            if let stop { try container.encode(stop, forKey: .stop) }
+            if let max_tokens { try container.encode(max_tokens, forKey: .max_tokens) }
+            if let max_completion_tokens { try container.encode(max_completion_tokens, forKey: .max_completion_tokens) }
+            if let presence_penalty { try container.encode(presence_penalty, forKey: .presence_penalty) }
+            if let frequency_penalty { try container.encode(frequency_penalty, forKey: .frequency_penalty) }
+            if let logit_bias { try container.encode(logit_bias, forKey: .logit_bias) }
+            if let logprobs { try container.encode(logprobs, forKey: .logprobs) }
+            if let top_logprobs { try container.encode(top_logprobs, forKey: .top_logprobs) }
+            if let user { try container.encode(user, forKey: .user) }
+            if let response_format { try container.encode(response_format, forKey: .response_format) }
+            if let seed { try container.encode(seed, forKey: .seed) }
+            if let tools { try container.encode(tools, forKey: .tools) }
+            if let tool_choice { try container.encode(tool_choice, forKey: .tool_choice) }
+            if let parallel_tool_calls { try container.encode(parallel_tool_calls, forKey: .parallel_tool_calls) }
+            if let service_tier { try container.encode(service_tier, forKey: .service_tier) }
+            if let store { try container.encode(store, forKey: .store) }
+            if let prediction { try container.encode(prediction, forKey: .prediction) }
+            if let modalities { try container.encode(modalities, forKey: .modalities) }
+            if let audio { try container.encode(audio, forKey: .audio) }
+            if let reasoning_effort { try container.encode(reasoning_effort, forKey: .reasoning_effort) }
+            if let metadata { try container.encode(metadata, forKey: .metadata) }
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case model, messages, temperature, top_p, n, stream, stream_options, stop
+            case max_tokens, max_completion_tokens, presence_penalty, frequency_penalty
+            case logit_bias, logprobs, top_logprobs, user, response_format, seed, tools
+            case tool_choice, parallel_tool_calls, service_tier, store, prediction
+            case modalities, audio, reasoning_effort, metadata
+            // Preserve synthesized decoding of the ignored wrappers. Neither is encoded.
+            case _choose, toolEventHandler
+        }
+
         public struct StreamOptions: Codable {
             let include_usage: Bool
         }

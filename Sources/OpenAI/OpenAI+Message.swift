@@ -106,12 +106,19 @@ public extension OpenAI {
 
         public func encode(to encoder: any Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(role, forKey: .role)
-            if let tool_call_id, let toolResult {
-                try container.encode(tool_call_id, forKey: .tool_call_id)
-                try container.encode(Content.string(toolResult.result), forKey: .content)
-            } else {
-                try container.encode(content, forKey: .content)
+            try container.encode(role.rawValue, forKey: .role)
+            switch content {
+            case .string(let text):
+                try container.encode(text, forKey: .content)
+            case .null:
+                try container.encodeNil(forKey: .content)
+            case .array(let parts):
+                if case .toolResult(let result) = parts.first {
+                    try container.encode(result.tool_selection_id, forKey: .tool_call_id)
+                    try container.encode(result.result, forKey: .content)
+                } else {
+                    try container.encode(parts, forKey: .content)
+                }
             }
             try container.encodeIfPresent(name, forKey: .name)
             try container.encodeIfPresent(tool_calls, forKey: .tool_calls)
