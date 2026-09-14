@@ -27,7 +27,16 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 
     override init() {
         super.init()
-        APIService.allCases.forEach { llm in UserDefaults.getApiKey(for: llm).flatMap { register($0, for: llm) } }
+        refreshCredentials()
+    }
+
+    func refreshCredentials() {
+        APIService.allCases.forEach { llm in
+            if let apiKey = UserDefaults.getApiKey(for: llm) {
+                register(apiKey, for: llm)
+            }
+        }
+
     }
 
     func request(messages: [Message], model: Model, stream: Bool = false, tools: [OpenAI.Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) -> any LangToolsChatRequest & LangToolsStreamableRequest {
@@ -45,9 +54,10 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
     }
 
     func updateApiKey(_ apiKey: String, for llm: APIService) throws {
-        guard !apiKey.isEmpty else { throw NetworkError.emptyApiKey }
-        UserDefaults.setApiKey(apiKey, for: llm)
-        register(apiKey, for: llm)
+        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw NetworkError.emptyApiKey }
+        UserDefaults.setApiKey(trimmed, for: llm)
+        register(trimmed, for: llm)
     }
 
     func register(_ apiKey: String, for llm: APIService) {
