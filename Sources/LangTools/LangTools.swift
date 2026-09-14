@@ -49,7 +49,7 @@ extension LangTools {
         let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { throw LangToolsError.requestFailed }
         guard httpResponse.statusCode == 200 else { throw LangToolsError.responseUnsuccessful(statusCode: httpResponse.statusCode, Self.decodeError(data: data)) }
-        return Response.self == Data.self ? data as! Response : try Self.decodeResponse(data: data)
+        if let audioResponseType = Response.self as? any LangToolsAudioResponse.Type { return try audioResponseType.init(audioData: data) as! Response } else { return try Self.decodeResponse(data: data) }
     }
 
     public func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {
@@ -123,8 +123,9 @@ extension LangTools {
                             continue
                         }
                         if let response {
-                            // If we were able to create a response object we update the decoded response with information from the request and return it before adding it to the combined response used to handle tool completions.
-                            let updatedResponse = try request.update(response: response)
+                            // If we were able to create a response object, enrich it with the accumulated stream state and request-specific information before adding it to the combined response used to handle tool completions.
+                            let streamUpdatedResponse = response.updating(with: combinedResponse)
+                            let updatedResponse = try request.update(response: streamUpdatedResponse)
                             continuation.yield(updatedResponse)
                             combinedResponse = combinedResponse.combining(with: updatedResponse)
                         }
@@ -139,7 +140,9 @@ extension LangTools {
                     if let completionRequest = try await completionRequest(request: request, response: combinedResponse) {
                         print("   🔄 Tool calling - making completion request...")
                         for try await response in stream(request: completionRequest) {
-                            continuation.yield(try request.update(response: response))
+                            // The nested stream has already applied updates for its
+                            // completion request, so yield it directly.
+                            continuation.yield(response)
                         }
                     }
 

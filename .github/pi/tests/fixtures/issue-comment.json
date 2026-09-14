@@ -1,0 +1,8 @@
+{
+  "comment": {"body": "@pi suggest a fix for this issue"},
+  "issue": {
+    "number": 123,
+    "title": "Streaming drops the final message",
+    "body": "The last chunk disappears when the stream closes.\nLiteral shell data: $(touch injected) `touch injected` ${SECRET}"
+  }
+}
