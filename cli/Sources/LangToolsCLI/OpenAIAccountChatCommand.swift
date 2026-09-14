@@ -14,11 +14,15 @@ struct OpenAIAccountChatCommand {
             codexHomeOverride: request.codexHome,
             conversationID: request.conversationID
         )
+        FileHandle.standardOutput.write(try responseData(content: content))
+    }
+
+    static func responseData(content: String) throws -> Data {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(OpenAIAccountChatResponse(content: content))
-        FileHandle.standardOutput.write(data)
-        FileHandle.standardOutput.write(Data("\n".utf8))
+        encoder.outputFormatting = [.sortedKeys]
+        var data = try encoder.encode(OpenAIAccountChatResponse(content: content))
+        data.append(UInt8(ascii: "\n"))
+        return data
     }
 
     static func performChat(

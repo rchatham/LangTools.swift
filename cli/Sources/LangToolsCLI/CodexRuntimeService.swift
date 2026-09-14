@@ -9,9 +9,53 @@ struct CodexAccountStatus: Sendable {
     let planType: String?
 }
 
+enum CodexChatStreamEvent: Equatable, Sendable {
+    case delta(String)
+    case complete(String)
+}
+
+private struct CodexThreadScopedNotificationParams: Decodable, Sendable {
+    let threadId: String
+}
+
+enum CodexContainment {
+    static let approvalPolicy = "never"
+    static let sandbox = "workspace-write"
+    static let networkAccess = false
+    static let excludeTmpdirEnvVar = true
+    static let excludeSlashTmp = true
+
+    static var isSupported: Bool {
+        #if os(macOS)
+        true
+        #else
+        false
+        #endif
+    }
+
+    static func sandboxPolicy(workspace: URL) -> CodexSandboxPolicy {
+        .workspaceWrite(
+            writableRoots: [workspace.path],
+            networkAccess: networkAccess,
+            excludeTmpdirEnvVar: excludeTmpdirEnvVar,
+            excludeSlashTmp: excludeSlashTmp
+        )
+    }
+}
+
 actor CodexRuntimeService {
-    static let shared = CodexRuntimeService(client: CodexAppServerClient())
+    static let shared: CodexRuntimeService = {
+        let workspaces = CodexConversationWorkspace()
+        let environment = ProcessInfo.processInfo.environment
+        let client = CodexAppServerClient(
+            workspaceRootProvider: { workspaces.processRoot },
+            codexHomeProvider: { CodexSeatbeltProfile.resolvedCodexHome(environment: environment) }
+        )
+        return CodexRuntimeService(client: client, workspaces: workspaces)
+    }()
     static let sessionMarker = "langtools-codex-app-server-session-v1"
+    static let maximumResponseBytes = 8 * 1_048_576
+    static let maximumBufferedStreamEvents = 256
 
     typealias BrowserOpener = @Sendable (URL) throws -> Void
     typealias LoginStartResponseCheckpoint = @Sendable () async -> Void
@@ -92,6 +136,7 @@ actor CodexRuntimeService {
     private let loginCompletionTimeout: Duration
     private let turnCompletionTimeout: Duration
     private let conversationIdleTimeout: Duration
+    private let responseByteLimit: Int
     private let workspaces: CodexConversationWorkspace
     private var conversations: [UUID: ConversationState] = [:]
     private var servicePhase: ServicePhase = .active
@@ -108,6 +153,7 @@ actor CodexRuntimeService {
         loginCompletionTimeout: Duration = .seconds(300),
         turnCompletionTimeout: Duration = .seconds(120),
         conversationIdleTimeout: Duration = .seconds(1_800),
+        responseByteLimit: Int = CodexRuntimeService.maximumResponseBytes,
         workspaces: CodexConversationWorkspace = CodexConversationWorkspace()
     ) {
         self.client = client
@@ -117,6 +163,7 @@ actor CodexRuntimeService {
         self.loginCompletionTimeout = loginCompletionTimeout
         self.turnCompletionTimeout = turnCompletionTimeout
         self.conversationIdleTimeout = conversationIdleTimeout
+        self.responseByteLimit = max(0, responseByteLimit)
         self.workspaces = workspaces
     }
 
@@ -265,6 +312,66 @@ actor CodexRuntimeService {
         messages: [HelperChatMessage],
         conversationID: UUID? = nil
     ) async throws -> String {
+        try await chat(
+            model: model,
+            messages: messages,
+            conversationID: conversationID,
+            onDelta: { _ in }
+        )
+    }
+
+    func chatStream(
+        model: String,
+        messages: [HelperChatMessage],
+        conversationID: UUID? = nil
+    ) -> AsyncThrowingStream<CodexChatStreamEvent, Error> {
+        AsyncThrowingStream(bufferingPolicy: .bufferingOldest(Self.maximumBufferedStreamEvents)) { continuation in
+            let producer = Task { [weak self] in
+                guard let self else {
+                    continuation.finish(throwing: CancellationError())
+                    return
+                }
+                do {
+                    let response = try await self.chat(
+                        model: model,
+                        messages: messages,
+                        conversationID: conversationID,
+                        onDelta: { delta in
+                            switch continuation.yield(.delta(delta)) {
+                            case .enqueued: return
+                            case .dropped:
+                                throw CodexRuntimeError.runtime("The response stream consumer could not keep up.")
+                            case .terminated:
+                                throw CancellationError()
+                            @unknown default:
+                                throw CodexRuntimeError.runtime("The response stream entered an unknown state.")
+                            }
+                        }
+                    )
+                    switch continuation.yield(.complete(response)) {
+                    case .enqueued:
+                        continuation.finish()
+                    case .dropped:
+                        continuation.finish(throwing: CodexRuntimeError.runtime("The response stream consumer could not keep up."))
+                    case .terminated:
+                        return
+                    @unknown default:
+                        continuation.finish(throwing: CodexRuntimeError.runtime("The response stream entered an unknown state."))
+                    }
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in producer.cancel() }
+        }
+    }
+
+    private func chat(
+        model: String,
+        messages: [HelperChatMessage],
+        conversationID: UUID?,
+        onDelta: @escaping @Sendable (String) throws -> Void
+    ) async throws -> String {
         guard servicePhase == .active else {
             throw CodexRuntimeError.accountConflict("Codex runtime is draining or shut down.")
         }
@@ -275,7 +382,12 @@ actor CodexRuntimeService {
         guard let conversationID else {
             let ephemeralID = UUID()
             do {
-                let response = try await chat(model: slug, messages: messages, conversationID: ephemeralID)
+                let response = try await chat(
+                    model: slug,
+                    messages: messages,
+                    conversationID: ephemeralID,
+                    onDelta: onDelta
+                )
                 await endConversation(id: ephemeralID)
                 return response
             } catch {
@@ -320,7 +432,8 @@ actor CodexRuntimeService {
                 conversationID: conversationID,
                 lifecycleID: lifecycleID,
                 model: slug,
-                messages: messages
+                messages: messages,
+                onDelta: onDelta
             )
         }
         conversations[conversationID]?.activeOperation = operation
@@ -379,7 +492,8 @@ actor CodexRuntimeService {
         conversationID: UUID,
         lifecycleID: UUID,
         model: String,
-        messages: [HelperChatMessage]
+        messages: [HelperChatMessage],
+        onDelta: @escaping @Sendable (String) throws -> Void
     ) async throws -> String {
         var state = try activeState(conversationID, lifecycleID: lifecycleID)
         let generation = try await client.initializedProcessGeneration()
@@ -424,7 +538,8 @@ actor CodexRuntimeService {
                 lifecycleID: lifecycleID,
                 model: model,
                 workspace: state.workspaceURL,
-                messages: messages
+                messages: messages,
+                onDelta: onDelta
             )
         }
 
@@ -434,7 +549,8 @@ actor CodexRuntimeService {
             model: model,
             workspace: state.workspaceURL,
             messages: turnMessages,
-            retryMessages: messages
+            retryMessages: messages,
+            onDelta: onDelta
         )
     }
 
@@ -444,7 +560,8 @@ actor CodexRuntimeService {
         model: String,
         workspace: URL,
         messages: [HelperChatMessage],
-        retryMessages: [HelperChatMessage]? = nil
+        retryMessages: [HelperChatMessage]? = nil,
+        onDelta: @escaping @Sendable (String) throws -> Void
     ) async throws -> String {
         let state = try activeState(conversationID, lifecycleID: lifecycleID)
         guard let threadID = state.threadID else {
@@ -456,7 +573,8 @@ actor CodexRuntimeService {
                 model: model,
                 workspace: workspace,
                 messages: messages,
-                lifecycle: (conversationID, lifecycleID)
+                lifecycle: (conversationID, lifecycleID),
+                onDelta: onDelta
             )
             try validateActiveLifecycle(conversationID, lifecycleID: lifecycleID)
             return response
@@ -477,7 +595,8 @@ actor CodexRuntimeService {
                 workspace: workspace,
                 messages: retryMessages ?? messages,
                 lifecycle: (conversationID, lifecycleID),
-                allowStaleThreadMapping: false
+                allowStaleThreadMapping: false,
+                onDelta: onDelta
             )
             try validateActiveLifecycle(conversationID, lifecycleID: lifecycleID)
             return response
@@ -489,13 +608,16 @@ actor CodexRuntimeService {
         workspace: URL,
         lifecycle: (conversationID: UUID, lifecycleID: UUID)? = nil
     ) async throws -> (id: String, generation: UUID) {
+        guard CodexContainment.isSupported else {
+            throw CodexRuntimeError.runtime("Codex account chat containment is supported only on macOS.")
+        }
         let thread: CodexThreadStartResponse = try await client.request(
             method: "thread/start",
             params: CodexThreadStartParams(
                 model: model,
                 cwd: workspace.path,
-                approvalPolicy: "never",
-                sandbox: "workspace-write",
+                approvalPolicy: CodexContainment.approvalPolicy,
+                sandbox: CodexContainment.sandbox,
                 ephemeral: true
             )
         )
@@ -515,7 +637,8 @@ actor CodexRuntimeService {
         workspace: URL,
         messages: [HelperChatMessage],
         lifecycle: (conversationID: UUID, lifecycleID: UUID)? = nil,
-        allowStaleThreadMapping: Bool = true
+        allowStaleThreadMapping: Bool = true,
+        onDelta: @escaping @Sendable (String) throws -> Void
     ) async throws -> String {
         let context = ChatTurnContext(threadID: threadID)
         if let lifecycle {
@@ -523,7 +646,10 @@ actor CodexRuntimeService {
             conversations[lifecycle.conversationID]?.activeTurn = context
         }
         let subscription = await client.subscribeToNotifications(
-            methods: ["item/agentMessage/delta", "turn/completed", "error"]
+            methods: ["item/agentMessage/delta", "turn/completed", "error"],
+            accepts: { data in
+                (try? JSONDecoder().decode(CodexThreadScopedNotificationParams.self, from: data).threadId) == threadID
+            }
         )
         do {
             if let lifecycle {
@@ -536,18 +662,20 @@ actor CodexRuntimeService {
                     params: CodexTurnStartParams(
                         threadId: threadID,
                         input: [.init(text: Self.renderPrompt(messages: messages))],
-                        approvalPolicy: "never",
-                        sandboxPolicy: .workspaceWrite(
-                            writableRoots: [workspace.path],
-                            networkAccess: false,
-                            excludeTmpdirEnvVar: true,
-                            excludeSlashTmp: true
-                        ),
+                        approvalPolicy: CodexContainment.approvalPolicy,
+                        sandboxPolicy: CodexContainment.sandboxPolicy(workspace: workspace),
                         model: model
                     ),
                     cancelOnTaskCancellation: false
                 )
             } catch {
+                if case CodexAppServerError.timeout(let method) = error, method == "turn/start" {
+                    // The server may have started a turn whose ID was lost with the
+                    // timed-out response. Restarting is the only fail-closed way to
+                    // guarantee that unknown turn cannot continue.
+                    try? await client.restart()
+                    throw error
+                }
                 if allowStaleThreadMapping, Self.isStaleThreadError(error) {
                     throw InternalTurnStartError.staleThread
                 }
@@ -563,7 +691,8 @@ actor CodexRuntimeService {
             let response = try await collectResponse(
                 subscription: subscription,
                 threadID: threadID,
-                turnID: started.turn.id
+                turnID: started.turn.id,
+                onDelta: onDelta
             )
             if let lifecycle {
                 try validateActiveLifecycle(lifecycle.conversationID, lifecycleID: lifecycle.lifecycleID)
@@ -924,9 +1053,11 @@ actor CodexRuntimeService {
     private func collectResponse(
         subscription: CodexNotificationSubscription,
         threadID: String,
-        turnID: String
+        turnID: String,
+        onDelta: @escaping @Sendable (String) throws -> Void
     ) async throws -> String {
         var content = ""
+        var responseBytes = 0
         while true {
             let notification = try await client.nextNotification(
                 from: subscription,
@@ -946,7 +1077,14 @@ actor CodexRuntimeService {
             )
             switch notification.method {
             case "item/agentMessage/delta":
-                content += try JSONDecoder().decode(CodexAgentMessageDeltaNotification.self, from: notification.params).delta
+                let delta = try JSONDecoder().decode(CodexAgentMessageDeltaNotification.self, from: notification.params).delta
+                let deltaBytes = delta.utf8.count
+                guard deltaBytes <= responseByteLimit - responseBytes else {
+                    throw CodexRuntimeError.responseTooLarge
+                }
+                responseBytes += deltaBytes
+                content += delta
+                try onDelta(delta)
             case "error":
                 let failure = try JSONDecoder().decode(CodexErrorNotification.self, from: notification.params)
                 if failure.willRetry == false {
@@ -956,11 +1094,10 @@ actor CodexRuntimeService {
                 let completed = try JSONDecoder().decode(CodexTurnCompletedNotification.self, from: notification.params)
                 switch completed.turn.status {
                 case "completed":
-                    let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard trimmed.isEmpty == false else {
+                    guard content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
                         throw CodexRuntimeError.invalidResponse("Codex completed the turn without an assistant response.")
                     }
-                    return trimmed
+                    return content
                 case "interrupted": throw CancellationError()
                 case "failed":
                     if let error = completed.turn.error { throw Self.mapTurnError(error) }
@@ -1109,6 +1246,7 @@ enum CodexRuntimeError: LocalizedError, Sendable {
     case overloaded(String)
     case accountConflict(String)
     case browserOpenFailed
+    case responseTooLarge
     case invalidResponse(String)
     case timeout(String)
     case runtime(String)
@@ -1119,6 +1257,7 @@ enum CodexRuntimeError: LocalizedError, Sendable {
              .overloaded(let message), .accountConflict(let message), .invalidResponse(let message),
              .timeout(let message), .runtime(let message): return message
         case .browserOpenFailed: return "Unable to open the ChatGPT login URL in a browser."
+        case .responseTooLarge: return "Codex response exceeded the configured size limit."
         }
     }
 }

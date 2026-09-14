@@ -1,23 +1,58 @@
 import Foundation
 
-private final class ProcessChunkPump: @unchecked Sendable {
+final class ProcessChunkPump: @unchecked Sendable {
     let stream: AsyncStream<Data>
     private let continuation: AsyncStream<Data>.Continuation
-    private let queue: DispatchQueue
+    private let lock = NSLock()
+    private let onOverflow: @Sendable () -> Void
+    private var stopped = false
 
-    init(label: String) {
+    init(
+        label _: String,
+        maximumBufferedChunks: Int,
+        onOverflow: @escaping @Sendable () -> Void
+    ) {
+        precondition(maximumBufferedChunks > 0)
         var captured: AsyncStream<Data>.Continuation!
-        self.stream = AsyncStream { captured = $0 }
+        self.stream = AsyncStream(bufferingPolicy: .bufferingOldest(maximumBufferedChunks)) { captured = $0 }
         self.continuation = captured
-        self.queue = DispatchQueue(label: label)
+        self.onOverflow = onOverflow
     }
 
     func yield(_ data: Data) {
-        queue.async { self.continuation.yield(data) }
+        lock.lock()
+        guard stopped == false else {
+            lock.unlock()
+            return
+        }
+        switch continuation.yield(data) {
+        case .enqueued:
+            lock.unlock()
+        case .dropped:
+            stopped = true
+            lock.unlock()
+            continuation.finish()
+            onOverflow()
+        case .terminated:
+            stopped = true
+            lock.unlock()
+        @unknown default:
+            stopped = true
+            lock.unlock()
+            continuation.finish()
+            onOverflow()
+        }
     }
 
     func finish() {
-        queue.async { self.continuation.finish() }
+        lock.lock()
+        guard stopped == false else {
+            lock.unlock()
+            return
+        }
+        stopped = true
+        lock.unlock()
+        continuation.finish()
     }
 }
 
@@ -43,17 +78,33 @@ actor CodexAppServerClient {
         let timeoutTask: Task<Void, Never>
     }
 
+    private struct BufferedNotification {
+        let notification: CodexServerNotification
+        let byteCount: Int
+    }
+
     private struct NotificationSubscriptionState {
         let methods: Set<String>
-        var buffered: [CodexServerNotification] = []
+        let accepts: @Sendable (Data) -> Bool
+        let maximumBufferedEvents: Int
+        let maximumBufferedBytes: Int
+        var buffered: [BufferedNotification] = []
+        var bufferedByteCount = 0
         var waiter: NotificationWaiter?
+        var terminalFailure: CodexAppServerError?
     }
+
+    typealias WorkspaceRootProvider = @Sendable () -> URL?
+    typealias CodexHomeProvider = @Sendable () -> String
 
     private let commandResolver: CommandResolver
     private let environment: [String: String]
     private let defaultTimeout: Duration
     private let requestTimeoutSleeper: RequestTimeoutSleeper
+    private let workspaceRootProvider: WorkspaceRootProvider
+    private let codexHomeProvider: CodexHomeProvider
     private var process: Process?
+    private var seatbeltProfileURL: URL?
     private var stdinHandle: FileHandle?
     private var stdoutBuffer = Data()
     private var pending: [Int: PendingRequest] = [:]
@@ -71,18 +122,29 @@ actor CodexAppServerClient {
     private var stdoutReaderTask: Task<Void, Never>?
     private var stderrReaderTask: Task<Void, Never>?
 
+    static let maximumBufferedNotificationEvents = 256
+    static let maximumBufferedNotificationBytes = 1_048_576
+    static let maximumStdoutNDJSONLineBytes = 1_048_576
+    static let maximumBufferedProcessChunks = 256
+
     init(
         commandResolver: @escaping CommandResolver = { try OpenAIAccountChatCommand.resolveCodexCommand() },
         environment: [String: String] = ProcessInfo.processInfo.environment,
         defaultTimeout: Duration = .seconds(30),
         requestTimeoutSleeper: @escaping RequestTimeoutSleeper = { _, duration in
             try await Task.sleep(for: duration)
-        }
+        },
+        workspaceRootProvider: @escaping WorkspaceRootProvider = { nil },
+        codexHomeProvider: CodexHomeProvider? = nil
     ) {
         self.commandResolver = commandResolver
         self.environment = environment
         self.defaultTimeout = defaultTimeout
         self.requestTimeoutSleeper = requestTimeoutSleeper
+        self.workspaceRootProvider = workspaceRootProvider
+        self.codexHomeProvider = codexHomeProvider ?? {
+            CodexSeatbeltProfile.resolvedCodexHome(environment: ProcessInfo.processInfo.environment)
+        }
     }
 
     func request<Params: Encodable, Response: Decodable>(
@@ -111,9 +173,20 @@ actor CodexAppServerClient {
         }
     }
 
-    func subscribeToNotifications(methods: Set<String>) -> CodexNotificationSubscription {
+    func subscribeToNotifications(
+        methods: Set<String>,
+        accepts: @escaping @Sendable (Data) -> Bool = { _ in true },
+        maximumBufferedEvents: Int = CodexAppServerClient.maximumBufferedNotificationEvents,
+        maximumBufferedBytes: Int = CodexAppServerClient.maximumBufferedNotificationBytes
+    ) -> CodexNotificationSubscription {
         let subscription = CodexNotificationSubscription(id: UUID())
-        notificationSubscriptions[subscription.id] = NotificationSubscriptionState(methods: methods)
+        notificationSubscriptions[subscription.id] = NotificationSubscriptionState(
+            methods: methods,
+            accepts: accepts,
+            maximumBufferedEvents: max(0, maximumBufferedEvents),
+            maximumBufferedBytes: max(0, maximumBufferedBytes),
+            terminalFailure: nil
+        )
         return subscription
     }
 
@@ -125,10 +198,12 @@ actor CodexAppServerClient {
         guard var state = notificationSubscriptions[subscription.id] else {
             throw CodexAppServerError.invalidResponse("Notification subscription is no longer active.")
         }
-        if let index = state.buffered.firstIndex(where: { matching($0.params) }) {
-            let notification = state.buffered.remove(at: index)
+        if let terminalFailure = state.terminalFailure { throw terminalFailure }
+        if let index = state.buffered.firstIndex(where: { matching($0.notification.params) }) {
+            let buffered = state.buffered.remove(at: index)
+            state.bufferedByteCount -= buffered.byteCount
             notificationSubscriptions[subscription.id] = state
-            return notification
+            return buffered.notification
         }
         guard state.waiter == nil else {
             throw CodexAppServerError.invalidResponse("Notification subscription already has an active waiter.")
@@ -174,6 +249,13 @@ actor CodexAppServerClient {
         guard let state = notificationSubscriptions.removeValue(forKey: subscription.id) else { return }
         state.waiter?.timeoutTask.cancel()
         state.waiter?.continuation.resume(throwing: CancellationError())
+    }
+
+    func notificationBufferMetrics(
+        for subscription: CodexNotificationSubscription
+    ) -> (events: Int, bytes: Int, failed: Bool, waiting: Bool)? {
+        guard let state = notificationSubscriptions[subscription.id] else { return nil }
+        return (state.buffered.count, state.bufferedByteCount, state.terminalFailure != nil, state.waiter != nil)
     }
 
     func cancelRequests(in scope: UUID) {
@@ -274,7 +356,10 @@ actor CodexAppServerClient {
                 timeout: defaultTimeout,
                 cancelOnTaskCancellation: false
             )
-            _ = try JSONDecoder().decode(CodexInitializeResponse.self, from: responseData)
+            let initialized = try JSONDecoder().decode(CodexInitializeResponse.self, from: responseData)
+            guard initialized.platformOs.lowercased() == "macos" else {
+                throw CodexAppServerError.unsupportedContainmentPlatform(initialized.platformOs)
+            }
             try writeJSONObject(["method": "initialized"])
             isInitialized = true
             finishStartup(with: .success(()))
@@ -300,9 +385,19 @@ actor CodexAppServerClient {
 
     private func launchProcess() throws {
         let command = try commandResolver()
+        let codexArguments = command.arguments + ["app-server", "--listen", "stdio://"]
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: command.executable)
-        process.arguments = command.arguments + ["app-server", "--listen", "stdio://"]
+        if let seatbelt = try makeSeatbeltLaunch(
+            executable: command.executable,
+            arguments: codexArguments
+        ) {
+            process.executableURL = URL(fileURLWithPath: seatbelt.sandboxExec)
+            process.arguments = ["-f", seatbelt.profilePath, command.executable] + codexArguments
+            seatbeltProfileURL = seatbelt.profileURL
+        } else {
+            process.executableURL = URL(fileURLWithPath: command.executable)
+            process.arguments = codexArguments
+        }
 
         var childEnvironment = environment
         if let override = childEnvironment["LANGTOOLS_CODEX_HOME"], override.isEmpty == false {
@@ -319,8 +414,20 @@ actor CodexAppServerClient {
         process.standardError = stderr
 
         let generation = UUID()
-        let stdoutPump = ProcessChunkPump(label: "LangToolsCLI.CodexAppServer.stdout")
-        let stderrPump = ProcessChunkPump(label: "LangToolsCLI.CodexAppServer.stderr")
+        let stdoutPump = ProcessChunkPump(
+            label: "LangToolsCLI.CodexAppServer.stdout",
+            maximumBufferedChunks: Self.maximumBufferedProcessChunks,
+            onOverflow: { [weak self] in
+                Task { await self?.processChunkPumpOverflow(stream: "stdout", generation: generation) }
+            }
+        )
+        let stderrPump = ProcessChunkPump(
+            label: "LangToolsCLI.CodexAppServer.stderr",
+            maximumBufferedChunks: Self.maximumBufferedProcessChunks,
+            onOverflow: { [weak self] in
+                Task { await self?.processChunkPumpOverflow(stream: "stderr", generation: generation) }
+            }
+        )
         stdoutReaderTask = Task { [weak self] in
             for await data in stdoutPump.stream {
                 await self?.consumeStdout(data, generation: generation)
@@ -356,6 +463,32 @@ actor CodexAppServerClient {
         self.stdoutPump = stdoutPump
         self.stderrPump = stderrPump
         stdinHandle = stdin.fileHandleForWriting
+    }
+
+    private struct SeatbeltLaunch {
+        let sandboxExec: String
+        let profilePath: String
+        let profileURL: URL
+    }
+
+    private func makeSeatbeltLaunch(executable: String, arguments: [String]) throws -> SeatbeltLaunch? {
+        guard let sandboxExec = CodexSeatbeltProfile.sandboxExecPath(),
+              let workspaceRoot = workspaceRootProvider()
+        else { return nil }
+        let inputs = CodexSeatbeltProfile.Inputs(
+            codexExecutable: executable,
+            codexExecutableArguments: Array(arguments.dropLast(3)),
+            codexHome: codexHomeProvider(),
+            workspaceRoot: workspaceRoot.resolvingSymlinksInPath().path
+        )
+        // A profile-write failure throws so the caller never launches the
+        // Codex runtime without the intended OS-level read boundary.
+        let profileURL = try CodexSeatbeltProfile().writeProfile(inputs: inputs)
+        return SeatbeltLaunch(
+            sandboxExec: sandboxExec,
+            profilePath: profileURL.path,
+            profileURL: profileURL
+        )
     }
 
     private func sendRequest(
@@ -450,11 +583,26 @@ actor CodexAppServerClient {
         guard processGeneration == generation else { return }
         stdoutBuffer.append(data)
         while let newline = stdoutBuffer.firstIndex(of: 0x0A) {
+            let lineByteCount = stdoutBuffer.distance(from: stdoutBuffer.startIndex, to: newline)
+            guard lineByteCount <= Self.maximumStdoutNDJSONLineBytes else {
+                shutdownProcess(error: CodexAppServerError.invalidResponse("Codex app-server emitted an oversized NDJSON line."))
+                return
+            }
             let line = stdoutBuffer[..<newline]
             stdoutBuffer.removeSubrange(...newline)
             guard line.isEmpty == false else { continue }
             handleLine(Data(line))
+            guard processGeneration == generation else { return }
         }
+        guard stdoutBuffer.count <= Self.maximumStdoutNDJSONLineBytes else {
+            shutdownProcess(error: CodexAppServerError.invalidResponse("Codex app-server emitted an oversized unterminated NDJSON line."))
+            return
+        }
+    }
+
+    private func processChunkPumpOverflow(stream: String, generation: UUID) {
+        guard processGeneration == generation else { return }
+        shutdownProcess(error: CodexAppServerError.transport("Codex app-server \(stream) buffering exceeded its limit."))
     }
 
     private func consumeStderr(_ data: Data, generation: UUID) {
@@ -515,16 +663,38 @@ actor CodexAppServerClient {
         }
         let notification = CodexServerNotification(method: method, params: paramsData)
         for subscriptionID in Array(notificationSubscriptions.keys) {
-            guard var state = notificationSubscriptions[subscriptionID], state.methods.contains(method) else { continue }
+            guard var state = notificationSubscriptions[subscriptionID],
+                  state.methods.contains(method),
+                  state.terminalFailure == nil,
+                  state.accepts(paramsData)
+            else { continue }
             if let waiter = state.waiter, waiter.matches(paramsData) {
                 state.waiter = nil
                 notificationSubscriptions[subscriptionID] = state
                 waiter.timeoutTask.cancel()
                 waiter.continuation.resume(returning: notification)
-            } else {
-                state.buffered.append(notification)
-                notificationSubscriptions[subscriptionID] = state
+                continue
             }
+
+            let notificationBytes = data.count
+            let exceedsEventLimit = state.buffered.count >= state.maximumBufferedEvents
+            let exceedsByteLimit = notificationBytes > state.maximumBufferedBytes - state.bufferedByteCount
+            if exceedsEventLimit || exceedsByteLimit {
+                let failure = CodexAppServerError.invalidResponse("Notification subscription exceeded its buffer limits.")
+                let waiter = state.waiter
+                state.waiter = nil
+                state.buffered.removeAll(keepingCapacity: false)
+                state.bufferedByteCount = 0
+                state.terminalFailure = failure
+                notificationSubscriptions[subscriptionID] = state
+                waiter?.timeoutTask.cancel()
+                waiter?.continuation.resume(throwing: failure)
+                continue
+            }
+
+            state.buffered.append(BufferedNotification(notification: notification, byteCount: notificationBytes))
+            state.bufferedByteCount += notificationBytes
+            notificationSubscriptions[subscriptionID] = state
         }
     }
 
@@ -610,6 +780,10 @@ actor CodexAppServerClient {
         oldProcess?.standardOutput.flatMap { $0 as? Pipe }?.fileHandleForReading.readabilityHandler = nil
         oldProcess?.standardError.flatMap { $0 as? Pipe }?.fileHandleForReading.readabilityHandler = nil
         if oldProcess?.isRunning == true { oldProcess?.terminate() }
+        if let profileURL = seatbeltProfileURL {
+            seatbeltProfileURL = nil
+            try? FileManager.default.removeItem(at: profileURL)
+        }
 
         let requests = pending.values
         pending.removeAll()
@@ -638,6 +812,7 @@ struct CodexNotificationSubscription: Sendable {
 
 enum CodexAppServerError: LocalizedError, Sendable {
     case unavailable
+    case unsupportedContainmentPlatform(String)
     case transport(String)
     case invalidResponse(String)
     case invalidRequest(String)
@@ -650,6 +825,8 @@ enum CodexAppServerError: LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .unavailable: return "Codex CLI is not available. Install it, put `codex` on PATH, or set LANGTOOLS_CODEX_PATH."
+        case .unsupportedContainmentPlatform(let platform):
+            return "Codex account chat containment is unsupported on app-server platform: \(platform)."
         case .transport(let message): return "Codex app-server transport failed: \(message)"
         case .invalidResponse(let message): return "Codex app-server returned an invalid response: \(message)"
         case .invalidRequest(let message), .server(_, let message): return message

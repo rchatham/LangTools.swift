@@ -86,3 +86,28 @@ struct HelperChatMessage: Codable, Equatable, Sendable {
 struct HelperChatResponse: Codable {
     let content: String
 }
+
+struct HelperChatStreamEvent: Codable, Equatable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        case delta
+        case complete
+        case error
+    }
+
+    let type: Kind
+    let delta: String?
+    let content: String?
+    let error: String?
+
+    static func delta(_ value: String) -> Self {
+        Self(type: .delta, delta: value, content: nil, error: nil)
+    }
+
+    static func complete(_ value: String) -> Self {
+        Self(type: .complete, delta: nil, content: value, error: nil)
+    }
+
+    static func failure(_ value: String) -> Self {
+        Self(type: .error, delta: nil, content: nil, error: value)
+    }
+}

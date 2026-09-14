@@ -556,6 +556,59 @@ final class CodexRuntimeServiceFocusedTests: XCTestCase {
         await runtime.shutdown()
     }
 
+    func testTurnStartTimeoutRestartsUnknownTurnGenerationAndNextLifecycleIsClean() async throws {
+        let startedURL = temporaryURL(suffix: ".started")
+        let processCountURL = temporaryURL(suffix: ".process-count")
+        let logURL = temporaryURL(suffix: ".jsonl")
+        let scriptURL = try makePythonScript(Self.delayedUnknownTurnTimeoutServer)
+        defer {
+            for url in [startedURL, processCountURL, logURL, scriptURL] {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        let timeoutGate = OneShotTurnStartTimeout(markerURL: startedURL)
+        let client = makeClient(
+            scriptURL: scriptURL,
+            environment: [
+                "STARTED": startedURL.path,
+                "PROCESS_COUNT": processCountURL.path,
+                "LOG": logURL.path
+            ],
+            requestTimeoutSleeper: { method, duration in
+                try await timeoutGate.sleep(method: method, duration: duration)
+            }
+        )
+        let runtime = CodexRuntimeService(client: client, browserOpener: { _ in })
+        let conversationID = UUID()
+
+        do {
+            _ = try await runtime.chat(
+                model: "codex-test",
+                messages: [.init(role: "user", content: "first")],
+                conversationID: conversationID
+            )
+            XCTFail("Expected turn/start timeout")
+        } catch let error as CodexAppServerError {
+            guard case .timeout(let method) = error else { return XCTFail("Expected timeout, got \(error)") }
+            XCTAssertEqual(method, "turn/start")
+        }
+
+        for _ in 0..<100 where (try? String(contentsOf: processCountURL, encoding: .utf8)) != "2" {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(try String(contentsOf: processCountURL, encoding: .utf8), "2")
+        let firstPID = try XCTUnwrap(readJSONLines(logURL).first?["pid"] as? Int32)
+        try await assertProcessExited(firstPID)
+        let recovered = try await runtime.chat(
+            model: "codex-test",
+            messages: [.init(role: "user", content: "second")],
+            conversationID: conversationID
+        )
+        XCTAssertEqual(recovered, "recovered")
+        XCTAssertEqual(try readJSONLines(logURL).count, 2)
+        await runtime.shutdown()
+    }
+
     func testCancellationDuringDelayedTurnStartStillInterruptsReturnedTurn() async throws {
         let turnStartedURL = temporaryURL(suffix: ".started")
         let interruptedURL = temporaryURL(suffix: ".interrupted")
@@ -1409,6 +1462,34 @@ open(os.environ["MARKER"], "w").write("thread-exact/turn-exact")
 write({"id":request["id"], "result":{}})
 """#
 
+    private static let delayedUnknownTurnTimeoutServer = preamble + #"""
+count_path = os.environ["PROCESS_COUNT"]
+try:
+    generation = int(open(count_path).read()) + 1
+except FileNotFoundError:
+    generation = 1
+open(count_path, "w").write(str(generation))
+with open(os.environ["LOG"], "a") as log:
+    log.write(json.dumps({"generation":generation, "pid":os.getpid()}) + "\n")
+
+request = read()
+assert request["method"] == "thread/start"
+thread_id = "thread-old" if generation == 1 else "thread-new"
+write({"id":request["id"], "result":{"thread":{"id":thread_id}, "model":"codex-test", "modelProvider":"openai"}})
+request = read()
+assert request["method"] == "turn/start"
+if generation == 1:
+    open(os.environ["STARTED"], "w").write("started")
+    time.sleep(0.2)
+    write({"id":request["id"], "result":{"turn":{"id":"turn-late"}}})
+else:
+    write({"id":request["id"], "result":{"turn":{"id":"turn-new"}}})
+    write({"method":"item/agentMessage/delta", "params":{"threadId":"thread-new", "turnId":"turn-new", "itemId":"a", "delta":"recovered"}})
+    write({"method":"turn/completed", "params":{"threadId":"thread-new", "turn":{"id":"turn-new", "status":"completed", "error":None}}})
+while True:
+    read()
+"""#
+
     private static let turnTimeoutServer = preamble + #"""
 request = read()
 assert request["method"] == "thread/start"
@@ -1438,6 +1519,30 @@ assert request["params"] == {"threadId":"thread-delayed", "turnId":"turn-delayed
 open(os.environ["INTERRUPTED"], "w").write("thread-delayed/turn-delayed")
 write({"id":request["id"], "result":{}})
 """#
+}
+
+private actor OneShotTurnStartTimeout {
+    private let markerURL: URL
+    private var didTimeout = false
+
+    init(markerURL: URL) {
+        self.markerURL = markerURL
+    }
+
+    func sleep(method: String, duration: Duration) async throws {
+        guard method == "turn/start", didTimeout == false else {
+            try await Task.sleep(for: duration)
+            return
+        }
+        for _ in 0..<200 {
+            if FileManager.default.fileExists(atPath: markerURL.path) {
+                didTimeout = true
+                return
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try await Task.sleep(for: duration)
+    }
 }
 
 private actor AsyncCheckpoint {
