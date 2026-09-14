@@ -199,25 +199,17 @@ final class AnthropicPerformanceTests: XCTestCase {
 
     // MARK: - Response Combining Performance
 
-    func testResponseCombiningPerformance() {
-        let decoder = JSONDecoder()
-        let data = PerformanceFixtures.anthropicMessageResponseJSON()
-        guard let response = try? decoder.decode(Anthropic.MessageResponse.self, from: data) else {
-            return XCTFail("Fixture validation failed to decode")
-        }
-
-        var sink: Anthropic.MessageResponse?
+    func testResponseCombiningPerformance() throws {
+        let workload = try StreamingCombiningWorkload.AnthropicStreams()
+        workload.validate(workload.combine())
+        var sink: [Anthropic.MessageResponse] = []
         measure {
-            for _ in 0..<500 {
-                var combined = Anthropic.MessageResponse.empty
-                for _ in 0..<50 {
-                    combined = combined.combining(with: response)
-                }
-                sink = combined
+            for _ in 0..<StreamingCombiningWorkload.batchCount {
+                sink = workload.combine()
             }
         }
-        // Observable use so an optimized build can't dead-code-eliminate the combine loop.
-        XCTAssertNotNil(sink)
+        // Exact correctness checks and observable consumption stay outside timing.
+        workload.validate(sink)
     }
 
     // MARK: - Request Preparation Performance

@@ -30,7 +30,8 @@ public extension XCTestCase {
     ///   - foundationBlock: a Foundation baseline (e.g. `JSONSerialization`) over the *same* payload,
     ///     run the same number of atomic operations as `customBlock` so the ratio is per-operation.
     ///   - customBlock: the LangTools path under test.
-    ///   - maxRatio: fallback ceiling used only when `key` is absent from `ratios.json` (e.g. first run).
+    ///   - maxRatio: retained for call-site compatibility; never used as a fallback. Normal runs
+    ///     require a valid committed ceiling. Bootstrap explicitly with `RECORD_PERF_RATIOS=1`.
     ///   - key: stable identifier, also the `ratios.json` key (e.g. `"OpenAI.responseCombining"`).
     ///   - iterations: number of timed samples; the steady-state median is used (cold run discarded).
     ///
@@ -45,6 +46,22 @@ public extension XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
+        let recording = ProcessInfo.processInfo.environment["RECORD_PERF_RATIOS"] == "1"
+        let ceiling: Double?
+        do {
+            if recording {
+                ceiling = nil
+            } else {
+                ceiling = try PerformanceRatios.ceiling(for: key)
+            }
+        } catch {
+            XCTFail("Cannot load performance ceiling for \(key): \(error). Fix \(PerformanceRatios.fileURL.path); bootstrap only with RECORD_PERF_RATIOS=1", file: file, line: line)
+            return
+        }
+        guard iterations > 0 else {
+            XCTFail("Performance sample count must be positive", file: file, line: line)
+            return
+        }
         let foundation = Self.steadyStateMedian(foundationBlock, iterations: iterations)
         let custom = Self.steadyStateMedian(customBlock, iterations: iterations)
 
@@ -56,7 +73,7 @@ public extension XCTestCase {
         print(String(format: "⏱️ perf-ratio[%@]: custom=%.3fms foundation=%.3fms ratio=%.2f×",
                      key, custom * 1000, foundation * 1000, ratio))
 
-        if ProcessInfo.processInfo.environment["RECORD_PERF_RATIOS"] == "1" {
+        if recording {
             do {
                 try PerformanceRatios.record(key: key, observedRatio: ratio)
                 print("   📝 recorded ceiling for \(key)")
@@ -66,11 +83,8 @@ public extension XCTestCase {
             return
         }
 
-        let ceiling: Double
-        do {
-            ceiling = try PerformanceRatios.ceiling(for: key) ?? maxRatio
-        } catch {
-            XCTFail("ratios.json exists but could not be read/decoded (\(error)) — fix or delete \(PerformanceRatios.fileURL.path) (re-record with RECORD_PERF_RATIOS=1)", file: file, line: line)
+        guard let ceiling else {
+            XCTFail("Missing performance ceiling for \(key)", file: file, line: line)
             return
         }
         XCTAssertLessThanOrEqual(
@@ -104,7 +118,7 @@ public extension XCTestCase {
 /// *committed* file, but bundled resources are read-only copies in the build directory.
 public enum PerformanceRatios {
 
-    static let fileURL: URL = URL(fileURLWithPath: #filePath)
+    public static let fileURL: URL = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .appendingPathComponent("PerformanceTestUtils")
@@ -114,27 +128,45 @@ public enum PerformanceRatios {
     /// trip the gate. A regression has to exceed the observed ratio by more than this to fail.
     static let recordHeadroom: Double = 1.4
 
-    /// A missing file is a legitimate first-run state and returns `[:]` (callers fall back to
-    /// `maxRatio`). A file that exists but can't be read or decoded throws instead — silently
-    /// returning `[:]` there would disable every committed ceiling and let regressions pass.
-    public static func load() throws -> [String: Double] {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return [:] }
-        let data = try Data(contentsOf: fileURL)
-        return try JSONDecoder().decode([String: Double].self, from: data)
+    enum ConfigurationError: Error, Equatable {
+        case missingKey(String)
+        case invalidRatio(String)
     }
 
-    public static func ceiling(for key: String) throws -> Double? {
-        try load()[key]
+    /// Normal reads fail closed, including missing files. URL injection isolates regression tests.
+    public static func load(from url: URL = fileURL) throws -> [String: Double] {
+        let data = try Data(contentsOf: url)
+        let map = try JSONDecoder().decode([String: Double].self, from: data)
+        for (key, value) in map where !value.isFinite || value <= 0 {
+            throw ConfigurationError.invalidRatio(key)
+        }
+        return map
     }
 
-    public static func record(key: String, observedRatio: Double) throws {
-        var map = try load()
-        map[key] = ((observedRatio * recordHeadroom) * 100).rounded() / 100 // 2-decimal ceiling
+    public static func ceiling(for key: String, from url: URL = fileURL) throws -> Double {
+        guard let ceiling = try load(from: url)[key] else {
+            throw ConfigurationError.missingKey(key)
+        }
+        return ceiling
+    }
+
+    /// Explicit recording alone may bootstrap a missing file/key. Existing corrupt or unreadable
+    /// configuration still throws; failed writes propagate rather than claiming a saved ceiling.
+    public static func record(key: String, observedRatio: Double, to url: URL = fileURL) throws {
+        let ceiling = ((observedRatio * recordHeadroom) * 100).rounded() / 100
+        guard observedRatio.isFinite, observedRatio > 0, ceiling.isFinite, ceiling > 0 else {
+            throw ConfigurationError.invalidRatio(key)
+        }
+        var map: [String: Double] = [:]
+        if FileManager.default.fileExists(atPath: url.path) {
+            map = try load(from: url)
+        }
+        map[key] = ceiling
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(map)
         // .atomic so an interrupted run can't leave a truncated ratios.json, which load()
         // would then reject and fail every gate.
-        try data.write(to: fileURL, options: .atomic)
+        try data.write(to: url, options: .atomic)
     }
 }

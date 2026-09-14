@@ -199,25 +199,17 @@ final class OpenAIPerformanceTests: XCTestCase {
 
     // MARK: - Response Combining Performance
 
-    func testResponseCombiningPerformance() {
-        let decoder = JSONDecoder()
-        let singleData = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 1)
-        guard let response = try? decoder.decode(OpenAI.ChatCompletionResponse.self, from: singleData) else {
-            return XCTFail("Fixture validation failed to decode")
-        }
-
-        var sink: OpenAI.ChatCompletionResponse?
+    func testResponseCombiningPerformance() throws {
+        let workload = try StreamingCombiningWorkload.OpenAIStreams()
+        workload.validate(workload.combine())
+        var sink: [OpenAI.ChatCompletionResponse] = []
         measure {
-            for _ in 0..<500 {
-                var combined = OpenAI.ChatCompletionResponse.empty
-                for _ in 0..<50 {
-                    combined = combined.combining(with: response)
-                }
-                sink = combined
+            for _ in 0..<StreamingCombiningWorkload.batchCount {
+                sink = workload.combine()
             }
         }
-        // Observable use so an optimized build can't dead-code-eliminate the combine loop.
-        XCTAssertFalse(sink?.choices.isEmpty ?? true)
+        // Exact correctness checks and observable consumption stay outside timing.
+        workload.validate(sink)
     }
 
     // MARK: - Request Preparation Performance

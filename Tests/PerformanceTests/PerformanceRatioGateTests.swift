@@ -21,29 +21,33 @@ final class PerformanceRatioGateTests: XCTestCase {
 
     // MARK: - OpenAI.responseCombining
     //
-    // The streamed-response accumulator was the ~3× outlier. Baseline: parsing the same
-    // single-choice payload. Combining a decoded response should stay within a small multiple
-    // of raw-parse cost — that multiple is the invariant we lock in.
+    // Baseline parses the same text/tool delta JSON used by the accumulator. Each batch
+    // resets independent conversations, bounding accumulated strings. This replaces the old
+    // full-response workload; its historical ratios are not directly comparable.
 
     func testGate_OpenAIResponseCombining() throws {
-        let singleData = PerformanceFixtures.openAIChatCompletionResponseJSON(choiceCount: 1)
-        let response = try JSONDecoder().decode(OpenAI.ChatCompletionResponse.self, from: singleData)
-        let iterations = 2500
+        let workload = try StreamingCombiningWorkload.OpenAIStreams()
+        workload.validate(workload.combine())
+        var sink: [OpenAI.ChatCompletionResponse] = []
 
         assertWithinRatio(
             of: {
-                for _ in 0..<iterations {
-                    _ = try! JSONSerialization.jsonObject(with: singleData)
+                for _ in 0..<StreamingCombiningWorkload.batchCount {
+                    for stream in workload.payloads {
+                        for payload in stream {
+                            _ = try! JSONSerialization.jsonObject(with: payload)
+                        }
+                    }
                 }
             },
             {
-                var combined = OpenAI.ChatCompletionResponse.empty
-                for _ in 0..<iterations {
-                    combined = combined.combining(with: response)
+                for _ in 0..<StreamingCombiningWorkload.batchCount {
+                    sink = workload.combine()
                 }
             },
             maxRatio: 6.0,
             key: "OpenAI.responseCombining")
+        workload.validate(sink)
     }
 
     // MARK: - OpenAI.manyChoicesDecode
