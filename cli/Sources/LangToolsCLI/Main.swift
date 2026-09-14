@@ -56,7 +56,7 @@ private struct CommandRouter {
       LangToolsCLI auth export-session openai --format json
       LangToolsCLI auth status openai --format json
       LangToolsCLI auth logout openai
-      LangToolsCLI openai-chat --model <model-id> --messages-file <path>
+      LangToolsCLI openai-chat --model <model-id> --messages-file <path> [--conversation-id <uuid>]
       LangToolsCLI serve [--host 127.0.0.1] [--port 8765] [--token <token>]
     """
 }

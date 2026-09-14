@@ -56,36 +56,49 @@ final class CodexAppServerProtocolTests: XCTestCase {
     }
 
     func testThreadTurnDeltaCompletionAndInterruptUseExactKeys() throws {
+        let workspace = "/Users/test/Library/Caches/LangToolsCLI/workspace"
         let thread = CodexThreadStartParams(
             model: "gpt-codex",
-            modelProvider: nil,
-            cwd: "/tmp/isolated",
+            cwd: workspace,
             approvalPolicy: "never",
-            sandbox: "read-only",
-            config: nil,
-            developerInstructions: nil,
-            multiAgentMode: "none",
-            ephemeral: true,
-            environments: [],
-            dynamicTools: [],
-            selectedCapabilityRoots: []
+            sandbox: "workspace-write",
+            ephemeral: true
         )
         let threadObject = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(thread)) as? [String: Any])
-        XCTAssertEqual(threadObject["sandbox"] as? String, "read-only")
+        XCTAssertEqual(threadObject["sandbox"] as? String, "workspace-write")
+        XCTAssertEqual(threadObject["cwd"] as? String, workspace)
+        XCTAssertTrue((threadObject["cwd"] as? String)?.hasPrefix("/") == true)
+        XCTAssertNil(threadObject["runtimeWorkspaceRoots"])
+        XCTAssertNil(threadObject["dynamicTools"])
+        XCTAssertNil(threadObject["selectedCapabilityRoots"])
+        XCTAssertNil(threadObject["config"])
         XCTAssertEqual(threadObject["approvalPolicy"] as? String, "never")
 
         let turn = CodexTurnStartParams(
             threadId: "thread-1",
             input: [.init(text: "hello")],
             approvalPolicy: "never",
-            sandboxPolicy: ReadOnlySandboxPolicy(),
-            model: "gpt-codex",
-            environments: [],
-            multiAgentMode: "none"
+            sandboxPolicy: .workspaceWrite(
+                writableRoots: [workspace],
+                networkAccess: false,
+                excludeTmpdirEnvVar: true,
+                excludeSlashTmp: true
+            ),
+            model: "gpt-codex"
         )
         let turnObject = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(turn)) as? [String: Any])
         let input = try XCTUnwrap((turnObject["input"] as? [[String: Any]])?.first)
         XCTAssertNotNil(input["text_elements"])
+        XCTAssertNil(turnObject["runtimeWorkspaceRoots"])
+        XCTAssertNil(turnObject["environments"])
+        XCTAssertNil(turnObject["multiAgentMode"])
+        XCTAssertNil(turnObject["permissions"])
+        let policy = try XCTUnwrap(turnObject["sandboxPolicy"] as? [String: Any])
+        XCTAssertEqual(policy["type"] as? String, "workspaceWrite")
+        XCTAssertEqual(policy["writableRoots"] as? [String], [workspace])
+        XCTAssertEqual(policy["networkAccess"] as? Bool, false)
+        XCTAssertEqual(policy["excludeTmpdirEnvVar"] as? Bool, true)
+        XCTAssertEqual(policy["excludeSlashTmp"] as? Bool, true)
 
         let delta = try JSONDecoder().decode(
             CodexAgentMessageDeltaNotification.self,

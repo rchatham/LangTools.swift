@@ -199,26 +199,11 @@ struct CodexModel: Decodable, Sendable {
 
 struct CodexThreadStartParams: Encodable, Sendable {
     let model: String?
-    let modelProvider: String?
     let cwd: String?
     let approvalPolicy: String?
     let sandbox: String?
-    let config: [String: JSONValue]?
-    let developerInstructions: String?
-    let multiAgentMode: String?
     let ephemeral: Bool?
-    let environments: [CodexTurnEnvironmentParams]?
-    let dynamicTools: [CodexDynamicToolSpec]?
-    let selectedCapabilityRoots: [CodexSelectedCapabilityRoot]?
 }
-
-struct CodexTurnEnvironmentParams: Codable, Sendable {
-    let cwd: String
-    let environmentId: String
-}
-
-struct CodexDynamicToolSpec: Codable, Sendable {}
-struct CodexSelectedCapabilityRoot: Codable, Sendable {}
 
 struct CodexThreadStartResponse: Decodable, Sendable {
     struct Thread: Decodable, Sendable { let id: String }
@@ -244,15 +229,40 @@ struct CodexTurnStartParams: Encodable, Sendable {
     let threadId: String
     let input: [UserInput]
     let approvalPolicy: String?
-    let sandboxPolicy: ReadOnlySandboxPolicy?
+    let sandboxPolicy: CodexSandboxPolicy?
     let model: String?
-    let environments: [CodexTurnEnvironmentParams]?
-    let multiAgentMode: String?
 }
 
-struct ReadOnlySandboxPolicy: Encodable, Sendable {
-    let type = "readOnly"
-    let networkAccess = false
+/// This policy constrains commands launched inside Codex's local sandbox. It
+/// does not disable Codex account capabilities such as native hosted tools or
+/// MCP servers configured in the user's Codex home.
+enum CodexSandboxPolicy: Encodable, Sendable {
+    case readOnly(networkAccess: Bool)
+    case workspaceWrite(
+        writableRoots: [String],
+        networkAccess: Bool,
+        excludeTmpdirEnvVar: Bool,
+        excludeSlashTmp: Bool
+    )
+
+    private enum CodingKeys: String, CodingKey {
+        case type, writableRoots, networkAccess, excludeTmpdirEnvVar, excludeSlashTmp
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .readOnly(let networkAccess):
+            try container.encode("readOnly", forKey: .type)
+            try container.encode(networkAccess, forKey: .networkAccess)
+        case .workspaceWrite(let writableRoots, let networkAccess, let excludeTmpdirEnvVar, let excludeSlashTmp):
+            try container.encode("workspaceWrite", forKey: .type)
+            try container.encode(writableRoots, forKey: .writableRoots)
+            try container.encode(networkAccess, forKey: .networkAccess)
+            try container.encode(excludeTmpdirEnvVar, forKey: .excludeTmpdirEnvVar)
+            try container.encode(excludeSlashTmp, forKey: .excludeSlashTmp)
+        }
+    }
 }
 
 struct CodexTurnStartResponse: Decodable, Sendable {

@@ -20,10 +20,13 @@ final class CodexAppServerClientTests: XCTestCase {
             defaultTimeout: .seconds(5)
         )
 
+        let initialGeneration = try await client.initializedProcessGeneration()
         async let first: Response = client.request(method: "test/first", params: RequestParams(value: "one"))
         async let second: Response = client.request(method: "test/second", params: RequestParams(value: "two"))
         let values = try await [first.value, second.value]
         XCTAssertEqual(Set(values), Set(["test/first", "test/second"]))
+        let stableGeneration = try await client.initializedProcessGeneration()
+        XCTAssertEqual(stableGeneration, initialGeneration)
         await client.shutdown()
     }
 
@@ -74,6 +77,7 @@ final class CodexAppServerClientTests: XCTestCase {
             defaultTimeout: .seconds(2)
         )
 
+        let initialGeneration = try await client.initializedProcessGeneration()
         do {
             let _: Response = try await client.request(method: "process/exit", params: RequestParams(value: "one"))
             XCTFail("Expected process exit")
@@ -86,9 +90,184 @@ final class CodexAppServerClientTests: XCTestCase {
 
         let restarted: Response = try await client.request(method: "process/restarted", params: RequestParams(value: "two"))
         XCTAssertEqual(restarted.value, "process/restarted")
+        let restartedGeneration = try await client.initializedProcessGeneration()
+        XCTAssertNotEqual(restartedGeneration, initialGeneration)
         XCTAssertEqual(try String(contentsOf: countURL, encoding: .utf8), "2")
         await client.shutdown()
     }
+
+    func testCancellationScopeCancelsStartupWaiterWithoutCancellingSharedInitialization() async throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-app-server-startup-scope-\(UUID().uuidString).py")
+        let acceptedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-app-server-startup-scope-\(UUID().uuidString).accepted")
+        try Data(Self.hangingInitializationServer.utf8).write(to: scriptURL)
+        defer {
+            try? FileManager.default.removeItem(at: scriptURL)
+            try? FileManager.default.removeItem(at: acceptedURL)
+        }
+
+        let client = CodexAppServerClient(
+            commandResolver: {
+                ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
+            },
+            environment: ["ACCEPTED": acceptedURL.path],
+            defaultTimeout: .seconds(30)
+        )
+        let cancelledScope = UUID()
+        let blocked = Task {
+            try await client.request(
+                method: "startup/blocked",
+                params: RequestParams(value: "blocked"),
+                cancellationScope: cancelledScope
+            ) as Response
+        }
+        for _ in 0..<100 where FileManager.default.fileExists(atPath: acceptedURL.path) == false {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: acceptedURL.path))
+
+        let unrelated = Task {
+            try await client.request(
+                method: "startup/unrelated",
+                params: RequestParams(value: "unrelated"),
+                cancellationScope: UUID()
+            ) as Response
+        }
+        let barrierScope = UUID()
+        await client.cancelRequests(in: barrierScope)
+        await client.closeRequestCancellationScope(barrierScope)
+        let cancelledPromptly = expectation(description: "startup waiter cancelled promptly")
+        let blockedResult = Task {
+            let result = await blocked.result
+            cancelledPromptly.fulfill()
+            return result
+        }
+        await client.cancelRequests(in: cancelledScope)
+        await fulfillment(of: [cancelledPromptly], timeout: 0.5)
+
+        do {
+            let _: Response = try await client.request(
+                method: "startup/tombstoned",
+                params: RequestParams(value: "tombstoned"),
+                cancellationScope: cancelledScope
+            )
+            XCTFail("Expected cancellation-before-startup tombstone rejection")
+        } catch is CancellationError {
+            // Expected.
+        }
+
+        await client.shutdown()
+        switch await blockedResult.value {
+        case .failure(let error as CancellationError):
+            _ = error
+        default:
+            XCTFail("Expected scoped startup waiter cancellation")
+        }
+        switch await unrelated.result {
+        case .failure(let error as CodexAppServerError):
+            guard case .shutdown = error else {
+                return XCTFail("Expected unrelated waiter to remain until shutdown, got \(error)")
+            }
+        default:
+            XCTFail("Expected unrelated startup waiter to fail only at shutdown")
+        }
+    }
+
+    func testCancellationScopeCancelsOnlyMatchingRequests() async throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-app-server-scope-\(UUID().uuidString).py")
+        let acceptedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-app-server-scope-\(UUID().uuidString).accepted")
+        try Data(Self.cancellationScopeServer.utf8).write(to: scriptURL)
+        defer {
+            try? FileManager.default.removeItem(at: scriptURL)
+            try? FileManager.default.removeItem(at: acceptedURL)
+        }
+
+        let client = CodexAppServerClient(
+            commandResolver: {
+                ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
+            },
+            environment: ["ACCEPTED": acceptedURL.path],
+            defaultTimeout: .seconds(2)
+        )
+        let cancelledScope = UUID()
+        let blocked = Task {
+            try await client.request(
+                method: "scope/blocked",
+                params: RequestParams(value: "blocked"),
+                cancellationScope: cancelledScope
+            ) as Response
+        }
+        for _ in 0..<100 where FileManager.default.fileExists(atPath: acceptedURL.path) == false {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: acceptedURL.path))
+
+        let unrelated: Response = try await client.request(
+            method: "scope/unrelated",
+            params: RequestParams(value: "unrelated"),
+            cancellationScope: UUID()
+        )
+        await client.cancelRequests(in: cancelledScope)
+
+        XCTAssertEqual(unrelated.value, "unrelated")
+        do {
+            _ = try await blocked.value
+            XCTFail("Expected scoped request cancellation")
+        } catch is CancellationError {
+            // Expected.
+        }
+        do {
+            let _: Response = try await client.request(
+                method: "scope/tombstoned",
+                params: RequestParams(value: "tombstoned"),
+                cancellationScope: cancelledScope
+            )
+            XCTFail("Expected cancelled scope tombstone to reject a later request")
+        } catch is CancellationError {
+            // Expected.
+        }
+        await client.shutdown()
+    }
+
+    private static let hangingInitializationServer = #"""
+import json
+import os
+import sys
+import time
+
+initialize = json.loads(sys.stdin.readline())
+assert initialize["method"] == "initialize"
+open(os.environ["ACCEPTED"], "w").write("accepted")
+while True:
+    time.sleep(1)
+"""#
+
+    private static let cancellationScopeServer = #"""
+import json
+import os
+import sys
+
+def read():
+    return json.loads(sys.stdin.readline())
+
+def write(value):
+    print(json.dumps(value), flush=True)
+
+initialize = read()
+write({"id":initialize["id"], "result":{"userAgent":"fake", "codexHome":"/tmp", "platformFamily":"unix", "platformOs":"macos"}})
+assert read()["method"] == "initialized"
+blocked = read()
+assert blocked["method"] == "scope/blocked"
+open(os.environ["ACCEPTED"], "w").write("accepted")
+unrelated = read()
+assert unrelated["method"] == "scope/unrelated"
+write({"id":unrelated["id"], "result":{"value":"unrelated"}})
+while True:
+    read()
+"""#
 
     private static let chunkedServer = #"""
 import json
@@ -175,14 +354,18 @@ write({"id": initialize["id"], "result": {
 }})
 assert read()["method"] == "initialized"
 
-write({"id": "server-request", "method": "item/tool/requestUserInput", "params": {}})
+write({"id": "user-input-request", "method": "item/tool/requestUserInput", "params": {}})
+write({"id": "permissions-request", "method": "item/permissions/requestApproval", "params": {}})
 requests = []
-did_decline = False
-while len(requests) < 2 or not did_decline:
+declined = set()
+while len(requests) < 2 or len(declined) < 2:
     message = read()
-    if message.get("id") == "server-request":
-        assert message["result"]["answers"] == {}
-        did_decline = True
+    if message.get("id") == "user-input-request":
+        assert message == {"id":"user-input-request","result":{"answers":{}}}
+        declined.add("user-input")
+    elif message.get("id") == "permissions-request":
+        assert message == {"id":"permissions-request","result":{"permissions":{"fileSystem":None,"network":None},"scope":"turn","strictAutoReview":None}}
+        declined.add("permissions")
     else:
         requests.append(message)
 for request in reversed(requests):

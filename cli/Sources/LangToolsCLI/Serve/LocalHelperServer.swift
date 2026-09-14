@@ -78,6 +78,14 @@ struct LocalHelperServer {
 
     private func route(request: HTTPRequest, connection: NWConnection) async {
         do {
+            if request.method == "DELETE", request.path.hasPrefix("/v1/account/conversations/") {
+                guard let conversationID = Self.conversationID(fromCleanupPath: request.path) else {
+                    throw CodexRuntimeError.badRequest("A valid conversation UUID is required.")
+                }
+                await CodexRuntimeService.shared.endConversation(id: conversationID)
+                respond(connection: connection, status: "204 No Content", body: "")
+                return
+            }
             switch (request.method, request.path) {
             case ("GET", "/health"):
                 let body = try Self.jsonBody(HelperHealthResponse(status: "ok", version: 1))
@@ -122,7 +130,8 @@ struct LocalHelperServer {
                 let content = try await OpenAIAccountChatCommand.performChat(
                     modelID: payload.model,
                     messages: payload.messages.map { .init(role: $0.role, content: $0.content) },
-                    codexHomeOverride: nil
+                    codexHomeOverride: nil,
+                    conversationID: payload.conversationID
                 )
                 let body = try Self.jsonBody(HelperChatResponse(content: content))
                 respond(connection: connection, status: "200 OK", body: body)
@@ -170,6 +179,14 @@ struct LocalHelperServer {
             expiresAt: nil,
             accessibleModelIDs: nil
         )
+    }
+
+    static func conversationID(fromCleanupPath path: String) -> UUID? {
+        let prefix = "/v1/account/conversations/"
+        guard path.hasPrefix(prefix) else { return nil }
+        let value = String(path.dropFirst(prefix.count))
+        guard value.isEmpty == false, value.contains("/") == false else { return nil }
+        return UUID(uuidString: value)
     }
 
     static func httpStatus(for error: Error) -> String {

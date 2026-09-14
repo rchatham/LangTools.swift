@@ -49,26 +49,47 @@ final class LocalHelperServerTests: XCTestCase {
         XCTAssertNil(object["idToken"])
     }
 
-    func testChatThreadWireConfigurationIsEphemeralAndReadOnly() throws {
-        let params = CodexThreadStartParams(
-            model: "gpt-5.5",
-            modelProvider: nil,
-            cwd: "/tmp/isolated",
-            approvalPolicy: "never",
-            sandbox: "read-only",
-            config: nil,
-            developerInstructions: "Do not use tools.",
-            multiAgentMode: "none",
-            ephemeral: true,
-            environments: [],
-            dynamicTools: [],
-            selectedCapabilityRoots: []
+    func testChatPayloadConversationIdentityAndUnsupportedPaths() throws {
+        let id = UUID()
+        let withID = Data(#"{"provider":"openAI","model":"gpt","messages":[{"role":"user","content":"hi"}],"stream":false,"conversationID":"\#(id.uuidString)"}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(HelperChatRequest.self, from: withID).conversationID, id)
+
+        let legacy = Data(#"{"provider":"openAI","model":"gpt","messages":[{"role":"user","content":"hi"}],"stream":false}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(HelperChatRequest.self, from: legacy).conversationID)
+
+        let malformed = Data(#"{"provider":"openAI","model":"gpt","messages":[{"role":"user","content":"hi"}],"stream":false,"conversationID":"not-a-uuid"}"#.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(HelperChatRequest.self, from: malformed))
+
+        let additiveLegacy = Data(#"{"provider":"openAI","model":"gpt","messages":[{"role":"user","content":"hi"}],"stream":false,"tools":[{"name":"ignored"}],"toolChoice":"auto","futureMetadata":{"value":1}}"#.utf8)
+        let decoded = try JSONDecoder().decode(HelperChatRequest.self, from: additiveLegacy)
+        XCTAssertEqual(decoded.model, "gpt")
+
+        let securityFields = [
+            "cwd", "current-working-directory", "sandbox", "sandboxPolicy",
+            "permissions", "approval_policy", "networkAccess", "writableRoots",
+            "workspaceRoots", "runtimeWorkspaceRoots", "selectedCapabilityRoots",
+            "dynamicTools", "config", "developerInstructions", "baseInstructions",
+            "environment", "environments", "multiAgentMode", "modelProvider",
+            "ephemeral", "personality", "collaborationMode"
+        ]
+        for field in securityFields {
+            let object: [String: Any] = [
+                "provider": "openAI", "model": "gpt", "messages": [["role": "user", "content": "hi"]],
+                "stream": false, field: field == "networkAccess" ? false : "/tmp"
+            ]
+            let data = try JSONSerialization.data(withJSONObject: object)
+            XCTAssertThrowsError(try JSONDecoder().decode(HelperChatRequest.self, from: data), "Expected rejection for \(field)")
+        }
+    }
+
+    func testCleanupPathRequiresOneUUIDAndIsIdempotentlyAddressable() {
+        let id = UUID()
+        XCTAssertEqual(
+            LocalHelperServer.conversationID(fromCleanupPath: "/v1/account/conversations/\(id.uuidString)"),
+            id
         )
-        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(params)) as? [String: Any])
-        XCTAssertEqual(object["approvalPolicy"] as? String, "never")
-        XCTAssertEqual(object["sandbox"] as? String, "read-only")
-        XCTAssertEqual(object["ephemeral"] as? Bool, true)
-        XCTAssertEqual((object["dynamicTools"] as? [Any])?.count, 0)
+        XCTAssertNil(LocalHelperServer.conversationID(fromCleanupPath: "/v1/account/conversations/not-a-uuid"))
+        XCTAssertNil(LocalHelperServer.conversationID(fromCleanupPath: "/v1/account/conversations/\(id)/extra"))
     }
 
     func testHTTPErrorMappingCoversWireStatuses() {

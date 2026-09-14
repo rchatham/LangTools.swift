@@ -11,7 +11,8 @@ struct OpenAIAccountChatCommand {
         let content = try await performChat(
             modelID: request.modelID,
             messages: try request.messages(),
-            codexHomeOverride: request.codexHome
+            codexHomeOverride: request.codexHome,
+            conversationID: request.conversationID
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -23,7 +24,8 @@ struct OpenAIAccountChatCommand {
     static func performChat(
         modelID: String,
         messages: [HelperChatMessage],
-        codexHomeOverride: String?
+        codexHomeOverride: String?,
+        conversationID: UUID? = nil
     ) async throws -> String {
         if let codexHomeOverride, codexHomeOverride.isEmpty == false {
             let configured = ProcessInfo.processInfo.environment["LANGTOOLS_CODEX_HOME"]
@@ -32,7 +34,11 @@ struct OpenAIAccountChatCommand {
                 throw OpenAIAccountChatCommandError.codexHomeMustBeConfiguredInEnvironment
             }
         }
-        return try await CodexRuntimeService.shared.chat(model: modelID, messages: messages)
+        return try await CodexRuntimeService.shared.chat(
+            model: modelID,
+            messages: messages,
+            conversationID: conversationID
+        )
     }
 
     static func resolveCodexCommand(
@@ -145,11 +151,18 @@ private struct OpenAIAccountChatRequest {
     let modelID: String
     let messagesFile: String
     let codexHome: String?
+    let conversationID: UUID?
 
     init(arguments: [String]) throws {
         modelID = try Self.value(for: "--model", in: arguments)
         messagesFile = try Self.value(for: "--messages-file", in: arguments)
         codexHome = Self.optionalValue(for: "--codex-home", in: arguments)
+        if let rawID = Self.optionalValue(for: "--conversation-id", in: arguments) {
+            guard let parsed = UUID(uuidString: rawID) else { throw OpenAIAccountChatCommandError.usage }
+            conversationID = parsed
+        } else {
+            conversationID = nil
+        }
     }
 
     func messages() throws -> [HelperChatMessage] {
@@ -180,7 +193,7 @@ private enum OpenAIAccountChatCommandError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .usage: return "Usage: LangToolsCLI openai-chat --model <model-id> --messages-file <path>"
+        case .usage: return "Usage: LangToolsCLI openai-chat --model <model-id> --messages-file <path> [--conversation-id <uuid>]"
         case .codexUnavailable: return "Codex CLI is not available. Install it and ensure `codex` is on PATH, or set LANGTOOLS_CODEX_PATH."
         case .codexHomeMustBeConfiguredInEnvironment:
             return "--codex-home must match LANGTOOLS_CODEX_HOME or CODEX_HOME so the shared Codex app-server uses the requested account."

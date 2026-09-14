@@ -23,10 +23,17 @@ private final class ProcessChunkPump: @unchecked Sendable {
 
 actor CodexAppServerClient {
     typealias CommandResolver = @Sendable () throws -> ResolvedCodexCommand
+    typealias RequestTimeoutSleeper = @Sendable (String, Duration) async throws -> Void
 
     private struct PendingRequest {
         let continuation: CheckedContinuation<Data, Error>
         let timeoutTask: Task<Void, Never>
+        let cancellationScope: UUID?
+    }
+
+    private struct StartupWaiter {
+        let cancellationScope: UUID?
+        let continuation: CheckedContinuation<Void, Error>
     }
 
     private struct NotificationWaiter {
@@ -45,15 +52,17 @@ actor CodexAppServerClient {
     private let commandResolver: CommandResolver
     private let environment: [String: String]
     private let defaultTimeout: Duration
+    private let requestTimeoutSleeper: RequestTimeoutSleeper
     private var process: Process?
     private var stdinHandle: FileHandle?
     private var stdoutBuffer = Data()
     private var pending: [Int: PendingRequest] = [:]
+    private var cancelledRequestScopes = Set<UUID>()
     private var notificationSubscriptions: [UUID: NotificationSubscriptionState] = [:]
     private var nextRequestID = 1
     private var isInitialized = false
     private var isStarting = false
-    private var startupWaiters: [CheckedContinuation<Void, Error>] = []
+    private var startupWaiters: [UUID: StartupWaiter] = [:]
     private var shuttingDown = false
     private var stderrTail = ""
     private var processGeneration: UUID?
@@ -65,27 +74,35 @@ actor CodexAppServerClient {
     init(
         commandResolver: @escaping CommandResolver = { try OpenAIAccountChatCommand.resolveCodexCommand() },
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        defaultTimeout: Duration = .seconds(30)
+        defaultTimeout: Duration = .seconds(30),
+        requestTimeoutSleeper: @escaping RequestTimeoutSleeper = { _, duration in
+            try await Task.sleep(for: duration)
+        }
     ) {
         self.commandResolver = commandResolver
         self.environment = environment
         self.defaultTimeout = defaultTimeout
+        self.requestTimeoutSleeper = requestTimeoutSleeper
     }
 
     func request<Params: Encodable, Response: Decodable>(
         method: String,
         params: Params,
         timeout: Duration? = nil,
-        cancelOnTaskCancellation: Bool = true
+        cancelOnTaskCancellation: Bool = true,
+        cancellationScope: UUID? = nil
     ) async throws -> Response {
-        try await ensureStarted()
+        try validateRequestScope(cancellationScope)
+        try await ensureStarted(cancellationScope: cancellationScope)
+        try validateRequestScope(cancellationScope)
         let paramsData = try JSONEncoder().encode(params)
         let paramsObject = try JSONSerialization.jsonObject(with: paramsData)
         let data = try await sendRequest(
             method: method,
             params: paramsObject,
             timeout: timeout ?? defaultTimeout,
-            cancelOnTaskCancellation: cancelOnTaskCancellation
+            cancelOnTaskCancellation: cancelOnTaskCancellation,
+            cancellationScope: cancellationScope
         )
         do {
             return try JSONDecoder().decode(Response.self, from: data)
@@ -159,7 +176,34 @@ actor CodexAppServerClient {
         state.waiter?.continuation.resume(throwing: CancellationError())
     }
 
+    func cancelRequests(in scope: UUID) {
+        cancelledRequestScopes.insert(scope)
+        let startupWaiterIDs = startupWaiters.compactMap { id, waiter in
+            waiter.cancellationScope == scope ? id : nil
+        }
+        for waiterID in startupWaiterIDs {
+            failStartupWaiter(id: waiterID, error: CancellationError())
+        }
+        let requestIDs = pending.compactMap { id, request in
+            request.cancellationScope == scope ? id : nil
+        }
+        for requestID in requestIDs {
+            failPending(id: requestID, error: CancellationError())
+        }
+    }
+
+    func closeRequestCancellationScope(_ scope: UUID) {
+        cancelledRequestScopes.remove(scope)
+    }
+
+    func initializedProcessGeneration() async throws -> UUID {
+        try await ensureStarted()
+        guard let processGeneration else { throw CodexAppServerError.unavailable }
+        return processGeneration
+    }
+
     func restart() async throws {
+        guard shuttingDown == false else { throw CodexAppServerError.shutdown }
         shutdownProcess(error: CodexAppServerError.restarted)
         try await ensureStarted()
     }
@@ -169,15 +213,45 @@ actor CodexAppServerClient {
         shutdownProcess(error: CodexAppServerError.shutdown)
     }
 
-    private func ensureStarted() async throws {
+    private func ensureStarted(cancellationScope: UUID? = nil) async throws {
+        guard shuttingDown == false else { throw CodexAppServerError.shutdown }
+        try validateRequestScope(cancellationScope)
         if isInitialized, let process, process.isRunning { return }
-        if isStarting {
-            try await withCheckedThrowingContinuation { startupWaiters.append($0) }
+
+        let waiterID = UUID()
+        let shouldStart = isStarting == false
+        if shouldStart {
+            isStarting = true
+        }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                guard cancellationScope.map({ cancelledRequestScopes.contains($0) }) != true else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                startupWaiters[waiterID] = StartupWaiter(
+                    cancellationScope: cancellationScope,
+                    continuation: continuation
+                )
+                if shouldStart {
+                    Task { [weak self] in
+                        await self?.performStartup()
+                    }
+                }
+            }
+        } onCancel: {
+            Task { [weak self] in
+                await self?.failStartupWaiter(id: waiterID, error: CancellationError())
+            }
+        }
+        try validateRequestScope(cancellationScope)
+    }
+
+    private func performStartup() async {
+        guard shuttingDown == false else {
+            finishStartup(with: .failure(CodexAppServerError.shutdown))
             return
         }
-
-        isStarting = true
-        shuttingDown = false
         if process != nil || stdinHandle != nil || stdoutBuffer.isEmpty == false {
             shutdownProcess(error: CodexAppServerError.restarted)
         }
@@ -186,7 +260,7 @@ actor CodexAppServerClient {
             let params = CodexInitializeParams(
                 clientInfo: .init(name: "langtools-cli", title: "LangTools CLI", version: "1"),
                 capabilities: .init(
-                    experimentalApi: false,
+                    experimentalApi: true,
                     requestAttestation: false,
                     mcpServerOpenaiFormElicitation: false,
                     optOutNotificationMethods: nil
@@ -198,23 +272,30 @@ actor CodexAppServerClient {
                 method: "initialize",
                 params: object,
                 timeout: defaultTimeout,
-                cancelOnTaskCancellation: true
+                cancelOnTaskCancellation: false
             )
             _ = try JSONDecoder().decode(CodexInitializeResponse.self, from: responseData)
             try writeJSONObject(["method": "initialized"])
             isInitialized = true
-            isStarting = false
-            let waiters = startupWaiters
-            startupWaiters.removeAll()
-            waiters.forEach { $0.resume() }
+            finishStartup(with: .success(()))
         } catch {
-            isStarting = false
             shutdownProcess(error: error)
-            let waiters = startupWaiters
-            startupWaiters.removeAll()
-            waiters.forEach { $0.resume(throwing: error) }
-            throw error
+            finishStartup(with: .failure(error))
         }
+    }
+
+    private func finishStartup(with result: Result<Void, Error>) {
+        isStarting = false
+        let waiters = startupWaiters.values
+        startupWaiters.removeAll()
+        for waiter in waiters {
+            waiter.continuation.resume(with: result)
+        }
+    }
+
+    private func failStartupWaiter(id: UUID, error: Error) {
+        guard let waiter = startupWaiters.removeValue(forKey: id) else { return }
+        waiter.continuation.resume(throwing: error)
     }
 
     private func launchProcess() throws {
@@ -281,37 +362,76 @@ actor CodexAppServerClient {
         method: String,
         params: Any,
         timeout: Duration,
-        cancelOnTaskCancellation: Bool
+        cancelOnTaskCancellation: Bool,
+        cancellationScope: UUID? = nil
     ) async throws -> Data {
+        try validateRequestScope(cancellationScope)
         guard let process, process.isRunning else { throw CodexAppServerError.unavailable }
         let requestID = nextRequestID
         nextRequestID += 1
 
-        let operation = {
-            try await withCheckedThrowingContinuation { continuation in
-                let timeoutTask = Task { [weak self] in
-                    do {
-                        try await Task.sleep(for: timeout)
-                    } catch {
-                        return
-                    }
-                    await self?.failPending(id: requestID, error: CodexAppServerError.timeout(method))
-                }
-                self.pending[requestID] = PendingRequest(continuation: continuation, timeoutTask: timeoutTask)
-                do {
-                    try self.writeJSONObject(["id": requestID, "method": method, "params": params])
-                } catch {
-                    self.failPending(id: requestID, error: error)
-                }
-            }
-        }
         guard cancelOnTaskCancellation else {
-            return try await operation()
+            return try await registerPendingRequest(
+                id: requestID,
+                method: method,
+                params: params,
+                timeout: timeout,
+                cancellationScope: cancellationScope
+            )
         }
-        return try await withTaskCancellationHandler(operation: operation) {
+        return try await withTaskCancellationHandler {
+            try await registerPendingRequest(
+                id: requestID,
+                method: method,
+                params: params,
+                timeout: timeout,
+                cancellationScope: cancellationScope
+            )
+        } onCancel: {
             Task { [weak self] in
                 await self?.failPending(id: requestID, error: CancellationError())
             }
+        }
+    }
+
+    private func registerPendingRequest(
+        id requestID: Int,
+        method: String,
+        params: Any,
+        timeout: Duration,
+        cancellationScope: UUID?
+    ) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            let timeoutTask = Task { [weak self, requestTimeoutSleeper = self.requestTimeoutSleeper] in
+                do {
+                    try await requestTimeoutSleeper(method, timeout)
+                    try Task.checkCancellation()
+                } catch {
+                    return
+                }
+                await self?.failPending(id: requestID, error: CodexAppServerError.timeout(method))
+            }
+            guard cancellationScope.map({ cancelledRequestScopes.contains($0) }) != true else {
+                timeoutTask.cancel()
+                continuation.resume(throwing: CancellationError())
+                return
+            }
+            pending[requestID] = PendingRequest(
+                continuation: continuation,
+                timeoutTask: timeoutTask,
+                cancellationScope: cancellationScope
+            )
+            do {
+                try writeJSONObject(["id": requestID, "method": method, "params": params])
+            } catch {
+                failPending(id: requestID, error: error)
+            }
+        }
+    }
+
+    private func validateRequestScope(_ scope: UUID?) throws {
+        if let scope, cancelledRequestScopes.contains(scope) {
+            throw CancellationError()
         }
     }
 
@@ -415,6 +535,14 @@ actor CodexAppServerClient {
         switch method {
         case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
             result = ["decision": "decline"]
+        case "item/permissions/requestApproval":
+            // Codex 0.142.0 requires PermissionsRequestApprovalResponse. Granting
+            // neither profile fails closed while preserving the protocol's exact shape.
+            result = [
+                "permissions": ["fileSystem": NSNull(), "network": NSNull()],
+                "scope": "turn",
+                "strictAutoReview": NSNull()
+            ]
         case "applyPatchApproval", "execCommandApproval":
             result = ["decision": "denied"]
         case "item/tool/requestUserInput":

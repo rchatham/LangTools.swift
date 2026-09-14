@@ -60,19 +60,23 @@ while True:
         params = request["params"]
         assert params["model"] == "codex-one"
         assert params["approvalPolicy"] == "never"
-        assert params["sandbox"] == "read-only"
+        assert params["sandbox"] == "workspace-write"
         assert params["ephemeral"] is True
+        assert params["cwd"].startswith("/")
+        assert "runtimeWorkspaceRoots" not in params
         assert "dynamicTools" not in params
         assert "environments" not in params
         assert "multiAgentMode" not in params
         assert "selectedCapabilityRoots" not in params
-        assert params["config"]["web_search"] == "disabled"
-        assert "tools" not in params["config"]
+        assert "config" not in params
         write({"id":request["id"], "result":{"thread":{"id":"thread-1"},"model":"codex-one","modelProvider":"openai"}})
     elif method == "turn/start":
         params = request["params"]
         assert params["threadId"] == "thread-1"
-        assert params["sandboxPolicy"] == {"type":"readOnly","networkAccess":False}
+        workspace = params["sandboxPolicy"]["writableRoots"][0]
+        assert params["sandboxPolicy"] == {"type":"workspaceWrite","writableRoots":[workspace],"networkAccess":False,"excludeTmpdirEnvVar":True,"excludeSlashTmp":True}
+        assert "runtimeWorkspaceRoots" not in params
+        assert "permissions" not in params
         assert params["input"][0]["text_elements"] == []
         for index in range(75):
             write({"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"a","delta":str(index) + ","}})

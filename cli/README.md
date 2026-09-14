@@ -33,6 +33,10 @@ CODEX_HOME="$HOME/.codex" codex login
 
 Then retry **Sign in to Codex**. Never pass browser OAuth access or ID tokens to `codex login --with-access-token`; that option accepts different Codex token formats.
 
+## Codex capability boundary
+
+The helper does not forward app-provided tools, legacy `tools`/`toolChoice` fields, or helper-defined dynamic tools to Codex. It starts turns with Codex's supported workspace-write sandbox policy and `networkAccess: false`; that setting constrains network access for commands executed inside the local sandbox only. It is **not** total network isolation: the user's native Codex account configuration can still include hosted capabilities or MCP servers managed by Codex.
+
 ## Verification
 
 ```bash
