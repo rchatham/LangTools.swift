@@ -74,6 +74,11 @@ struct CodexSeatbeltProfile: Sendable {
     func render(inputs: Inputs) -> String {
         let codexHome = Self.quoted(inputs.codexHome)
         let workspaceRoot = Self.quoted(inputs.workspaceRoot)
+        // Apple's canonical shared seatbelt profile (shipped at
+        // /System/Library/Sandbox/Profiles/system.sb and imported by Apple's
+        // own /usr/share/sandbox profiles). It supplies the boilerplate allows
+        // a process needs to exec/load under deny-default; without it deny-default
+        // aborts at startup. Loadability is exercised by the real sandbox-exec tests.
         var lines: [String] = [
             "(version 1)",
             "(deny default)",
