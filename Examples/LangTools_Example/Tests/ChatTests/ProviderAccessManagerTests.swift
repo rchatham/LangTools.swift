@@ -160,4 +160,24 @@ final class ProviderAccessManagerTests: XCTestCase {
         XCTAssertFalse(modelIDs.contains("openai/gpt-5.5"))
         XCTAssertFalse(modelIDs.contains("openai/gpt-4o-mini"))
     }
+
+    func testConcurrentRefreshAndStateReadsAreSafeAcrossIsolation() async {
+        // Exercises state(for:) from a nonisolated async context (mirroring
+        // NetworkClient.ensureModelAccess) interleaved with main-thread
+        // refresh() writes. The lock-protected snapshot must stay consistent
+        // and never return a state for the wrong service.
+        for index in 0..<400 {
+            let service = APIService.allCases[index % APIService.allCases.count]
+            // Nonisolated read of the access manager (no MainActor hop).
+            let snapshot = accessManager.state(for: service)
+            XCTAssertEqual(snapshot.service, service)
+            if index % 2 == 0 {
+                await MainActor.run { accessManager.refresh() }
+            }
+        }
+        await MainActor.run { accessManager.refresh() }
+        for service in APIService.allCases {
+            XCTAssertEqual(accessManager.state(for: service).service, service)
+        }
+    }
 }

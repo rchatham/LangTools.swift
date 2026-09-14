@@ -13,6 +13,7 @@ public final class ProviderAccessManager: ObservableObject {
 
     private let keychainService: KeychainService
     private let sessionStore: AuthSessionStore
+    private let stateLock = NSLock()
 
     public init(
         keychainService: KeychainService = .shared,
@@ -37,7 +38,11 @@ public final class ProviderAccessManager: ObservableObject {
                 accountIdentifier: session?.accountIdentifier
             )
         }
-        let applyStates = { self.states = newStates }
+        let applyStates = {
+            self.stateLock.lock()
+            self.states = newStates
+            self.stateLock.unlock()
+        }
         if Thread.isMainThread {
             applyStates()
         } else {
@@ -55,8 +60,18 @@ public final class ProviderAccessManager: ObservableObject {
         refresh()
     }
 
+    /// Snapshot of `states` safe to read from any thread (including nonisolated
+    /// `async` call sites such as `NetworkClient.ensureModelAccess`). The
+    /// dictionary is a value type, so a copy under the lock avoids racing the
+    /// main-thread `@Published` write in `refresh()`.
+    private func snapshotStates() -> [APIService: ProviderAccessState] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return states
+    }
+
     public func state(for service: APIService) -> ProviderAccessState {
-        states[service] ?? ProviderAccessState(service: service, authStatus: .notConfigured, availableModels: [])
+        snapshotStates()[service] ?? ProviderAccessState(service: service, authStatus: .notConfigured, availableModels: [])
     }
 
     public func hasAccountSession(for service: APIService) -> Bool {
