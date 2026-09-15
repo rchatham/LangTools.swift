@@ -195,7 +195,9 @@ struct CodexSeatbeltProfile: Sendable {
                 "   (global-name \"com.apple.networkd\")\n" +
                 "   (global-name \"com.apple.dnssd\")\n" +
                 ")",
-            "(allow system-socket)",
+            // AF_SYSTEM control sockets only (domain 32, from the denial
+            // reports); regular TCP/UDP is covered by network* above.
+            "(allow system-socket (socket-domain 32))",
             // Scoped to Codex's own preference domain. Codex also probes
             // kCFPreferencesAnyApplication, which is denied and non-fatal;
             // scoping avoids exposing every app's CFPreferences/NSUserDefaults
@@ -208,7 +210,10 @@ struct CodexSeatbeltProfile: Sendable {
             // workspace/codex home are otherwise un-stat-able). Accepted risk,
             // stated explicitly: this permits existence/metadata probing of
             // arbitrary paths (e.g. ~/.ssh/config existing) but never contents;
-            // content reads remain denied-by-default below.
+            // content reads remain denied-by-default below. Narrowing this to
+            // the allowlisted roots and their ancestor components was attempted
+            // and empirically broke app-server startup, so the broad grant is
+            // required for codex to run at all.
             "(allow file-read-metadata)"
         ]
         // System runtime roots Codex and its native tools need to exec/load.

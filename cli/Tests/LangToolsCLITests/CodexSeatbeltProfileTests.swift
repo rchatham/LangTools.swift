@@ -165,7 +165,7 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         // codex actually requested (enumerated from sandbox denial reports).
         XCTAssertTrue(source.contains("(allow mach-lookup"))
         XCTAssertTrue(source.contains("\"com.apple.SystemConfiguration.configd\""))
-        XCTAssertTrue(source.contains("(allow system-socket)"))
+        XCTAssertTrue(source.contains("(allow system-socket (socket-domain 32))"))
         XCTAssertTrue(source.contains(
             "(allow user-preference-read (preference-domain \"com.openai.codex\"))"
         ))
