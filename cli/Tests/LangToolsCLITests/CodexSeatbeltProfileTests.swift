@@ -38,7 +38,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutable: "/usr/bin/python3",
             codexExecutableArguments: [],
             codexHome: codexHome.path,
-            workspaceRoot: workspaceRoot.path
+            workspaceRoot: workspaceRoot.path,
+            codexRuntimeCache: ""
         )
         let profileURL = try CodexSeatbeltProfile().writeProfile(inputs: inputs)
         defer { try? FileManager.default.removeItem(at: profileURL) }
@@ -100,7 +101,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutable: "/opt/codex/bin/codex",
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
-            workspaceRoot: "/tmp/ws root"
+            workspaceRoot: "/tmp/ws root",
+            codexRuntimeCache: ""
         )
         let source = CodexSeatbeltProfile().render(inputs: inputs)
         XCTAssertTrue(source.contains("(deny default)"))

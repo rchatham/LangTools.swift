@@ -30,6 +30,9 @@ struct CodexSeatbeltProfile: Sendable {
         /// Helper-owned workspace root containing all conversation workspaces
         /// for this helper process lifetime.
         let workspaceRoot: String
+        /// Codex runtime/plugin cache (e.g. `~/.cache/codex-runtimes`). Empty
+        /// when it does not exist.
+        let codexRuntimeCache: String
     }
 
     /// Returns the absolute path to `sandbox-exec` when seatbelt containment is
@@ -63,6 +66,19 @@ struct CodexSeatbeltProfile: Sendable {
         )
     }
 
+    /// Resolves the Codex runtime/plugin cache directory when it exists.
+    static func resolvedCodexRuntimeCache(environment: [String: String]) -> String {
+        guard let home = environment["HOME"], home.isEmpty == false else { return "" }
+        let cache = URL(fileURLWithPath: home)
+            .appendingPathComponent(".cache/codex-runtimes")
+        let resolved = Self.standardizedResolving(cache.path)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: resolved, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else { return "" }
+        return resolved
+    }
+
     private static func standardizedResolving(_ path: String) -> String {
         URL(fileURLWithPath: path)
             .standardizedFileURL
@@ -85,6 +101,14 @@ struct CodexSeatbeltProfile: Sendable {
             "(import \"system.sb\")",
             "(allow process-exec process-fork signal)",
             "(allow network*)",
+            // Codex's HTTP stack (Rust reqwest/hyper) needs SystemConfiguration,
+            // network extension sockets, and DNS resolution to reach the backend;
+            // enumerating every mach service it touches is fragile, and mach IPC
+            // does not expose user files, so mach lookup stays broad. File reads
+            // remain the enforced boundary below.
+            "(allow mach-lookup)",
+            "(allow system-socket)",
+            "(allow user-preference-read)",
             // Allow stat/metadata of any path (low-risk: exposes existence only,
             // not contents) so the sandboxed process can resolve absolute path
             // components. Content reads remain denied-by-default below.
@@ -106,6 +130,12 @@ struct CodexSeatbeltProfile: Sendable {
         // Codex owns its credential/config/cache directory.
         lines.append("(allow file-read* (subpath \(codexHome)))")
         lines.append("(allow file-write* (subpath \(codexHome)))")
+        // Codex runtime/plugin cache (models cache, primary runtime plugins).
+        if inputs.codexRuntimeCache.isEmpty == false {
+            let runtimeCache = Self.quoted(inputs.codexRuntimeCache)
+            lines.append("(allow file-read* (subpath \(runtimeCache)))")
+            lines.append("(allow file-write* (subpath \(runtimeCache)))")
+        }
         // Helper-owned conversation workspaces.
         lines.append("(allow file-read* (subpath \(workspaceRoot)))")
         lines.append("(allow file-write* (subpath \(workspaceRoot)))")
