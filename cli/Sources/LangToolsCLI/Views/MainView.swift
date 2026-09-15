@@ -71,8 +71,9 @@ struct MainView: @preconcurrency View {
                 isStreaming: isStreaming
             )
 
-            // Separator above info line
-            Text(String(repeating: "─", count: 80))
+            // Separator above info line (fits the current terminal width so
+            // it never wraps and grows the footer)
+            Text(String(repeating: "─", count: max(10, TerminalSize.columns() - 8)))
                 .foregroundColor(.blue)
 
             // Info line - model, path, git branch (above input)

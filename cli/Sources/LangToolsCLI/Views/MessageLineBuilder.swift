@@ -72,4 +72,100 @@ enum MessageLineBuilder {
     static func leadingWhitespaceCount(_ line: String) -> Int {
         return line.prefix(while: { $0.isWhitespace }).count
     }
+
+    // MARK: - Wrapping
+    //
+    // SwiftTUI's renderer has no clipping: any layer taller than the window
+    // traps in `Renderer.drawPixel`. The tail-window budget must therefore
+    // count *wrapped rows*, not logical lines. These helpers wrap lines at a
+    // conservative width (the real terminal offers at least as many columns,
+    // so real wrapping never produces more rows than estimated).
+
+    /// Approximate display width of a line in terminal columns. Wide CJK/emoji
+    /// glyphs count as 2 columns; tabs conservatively count as 8.
+    static func displayWidth(of line: String) -> Int {
+        var width = 0
+        for character in line {
+            width += characterColumns(character)
+        }
+        return width
+    }
+
+    /// Terminal columns a character occupies.
+    static func characterColumns(_ character: Character) -> Int {
+        if character == "\t" { return 8 }
+        return isWide(character) ? 2 : 1
+    }
+
+    /// Whether a character renders double-width (East Asian Wide/Fullwidth or
+    /// emoji presentation).
+    static func isWide(_ character: Character) -> Bool {
+        for scalar in character.unicodeScalars {
+            if scalar.properties.isEmojiPresentation { return true }
+            switch scalar.value {
+            case 0x1100...0x115F,       // Hangul Jamo
+                 0x2E80...0x303E,       // CJK Radicals .. CJK Symbols
+                 0x3041...0x33FF,       // Hiragana .. CJK Compatibility
+                 0x4E00...0x9FFF,       // CJK Unified Ideographs
+                 0xA000...0xA4CF,       // Yi
+                 0xAC00...0xD7A3,       // Hangul Syllables
+                 0xF900...0xFAFF,       // CJK Compatibility Ideographs
+                 0xFE30...0xFE4F,       // CJK Compatibility Forms
+                 0xFF00...0xFF60,       // Fullwidth Forms
+                 0xFFE0...0xFFE6,       // Fullwidth Signs
+                 0x1F300...0x1F64F,     // Emoji (misc + emoticons)
+                 0x1F680...0x1F6FF,     // Emoji transport
+                 0x1F900...0x1F9FF,     // Supplemental Symbols
+                 0x20000...0x3FFFD:     // CJK Extensions
+                return true
+            default:
+                continue
+            }
+        }
+        return false
+    }
+
+    /// Wrap a line into segments of at most `width` display columns. The first
+    /// segment is shortened by `firstLinePrefixColumns` (inline prefixes such
+    // as "You: "). An empty line produces a single empty segment.
+    static func wrapSegments(of line: String, width: Int, firstLinePrefixColumns: Int = 0) -> [String] {
+        let width = max(1, width)
+        var segments: [String] = []
+        var current = ""
+        var currentWidth = firstLinePrefixColumns
+        for character in line {
+            let columns = characterColumns(character)
+            if currentWidth + columns > width, !current.isEmpty {
+                segments.append(current)
+                current = ""
+                currentWidth = 0
+            }
+            current.append(character)
+            currentWidth += columns
+        }
+        segments.append(current)
+        return segments
+    }
+
+    /// Number of wrapped rows a single logical line occupies.
+    static func wrappedRowCount(of line: String, width: Int, firstLinePrefixColumns: Int = 0) -> Int {
+        wrapSegments(of: line, width: width, firstLinePrefixColumns: firstLinePrefixColumns).count
+    }
+
+    /// Total wrapped rows for a sequence of logical lines.
+    static func wrappedRowCount<S: Sequence>(ofLines lines: S, width: Int) -> Int where S.Element == String {
+        lines.reduce(0) { $0 + wrappedRowCount(of: $1, width: width) }
+    }
+
+    /// The last `maxRows` wrapped rows of a single logical line, so the newest
+    /// content stays visible when a message alone exceeds the tail budget.
+    static func tailWrappedRows(of line: String, width: Int, firstLinePrefixColumns: Int = 0, maxRows: Int) -> [String] {
+        Array(wrapSegments(of: line, width: width, firstLinePrefixColumns: firstLinePrefixColumns).suffix(max(1, maxRows)))
+    }
+
+    /// The last `maxRows` wrapped rows across a sequence of logical lines.
+    static func tailWrappedRows<S: Sequence>(ofLines lines: S, width: Int, maxRows: Int) -> [String] where S.Element == String {
+        let segments = lines.flatMap { wrapSegments(of: $0, width: width) }
+        return Array(segments.suffix(max(1, maxRows)))
+    }
 }
