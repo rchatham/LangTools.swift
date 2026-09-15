@@ -831,6 +831,18 @@ enum CodexAppServerError: LocalizedError, Sendable {
     case restarted
     case shutdown
 
+    /// Maximum app-server stderr bytes embedded in a localized error message.
+    /// The runtime stderr tail is already capped (16 KB); this keeps the
+    /// user-facing error bounded.
+    static let maximumStderrDetailCharacters = 2_048
+
+    static func truncatedStderrDetail(_ stderr: String) -> String {
+        let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return "" }
+        guard trimmed.count > maximumStderrDetailCharacters else { return trimmed }
+        return String(trimmed.prefix(maximumStderrDetailCharacters)) + "…[truncated]"
+    }
+
     var errorDescription: String? {
         switch self {
         case .unavailable: return "Codex CLI is not available. Install it, put `codex` on PATH, or set LANGTOOLS_CODEX_PATH."
@@ -841,7 +853,7 @@ enum CodexAppServerError: LocalizedError, Sendable {
         case .invalidRequest(let message), .server(_, let message): return message
         case .timeout(let method): return "Codex app-server timed out while waiting for \(method)."
         case .exited(let status, let stderr):
-            let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            let detail = Self.truncatedStderrDetail(stderr)
             if detail.isEmpty {
                 return "Codex app-server exited with status \(status)."
             }

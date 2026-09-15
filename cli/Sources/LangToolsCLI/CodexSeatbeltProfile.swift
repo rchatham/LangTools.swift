@@ -66,17 +66,60 @@ struct CodexSeatbeltProfile: Sendable {
         )
     }
 
-    /// Resolves the Codex runtime/plugin cache directory when it exists.
-    static func resolvedCodexRuntimeCache(environment: [String: String]) -> String {
+    /// Resolves (creating when missing) the Codex runtime/plugin cache
+    /// directory.
+    ///
+    /// Fail-closed hardening: the seatbelt grants read/write on this directory,
+    /// and the helper does not own `~/.cache`, so the grant is only issued when
+    /// neither cache component is a symlink (a planted symlink would widen the
+    /// grant to its target), the path is a real directory owned by the
+    /// effective user, and a missing directory can be created helper-owned
+    /// (mode 0700). Otherwise no grant is issued and Codex simply runs without
+    /// this cache rather than gaining access to an unexpected location.
+    static func resolvedCodexRuntimeCache(
+        environment: [String: String],
+        fileManager: FileManager = .default
+    ) -> String {
         guard let home = environment["HOME"], home.isEmpty == false else { return "" }
-        let cache = URL(fileURLWithPath: home)
-            .appendingPathComponent(".cache/codex-runtimes")
-        let resolved = Self.standardizedResolving(cache.path)
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: resolved, isDirectory: &isDirectory),
-              isDirectory.boolValue
+        let cacheRoot = URL(fileURLWithPath: home, isDirectory: true)
+            .appendingPathComponent(".cache", isDirectory: true)
+        let cachePath = cacheRoot.appendingPathComponent("codex-runtimes", isDirectory: true)
+        let lexicalPath = cachePath.standardizedFileURL.path
+        let lexicalRoot = cacheRoot.standardizedFileURL.path
+
+        guard Self.isSymlink(at: lexicalPath, fileManager: fileManager) == false,
+              Self.isSymlink(at: lexicalRoot, fileManager: fileManager) == false
         else { return "" }
-        return resolved
+
+        var isDirectory: ObjCBool = false
+        if fileManager.fileExists(atPath: lexicalPath, isDirectory: &isDirectory) {
+            guard isDirectory.boolValue else { return "" }
+        } else {
+            do {
+                try fileManager.createDirectory(
+                    at: cachePath,
+                    withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: NSNumber(value: Int16(0o700))]
+                )
+                try fileManager.setAttributes(
+                    [.posixPermissions: NSNumber(value: Int16(0o700))],
+                    ofItemAtPath: lexicalPath
+                )
+            } catch {
+                return ""
+            }
+        }
+
+        guard let attributes = try? fileManager.attributesOfItem(atPath: lexicalPath),
+              let owner = attributes[.ownerAccountName] as? String,
+              owner == NSUserName()
+        else { return "" }
+
+        return lexicalPath
+    }
+
+    private static func isSymlink(at path: String, fileManager: FileManager) -> Bool {
+        (try? fileManager.destinationOfSymbolicLink(atPath: path)) != nil
     }
 
     private static func standardizedResolving(_ path: String) -> String {
@@ -106,6 +149,13 @@ struct CodexSeatbeltProfile: Sendable {
             // enumerating every mach service it touches is fragile, and mach IPC
             // does not expose user files, so mach lookup stays broad. File reads
             // remain the enforced boundary below.
+            //
+            // Accepted trade-off: `user-preference-read` is intentionally global.
+            // Codex reads both its own `com.openai.codex` domain and
+            // kCFPreferencesAnyApplication, so it cannot be scoped to one domain
+            // without breaking it. This exposes CFPreferences/NSUserDefaults
+            // values (app settings; some apps store credentials in prefs) but
+            // not user documents; the filesystem read boundary is unaffected.
             "(allow mach-lookup)",
             "(allow system-socket)",
             "(allow user-preference-read)",

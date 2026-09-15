@@ -137,7 +137,141 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         )
     }
 
+    func testRenderIncludesRuntimeCacheRulesWithQuotedPaths() throws {
+        let inputs = CodexSeatbeltProfile.Inputs(
+            codexExecutable: "/opt/codex/bin/codex",
+            codexExecutableArguments: [],
+            codexHome: "/tmp/codex-home",
+            workspaceRoot: "/tmp/ws root",
+            codexRuntimeCache: "/tmp/cache dir/codex-runtimes"
+        )
+        let source = CodexSeatbeltProfile().render(inputs: inputs)
+        XCTAssertTrue(source.contains("(allow file-read* (subpath \"/tmp/cache dir/codex-runtimes\"))"))
+        XCTAssertTrue(source.contains("(allow file-write* (subpath \"/tmp/cache dir/codex-runtimes\"))"))
+        // Broadened runtime operations are part of the profile.
+        XCTAssertTrue(source.contains("(allow mach-lookup)"))
+        XCTAssertTrue(source.contains("(allow system-socket)"))
+        XCTAssertTrue(source.contains("(allow user-preference-read)"))
+        XCTAssertTrue(source.contains("(allow file-read-metadata)"))
+        // No runtime-cache rules are emitted when no cache is configured.
+        let empty = CodexSeatbeltProfile().render(inputs: CodexSeatbeltProfile.Inputs(
+            codexExecutable: "/opt/codex/bin/codex",
+            codexExecutableArguments: [],
+            codexHome: "/tmp/codex-home",
+            workspaceRoot: "/tmp/ws root",
+            codexRuntimeCache: ""
+        ))
+        XCTAssertFalse(empty.contains("codex-runtimes"))
+    }
+
+    func testResolvedRuntimeCacheCreatesMissingDirectoryWithOwnerOnlyPermissions() throws {
+        let home = makeTempDir(prefix: "home")
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let cache = CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: ["HOME": home.path])
+        let expected = home.appendingPathComponent(".cache/codex-runtimes").standardizedFileURL.resolvingSymlinksInPath().path
+        XCTAssertEqual(cache, expected)
+
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cache, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
+        let permissions = try XCTUnwrap(
+            (try FileManager.default.attributesOfItem(atPath: cache)[.posixPermissions] as? NSNumber)?.intValue
+        )
+        XCTAssertEqual(permissions & 0o777, 0o700)
+    }
+
+    func testResolvedRuntimeCacheRefusesSymlinkedCacheDirectory() throws {
+        let home = makeTempDir(prefix: "home")
+        let target = makeTempDir(prefix: "target")
+        defer {
+            try? FileManager.default.removeItem(at: home)
+            try? FileManager.default.removeItem(at: target)
+        }
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".cache"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: home.appendingPathComponent(".cache/codex-runtimes"),
+            withDestinationURL: target
+        )
+
+        // A planted symlink must not widen the read/write grant to its target.
+        XCTAssertEqual(CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: ["HOME": home.path]), "")
+    }
+
+    func testResolvedRuntimeCacheRefusesSymlinkedCacheParent() throws {
+        let home = makeTempDir(prefix: "home")
+        let target = makeTempDir(prefix: "target")
+        defer {
+            try? FileManager.default.removeItem(at: home)
+            try? FileManager.default.removeItem(at: target)
+        }
+        try FileManager.default.createSymbolicLink(
+            at: home.appendingPathComponent(".cache"),
+            withDestinationURL: target
+        )
+
+        XCTAssertEqual(CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: ["HOME": home.path]), "")
+    }
+
+    func testResolvedRuntimeCacheRefusesNonDirectoryPath() throws {
+        let home = makeTempDir(prefix: "home")
+        defer { try? FileManager.default.removeItem(at: home) }
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".cache"), withIntermediateDirectories: true)
+        try Data("not a directory".utf8).write(to: home.appendingPathComponent(".cache/codex-runtimes"))
+
+        XCTAssertEqual(CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: ["HOME": home.path]), "")
+    }
+
+    func testExitedErrorTruncatesStderrDetail() {
+        let short = CodexAppServerError.exited(status: 1, stderr: "boom\n")
+        XCTAssertEqual(short.errorDescription, "Codex app-server exited with status 1: boom")
+
+        let blank = CodexAppServerError.exited(status: 1, stderr: "   \n")
+        XCTAssertEqual(blank.errorDescription, "Codex app-server exited with status 1.")
+
+        let huge = String(repeating: "x", count: 50_000)
+        let truncated = CodexAppServerError.exited(status: 2, stderr: huge).errorDescription ?? ""
+        XCTAssertLessThanOrEqual(truncated.count, CodexAppServerError.maximumStderrDetailCharacters + 64)
+        XCTAssertTrue(truncated.hasSuffix("…[truncated]"))
+    }
+
+    func testLaunchedProcessRunsInsideWorkspaceRootUnderSeatbelt() async throws {
+        guard CodexSeatbeltProfile.sandboxExecPath() != nil else {
+            throw XCTSkip("Seatbelt containment is unavailable on this platform.")
+        }
+        let workspace = makeTempDir(prefix: "ws")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let marker = workspace.appendingPathComponent("cwd-marker.txt")
+
+        let client = CodexAppServerClient(
+            commandResolver: {
+                ResolvedCodexCommand(executable: "/bin/sh", arguments: ["-c", "pwd > '\(marker.path)'"])
+            },
+            workspaceRootProvider: { workspace }
+        )
+        // Startup launches the command under the seatbelt with its working
+        // directory set to the workspace root; the fake command records its cwd
+        // and exits, so startup fails, but the marker proves where it ran.
+        _ = try? await client.initializedProcessGeneration()
+
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline, FileManager.default.fileExists(atPath: marker.path) == false {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let recorded = (try? String(contentsOf: marker, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // getcwd returns the physical path (/private/var for /var on macOS).
+        XCTAssertEqual(recorded.map(Self.physicalPath), Self.physicalPath(workspace.path))
+        await client.shutdown()
+    }
+
     // MARK: - Helpers
+
+    private static func physicalPath(_ path: String) -> String {
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard realpath(path, &buffer) != nil else { return path }
+        return String(cString: buffer)
+    }
 
     private func makeTempDir(prefix: String) -> URL {
         let url = FileManager.default.temporaryDirectory
