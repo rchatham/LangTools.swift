@@ -23,7 +23,6 @@ let package = Package(
         .library(name: "Ollama", targets: ["Ollama"]),
         .library(name: "AppleLangTools", targets: ["AppleLangTools"]),
         .library(name: "WhisperKitLangTools", targets: ["WhisperKitLangTools"]),
-        .executable(name: "ChatCLI", targets: ["ChatCLI"]),
     ],
     dependencies: [
         .package(url: "https://github.com/rchatham/JSON.swift.git", branch: "main"),
@@ -35,19 +34,17 @@ let package = Package(
         // .package(url: "https://github.com/MacPaw/OpenAI.git", from: "0.5.1"),
     ],
     targets: [
-        // Targets
         .target(name: "LangTools", dependencies: [.product(name: "JSON", package: "JSON.swift")], resources: [.process("README.md")]),
         .target(name: "Agents", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
         .target(name: "OpenAI", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
         .target(name: "Anthropic", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
-        .target(name: "XAI", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
-        .target(name: "Gemini", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
-        .target(name: "Ollama", dependencies: [ .target(name: "LangTools"), .target(name: "OpenAI"), ], resources: [.process("README.md")]),
+        .target(name: "XAI", dependencies: [.target(name: "LangTools"), .target(name: "OpenAI")], resources: [.process("README.md")]),
+        .target(name: "Gemini", dependencies: [.target(name: "LangTools"), .target(name: "OpenAI")], resources: [.process("README.md")]),
+        .target(name: "Ollama", dependencies: [.target(name: "LangTools"), .target(name: "OpenAI")], resources: [.process("README.md")]),
         .target(name: "AppleLangTools", dependencies: [.target(name: "LangTools")], path: "Sources/Apple", resources: [.process("README.md")]),
         .target(name: "WhisperKitLangTools", dependencies: [.target(name: "LangTools"), .product(name: "WhisperKit", package: "WhisperKit", condition: .when(platforms: [.macOS, .iOS]))], path: "Sources/WhisperKit"),
         .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], path: "Tests/TestUtils", resources: [.process("Resources/")]),
 
-        // Test targets
         .testTarget(name: "LangToolsTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils"]),
         .testTarget(name: "OpenAITests", dependencies: ["OpenAI", "TestUtils"]),
         .testTarget(name: "AnthropicTests", dependencies: ["Anthropic", "TestUtils"]),
@@ -72,8 +69,5 @@ let package = Package(
             // .product(name: "SwiftAnthropic", package: "SwiftAnthropic"),
             // .product(name: "OpenAI", package: "OpenAI", moduleAliases: ["OpenAI": "MacPawOpenAI"]),
         ]),
-    ] : []) + [
-        // Executable target
-        .executableTarget(name: "ChatCLI", dependencies: ["LangTools", "OpenAI", "Anthropic", "XAI", "Gemini", "Ollama"]),
-    ]
+    ] : [])
 )
