@@ -316,6 +316,11 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         let blank = CodexAppServerError.exited(status: 1, stderr: "   \n")
         XCTAssertEqual(blank.errorDescription, "Codex app-server exited with status 1.")
 
+        // Control characters are sanitized (terminal escapes cannot reach logs/UI).
+        let escape = CodexAppServerError.exited(status: 1, stderr: "bad\u{1B}[31mcolor\n").errorDescription ?? ""
+        XCTAssertFalse(escape.contains("\u{1B}"))
+        XCTAssertTrue(escape.contains("bad [31mcolor"))
+
         // Byte budget, not Character count: 2,048 UTF-8 bytes.
         let multiByte = String(repeating: "日", count: 5_000) // 15,000 bytes
         let truncatedBytes = CodexAppServerError.exited(status: 3, stderr: multiByte).errorDescription ?? ""
@@ -330,6 +335,16 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         let tail = CodexAppServerError.exited(status: 4, stderr: long).errorDescription ?? ""
         XCTAssertTrue(tail.hasSuffix("FATAL-REASON[truncated]"))
         XCTAssertFalse(tail.hasPrefix("aaa"))
+
+        // A multi-byte character split by the byte boundary is trimmed at the
+        // continuation boundary: the kept tail is exactly 682 complete
+        // characters (2048 bytes = 682 x 3 + 2), never a corrupted glyph.
+        let split = String(repeating: "日", count: 1_025) // boundary splits the last char
+        let splitDetail = CodexAppServerError.exited(status: 6, stderr: split).errorDescription ?? ""
+        XCTAssertEqual(
+            splitDetail,
+            "Codex app-server exited with status 6: …" + String(repeating: "日", count: 682) + "[truncated]"
+        )
     }
 
     func testLaunchedProcessRunsInsideWorkspaceRootUnderSeatbelt() async throws {

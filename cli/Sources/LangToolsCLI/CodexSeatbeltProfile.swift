@@ -103,7 +103,17 @@ struct CodexSeatbeltProfile: Sendable {
         var isDirectory: ObjCBool = false
         let rootExisted = fileManager.fileExists(atPath: lexicalRoot, isDirectory: &isDirectory)
         if fileManager.fileExists(atPath: lexicalPath, isDirectory: &isDirectory) {
-            guard isDirectory.boolValue else { return "" }
+            // A pre-existing leaf must be owned by the effective user and must
+            // not be group/other-writable: other local users could otherwise
+            // tamper with data the sandboxed process can read back, mirroring
+            // the create path.
+            guard isDirectory.boolValue,
+                  let attributes = try? fileManager.attributesOfItem(atPath: lexicalPath),
+                  let owner = attributes[.ownerAccountName] as? String,
+                  owner == currentUser,
+                  let permissions = attributes[.posixPermissions] as? NSNumber,
+                  permissions.intValue & 0o022 == 0
+            else { return "" }
         } else {
             if rootExisted {
                 // A pre-existing .cache the helper did not create must at least be
@@ -139,17 +149,21 @@ struct CodexSeatbeltProfile: Sendable {
             }
         }
 
-        // Re-check symlink status as late as possible: attributesOfItem would
-        // follow a symlink planted between the first check and here.
+        // Re-check symlink status on both components as late as possible:
+        // attributesOfItem would follow a symlink planted between the first
+        // check and here, vouching for a target's owner.
         guard Self.isSymlink(at: lexicalPath, fileManager: fileManager) == false,
-              let attributes = try? fileManager.attributesOfItem(atPath: lexicalPath),
-              let owner = attributes[.ownerAccountName] as? String,
-              owner == currentUser
+              Self.isSymlink(at: lexicalRoot, fileManager: fileManager) == false
         else { return "" }
 
-        // Match workspaceRoot handling: grant the symlink-resolved location the
-        // kernel will evaluate (a no-op when no component is a symlink).
-        return URL(fileURLWithPath: lexicalPath).resolvingSymlinksInPath().path
+        // Grant the lexical path, not a resolved one. Seatbelt evaluates file
+        // operations against symlink-resolved paths, so the allowlist below
+        // matches the physical location regardless; and if the directory is
+        // swapped for a symlink after launch, accesses through it resolve to
+        // the target and are denied because the target is not allowlisted.
+        // Resolving here instead would hand a swapped-in target path directly
+        // to the grant, so lexical is strictly safer.
+        return lexicalPath
     }
 
     private static func isSymlink(at path: String, fileManager: FileManager) -> Bool {

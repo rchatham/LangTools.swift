@@ -838,15 +838,34 @@ enum CodexAppServerError: LocalizedError, Sendable {
     static let maximumStderrDetailBytes = 2_048
 
     static func truncatedStderrDetail(_ stderr: String) -> String {
-        let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = sanitizeStderrDetail(stderr)
         guard trimmed.isEmpty == false else { return "" }
         var bytes = Array(trimmed.utf8)
         guard bytes.count > maximumStderrDetailBytes else { return trimmed }
         // The failure reason lives at the end of a crash log: keep the tail.
         bytes = Array(bytes.suffix(maximumStderrDetailBytes))
-        var detail = String(decoding: bytes, as: UTF8.self)
-        while detail.first == "\u{FFFD}" { detail.removeFirst() }
+        // Drop continuation bytes of a multi-byte character split by the byte
+        // boundary; a remaining partial start byte decodes to one replacement
+        // character, which is stripped only as a leading artifact.
+        var start = 0
+        while start < bytes.count, bytes[start] & 0b1100_0000 == 0b1000_0000 { start += 1 }
+        var detail = String(decoding: bytes[start...], as: UTF8.self)
+        if detail.first == "\u{FFFD}" { detail.removeFirst() }
         return "…" + detail + "[truncated]"
+    }
+
+    /// Replaces control characters (other than newlines) with spaces so
+    /// embedded stderr cannot smuggle terminal escape sequences into logs or
+    /// the UI, then collapses whitespace runs.
+    private static func sanitizeStderrDetail(_ value: String) -> String {
+        let replaced = String(value.map { character in
+            (character.isNewline || character.unicodeScalars.allSatisfy { $0.value >= 0x20 })
+                ? character : " "
+        })
+        return replaced
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { $0.isEmpty == false }
+            .joined(separator: " ")
     }
 
     var errorDescription: String? {
