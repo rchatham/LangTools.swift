@@ -34,13 +34,21 @@ final class MessageResponseTests: XCTestCase {
     }
 
     func testMessageResponseWithToolCallDecodable() throws {
-        Anthropic.decode { (result: Result<Anthropic.MessageResponse, Error>) in
-            switch result {
-            case .success(_): break
-            case .failure(let error):
-                XCTFail("failed to decode data \(error.localizedDescription)")
-            }
-        }(try getData(filename: "message_response_with_tool_call")!)
+        let data = try getData(filename: "message_response_with_tool_call")!
+        let response = try JSONDecoder().decode(Anthropic.MessageResponse.self, from: data)
+
+        guard case .array(let blocks) = response.messageInfo?.content,
+              case .toolUse(let toolUse) = blocks.first else {
+            return XCTFail("Expected tool_use content block")
+        }
+
+        XCTAssertEqual(toolUse.id, "toolu_01D7FLrfh4GYq7yT1ULFeyMV")
+        XCTAssertEqual(toolUse.name, "get_stock_price")
+        XCTAssertEqual(toolUse.inputJSON, .object(["ticker": .string("^GSPC")]))
+        XCTAssertTrue(toolUse.input.contains("^GSPC"))
+
+        let encoded = try response.data()
+        XCTAssertEqual(encoded.dictionary, data.dictionary, "Expected tool_use response to round-trip")
     }
 
     func testMessageResponseEncodable() throws {
