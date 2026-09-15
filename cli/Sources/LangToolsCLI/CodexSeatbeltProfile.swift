@@ -122,18 +122,6 @@ struct CodexSeatbeltProfile: Sendable {
                   permissions.intValue & 0o022 == 0
             else { return "" }
         } else {
-            if rootExisted {
-                // A pre-existing .cache the helper did not create must be owned
-                // by the effective user and must not be group/other-writable:
-                // otherwise another local user could swap the leaf between the
-                // checks above and below. Its mode is otherwise left untouched.
-                guard let rootAttributes = try? fileManager.attributesOfItem(atPath: lexicalRoot),
-                      let rootOwnerID = rootAttributes[.ownerAccountID] as? NSNumber,
-                      rootOwnerID.uint32Value == currentUserID,
-                      let rootPermissions = rootAttributes[.posixPermissions] as? NSNumber,
-                      rootPermissions.intValue & 0o022 == 0
-                else { return "" }
-            }
             do {
                 try fileManager.createDirectory(
                     at: cachePath,
@@ -173,6 +161,35 @@ struct CodexSeatbeltProfile: Sendable {
         // Resolving here instead would hand a swapped-in target path directly
         // to the grant, so lexical is strictly safer.
         return lexicalPath
+    }
+
+    /// Credential/token stores whose metadata probing is denied even though
+    /// global `file-read-metadata` is required for app-server startup.
+    static let sensitiveCredentialStoreNames = [
+        ".ssh",
+        ".gnupg",
+        ".aws",
+        ".netrc",
+        ".kube",
+        ".docker",
+        ".config",
+        ".gitconfig",
+        ".npmrc",
+        ".pypirc",
+        ".azure",
+        ".cargo",
+        ".terraform.d",
+        ".vault",
+        ".ansible"
+    ]
+
+    private static func sensitiveCredentialPaths(home: String) -> [String] {
+        var paths = sensitiveCredentialStoreNames.map { home + "/" + $0 }
+        // macOS credential/token locations one level deeper than the home.
+        paths.append(home + "/Library/Application Support")
+        paths.append(home + "/Library/Keychains")
+        paths.append(home + "/Library/Preferences")
+        return paths
     }
 
     private static func isSymlink(at path: String, fileManager: FileManager) -> Bool {
@@ -247,14 +264,12 @@ struct CodexSeatbeltProfile: Sendable {
             "(allow file-read-metadata)"
         ]
         if inputs.homeDirectory.isEmpty == false {
-            let home = inputs.homeDirectory
-            for sensitive in [".ssh", ".gnupg", ".aws", ".netrc", ".kube", ".docker", ".config"] {
-                let sensitivePath = home + "/" + sensitive
+            // Standardize first: a trailing slash or non-canonical form would
+            // produce subpaths that never match, silently disabling the deny.
+            let home = URL(fileURLWithPath: inputs.homeDirectory).standardizedFileURL.path
+            for sensitivePath in Self.sensitiveCredentialPaths(home: home) {
                 lines.append("(deny file-read-metadata (subpath \(Self.quoted(sensitivePath))))")
             }
-            // Application-support tokens live one level deeper; metadata of the
-            // parent is left permitted so path resolution keeps working.
-            lines.append("(deny file-read-metadata (subpath \(Self.quoted(home + "/Library/Application Support"))))")
         }
         // System runtime roots Codex and its native tools need to exec/load.
         for root in Self.systemReadRoots {

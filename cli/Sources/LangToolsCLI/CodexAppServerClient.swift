@@ -507,6 +507,12 @@ actor CodexAppServerClient {
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: NSNumber(value: Int16(0o700))]
         )
+        // Re-assert owner-only mode in case a prior launch created it with a
+        // different umask or the mode drifted.
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o700))],
+            ofItemAtPath: appServerCWD.path
+        )
         let inputs = CodexSeatbeltProfile.Inputs(
             codexExecutable: executable,
             codexExecutableArguments: Array(arguments.dropLast(3)),

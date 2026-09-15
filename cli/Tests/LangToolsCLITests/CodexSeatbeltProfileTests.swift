@@ -190,6 +190,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         ))
         XCTAssertTrue(source.contains("(allow file-read-metadata)"))
         XCTAssertFalse(source.contains("(allow mach-lookup)\n)"))
+        // No credential blocklist renders without a home directory.
+        XCTAssertFalse(source.contains("deny file-read-metadata"))
         // No runtime-cache rules are emitted when no cache is configured.
         let empty = CodexSeatbeltProfile().render(inputs: CodexSeatbeltProfile.Inputs(
             codexExecutable: "/opt/codex/bin/codex",
@@ -297,8 +299,14 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             ofItemAtPath: leaf.path
         )
 
-        // Other-writable cached runtime data could be tampered with by any
-        // local user and then read back by the sandboxed process.
+        // Group/other-writable cached runtime data could be tampered with by
+        // other local users and then read back by the sandboxed process.
+        XCTAssertEqual(CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: ["HOME": home.path]), "")
+
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o770))],
+            ofItemAtPath: leaf.path
+        )
         XCTAssertEqual(CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: ["HOME": home.path]), "")
     }
 
@@ -464,6 +472,33 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             XCTAssertTrue(message.contains("workspace root is missing"), message)
         }
         await client.shutdown()
+    }
+
+    func testRenderDeniesMetadataProbingOfEveryCredentialStore() throws {
+        let home = "/Users/reid"
+        let source = CodexSeatbeltProfile().render(inputs: CodexSeatbeltProfile.Inputs(
+            codexExecutable: "/opt/codex/bin/codex",
+            codexExecutableArguments: [],
+            codexHome: home + "/.codex",
+            workspaceRoot: home + "/Library/Caches/ws",
+            codexRuntimeCache: home + "/.cache/codex-runtimes",
+            homeDirectory: home
+        ))
+        for sensitive in CodexSeatbeltProfile.sensitiveCredentialStoreNames {
+            XCTAssertTrue(
+                source.contains("(deny file-read-metadata (subpath \"\(home)/\(sensitive)\"))"),
+                "missing metadata blocklist entry for \(sensitive)"
+            )
+        }
+        XCTAssertTrue(source.contains("(deny file-read-metadata (subpath \"\(home)/Library/Application Support\"))"))
+        XCTAssertTrue(source.contains("(deny file-read-metadata (subpath \"\(home)/Library/Keychains\"))"))
+        XCTAssertTrue(source.contains("(deny file-read-metadata (subpath \"\(home)/Library/Preferences\"))"))
+        // The mach-lookup enumeration stays pinned to the requested services.
+        for service in ["coreservicesd", "diskarbitrationd", "FSEvents", "SecurityServer",
+                        "configd", "SCNetworkReachability", "networkd", "dnssd"] {
+            XCTAssertTrue(source.contains(service), "missing mach service \(service)")
+        }
+        XCTAssertFalse(source.contains("(allow mach-lookup)\n)"))
     }
 
     // MARK: - Helpers
