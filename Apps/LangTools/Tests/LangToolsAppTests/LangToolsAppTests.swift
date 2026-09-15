@@ -24,6 +24,11 @@ final class KeychainHostSmokeTests: XCTestCase {
         let account = "promotion-smoke-\(UUID().uuidString)"
         let value = UUID().uuidString
 
+        // Remove stale smoke accounts left by interrupted earlier runs.
+        for staleAccount in keychain.allKeys() where staleAccount.hasPrefix("promotion-smoke-") {
+            try? keychain.remove(staleAccount)
+        }
+
         defer { try? keychain.remove(account) }
 
         do {
