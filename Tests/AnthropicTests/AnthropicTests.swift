@@ -230,5 +230,30 @@ class AnthropicTests: XCTestCase {
         // Deprecated (but not yet retired) models should return false
         XCTAssertFalse(Anthropic.Model.claude3Haiku_20240307.isRetired)
     }
+
+    // MARK: - Content Block Decoding
+
+    /// Pins the strict `type`-dispatch decoding of content blocks: an unknown `type` must throw
+    /// rather than being silently accepted (the old try-each-shape fallback could misdecode it
+    /// as text). Guards against a fixture or API change reintroducing lenient decoding.
+    func testContentBlockDecodingRejectsUnknownType() {
+        let unknown = #"[{"type":"bogus","text":"hi"}]"#.data(using: .utf8)!
+        XCTAssertThrowsError(try JSONDecoder().decode([Anthropic.Message.Content.ContentType].self, from: unknown)) { error in
+            guard case DecodingError.dataCorrupted = error else {
+                return XCTFail("Expected dataCorrupted for unknown content type, got \(error)")
+            }
+        }
+    }
+
+    /// A block with no `type` field must also throw — it previously decoded as TextContent via
+    /// the fallback chain, hiding malformed payloads.
+    func testContentBlockDecodingRejectsMissingType() {
+        let missing = #"[{"text":"hi"}]"#.data(using: .utf8)!
+        XCTAssertThrowsError(try JSONDecoder().decode([Anthropic.Message.Content.ContentType].self, from: missing)) { error in
+            guard case DecodingError.keyNotFound = error else {
+                return XCTFail("Expected keyNotFound for missing content type, got \(error)")
+            }
+        }
+    }
 }
 

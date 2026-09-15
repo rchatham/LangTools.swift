@@ -60,6 +60,23 @@ final class LangToolsTests: XCTestCase {
         XCTAssertEqual(MockURLProtocol.handlerCount(), 250)
     }
 
+    /// Pins the fail-fast interception: a request to a known API host with no registered
+    /// handler must fail immediately with resourceUnavailable — never escape to the real
+    /// network, where an unmocked call has no bounded timeout and can hang CI.
+    func testUnmockedRequestToKnownHostFailsFast() async throws {
+        MockURLProtocol.resetHandlers()
+        let session = URLSession(configuration: MockURLProtocol.configuration)
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
+        request.httpMethod = "POST"
+        do {
+            _ = try await session.data(for: request)
+            XCTFail("Unmocked request to a known API host must fail fast, not reach the network")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .resourceUnavailable,
+                           "Fail-fast interception should surface resourceUnavailable, got \(error)")
+        }
+    }
+
     // MARK: - LangToolsError Tests
 
     func testLangToolsErrorInvalidData() {
