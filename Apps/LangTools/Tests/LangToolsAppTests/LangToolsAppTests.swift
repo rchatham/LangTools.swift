@@ -2,6 +2,7 @@
 import Foundation
 import KeychainAccess
 import Testing
+import XCTest
 @testable import LangToolsApp
 
 @Test func appIdentityPreservesExistingInstallations() {
@@ -12,21 +13,27 @@ import Testing
 }
 
 #if os(macOS)
-@Test func signedHostCanAccessPreservedKeychainService() throws {
-    // Requires a signed host; unsigned macOS runners lack keychain entitlements.
-    // Exercise the real shared instance so a future initializer-default change
-    // cannot silently move credentials away from the preserved namespace.
-    #expect(KeychainService.shared.keychain.service == "com.reidchatham.LangTools_Example")
+final class KeychainHostSmokeTests: XCTestCase {
+    func testSignedHostCanAccessPreservedKeychainService() throws {
+        // Requires a signed host; unsigned macOS runners lack keychain entitlements.
+        // Exercise the real shared instance so a future initializer-default change
+        // cannot silently move credentials away from the preserved namespace.
+        XCTAssertEqual(KeychainService.shared.keychain.service, "com.reidchatham.LangTools_Example")
 
-    let keychain = Keychain(service: KeychainService.serviceIdentifier)
-    let account = "promotion-smoke-\(UUID().uuidString)"
-    let value = UUID().uuidString
+        let keychain = Keychain(service: KeychainService.shared.keychain.service)
+        let account = "promotion-smoke-\(UUID().uuidString)"
+        let value = UUID().uuidString
 
-    defer { try? keychain.remove(account) }
+        defer { try? keychain.remove(account) }
 
-    try keychain.set(value, key: account)
-    #expect(try keychain.getString(account) == value)
-    try keychain.remove(account)
-    #expect(try keychain.getString(account) == nil)
+        do {
+            try keychain.set(value, key: account)
+        } catch let status as KeychainAccess.Status where status == .missingEntitlement {
+            throw XCTSkip("Keychain entitlements unavailable on this (likely unsigned) host")
+        }
+        XCTAssertEqual(try keychain.getString(account), value)
+        try keychain.remove(account)
+        XCTAssertNil(try keychain.getString(account))
+    }
 }
 #endif

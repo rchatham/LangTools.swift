@@ -88,11 +88,6 @@ public final class CodexHelperTokenStore {
 public class KeychainService: KeychainSecretStoring {
     public static let shared = KeychainService()
 
-    /// Stable service identifier retained so existing credentials remain accessible.
-    /// Kept internal: the shared-instance assertion in the hosted test guards the
-    /// initializer-default literal against drift without expanding the public API.
-    static let serviceIdentifier = "com.reidchatham.LangTools_Example"
-
     let keychain: Keychain
 
     public init(keychain: Keychain = Keychain(service: "com.reidchatham.LangTools_Example")) {
