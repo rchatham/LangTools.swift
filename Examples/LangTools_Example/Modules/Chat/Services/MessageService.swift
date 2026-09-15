@@ -41,7 +41,14 @@ public class MessageService: Sendable {
     var filteredTools: [Tool]? {
         guard let enabledTools = ToolManager.shared.filteredTools() else { return nil }
         let enabledNames = Set(enabledTools.map { $0.name })
-        return tools?.filter { enabledNames.contains($0.name) }
+        // Agent tools come from `self.tools` (they carry the agent event handler).
+        var result: [Tool] = (tools ?? []).filter { enabledNames.contains($0.name) }
+        // Non-agent configs provide their own callbacks and are not in `self.tools`.
+        let selfToolNames = Set((tools ?? []).map { $0.name })
+        for config in ToolManager.shared.allToolConfigurations() where !config.isAgent && enabledNames.contains(config.id) && !selfToolNames.contains(config.id) {
+            result.append(Tool(config.toTool()))
+        }
+        return result
     }
 
     public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [any Agent]? = nil, tools: [Tool]? = nil) {
@@ -62,8 +69,17 @@ public class MessageService: Sendable {
             // Snapshot filtered tools on the main actor before entering the async stream.
             let activeTools = await filteredTools
 
+            // Surface non-agent tool-call lifecycle to ChatUI by applying
+            // LangTools tool events to the streaming assistant message.
+            let toolEventHandler: (LangToolsToolEvent) -> Void = { [weak self] event in
+                Task { @MainActor in
+                    guard let self, let last = self.messages.last, last.isAssistant else { return }
+                    last.applyToolEvent(event)
+                }
+            }
+
             var content: String = ""
-            for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: activeTools) {
+            for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: activeTools, toolEventHandler: toolEventHandler) {
                 content += chunk
                 // Only treat the last message as a continuation target when it is
                 // a plain assistant text message.  Content-card and agent-event

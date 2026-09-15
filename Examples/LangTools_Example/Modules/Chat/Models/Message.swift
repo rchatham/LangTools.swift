@@ -9,6 +9,7 @@ import LangTools
 import OpenAI
 import Anthropic
 import Ollama
+import ChatUI
 
 public final class Message: Codable, Sendable, ObservableObject, Identifiable, Equatable, Hashable {
     public let uuid: UUID
@@ -16,6 +17,9 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
     @Published public var contentType: ContentType
     public var imageDetail: ImageDetail?
     public let createdAt: Date
+    /// Tool invocations made while producing this message. Rendered by ChatUI
+    /// as expandable tool-call cards alongside the message bubble.
+    @Published public var toolCalls: [ChatToolCall] = []
     public var id: UUID { uuid }
 
     public var text: String? {
@@ -28,19 +32,20 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         }
     }
 
-    public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil, createdAt: Date = Date()) {
+    public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil, createdAt: Date = Date(), toolCalls: [ChatToolCall] = []) {
         self.uuid = uuid
         self.role = role
         self.contentType = contentType
         self.imageDetail = imageDetail
         self.createdAt = createdAt
+        self.toolCalls = toolCalls
     }
 
     // Helper initializer for regular messages
     public convenience init(text: String, role: Role) { self.init(role: role, contentType: .string(text)) }
 
     // Coding keys for encoding/decoding
-    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail, createdAt }
+    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail, createdAt, toolCalls }
 
     public required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -49,6 +54,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         contentType = try container.decode(ContentType.self, forKey: .contentType)
         imageDetail = try container.decodeIfPresent(ImageDetail.self, forKey: .imageDetail)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        toolCalls = try container.decodeIfPresent([ChatToolCall].self, forKey: .toolCalls) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -58,6 +64,9 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         try container.encode(contentType, forKey: .contentType)
         try container.encodeIfPresent(imageDetail, forKey: .imageDetail)
         try container.encode(createdAt, forKey: .createdAt)
+        if !toolCalls.isEmpty {
+            try container.encode(toolCalls, forKey: .toolCalls)
+        }
     }
 
     public static func == (lhs: Message, rhs: Message) -> Bool {
@@ -65,7 +74,8 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         lhs.role == rhs.role &&
         lhs.contentType == rhs.contentType &&
         lhs.imageDetail == rhs.imageDetail &&
-        lhs.createdAt == rhs.createdAt
+        lhs.createdAt == rhs.createdAt &&
+        lhs.toolCalls == rhs.toolCalls
     }
 
     public func hash(into hasher: inout Hasher) {
@@ -74,6 +84,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         hasher.combine(contentType)
         hasher.combine(imageDetail)
         hasher.combine(createdAt)
+        hasher.combine(toolCalls)
     }
 }
 
@@ -282,6 +293,52 @@ public enum AgentEventType: String, Codable {
 
 // Factory methods for agent events
 extension Message {
+    /// Updates the tool-call lifecycle for this message from a LangTools event.
+    /// Used by `MessageService` to surface non-agent tool activity to ChatUI.
+    public func applyToolEvent(_ event: LangToolsToolEvent) {
+        switch event {
+        case .toolCalled(let selection):
+            let id = selection.id ?? selection.name ?? UUID().uuidString
+            let arguments = selection.arguments.isEmpty ? nil : selection.arguments
+            let call = ChatToolCall(
+                id: id,
+                name: selection.name ?? "tool",
+                arguments: arguments,
+                status: .pending,
+                result: nil
+            )
+            if let index = toolCalls.firstIndex(where: { $0.id == id }) {
+                toolCalls[index] = call
+            } else {
+                toolCalls.append(call)
+            }
+        case .toolCompleted(let result):
+            guard let result else { return }
+            let id = result.tool_selection_id
+            let status: ChatToolCall.Status = result.is_error ? .failure : .success
+            if let index = toolCalls.firstIndex(where: { $0.id == id }) {
+                let existing = toolCalls[index]
+                toolCalls[index] = ChatToolCall(
+                    id: existing.id,
+                    name: existing.name,
+                    arguments: existing.arguments,
+                    status: status,
+                    result: result.result
+                )
+            } else {
+                toolCalls.append(
+                    ChatToolCall(
+                        id: id,
+                        name: "tool",
+                        arguments: nil,
+                        status: status,
+                        result: result.result
+                    )
+                )
+            }
+        }
+    }
+
     public static func agentEvent(type: AgentEventType, agentName: String, details: String, children: [Message] = []) -> Message {
         let content = AgentEventContent(type: type, agentName: agentName, details: details, children: children)
         return Message(role: .system, contentType: .agentEvent(content))

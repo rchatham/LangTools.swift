@@ -67,7 +67,7 @@ struct LangTools_ExampleApp: App {
                 iconName: "magnifyingglass",
                 isAgent: true
             ),
-        ])
+        ] + BuiltInTools.configurations())
     }
 
     // MARK: - Content Card Registry
