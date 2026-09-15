@@ -71,13 +71,22 @@ struct CodexSeatbeltProfile: Sendable {
     ///
     /// Fail-closed hardening: the seatbelt grants read/write on this directory,
     /// and the helper does not own `~/.cache`, so the grant is only issued when
-    /// neither cache component is a symlink (a planted symlink would widen the
-    /// grant to its target), the path is a real directory owned by the
-    /// effective user, and a missing directory can be created helper-owned
-    /// (mode 0700). Otherwise no grant is issued and Codex simply runs without
-    /// this cache rather than gaining access to an unexpected location.
+    /// neither cache component is a symlink (a planted symlink would otherwise
+    /// hand the grant a target path directly), the path is a real directory
+    /// owned by the effective user, and a missing directory can be created
+    /// helper-owned (mode 0700, including the intermediate `.cache` when the
+    /// helper creates it). Otherwise no grant is issued and Codex simply runs
+    /// without this cache rather than gaining access to an unexpected location.
+    ///
+    /// Seatbelt evaluates file operations against symlink-resolved paths, so a
+    /// symlink swapped in after launch resolves to a non-allowlisted target and
+    /// stays denied; the checks here prevent issuing a wide grant up front.
+    /// A pre-existing directory's mode is intentionally left untouched: the
+    /// grant only applies to the sandboxed Codex process running as the same
+    /// user, and existing filesystem permissions still bound everyone else.
     static func resolvedCodexRuntimeCache(
         environment: [String: String],
+        currentUser: String = NSUserName(),
         fileManager: FileManager = .default
     ) -> String {
         guard let home = environment["HOME"], home.isEmpty == false else { return "" }
@@ -92,6 +101,7 @@ struct CodexSeatbeltProfile: Sendable {
         else { return "" }
 
         var isDirectory: ObjCBool = false
+        let rootExisted = fileManager.fileExists(atPath: lexicalRoot, isDirectory: &isDirectory)
         if fileManager.fileExists(atPath: lexicalPath, isDirectory: &isDirectory) {
             guard isDirectory.boolValue else { return "" }
         } else {
@@ -105,6 +115,14 @@ struct CodexSeatbeltProfile: Sendable {
                     [.posixPermissions: NSNumber(value: Int16(0o700))],
                     ofItemAtPath: lexicalPath
                 )
+                // createDirectory applies explicit attributes only to the final
+                // component; keep the helper-created .cache owner-only too.
+                if rootExisted == false {
+                    try fileManager.setAttributes(
+                        [.posixPermissions: NSNumber(value: Int16(0o700))],
+                        ofItemAtPath: lexicalRoot
+                    )
+                }
             } catch {
                 return ""
             }
@@ -112,10 +130,12 @@ struct CodexSeatbeltProfile: Sendable {
 
         guard let attributes = try? fileManager.attributesOfItem(atPath: lexicalPath),
               let owner = attributes[.ownerAccountName] as? String,
-              owner == NSUserName()
+              owner == currentUser
         else { return "" }
 
-        return lexicalPath
+        // Match workspaceRoot handling: grant the symlink-resolved location the
+        // kernel will evaluate (a no-op when no component is a symlink).
+        return URL(fileURLWithPath: lexicalPath).resolvingSymlinksInPath().path
     }
 
     private static func isSymlink(at path: String, fileManager: FileManager) -> Bool {

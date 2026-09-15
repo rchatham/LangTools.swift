@@ -222,6 +222,51 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         XCTAssertEqual(CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: ["HOME": home.path]), "")
     }
 
+    func testResolvedRuntimeCacheRefusesMissingOrEmptyHome() {
+        XCTAssertEqual(CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: [:]), "")
+        XCTAssertEqual(CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: ["HOME": ""]), "")
+    }
+
+    func testResolvedRuntimeCacheRefusesForeignOwnedDirectory() throws {
+        let home = makeTempDir(prefix: "home")
+        defer { try? FileManager.default.removeItem(at: home) }
+        try FileManager.default.createDirectory(
+            at: home.appendingPathComponent(".cache/codex-runtimes"),
+            withIntermediateDirectories: true
+        )
+
+        XCTAssertEqual(
+            CodexSeatbeltProfile.resolvedCodexRuntimeCache(
+                environment: ["HOME": home.path],
+                currentUser: "someone-else"
+            ),
+            ""
+        )
+        // The real owner is still granted.
+        XCTAssertNotEqual(
+            CodexSeatbeltProfile.resolvedCodexRuntimeCache(
+                environment: ["HOME": home.path],
+                currentUser: NSUserName()
+            ),
+            ""
+        )
+    }
+
+    func testResolvedRuntimeCacheSetsIntermediateCachePermissions() throws {
+        let home = makeTempDir(prefix: "home")
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        XCTAssertNotNil(CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: ["HOME": home.path]))
+
+        let root = home.appendingPathComponent(".cache")
+        for path in [root, root.appendingPathComponent("codex-runtimes")] {
+            let permissions = try XCTUnwrap(
+                (try FileManager.default.attributesOfItem(atPath: path.path)[.posixPermissions] as? NSNumber)?.intValue
+            )
+            XCTAssertEqual(permissions & 0o777, 0o700, "\(path.path) should be owner-only")
+        }
+    }
+
     func testExitedErrorTruncatesStderrDetail() {
         let short = CodexAppServerError.exited(status: 1, stderr: "boom\n")
         XCTAssertEqual(short.errorDescription, "Codex app-server exited with status 1: boom")
@@ -262,6 +307,33 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         // getcwd returns the physical path (/private/var for /var on macOS).
         XCTAssertEqual(recorded.map(Self.physicalPath), Self.physicalPath(workspace.path))
+        await client.shutdown()
+    }
+
+    func testLaunchedProcessKeepsInheritedWorkingDirectoryWithoutSeatbelt() async throws {
+        // Without a workspace root there is no seatbelt launch, and the prior
+        // behavior is preserved: the child inherits the helper's cwd rather
+        // than being pointed at a workspace.
+        let workspace = makeTempDir(prefix: "ws")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let marker = workspace.appendingPathComponent("cwd-marker-no-seatbelt.txt")
+
+        let client = CodexAppServerClient(
+            commandResolver: {
+                ResolvedCodexCommand(executable: "/bin/sh", arguments: ["-c", "pwd > '\(marker.path)'"])
+            },
+            workspaceRootProvider: { nil }
+        )
+        _ = try? await client.initializedProcessGeneration()
+
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline, FileManager.default.fileExists(atPath: marker.path) == false {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let recorded = (try? String(contentsOf: marker, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(recorded.map(Self.physicalPath), Self.physicalPath(FileManager.default.currentDirectoryPath))
+        XCTAssertNotEqual(recorded.map(Self.physicalPath), Self.physicalPath(workspace.path))
         await client.shutdown()
     }
 
