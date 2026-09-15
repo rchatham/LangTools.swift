@@ -60,6 +60,20 @@ final class LangToolsTests: XCTestCase {
         XCTAssertEqual(MockURLProtocol.handlerCount(), 250)
     }
 
+    func testRemoveHandlerRemovesOnlyThatEndpoint() {
+        MockURLProtocol.resetHandlers()
+        MockURLProtocol.setHandler(for: "keep-me") { _ in (.success(Data()), 200) }
+        MockURLProtocol.setHandler(for: "remove-me") { _ in (.success(Data()), 200) }
+
+        MockURLProtocol.removeHandler(for: "remove-me")
+
+        XCTAssertEqual(MockURLProtocol.handlerCount(), 1)
+        let kept = URLRequest(url: URL(string: "https://example.com/keep-me")!)
+        let removed = URLRequest(url: URL(string: "https://example.com/remove-me")!)
+        XCTAssertTrue(MockURLProtocol.canInit(with: kept), "remaining endpoint must still intercept")
+        XCTAssertFalse(MockURLProtocol.canInit(with: removed), "removed endpoint must no longer intercept")
+    }
+
     /// Pins the fail-fast interception: a request to a known API host with no registered
     /// handler must fail immediately with resourceUnavailable — never escape to the real
     /// network, where an unmocked call has no bounded timeout and can hang CI.
