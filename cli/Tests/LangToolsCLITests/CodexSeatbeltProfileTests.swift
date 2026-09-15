@@ -392,7 +392,12 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         let recorded = (try? String(contentsOf: marker, encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         // getcwd returns the physical path (/private/var for /var on macOS).
-        XCTAssertEqual(recorded.map(Self.physicalPath), Self.physicalPath(workspace.path))
+        // The child runs in a dedicated empty directory inside the workspace
+        // root, not in the root itself.
+        XCTAssertEqual(
+            recorded.map(Self.physicalPath),
+            Self.physicalPath(workspace.appendingPathComponent("app-server-cwd").path)
+        )
         await client.shutdown()
     }
 

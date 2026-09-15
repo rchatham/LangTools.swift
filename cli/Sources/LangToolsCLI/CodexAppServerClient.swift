@@ -493,6 +493,17 @@ actor CodexAppServerClient {
                 "Codex workspace root is missing: \(resolvedWorkspace.path)"
             )
         }
+        // Give the app-server a dedicated, empty working directory inside the
+        // allowlisted root. Its own project-config scan must not traverse the
+        // sibling conversation workspaces that share the root; per-turn work
+        // happens in the conversation workspace set via thread/start.
+        let appServerCWD = resolvedWorkspace
+            .appendingPathComponent("app-server-cwd", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: appServerCWD,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: NSNumber(value: Int16(0o700))]
+        )
         let inputs = CodexSeatbeltProfile.Inputs(
             codexExecutable: executable,
             codexExecutableArguments: Array(arguments.dropLast(3)),
@@ -507,7 +518,7 @@ actor CodexAppServerClient {
             sandboxExec: sandboxExec,
             profilePath: profileURL.path,
             profileURL: profileURL,
-            workspaceURL: resolvedWorkspace
+            workspaceURL: appServerCWD
         )
     }
 
