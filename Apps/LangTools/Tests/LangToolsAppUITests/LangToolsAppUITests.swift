@@ -22,6 +22,7 @@ final class LangToolsAppUITests: XCTestCase {
         // Put teardown code here. This method is called after the invocation of each test method in the class.
     }
 
+#if !os(macOS)
     @MainActor
     func testPromotedAppLaunch() throws {
         let app = XCUIApplication()
@@ -33,6 +34,7 @@ final class LangToolsAppUITests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }
+#endif
 
 #if os(macOS)
     @MainActor
