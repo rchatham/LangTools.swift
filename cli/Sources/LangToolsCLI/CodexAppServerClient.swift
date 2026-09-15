@@ -502,6 +502,11 @@ actor CodexAppServerClient {
         // thread/start.
         let appServerCWD = resolvedWorkspace
             .appendingPathComponent("app-server-cwd", isDirectory: true)
+        // A sibling conversation could plant a symlink here (the root is
+        // writable inside the sandbox), so remove any symlink before creating.
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: appServerCWD.path)) != nil {
+            try FileManager.default.removeItem(at: appServerCWD)
+        }
         try FileManager.default.createDirectory(
             at: appServerCWD,
             withIntermediateDirectories: true,
@@ -513,6 +518,22 @@ actor CodexAppServerClient {
             [.posixPermissions: NSNumber(value: Int16(0o700))],
             ofItemAtPath: appServerCWD.path
         )
+        // Verify the final state: a real directory, owned by the effective
+        // user, not group/other-writable, and still not a symlink.
+        var cwdIsDirectory: ObjCBool = false
+        guard (try? FileManager.default.destinationOfSymbolicLink(atPath: appServerCWD.path)) == nil,
+              FileManager.default.fileExists(atPath: appServerCWD.path, isDirectory: &cwdIsDirectory),
+              cwdIsDirectory.boolValue,
+              let cwdAttributes = try? FileManager.default.attributesOfItem(atPath: appServerCWD.path),
+              let cwdOwnerID = cwdAttributes[.ownerAccountID] as? NSNumber,
+              cwdOwnerID.uint32Value == UInt32(geteuid()),
+              let cwdPermissions = cwdAttributes[.posixPermissions] as? NSNumber,
+              cwdPermissions.intValue & 0o022 == 0
+        else {
+            throw CodexAppServerError.transport(
+                "Codex app-server working directory is not a safe helper-owned directory: \(appServerCWD.path)"
+            )
+        }
         let inputs = CodexSeatbeltProfile.Inputs(
             codexExecutable: executable,
             codexExecutableArguments: Array(arguments.dropLast(3)),

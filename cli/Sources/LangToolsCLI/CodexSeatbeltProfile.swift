@@ -109,6 +109,18 @@ struct CodexSeatbeltProfile: Sendable {
 
         var isDirectory: ObjCBool = false
         let rootExisted = fileManager.fileExists(atPath: lexicalRoot, isDirectory: &isDirectory)
+        // The parent must be owned by the effective user and not group/other
+        // writable regardless of whether the leaf pre-exists: a writable or
+        // foreign-owned parent would let another local user swap the leaf
+        // between the checks below and the grant.
+        if rootExisted {
+            guard let rootAttributes = try? fileManager.attributesOfItem(atPath: lexicalRoot),
+                  let rootOwnerID = rootAttributes[.ownerAccountID] as? NSNumber,
+                  rootOwnerID.uint32Value == currentUserID,
+                  let rootPermissions = rootAttributes[.posixPermissions] as? NSNumber,
+                  rootPermissions.intValue & 0o022 == 0
+            else { return "" }
+        }
         if fileManager.fileExists(atPath: lexicalPath, isDirectory: &isDirectory) {
             // A pre-existing leaf must be owned by the effective user and must
             // not be group/other-writable: other local users could otherwise

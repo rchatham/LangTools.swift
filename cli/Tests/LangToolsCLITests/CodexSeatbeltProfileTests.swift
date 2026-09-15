@@ -98,13 +98,18 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             0,
             "Metadata probing must remain permitted (documented accepted risk)."
         )
-        // Credential-store locations are explicitly denied for metadata too.
-        let sshDirectory = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".ssh")
-        if FileManager.default.fileExists(atPath: sshDirectory.path) {
+        // Credential-store locations are explicitly denied for metadata too,
+        // for every blocklist entry that exists under the real home.
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        for sensitive in ["~/.ssh", "~/.gnupg", "~/.aws", "~/.config", "~/.gitconfig", "~/Library/Keychains"] {
+            let expanded = home.appendingPathComponent(
+                sensitive.replacingOccurrences(of: "~/", with: "")
+            )
+            guard FileManager.default.fileExists(atPath: expanded.path) else { continue }
             XCTAssertNotEqual(
-                runSandboxed(sandboxExec: sandboxExec, profile: profileURL, argv: ["/usr/bin/stat", sshDirectory.path]),
+                runSandboxed(sandboxExec: sandboxExec, profile: profileURL, argv: ["/usr/bin/stat", expanded.path]),
                 0,
-                "Metadata probing of ~/.ssh must be denied by the blocklist."
+                "Metadata probing of \(sensitive) must be denied by the blocklist."
             )
         }
         // Writing inside the workspace must succeed.
