@@ -25,13 +25,23 @@ final class AuthSessionStoreTests: XCTestCase {
             refreshToken: "refresh-token",
             idToken: "id-token",
             tokenType: "Bearer",
-            accessibleModelIDs: ["gpt-4o-mini", "gpt-5.1-codex"]
+            accessibleModelIDs: ["gpt-4o-mini", "gpt-5.3-codex-spark"]
         )
 
         try store.save(session)
         let loaded = try store.session(for: .openAI)
 
-        XCTAssertEqual(loaded, session)
+        XCTAssertEqual(loaded?.id, session.id)
+        XCTAssertEqual(loaded?.accountIdentifier, session.accountIdentifier)
+        XCTAssertEqual(loaded?.accessibleModelIDs, session.accessibleModelIDs)
+        // OpenAI sessions keep real tokens in the keychain: the CLI bridge and
+        // backend exchange rely on them. Only helper-managed marker sessions
+        // scrub credentials.
+        XCTAssertEqual(loaded?.accessToken, session.accessToken)
+        XCTAssertEqual(loaded?.refreshToken, session.refreshToken)
+        XCTAssertEqual(loaded?.idToken, session.idToken)
+        XCTAssertEqual(loaded?.tokenType, session.tokenType)
+        XCTAssertNil(loaded?.expiresAt)
     }
 
     func testLoadOlderSessionPayloadWithoutNewOptionalFields() throws {
@@ -43,7 +53,7 @@ final class AuthSessionStoreTests: XCTestCase {
           "accessToken": "token",
           "refreshToken": "refresh-token",
           "expiresAt": null,
-          "accessibleModelIDs": ["gpt-5.1-codex"],
+          "accessibleModelIDs": ["gpt-5.3-codex-spark"],
           "createdAt": 0
         }
         """
@@ -52,8 +62,31 @@ final class AuthSessionStoreTests: XCTestCase {
         let loaded = try store.session(for: .openAI)
 
         XCTAssertEqual(loaded?.accountIdentifier, "user@example.com")
+        XCTAssertEqual(loaded?.accessToken, "token")
+        XCTAssertEqual(loaded?.refreshToken, "refresh-token")
         XCTAssertNil(loaded?.idToken)
         XCTAssertNil(loaded?.tokenType)
+
+        // OpenAI credentials are preserved for the CLI bridge and backend
+        // exchange; the payload is only normalized, not scrubbed.
+        let rewritten = try XCTUnwrap(keychain.getString("openAI:accountSession"))
+        XCTAssertTrue(rewritten.contains("refresh-token"))
+        XCTAssertTrue(rewritten.contains("token"))
+    }
+
+    func testClaudeCodeCredentialsArePreserved() throws {
+        let session = AccountSession(
+            provider: .claudeCode,
+            accountIdentifier: "claude-user",
+            accessToken: "claude-access",
+            refreshToken: "claude-refresh",
+            idToken: "claude-id",
+            tokenType: "Bearer"
+        )
+
+        try store.save(session)
+
+        XCTAssertEqual(try store.session(for: .claudeCode), session)
     }
 
     func testRemoveSession() throws {

@@ -23,6 +23,21 @@ struct AuthCLI {
         }
     }
 
+    // Runtime-backed entry points used by the local helper server. Unlike the
+    // direct OAuth commands above, these delegate to the Codex app-server
+    // runtime and rely on the installed Codex CLI's authenticated state.
+    static func loginOpenAI() async throws -> StoredAccountSession {
+        try await CodexRuntimeService.shared.login()
+    }
+
+    static func logoutOpenAI() async throws {
+        try await CodexRuntimeService.shared.logout()
+    }
+
+    static func openAIAccessibleModelIDs() async throws -> [String] {
+        try await CodexRuntimeService.shared.modelSlugs()
+    }
+
     static let usage = """
     Usage:
       LangToolsCLI auth login openai

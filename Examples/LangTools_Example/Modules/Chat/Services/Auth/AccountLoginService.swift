@@ -74,7 +74,7 @@ public protocol AccountLoginService {
 }
 
 public protocol AccountLoginBackendClientProtocol {
-    func loginStartURL(for provider: AccountLoginProvider, state: String, codeChallenge: String?, redirectURI: String?) -> URL
+    func loginStartURL(for provider: AccountLoginProvider, state: String, codeChallenge: String?, redirectURI: String?) throws -> URL
     func exchange(provider: AccountLoginProvider, payload: AuthRedirectPayload, codeVerifier: String?, redirectURI: String?) async throws -> AccountSession
     func refresh(session: AccountSession) async throws -> AccountSession
     func logout(provider: AccountLoginProvider, session: AccountSession?) async throws
@@ -99,6 +99,8 @@ public final class BrowserAccountLoginService: AccountLoginService {
     }
 
     private var pendingLogin: PendingLogin?
+    private let loginLock = NSLock()
+    private var loginInProgress = false
 
     public init(
         coordinator: AccountLoginCoordinating = AccountLoginCoordinator.shared,
@@ -115,6 +117,9 @@ public final class BrowserAccountLoginService: AccountLoginService {
     }
 
     public func beginLogin(for provider: AccountLoginProvider) async throws -> AccountSession {
+        try reserveLoginSlot()
+        defer { releaseLoginSlot() }
+
         if pendingLogin != nil {
             throw AccountLoginError.loginAlreadyInProgress
         }
@@ -131,7 +136,7 @@ public final class BrowserAccountLoginService: AccountLoginService {
             pendingLogin = nil
         }
 
-        let loginURL = backendClient.loginStartURL(for: provider, state: state, codeChallenge: nil, redirectURI: nil)
+        let loginURL = try backendClient.loginStartURL(for: provider, state: state, codeChallenge: nil, redirectURI: nil)
         let callbackURL = try await coordinator.startLogin(
             at: loginURL,
             callbackScheme: AccountBackendConfiguration.callbackScheme,
@@ -144,7 +149,6 @@ public final class BrowserAccountLoginService: AccountLoginService {
         guard let pendingLogin else {
             throw AccountLoginError.noLoginInProgress
         }
-
         let payload = try Self.parseRedirect(url, expectedProvider: pendingLogin.provider, expectedState: pendingLogin.state)
         return try await backendClient.exchange(
             provider: pendingLogin.provider,
@@ -152,6 +156,21 @@ public final class BrowserAccountLoginService: AccountLoginService {
             codeVerifier: pendingLogin.codeVerifier,
             redirectURI: pendingLogin.redirectURI
         )
+    }
+
+    private func reserveLoginSlot() throws {
+        loginLock.lock()
+        defer { loginLock.unlock() }
+        guard loginInProgress == false else {
+            throw AccountLoginError.loginAlreadyInProgress
+        }
+        loginInProgress = true
+    }
+
+    private func releaseLoginSlot() {
+        loginLock.lock()
+        loginInProgress = false
+        loginLock.unlock()
     }
 
     public func refreshSession(_ session: AccountSession) async throws -> AccountSession {
@@ -293,7 +312,7 @@ public final class AccountLoginBackendClient: AccountLoginBackendClientProtocol 
         self.urlSession = urlSession
     }
 
-    public func loginStartURL(for provider: AccountLoginProvider, state: String, codeChallenge: String?, redirectURI: String?) -> URL {
+    public func loginStartURL(for provider: AccountLoginProvider, state: String, codeChallenge: String?, redirectURI: String?) throws -> URL {
         switch provider {
         case .openAI:
             return OpenAIOAuthConfiguration.authorizeURL(
@@ -302,7 +321,7 @@ public final class AccountLoginBackendClient: AccountLoginBackendClientProtocol 
                 redirectURI: redirectURI ?? configuration.callbackURL(for: provider).absoluteString
             )
         case .claudeCode:
-            return configuration.loginStartURL(for: provider, state: state)
+            return try configuration.loginStartURL(for: provider, state: state)
         }
     }
 
@@ -336,7 +355,7 @@ public final class AccountLoginBackendClient: AccountLoginBackendClientProtocol 
                 redirectURI: configuration.callbackURL(for: provider).absoluteString
             )
 
-            var request = URLRequest(url: configuration.exchangeURL(for: provider))
+            var request = URLRequest(url: try configuration.exchangeURL(for: provider))
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try encoder.encode(requestBody)
@@ -396,7 +415,7 @@ public final class AccountLoginBackendClient: AccountLoginBackendClientProtocol 
         case .openAI:
             return
         case .claudeCode:
-            var request = URLRequest(url: configuration.logoutURL(for: provider))
+            var request = URLRequest(url: try configuration.logoutURL(for: provider))
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             if let session {

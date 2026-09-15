@@ -3,6 +3,7 @@
 //
 
 import Combine
+import OpenAI
 import SwiftUI
 import ToolKit
 
@@ -166,7 +167,7 @@ public struct ChatSettingsView: View {
 
                 Picker("Chat Models", selection: $viewModel.model) {
                     ForEach(viewModel.availableModels, id: \.self) { model in
-                        Text(model.rawValue).tag(model)
+                        Text(viewModel.modelPickerTitle(for: model)).tag(model)
                     }
                 }
                 .pickerStyle(.menu)
@@ -182,10 +183,10 @@ public struct ChatSettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    ForEach(viewModel.providerAccessStates, id: \.service) { state in
+                    ForEach(viewModel.providerAccessStates) { state in
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text(state.service.displayName)
+                                Text(state.displayName)
                                 Spacer()
                                 Text(state.badgeTitle)
                                     .font(.caption)
@@ -194,16 +195,30 @@ public struct ChatSettingsView: View {
                             Text(state.statusDescription)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                            if let reason = viewModel.unavailableReason(for: state.service) {
+                            if let reason = viewModel.unavailableReason(for: state) {
                                 Text(reason)
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
                             }
-                            Button(accessActionTitle(for: state.service)) {
-                                viewModel.presentManageAccess(for: state.service)
+                            Button(accessActionTitle(for: state)) {
+                                viewModel.presentManageAccess(for: state.accessDestination)
                             }
                         }
                     }
+
+                    Text("For OpenAI account-backed Codex models, start the external helper and paste its URL/token below.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextField("Codex Helper URL", text: $viewModel.codexHelperBaseURLString)
+                    SecureField("Codex Helper Token", text: $viewModel.codexHelperToken)
+                    if let tokenError = viewModel.codexHelperTokenSaveError {
+                        Text(tokenError)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                    Text(viewModel.codexHelperCommand)
+                        .font(.system(.caption2, design: .monospaced))
+                        .textSelection(.enabled)
                 }
             }
 
@@ -415,7 +430,7 @@ public struct ChatSettingsView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         Picker("", selection: $viewModel.model) {
                             ForEach(viewModel.availableModels, id: \.self) { model in
-                                Text(model.rawValue).tag(model)
+                                Text(viewModel.modelPickerTitle(for: model)).tag(model)
                             }
                         }
                         .pickerStyle(.menu)
@@ -431,6 +446,28 @@ public struct ChatSettingsView: View {
                             Text(modelDescription(for: viewModel.model))
                                 .font(.body)
                         }
+
+                        if viewModel.canManageAccess {
+                            Divider()
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Codex Helper")
+                                    .font(.headline)
+                                Text("Run this in Terminal before using OpenAI account-backed Codex models:")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                Text(viewModel.codexHelperCommand)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .textSelection(.enabled)
+                                TextField("Codex Helper URL", text: $viewModel.codexHelperBaseURLString)
+                                    .textFieldStyle(.roundedBorder)
+                                SecureField("Codex Helper Token", text: $viewModel.codexHelperToken)
+                                    .textFieldStyle(.roundedBorder)
+                                Text("OpenAI account-backed models use the external Codex helper. API-key-backed OpenAI Platform models continue to use the regular API path.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                     }
                     .padding(8)
                 }
@@ -445,10 +482,10 @@ public struct ChatSettingsView: View {
                                 .font(.body)
                                 .foregroundColor(.secondary)
 
-                            ForEach(viewModel.providerAccessStates, id: \.service) { state in
+                            ForEach(viewModel.providerAccessStates) { state in
                                 VStack(alignment: .leading, spacing: 6) {
                                     HStack(alignment: .firstTextBaseline) {
-                                        Text(state.service.displayName)
+                                        Text(state.displayName)
                                             .font(.headline)
                                         Spacer()
                                         Text(state.badgeTitle)
@@ -460,14 +497,14 @@ public struct ChatSettingsView: View {
                                         .font(.subheadline)
                                         .foregroundColor(.secondary)
 
-                                    if let reason = viewModel.unavailableReason(for: state.service) {
+                                    if let reason = viewModel.unavailableReason(for: state) {
                                         Text(reason)
                                             .font(.caption)
                                             .foregroundColor(.secondary)
                                     }
 
-                                    Button(accessActionTitle(for: state.service)) {
-                                        viewModel.presentManageAccess(for: state.service)
+                                    Button(accessActionTitle(for: state)) {
+                                        viewModel.presentManageAccess(for: state.accessDestination)
                                     }
                                     .buttonStyle(.bordered)
                                 }
@@ -869,31 +906,30 @@ public struct ChatSettingsView: View {
     }
 
     // Helper function to provide model descriptions
-    private func accessActionTitle(for service: APIService) -> String {
-        switch service {
-        case .anthropic:
-            return "Manage Claude / Anthropic Access"
-        default:
-            return "Manage \(service.displayName) Access"
-        }
+    private func accessActionTitle(for state: ProviderAccessState) -> String {
+        "Manage \(state.displayName) Access"
     }
 
     private func modelDescription(for model: Model) -> String {
         switch model {
-        case _ where model.rawValue.contains("gpt-3.5"):
+        case .codex:
+            return "This model runs through the Codex helper using your OpenAI account subscription instead of the OpenAI Platform API."
+        case .openAI where model.slug.contains("gpt-3.5"):
             return "GPT-3.5 is a fast and cost-effective model suitable for most everyday tasks. It offers a good balance between capabilities and response time, with good understanding of context and general knowledge up to its training cutoff date."
-        case _ where model.rawValue.contains("gpt-4o"):
+        case .openAI where model.slug.contains("gpt-4o"):
             return "GPT-4o is OpenAI's latest model offering the best balance of intelligence and speed. It has enhanced reasoning capabilities and multimodal understanding while providing faster responses than traditional GPT-4."
-        case _ where model.rawValue.contains("gpt-4"):
+        case .openAI where model.slug.contains("gpt-5.5") || model.slug.contains("gpt-5.4"):
+            return "This model runs through the OpenAI Platform API and requires an OpenAI API key."
+        case .openAI where model.slug.contains("gpt-4"):
             return "GPT-4 is OpenAI's most advanced model for complex reasoning and problem-solving. It excels at tasks requiring deep understanding, nuance, and specialized knowledge, though it may be slower than other models."
-        case _ where model.rawValue.contains("claude-3"):
-            return "Claude 3 is Anthropic's latest model with strong reasoning capabilities, nuanced understanding, and reliable outputs. It's designed to be helpful, harmless, and honest with particular strength in long-form content."
-        case _ where model.rawValue.contains("grok"):
-            return "Grok is xAI's model designed to be conversational and witty while still providing accurate information. It aims to strike a balance between helpfulness and personality."
-        case _ where model.rawValue.contains("gemini"):
-            return "Gemini is Google's multimodal AI model with strong reasoning and multimodal capabilities. It excels at understanding and generating content across text, code, images, and other modalities."
-        case _ where model.rawValue.contains("ollama"):
-            return "This is a locally-hosted model running through Ollama. Performance and capabilities will depend on the specific model you've downloaded and your local hardware specifications."
+        case .anthropic where model.slug.contains("claude"):
+            return "Claude models provide strong reasoning and long-context performance through Anthropic."
+        case .xAI where model.slug.contains("grok"):
+            return "Grok is xAI's model designed to be conversational and witty while still providing accurate information."
+        case .gemini where model.slug.contains("gemini"):
+            return "Gemini is Google's multimodal AI model with strong reasoning and multimodal capabilities."
+        case .ollama:
+            return "This is a locally-hosted model running through Ollama. Performance and capabilities depend on the model and your local hardware."
         default:
             return "Selected model"
         }
@@ -1035,6 +1071,9 @@ extension ChatSettingsView {
         @Published var maxTokens = UserDefaults.maxTokens
         @Published var temperature = UserDefaults.temperature
         @Published var systemMessage = UserDefaults.systemMessage
+        @Published var codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
+        @Published var codexHelperToken = UserDefaults.codexHelperToken
+        @Published var codexHelperTokenSaveError: String?
         @Published var toolSettings = ToolSettings.shared
         @Published public var toolManager = ToolManager.shared
         public var accessManager = ProviderAccessManager.shared
@@ -1069,8 +1108,7 @@ extension ChatSettingsView {
         }
 
         var availableModels: [Model] {
-            let models = accessManager.availableChatModels()
-            return models.isEmpty ? Model.chatModels : models
+            accessManager.availableChatModels()
         }
 
         func loadSettings() {
@@ -1079,6 +1117,8 @@ extension ChatSettingsView {
             maxTokens = UserDefaults.maxTokens
             temperature = UserDefaults.temperature
             systemMessage = UserDefaults.systemMessage
+            codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
+            codexHelperToken = UserDefaults.codexHelperToken
         }
 
         var canManageAccess: Bool {
@@ -1089,8 +1129,8 @@ extension ChatSettingsView {
             accessManager.statesForAccessUI()
         }
 
-        func unavailableReason(for service: APIService) -> String? {
-            accessManager.unavailableReason(for: service)
+        func unavailableReason(for state: ProviderAccessState) -> String? {
+            accessManager.unavailableReason(for: state)
         }
 
         var accessButtonTitle: String {
@@ -1107,15 +1147,34 @@ extension ChatSettingsView {
             UserDefaults.maxTokens = maxTokens
             UserDefaults.temperature = temperature
             UserDefaults.systemMessage = systemMessage
+            if let url = URL(string: codexHelperBaseURLString), url.scheme?.isEmpty == false {
+                UserDefaults.codexHelperBaseURL = url
+            }
+            do {
+                try CodexHelperTokenStore().setToken(codexHelperToken.trimmingCharacters(in: .whitespacesAndNewlines))
+                codexHelperTokenSaveError = nil
+            } catch {
+                // Surface Keychain persistence failures instead of silently
+                // retaining the prior credential.
+                codexHelperTokenSaveError = error.localizedDescription
+            }
         }
 
-        func presentManageAccess(for service: APIService? = nil) {
-            let targetService = service ?? model.apiService
-            AuthPresentationCoordinator.shared.present(preferredService: targetService)
+        func presentManageAccess(for destination: AccessDestination? = nil) {
+            let targetDestination = destination ?? AccessDestination.destination(for: model)
+            AuthPresentationCoordinator.shared.present(preferredDestination: targetDestination)
         }
 
         func saveToolSettings() {
             toolSettings.saveSettings()
+        }
+
+        var codexHelperCommand: String {
+            "swift run LangToolsCLI serve"
+        }
+
+        func modelPickerTitle(for model: Model) -> String {
+            model.rawValue
         }
 
         /// Trigger WhisperKit preload

@@ -1,5 +1,6 @@
 .DS_Store
 /.build
+/cli/.build/
 build/
 /Packages
 xcuserdata/

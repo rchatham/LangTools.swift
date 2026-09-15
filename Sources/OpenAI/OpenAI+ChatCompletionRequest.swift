@@ -135,6 +135,50 @@ extension OpenAI {
             self.toolEventHandler = toolEventHandler
         }
 
+        /// Encodes required fields and present options without dispatching absent values.
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(model, forKey: .model)
+            try container.encode(messages, forKey: .messages)
+            // Check presence before container dispatch: most request options are absent.
+            if let temperature { try container.encode(temperature, forKey: .temperature) }
+            if let top_p { try container.encode(top_p, forKey: .top_p) }
+            if let n { try container.encode(n, forKey: .n) }
+            if let stream { try container.encode(stream, forKey: .stream) }
+            if let stream_options { try container.encode(stream_options, forKey: .stream_options) }
+            if let stop { try container.encode(stop, forKey: .stop) }
+            if let max_tokens { try container.encode(max_tokens, forKey: .max_tokens) }
+            if let max_completion_tokens { try container.encode(max_completion_tokens, forKey: .max_completion_tokens) }
+            if let presence_penalty { try container.encode(presence_penalty, forKey: .presence_penalty) }
+            if let frequency_penalty { try container.encode(frequency_penalty, forKey: .frequency_penalty) }
+            if let logit_bias { try container.encode(logit_bias, forKey: .logit_bias) }
+            if let logprobs { try container.encode(logprobs, forKey: .logprobs) }
+            if let top_logprobs { try container.encode(top_logprobs, forKey: .top_logprobs) }
+            if let user { try container.encode(user, forKey: .user) }
+            if let response_format { try container.encode(response_format, forKey: .response_format) }
+            if let seed { try container.encode(seed, forKey: .seed) }
+            if let tools { try container.encode(tools, forKey: .tools) }
+            if let tool_choice { try container.encode(tool_choice, forKey: .tool_choice) }
+            if let parallel_tool_calls { try container.encode(parallel_tool_calls, forKey: .parallel_tool_calls) }
+            if let service_tier { try container.encode(service_tier, forKey: .service_tier) }
+            if let store { try container.encode(store, forKey: .store) }
+            if let prediction { try container.encode(prediction, forKey: .prediction) }
+            if let modalities { try container.encode(modalities, forKey: .modalities) }
+            if let audio { try container.encode(audio, forKey: .audio) }
+            if let reasoning_effort { try container.encode(reasoning_effort, forKey: .reasoning_effort) }
+            if let metadata { try container.encode(metadata, forKey: .metadata) }
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case model, messages, temperature, top_p, n, stream, stream_options, stop
+            case max_tokens, max_completion_tokens, presence_penalty, frequency_penalty
+            case logit_bias, logprobs, top_logprobs, user, response_format, seed, tools
+            case tool_choice, parallel_tool_calls, service_tier, store, prediction
+            case modalities, audio, reasoning_effort, metadata
+            // Preserve synthesized decoding of the ignored wrappers. Neither is encoded.
+            case _choose, toolEventHandler
+        }
+
         public struct StreamOptions: Codable {
             let include_usage: Bool
         }
@@ -464,17 +508,25 @@ extension OpenAI {
 
             func combining(_ message: Message?, with delta: Message.Delta?) -> Message? {
                 guard let delta = delta else { return message }
-                return try! Message(role: message?.role ?? delta.role ?? .assistant, content: .string(message?.content.string ?? "" + (delta.content ?? "")), name: message?.name, tool_calls: combining(message?.tool_calls, with: delta.tool_calls))
+                return try! Message(role: message?.role ?? delta.role ?? .assistant, content: .string((message?.content.string ?? "") + (delta.content ?? "")), name: message?.name, tool_calls: combining(message?.tool_calls, with: delta.tool_calls))
             }
 
             func combining(_ delta: Message.Delta?, with next: Message.Delta?) -> Message.Delta? {
                 guard let delta = delta, let next = next else { return delta ?? next }
-                return Message.Delta(role: delta.role ?? next.role, content: delta.content ?? "" + (next.content ?? ""), tool_calls: combining(delta.tool_calls, with: next.tool_calls),/**/ audio: delta.audio ?? next.audio, /**/ refusal: next.refusal)
+                return Message.Delta(role: delta.role ?? next.role, content: (delta.content ?? "") + (next.content ?? ""), tool_calls: combining(delta.tool_calls, with: next.tool_calls),/**/ audio: delta.audio ?? next.audio, /**/ refusal: next.refusal)
             }
 
             func combining(_ toolCalls: [Message.ToolCall]?, with next: [Message.ToolCall]?) -> [Message.ToolCall]? {
-                guard let toolCalls = toolCalls, let next = next else { return toolCalls ?? next }
-                return next.sorted().reduce(into: toolCalls.sorted()) { partialResult, next in
+                guard let toolCalls = toolCalls, let next = next else {
+                    // A nil side is the common case (deltas after the tool-call chunks carry no
+                    // tool_calls, decoded as nil rather than []), so the surviving array must
+                    // still self-heal here like the merge below — otherwise an out-of-order
+                    // accumulator ships unsorted through the terminal delta.
+                    guard let survivor = toolCalls ?? next else { return nil }
+                    return survivor.isSortedByIndex ? survivor : survivor.sorted()
+                }
+                let orderedNext = next.isSortedByIndex ? next : next.sorted()
+                return orderedNext.reduce(into: toolCalls.isSortedByIndex ? toolCalls : toolCalls.sorted()) { partialResult, next in
                     if let index = partialResult.firstIndex(where: { $0.index == next.index })  {
                         partialResult[index] = combining(partialResult[index], with: next)
                     } else {
@@ -541,8 +593,14 @@ extension OpenAI {
         }
 
         func combining(_ choices: [Choice], with next: [Choice]) -> [Choice] {
-            if choices.isEmpty { return next }
-            return next.sorted().reduce(into: choices.sorted()) { partialResult, next in
+            // The first chunk must establish the sorted-accumulator invariant too — if it carries
+            // multiple out-of-order choices and is also the last combine, nothing downstream heals it.
+            if choices.isEmpty { return next.isSortedByIndex ? next : next.sorted() }
+            let orderedNext = next.isSortedByIndex ? next : next.sorted()
+            // An empty `next` (the terminal usage-only chunk of a real stream) falls through to
+            // the reduce as a no-op over the self-healed initial value — no early return needed,
+            // and the accumulator still comes back sorted.
+            return orderedNext.reduce(into: choices.isSortedByIndex ? choices : choices.sorted()) { partialResult, next in
                 if let index = partialResult.firstIndex(where: { $0.index == next.index }) {
                     partialResult[index] = partialResult[index].combining(with: next)
                 } else {
@@ -564,12 +622,32 @@ extension Array where Element == OpenAI.ChatCompletionResponse.Choice {
     func sorted() -> [Element] {
         return self.sorted(by: { $0.index < $1.index })
     }
+
+    /// True when elements are already in non-decreasing `index` order. Providers stream choices
+    /// in index order and the accumulator is kept ordered, so this lets the hot combining path
+    /// skip the allocating `sorted()` call (O(n) check vs O(n log n) + a fresh array per merge).
+    var isSortedByIndex: Bool {
+        guard count > 1 else { return true }
+        for i in 1..<count where self[i].index < self[i - 1].index { return false }
+        return true
+    }
 }
 
 extension Array where Element == OpenAI.Message.ToolCall {
     func sorted() -> [Element] {
         guard first?.index != nil else { return self }
         return self.sorted(by: { $0.index! < $1.index! }) // assume that if an index exists it exists for all tool calls
+    }
+
+    /// True when `sorted()` would be a no-op (already index-ordered, or indices absent). Mirrors
+    /// the "if an index exists it exists for all" assumption of `sorted()`; falls back to sorting
+    /// on any nil/out-of-order case so semantics are unchanged.
+    var isSortedByIndex: Bool {
+        guard count > 1, first?.index != nil else { return true }
+        for i in 1..<count {
+            guard let a = self[i - 1].index, let b = self[i].index, a <= b else { return false }
+        }
+        return true
     }
 }
 

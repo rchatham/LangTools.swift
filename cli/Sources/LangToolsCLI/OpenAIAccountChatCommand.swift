@@ -8,7 +8,7 @@ private struct CodexProcessResult {
     let stderr: String
 }
 
-private struct ResolvedCodexCommand {
+struct ResolvedCodexCommand: Sendable {
     let executable: String
     let arguments: [String]
 }
@@ -49,7 +49,38 @@ struct OpenAIAccountChatCommand {
         FileHandle.standardOutput.write(Data("\n".utf8))
     }
 
-    private static func resolveCodexCommand() throws -> ResolvedCodexCommand {
+    /// Runtime-backed chat entry point used by the local helper server. Unlike
+    /// the one-shot `run(arguments:)` flow, this delegates to the Codex
+    /// app-server runtime so conversations persist across helper requests.
+    static func performChat(
+        modelID: String,
+        messages: [HelperChatMessage],
+        codexHomeOverride: String?,
+        conversationID: UUID? = nil
+    ) async throws -> String {
+        if let codexHomeOverride, codexHomeOverride.isEmpty == false {
+            let configured = ProcessInfo.processInfo.environment["LANGTOOLS_CODEX_HOME"]
+                ?? ProcessInfo.processInfo.environment["CODEX_HOME"]
+            guard configured == codexHomeOverride else {
+                throw OpenAIAccountChatCommandError.codexHomeMustBeConfiguredInEnvironment
+            }
+        }
+        return try await CodexRuntimeService.shared.chat(
+            model: modelID,
+            messages: messages,
+            conversationID: conversationID
+        )
+    }
+
+    static func responseData(content: String) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        var data = try encoder.encode(OpenAIAccountChatResponse(content: content))
+        data.append(UInt8(ascii: "\n"))
+        return data
+    }
+
+    static func resolveCodexCommand() throws -> ResolvedCodexCommand {
         if let explicitPath = ProcessInfo.processInfo.environment["LANGTOOLS_CODEX_PATH"],
            explicitPath.isEmpty == false {
             if let command = codexCommand(for: explicitPath) {
@@ -397,6 +428,7 @@ private enum OpenAIAccountChatCommandError: LocalizedError {
     case invalidSession
     case codexUnavailable
     case codexFailed(message: String)
+    case codexHomeMustBeConfiguredInEnvironment
 
     var errorDescription: String? {
         switch self {
@@ -412,6 +444,8 @@ private enum OpenAIAccountChatCommandError: LocalizedError {
             return "Codex CLI is not available. Install it and ensure the `codex` binary is on your PATH, or set LANGTOOLS_CODEX_PATH."
         case .codexFailed(let message):
             return message
+        case .codexHomeMustBeConfiguredInEnvironment:
+            return "The requested Codex home must match the LANGTOOLS_CODEX_HOME or CODEX_HOME environment variable."
         }
     }
 }

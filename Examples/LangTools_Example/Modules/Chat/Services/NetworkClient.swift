@@ -26,6 +26,12 @@ public protocol NetworkClientProtocol {
     func disconnectAccount(_ provider: AccountLoginProvider) async throws
 }
 
+public protocol ConversationAwareNetworkClientProtocol: NetworkClientProtocol {
+    func performChatCompletionRequest(messages: [Message], model: Model, conversationID: UUID, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message
+    func streamChatCompletionRequest(messages: [Message], model: Model, conversationID: UUID, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error>
+    func endConversation(id: UUID) async
+}
+
 extension NetworkClientProtocol {
     public func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
         try await performChatCompletionRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice)
@@ -44,7 +50,7 @@ extension NetworkClientProtocol {
     }
 }
 
-public class NetworkClient: NSObject, NetworkClientProtocol {
+public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     public static let shared: NetworkClientProtocol = NetworkClient()
 
     private let keychainService: KeychainService
@@ -103,6 +109,36 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
         return Message(text: text, role: .assistant)
     }
 
+    /// Conversation-aware variant. Codex-route models are bridged through the
+    /// CLI helper, which is stateless: each call re-sends the full transcript,
+    /// so `conversationID` is accepted for API compatibility but not used.
+    public func performChatCompletionRequest(
+        messages: [Message],
+        model: Model,
+        conversationID: UUID,
+        tools: [Tool]?,
+        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?
+    ) async throws -> Message {
+        try await performChatCompletionRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice)
+    }
+
+    /// Conversation-aware streaming variant. See the non-streaming variant:
+    /// the CLI bridge is stateless, so `conversationID` is accepted but unused.
+    public func streamChatCompletionRequest(
+        messages: [Message],
+        model: Model,
+        conversationID: UUID,
+        stream: Bool,
+        tools: [Tool]?,
+        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?
+    ) throws -> AsyncThrowingStream<String, Error> {
+        try streamChatCompletionRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)
+    }
+
+    public func endConversation(id: UUID) async {
+        // The CLI bridge keeps no server-side conversation state.
+    }
+
     public func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<String, Error> {
         try ensureModelAccess(for: model)
 
@@ -146,8 +182,8 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
 
     func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) -> any LangToolsChatRequest & LangToolsStreamableRequest {
         switch model {
-        case .anthropic(let model): return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.convertTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
-        case .openAI(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), /*n: 3,*/ stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice/*, choose: {_ in 2}*/)
+        case .anthropic(let model), .claudeCode(let model): return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.convertTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
+        case .openAI(let model), .codex(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice)
         case .xAI(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice)
         case .gemini(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream/*, tools: tools?.convertTools(), tool_choice: toolChoice*/)
         case .ollama(let model): return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools?.convertTools())
@@ -160,9 +196,9 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
             throw NetworkError.accountProxyTransportFailed("Account-backed agent execution is not supported. Use an API key for agent runs.")
         }
         switch model {
-        case .anthropic(let model): return AgentContext(langTool: try requiredLangTool(Anthropic.self), model: model, messages: messages.toAnthropicMessages(), eventHandler: eventHandler)
+        case .anthropic(let model), .claudeCode(let model): return AgentContext(langTool: try requiredLangTool(Anthropic.self), model: model, messages: messages.toAnthropicMessages(), eventHandler: eventHandler)
         case .gemini(let model): return AgentContext(langTool: try requiredLangTool(Gemini.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
-        case .openAI(let model): return AgentContext(langTool: try requiredLangTool(OpenAI.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .openAI(let model), .codex(let model): return AgentContext(langTool: try requiredLangTool(OpenAI.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
         case .xAI(let model): return AgentContext(langTool: try requiredLangTool(XAI.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
         case .ollama(let model): return AgentContext(langTool: try requiredLangTool(Ollama.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
         }
@@ -195,7 +231,12 @@ public class NetworkClient: NSObject, NetworkClientProtocol {
     }
 
     public func disconnectAccount(_ provider: AccountLoginProvider) async throws {
-        try await accountLoginService.logout(provider: provider)
+        do {
+            try await accountLoginService.logout(provider: provider)
+        } catch {
+            // A remote logout failure must not leave a stale local session behind.
+            NSLog("Remote %@ logout failed; clearing the local session: %@", provider.displayName, error.localizedDescription)
+        }
         try await MainActor.run {
             try providerAccessManager.removeAccountSession(for: provider)
         }

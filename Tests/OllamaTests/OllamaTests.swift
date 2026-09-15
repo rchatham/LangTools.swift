@@ -19,14 +19,47 @@ class OllamaTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
 
 
+    func testOriginalInitializerFunctionTypesRemainAvailable() {
+        let configurationInitializer: (URL, URLSession) -> Ollama.OllamaConfiguration = Ollama.OllamaConfiguration.init
+        let ollamaInitializer: (URL, URLSession) -> Ollama = Ollama.init
+        let baseURL = URL(string: "http://localhost:11434")!
+        let session = URLSession(configuration: .ephemeral)
+
+        XCTAssertEqual(configurationInitializer(baseURL, session).baseURL, baseURL)
+        XCTAssertEqual(ollamaInitializer(baseURL, session).configuration.baseURL, baseURL)
+    }
+
+    func testPrepareAddsBearerAuthorizationWhenConfigured() throws {
+        let authenticatedAPI = Ollama(
+            baseURL: URL(string: "https://ollama.com")!,
+            apiKey: "test-api-key"
+        )
+
+        let request = try authenticatedAPI.prepare(request: Ollama.VersionRequest())
+
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-api-key")
+    }
+
+    func testPrepareOmitsEmptyAuthorization() throws {
+        let request = try Ollama(apiKey: "").prepare(request: Ollama.VersionRequest())
+
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testPrepareOmitsAuthorizationByDefault() throws {
+        let request = try api.prepare(request: Ollama.VersionRequest())
+
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+    }
+
     func testGenerate() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.GenerateRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.GenerateRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")
             return (.success(try self.getData(filename: "generate_response-ollama")!), 200)
         }
@@ -49,7 +82,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testGenerateWithOptions() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.GenerateRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.GenerateRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")
 
             return (.success(try self.getData(filename: "generate_response-ollama")!), 200)
@@ -71,7 +104,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testStreamGenerate() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.GenerateRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.GenerateRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")
 
             return (.success(try self.getData(filename: "generate_stream_response-ollama", fileExtension: "txt")!), 200)
@@ -136,7 +169,7 @@ class OllamaTests: XCTestCase {
             required: ["age", "available"]
         )
 
-        MockURLProtocol.mockNetworkHandlers[Ollama.GenerateRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.GenerateRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")
             //               let decoded = try JSONDecoder().decode(Ollama.GenerateRequest.self, from: request.httpBody!)
             //               XCTAssertNotNil(decoded.format)
@@ -153,7 +186,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testListModels() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.ListModelsRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.ListModelsRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "GET")
             return (.success(try self.getData(filename: "list_models_response-ollama")!), 200)
         }
@@ -176,7 +209,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testListModelsError() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.ListModelsRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Ollama.ListModelsRequest.endpoint) { _ in
             return (.success(try self.getData(filename: "error")!), 404)
         }
 
@@ -193,7 +226,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testListRunningModels() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.ListRunningModelsRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.ListRunningModelsRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "GET")
             return (.success(try self.getData(filename: "list_running_models_response")!), 200)
         }
@@ -211,7 +244,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testShowModel() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.ShowModelRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.ShowModelRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")
             return (.success(try self.getData(filename: "show_model_response")!), 200)
         }
@@ -227,7 +260,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testDeleteModel() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.DeleteModelRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.DeleteModelRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "DELETE")
             return (.success(try self.getData(filename: "success_response")!), 200)
         }
@@ -237,7 +270,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testCopyModel() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.CopyModelRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.CopyModelRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")
             return (.success(try self.getData(filename: "success_response")!), 200)
         }
@@ -248,7 +281,7 @@ class OllamaTests: XCTestCase {
 
 
     func testPullModel() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.PullModelRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.PullModelRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")
             return (.success(try self.getData(filename: "pull_model_response")!), 200)
         }
@@ -260,7 +293,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testStreamPullModel() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.PullModelRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.PullModelRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")
             // XCTAssertTrue(try JSONDecoder().decode(Ollama.PullModelRequest.self, from: request.httpBody!).stream ?? false)
             return (.success(try self.getData(filename: "pull_model_stream_response", fileExtension: "txt")!), 200)
@@ -299,7 +332,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testPushModel() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.PushModelRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.PushModelRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")
             return (.success(try self.getData(filename: "push_model_response")!), 200)
         }
@@ -310,7 +343,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testStreamPushModel() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.PushModelRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.PushModelRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")
             // XCTAssertTrue(try JSONDecoder().decode(Ollama.PushModelRequest.self, from: request.httpBody!).stream ?? false)
             return (.success(try self.getData(filename: "push_model_stream_response", fileExtension: "txt")!), 200)
@@ -343,7 +376,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testCreateModel() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.CreateModelRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.CreateModelRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")
             return (.success(try self.getData(filename: "success_response")!), 200)
         }
@@ -353,7 +386,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testChat() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.ChatRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.ChatRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")
             return (.success(try self.getData(filename: "chat_response-ollama")!), 200)
         }
@@ -371,7 +404,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testStreamChat() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.ChatRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.ChatRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")
             return (.success(try self.getData(filename: "chat_response_stream-ollama", fileExtension: "txt")!), 200)
         }
@@ -424,7 +457,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testChatWithTools() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.ChatRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.ChatRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")
             return (.success(try self.getData(filename: "chat_response_with_tools-ollama")!), 200)
         }
@@ -483,7 +516,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testVersion() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.VersionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Ollama.VersionRequest.endpoint) { request in
             // Verify request
             XCTAssertEqual(request.httpMethod, "GET")
             return (.success(try self.getData(filename: "version_response-ollama")!), 200)
@@ -494,7 +527,7 @@ class OllamaTests: XCTestCase {
     }
 
     func testVersionError() async throws {
-        MockURLProtocol.mockNetworkHandlers[Ollama.VersionRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Ollama.VersionRequest.endpoint) { _ in
             return (.success(try self.getData(filename: "error")!), 404)
         }
 

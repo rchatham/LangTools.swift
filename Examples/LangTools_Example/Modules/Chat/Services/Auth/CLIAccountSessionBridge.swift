@@ -21,17 +21,17 @@ public enum CLIAccountSessionBridgeError: LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .cliUnavailable:
-            return "LangToolsCLI is not available. Build/install it first."
+            return "langtools is not available. Build/install it first."
         case .unsupportedPlatform:
-            return "LangToolsCLI is only available on macOS."
+            return "langtools is only available on macOS."
         case .sandboxRequiresPrebuiltCLI:
-            return "LangToolsCLI must be provided as a prebuilt executable when the app is sandboxed. Set LANGTOOLS_AUTH_CLI_PATH or bundle the CLI binary with the app."
+            return "langtools must be provided as a prebuilt executable when the app is sandboxed. Set LANGTOOLS_AUTH_CLI_PATH or bundle the CLI binary with the app."
         case .commandFailed(let message):
             return message
         case .invalidSessionData:
-            return "LangToolsCLI returned invalid session data."
+            return "langtools returned invalid session data."
         case .invalidChatResponse:
-            return "LangToolsCLI returned an invalid chat response."
+            return "langtools returned an invalid chat response."
         }
     }
 }
@@ -141,7 +141,7 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
         // Helper output may contain exported sessions, tokens, or provider error
         // payloads. Keep it out of app-visible errors and direct users to the
         // bridge log, where sensitive operations are redacted.
-        "\(action) failed: LangToolsCLI exited with status \(result.status) at \(executable). See \(logger.logFilePath) for helper output."
+        "\(action) failed: langtools exited with status \(result.status) at \(executable). See \(logger.logFilePath) for helper output."
     }
 
     private func runLogged(
@@ -173,7 +173,7 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
             return items.joined(separator: "\n")
         case .string(let text):
             return text
-        case .null, .none:
+        case .null:
             return "[No content]"
         }
     }
@@ -190,8 +190,6 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
             return "string"
         case .null:
             return "null"
-        case .none:
-            return nil
         }
     }
 
@@ -217,7 +215,7 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
         let binaryPath = cliPackageRoot
             .appendingPathComponent(".build")
             .appendingPathComponent("debug")
-            .appendingPathComponent("LangToolsCLI")
+            .appendingPathComponent("langtools")
 
         if FileManager.default.isExecutableFile(atPath: binaryPath.path) {
             return ResolvedCommand(executable: binaryPath.path, arguments: [])
@@ -229,7 +227,7 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
 
         return ResolvedCommand(
             executable: "/usr/bin/env",
-            arguments: ["swift", "run", "--package-path", cliPackageRoot.path, "LangToolsCLI"]
+            arguments: ["swift", "run", "--package-path", cliPackageRoot.path, "langtools"]
         )
     }
 
@@ -241,11 +239,11 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
         let bundleURL = Bundle.main.bundleURL
         let contentsURL = bundleURL.appendingPathComponent("Contents")
         return [
-            bundleURL.appendingPathComponent("LangToolsCLI").path,
-            bundleURL.appendingPathComponent("Contents/MacOS/LangToolsCLI").path,
-            bundleURL.appendingPathComponent("Contents/Helpers/LangToolsCLI").path,
-            contentsURL.appendingPathComponent("MacOS/LangToolsCLI").path,
-            contentsURL.appendingPathComponent("Helpers/LangToolsCLI").path,
+            bundleURL.appendingPathComponent("langtools").path,
+            bundleURL.appendingPathComponent("Contents/MacOS/langtools").path,
+            bundleURL.appendingPathComponent("Contents/Helpers/langtools").path,
+            contentsURL.appendingPathComponent("MacOS/langtools").path,
+            contentsURL.appendingPathComponent("Helpers/langtools").path,
         ]
     }
 }
@@ -291,7 +289,7 @@ public struct CLIBridgeLogger {
                 .appendingPathComponent("LangTools_Example", isDirectory: true)
                 .appendingPathComponent("Logs", isDirectory: true)
             try? FileManager.default.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
-            self.fileURL = logsDirectory.appendingPathComponent("LangToolsCLI-bridge.log")
+            self.fileURL = logsDirectory.appendingPathComponent("langtools-bridge.log")
         }
     }
 

@@ -70,6 +70,10 @@ struct CLI {
             case "openai-chat":
                 try await OpenAIAccountChatCommand.run(arguments: Array(subcommandArguments.dropFirst()))
                 return
+            case "serve":
+                try await ServeCommand.run(arguments: Array(subcommandArguments.dropFirst()))
+                await CodexRuntimeService.shared.shutdown()
+                return
             default:
                 break
             }
@@ -121,6 +125,7 @@ struct CLI {
           langtools [OPTIONS]
           langtools auth <subcommand>
           langtools openai-chat --model <model-id> --messages-file <path>
+          langtools serve [--host 127.0.0.1] [--port 8765] --token-file <path>
 
         OPTIONS
           --tui         Launch the SwiftTUI interactive interface

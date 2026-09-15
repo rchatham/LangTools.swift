@@ -63,7 +63,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
     }
 
     private var currentService: APIService {
-        coordinator.preferredService ?? UserDefaults.model.apiService
+        coordinator.preferredDestination?.service ?? UserDefaults.model.apiService
     }
 
     private var dialogTitle: String {

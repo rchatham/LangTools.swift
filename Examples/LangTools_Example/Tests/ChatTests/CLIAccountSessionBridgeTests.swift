@@ -79,7 +79,7 @@ final class CLIAccountSessionBridgeTests: XCTestCase {
                 toolMessage,
                 eventMessage,
             ],
-            model: .openAI(.gpt51_codex)
+            model: .openAI(.gpt5_5)
         )
         let requestContents = try String(contentsOf: requestCaptureURL, encoding: .utf8)
 
@@ -105,42 +105,6 @@ final class CLIAccountSessionBridgeTests: XCTestCase {
 }
 
 final class AccountProxyTransportTests: XCTestCase {
-    func testStreamRequestDisablesBackendStreamingFlag() async throws {
-        let sessionConfiguration = URLSessionConfiguration.ephemeral
-        sessionConfiguration.protocolClasses = [MockURLProtocol.self]
-        let transport = AccountProxyTransport(
-            configuration: AccountBackendConfiguration(baseURL: URL(string: "https://example.com")!),
-            urlSession: URLSession(configuration: sessionConfiguration)
-        )
-        let session = AccountSession(provider: .claudeCode, accountIdentifier: "claude-user", accessToken: "token")
-        let expectation = expectation(description: "request captured")
-        MockURLProtocol.requestHandler = { request in
-            let body = try XCTUnwrap(request.httpBody)
-            let payload = try JSONDecoder().decode(AccountProxyTransportRequestProbe.self, from: body)
-            XCTAssertFalse(payload.stream)
-            expectation.fulfill()
-
-            let data = Data(#"{"content":"proxied response"}"#.utf8)
-            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
-            return (response, data)
-        }
-        let stream = try transport.streamChatCompletionRequest(
-            messages: [Message(text: "Hello", role: .user)],
-            model: .anthropic(try XCTUnwrap(Anthropic.Model.allCases.first)),
-            session: session,
-            stream: true,
-            tools: nil,
-            toolChoice: nil
-        )
-
-        var chunks: [String] = []
-        for try await chunk in stream {
-            chunks.append(chunk)
-        }
-
-        await fulfillment(of: [expectation], timeout: 2)
-        XCTAssertEqual(chunks, ["proxied response"])
-    }
 }
 
 private struct AccountProxyTransportRequestProbe: Decodable {

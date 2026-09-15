@@ -37,8 +37,8 @@ extension View {
     func enterAPIKeyAlert(isPresented: Binding<Bool>, apiKey: Binding<String>) -> some View {
         let service: APIService = {
             switch UserDefaults.model {
-            case .anthropic: return .anthropic
-            case .openAI: return .openAI
+            case .anthropic, .claudeCode: return .anthropic
+            case .openAI, .codex: return .openAI
             case .xAI: return .xAI
             case .gemini: return .gemini
             case .ollama: return .ollama

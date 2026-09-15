@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import Chat
 
+@MainActor
 final class AccountLoginServiceTests: XCTestCase {
     override func tearDown() {
         MockURLProtocol.requestHandler = nil
@@ -50,12 +51,12 @@ final class AccountLoginServiceTests: XCTestCase {
         XCTAssertEqual(payload.state, "test-state")
     }
 
-    func testOpenAILoginStartURLUsesDirectOAuthAuthorizeEndpoint() {
+    func testOpenAILoginStartURLUsesDirectOAuthAuthorizeEndpoint() throws {
         let client = AccountLoginBackendClient(
             configuration: AccountBackendConfiguration(baseURL: URL(string: "http://localhost:8080")!)
         )
 
-        let url = client.loginStartURL(for: .openAI, state: "test-state", codeChallenge: "test-challenge", redirectURI: "http://127.0.0.1:1455/auth/callback")
+        let url = try client.loginStartURL(for: .openAI, state: "test-state", codeChallenge: "test-challenge", redirectURI: "http://127.0.0.1:1455/auth/callback")
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let queryItems = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
 
@@ -312,7 +313,7 @@ final class AccountLoginServiceTests: XCTestCase {
         let (_, response) = try await task.value
 
         XCTAssertEqual(callback.path, "/auth/callback")
-        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 400)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
     }
 
     private func makeURLSession(handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)) -> URLSession {

@@ -8,15 +8,174 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      run_ollama_cloud_tests:
+        description: Run the paid live Ollama Cloud smoke test (main only)
+        type: boolean
+        default: false
+      run_pi_cloud_test:
+        description: Run the pinned Pi Ollama Cloud smoke test (main only)
+        type: boolean
+        default: false
 
 jobs:
   build:
-
     runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
     - name: Build
       run: swift build -v
     - name: Run tests
-      run: swift test -v
+      # Run merge-gating tests serially because some suites use process-global
+      # MockURLProtocol registration and shared handler state.
+      #
+      # Platform speech suites are skipped on headless macOS runners because they can
+      # wait on unavailable speech/model services or leave provider tasks running.
+      #
+      # Extended suites (AgentsTests, IntegrationTests, PerformanceTests,
+      # BenchmarkTests, and PerformanceRatioGateTests) are opt-in at Package.swift
+      # manifest load time so default CI does not build/link expensive or
+      # mock-state-sensitive tests. Enable them explicitly via Scripts/run-extended-tests.sh,
+      # which sets LANGTOOLS_ENABLE_EXTENDED_TESTS=1 before SwiftPM loads the manifest:
+      #   Scripts/run-extended-tests.sh --filter AgentsTests -v
+      #   Scripts/run-extended-tests.sh --filter IntegrationTests -v
+      #   Scripts/run-extended-tests.sh --filter PerformanceTests -v
+      #   Scripts/run-extended-tests.sh --filter BenchmarkTests -v
+      #   Scripts/run-extended-tests.sh --filter PerformanceRatioGateTests -v
+      # Follow-up for MockURLProtocol hardening: https://github.com/rchatham/LangTools.swift/issues/41
+      run: swift test -v --no-parallel --skip AppleSpeechTests --skip WhisperKitLangToolsTests
+
+  extended-tests:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+    - name: Run Agents extended tests
+      run: Scripts/run-extended-tests.sh --filter AgentsTests -v --no-parallel
+    - name: Run Integration extended tests
+      run: Scripts/run-extended-tests.sh --filter IntegrationTests -v --no-parallel
+
+  # Non-blocking performance visibility. The measure/reporting suites and the
+  # ratios.json regression gate run here so a perf regression surfaces in CI
+  # instead of only on manual runs — but continue-on-error keeps them from
+  # gating merges, since wall-clock-sensitive assertions can flake on shared
+  # runners even with the ratio normalization (see the comments in the build job).
+  performance-tests:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+    - name: Run performance ratio gates
+      run: Scripts/run-extended-tests.sh --filter PerformanceRatioGateTests -v --no-parallel
+    - name: Run performance tests
+      if: ${{ !cancelled() }}
+      run: Scripts/run-extended-tests.sh --filter PerformanceTests -v --no-parallel
+    - name: Run benchmark tests
+      if: ${{ !cancelled() }}
+      run: Scripts/run-extended-tests.sh --filter BenchmarkTests -v --no-parallel
+
+  pi-workflow-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+    - name: Run Pi workflow regression tests
+      run: ruby .github/pi/tests/prompt_test.rb
+
+  pi-cloud-smoke:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.run_pi_cloud_test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      PI_CODING_AGENT_DIR: ${{ github.workspace }}/.github/pi
+      PI_SKIP_VERSION_CHECK: "1"
+      PI_TELEMETRY: "0"
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+    - name: Set up Node.js
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version: "22"
+    - name: Install verified Pi package
+      shell: bash
+      run: |
+        set -euo pipefail
+        npm pack @earendil-works/pi-coding-agent@0.85.1 \
+          --ignore-scripts --pack-destination "$RUNNER_TEMP" > /dev/null
+        printf '%s  %s\n' \
+          '1f498729649bdce647d1160993b4d92bf3c614cc819213bee2f91dd34f2a7af4' \
+          "$RUNNER_TEMP/earendil-works-pi-coding-agent-0.85.1.tgz" \
+          | sha256sum --check
+        npm ci --prefix "$PI_CODING_AGENT_DIR/runtime" --omit=dev --ignore-scripts
+        package_dir="$PI_CODING_AGENT_DIR/runtime/node_modules/@earendil-works/pi-coding-agent"
+        mkdir "$package_dir"
+        tar -xzf "$RUNNER_TEMP/earendil-works-pi-coding-agent-0.85.1.tgz" \
+          --directory "$package_dir" --strip-components=1
+    - name: Run Pi Ollama Cloud smoke test
+      env:
+        OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        GH_TOKEN: ""
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -n "$OLLAMA_API_KEY"
+        response="$(printf 'Reply with exactly: pong\n' \
+          | node "$PI_CODING_AGENT_DIR/runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" \
+            --provider ollama-cloud --model 'glm-5.2' --thinking off \
+            --no-tools --no-extensions --no-skills --no-prompt-templates --no-themes \
+            --no-context-files --no-session --no-approve --print)"
+        test -n "$response"
+
+  ollama-cloud-smoke:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'push' && vars.RUN_OLLAMA_CLOUD_TESTS == 'true') ||
+       (github.event_name == 'workflow_dispatch' && inputs.run_ollama_cloud_tests))
+    runs-on: macos-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      LANGTOOLS_RUN_OLLAMA_CLOUD_TESTS: "1"
+      OLLAMA_CLOUD_MODEL: ${{ vars.OLLAMA_CLOUD_MODEL || 'glm-5.2' }}
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+    - name: Run live Ollama Cloud smoke test
+      env:
+        OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -n "$OLLAMA_API_KEY"
+        swift test --filter OllamaCloudIntegrationTests

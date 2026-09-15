@@ -1,7 +1,10 @@
 // swift-tools-version: 5.9
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
+import Foundation
 import PackageDescription
+
+let extendedTestsEnabled = ProcessInfo.processInfo.environment["LANGTOOLS_ENABLE_EXTENDED_TESTS"] == "1"
 
 let package = Package(
     name: "LangTools",
@@ -24,6 +27,11 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/rchatham/JSON.swift.git", branch: "main"),
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.18.0"),
+        // Benchmark comparison deps — only used by BenchmarkTests, not linked into any library product.
+        // To run competitor benchmarks: uncomment these and the BenchmarkTests product deps below.
+        // .package(url: "https://github.com/jamesrochabrun/SwiftOpenAI.git", from: "4.4.0"),
+        // .package(url: "https://github.com/jamesrochabrun/SwiftAnthropic.git", from: "2.2.0"),
+        // .package(url: "https://github.com/MacPaw/OpenAI.git", from: "0.5.1"),
     ],
     targets: [
         .target(name: "LangTools", dependencies: [.product(name: "JSON", package: "JSON.swift")], resources: [.process("README.md")]),
@@ -36,6 +44,7 @@ let package = Package(
         .target(name: "AppleLangTools", dependencies: [.target(name: "LangTools")], path: "Sources/Apple", resources: [.process("README.md")]),
         .target(name: "WhisperKitLangTools", dependencies: [.target(name: "LangTools"), .product(name: "WhisperKit", package: "WhisperKit", condition: .when(platforms: [.macOS, .iOS]))], path: "Sources/WhisperKit"),
         .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], path: "Tests/TestUtils", resources: [.process("Resources/")]),
+
         .testTarget(name: "LangToolsTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils"]),
         .testTarget(name: "OpenAITests", dependencies: ["OpenAI", "TestUtils"]),
         .testTarget(name: "AnthropicTests", dependencies: ["Anthropic", "TestUtils"]),
@@ -44,5 +53,21 @@ let package = Package(
         .testTarget(name: "OllamaTests", dependencies: ["Ollama", "OpenAI", "TestUtils"]),
         .testTarget(name: "AppleSpeechTests", dependencies: ["AppleLangTools"]),
         .testTarget(name: "WhisperKitLangToolsTests", dependencies: ["WhisperKitLangTools"]),
-    ]
+    ] + (extendedTestsEnabled ? [
+        .testTarget(name: "AgentsTests", dependencies: ["Agents", "LangTools", "OpenAI", "TestUtils"]),
+
+        // Performance & integration test targets
+        // ratios.json is read/written via a #filePath-relative path from PerformanceTests,
+        // not Bundle.module, so it's excluded from the helper target rather than processed as a resource.
+        .target(name: "PerformanceTestUtils", dependencies: [.target(name: "LangTools"), .target(name: "OpenAI"), .target(name: "Anthropic")], path: "Tests/PerformanceTestUtils", exclude: ["ratios.json"]),
+        .testTarget(name: "PerformanceTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils", "PerformanceTestUtils"]),
+        .testTarget(name: "IntegrationTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils", "PerformanceTestUtils"]),
+        .testTarget(name: "BenchmarkTests", dependencies: [
+            "LangTools", "OpenAI", "Anthropic",
+            // Uncomment when benchmark deps are enabled above:
+            // .product(name: "SwiftOpenAI", package: "SwiftOpenAI"),
+            // .product(name: "SwiftAnthropic", package: "SwiftAnthropic"),
+            // .product(name: "OpenAI", package: "OpenAI", moduleAliases: ["OpenAI": "MacPawOpenAI"]),
+        ]),
+    ] : [])
 )
