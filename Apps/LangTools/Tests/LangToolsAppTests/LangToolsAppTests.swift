@@ -13,6 +13,11 @@ import Testing
 
 #if os(macOS)
 @Test func signedHostCanAccessPreservedKeychainService() throws {
+    // Requires a signed host; unsigned macOS runners lack keychain entitlements.
+    // Exercise the real shared instance so a future initializer-default change
+    // cannot silently move credentials away from the preserved namespace.
+    #expect(KeychainService.shared.keychain.service == "com.reidchatham.LangTools_Example")
+
     let keychain = Keychain(service: KeychainService.serviceIdentifier)
     let account = "promotion-smoke-\(UUID().uuidString)"
     let value = UUID().uuidString

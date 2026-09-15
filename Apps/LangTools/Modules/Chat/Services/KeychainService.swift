@@ -89,11 +89,12 @@ public class KeychainService: KeychainSecretStoring {
     public static let shared = KeychainService()
 
     /// Stable service identifier retained so existing credentials remain accessible.
-    static let serviceIdentifier = "com.reidchatham.LangTools_Example"
+    /// Public so the initializer default argument can reference it without drift.
+    public static let serviceIdentifier = "com.reidchatham.LangTools_Example"
 
     let keychain: Keychain
 
-    public init(keychain: Keychain = Keychain(service: "com.reidchatham.LangTools_Example")) {
+    public init(keychain: Keychain = Keychain(service: KeychainService.serviceIdentifier)) {
         self.keychain = keychain
     }
 
