@@ -22,6 +22,10 @@ public class MessageService: Sendable {
     }
     var tools: [Tool]?
 
+    /// Transient flag set when a tool call completes during the current send,
+    /// forcing the follow-up response to start a new assistant message.
+    @ObservationIgnored private var toolBreakOccurred: Bool = false
+
     /// Callback fired when a message is added or modified (for persistence)
     public var messageUpdatedCallback: ((Message) -> Void)?
 
@@ -70,21 +74,25 @@ public class MessageService: Sendable {
             let activeTools = await filteredTools
 
             // Surface non-agent tool-call lifecycle to ChatUI by applying
-            // LangTools tool events to the streaming assistant message.
+            // LangTools tool events to the streaming assistant message. A tool
+            // completion marks a break so the follow-up response starts a new
+            // assistant message rather than continuing the pre-tool message.
             let toolEventHandler: (LangToolsToolEvent) -> Void = { [weak self] event in
                 Task { @MainActor in
                     guard let self, let last = self.messages.last, last.isAssistant else { return }
                     last.applyToolEvent(event)
+                    if case .toolCompleted = event {
+                        self.toolBreakOccurred = true
+                    }
                 }
             }
 
             var content: String = ""
             for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: activeTools, toolEventHandler: toolEventHandler) {
                 content += chunk
-                // Only treat the last message as a continuation target when it is
-                // a plain assistant text message.  Content-card and agent-event
-                // messages must not be overwritten by streamed text.
-                let lastIsStreamable = messages.last.map { $0.isAssistant && $0.isStringContent } ?? false
+                // Continue the last message only when it is a plain assistant text
+                // message that has not been split by a tool-call break.
+                let lastIsStreamable = messages.last.map { $0.isAssistant && $0.isStringContent && $0.toolCalls.isEmpty && !toolBreakOccurred } ?? false
                 if !lastIsStreamable {
                     if chunk.isEmpty { continue }
                     content = chunk.trimingLeadingNewlines()
@@ -95,14 +103,18 @@ public class MessageService: Sendable {
                 await MainActor.run {
                     if let last = messages.last, last.uuid == messageUuid {
                         // Update the existing assistant message in place so tool-call
-                        // state accumulated during the stream is preserved. Replacing
-                        // the instance would discard `toolCalls` written by the tool
-                        // event handler.
+                        // state accumulated on it is preserved.
                         last.contentType = .string(trimmed)
-                        if !ToolSettings.shared.keepsToolCallsInHistory {
-                            last.toolCalls = []
-                        }
                     } else {
+                        // Starting a new assistant message. If a tool-call break
+                        // caused the split, the previous message retains its tool
+                        // cards unless keepsToolCallsInHistory is disabled.
+                        if toolBreakOccurred, let last = messages.last {
+                            if !ToolSettings.shared.keepsToolCallsInHistory {
+                                last.toolCalls = []
+                            }
+                            toolBreakOccurred = false
+                        }
                         messages.append(Message(uuid: messageUuid, role: .assistant, contentType: .string(trimmed)))
                     }
                 }
