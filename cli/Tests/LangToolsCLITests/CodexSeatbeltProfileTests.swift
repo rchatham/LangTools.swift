@@ -148,11 +148,16 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         let source = CodexSeatbeltProfile().render(inputs: inputs)
         XCTAssertTrue(source.contains("(allow file-read* (subpath \"/tmp/cache dir/codex-runtimes\"))"))
         XCTAssertTrue(source.contains("(allow file-write* (subpath \"/tmp/cache dir/codex-runtimes\"))"))
-        // Broadened runtime operations are part of the profile.
-        XCTAssertTrue(source.contains("(allow mach-lookup)"))
+        // Runtime operations are part of the profile, scoped to the services
+        // codex actually requested (enumerated from sandbox denial reports).
+        XCTAssertTrue(source.contains("(allow mach-lookup"))
+        XCTAssertTrue(source.contains("\"com.apple.SystemConfiguration.configd\""))
         XCTAssertTrue(source.contains("(allow system-socket)"))
-        XCTAssertTrue(source.contains("(allow user-preference-read)"))
+        XCTAssertTrue(source.contains(
+            "(allow user-preference-read (preference-domain \"com.openai.codex\"))"
+        ))
         XCTAssertTrue(source.contains("(allow file-read-metadata)"))
+        XCTAssertFalse(source.contains("(allow mach-lookup)\n)"))
         // No runtime-cache rules are emitted when no cache is configured.
         let empty = CodexSeatbeltProfile().render(inputs: CodexSeatbeltProfile.Inputs(
             codexExecutable: "/opt/codex/bin/codex",

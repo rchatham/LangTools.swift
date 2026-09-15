@@ -165,20 +165,30 @@ struct CodexSeatbeltProfile: Sendable {
             "(allow process-exec process-fork signal)",
             "(allow network*)",
             // Codex's HTTP stack (Rust reqwest/hyper) needs SystemConfiguration,
-            // network extension sockets, and DNS resolution to reach the backend;
-            // enumerating every mach service it touches is fragile, and mach IPC
-            // does not expose user files, so mach lookup stays broad. File reads
-            // remain the enforced boundary below.
-            //
-            // Accepted trade-off: `user-preference-read` is intentionally global.
-            // Codex reads both its own `com.openai.codex` domain and
-            // kCFPreferencesAnyApplication, so it cannot be scoped to one domain
-            // without breaking it. This exposes CFPreferences/NSUserDefaults
-            // values (app settings; some apps store credentials in prefs) but
-            // not user documents; the filesystem read boundary is unaffected.
-            "(allow mach-lookup)",
+            // network sockets, and DNS resolution to reach the backend. Services
+            // were enumerated empirically from sandbox denial reports while
+            // running real codex turns under deny-default, then scoped to that
+            // exact set: allowing every mach service would also expose
+            // clipboard/contacts-class IPC to a prompt-injected process, and
+            // file reads are not the only exfiltration channel.
+            "(allow mach-lookup\n" +
+                "   (global-name \"com.apple.CoreServices.coreservicesd\")\n" +
+                "   (global-name \"com.apple.DiskArbitration.diskarbitrationd\")\n" +
+                "   (global-name \"com.apple.FSEvents\")\n" +
+                "   (global-name \"com.apple.SecurityServer\")\n" +
+                "   (global-name \"com.apple.SystemConfiguration.configd\")\n" +
+                "   (global-name \"com.apple.SystemConfiguration.SCNetworkReachability\")\n" +
+                "   (global-name \"com.apple.networkd\")\n" +
+                "   (global-name \"com.apple.dnssd\")\n" +
+                ")",
             "(allow system-socket)",
-            "(allow user-preference-read)",
+            // Scoped to Codex's own preference domain. Codex also probes
+            // kCFPreferencesAnyApplication, which is denied and non-fatal;
+            // scoping avoids exposing every app's CFPreferences/NSUserDefaults
+            // domains (some apps store credentials in preferences).
+            "(allow user-preference-read (preference-domain \"com.openai.codex\"))",
+            // Database change-notification shared memory (CoreTypes).
+            "(allow ipc-posix-shm-write-create (global-name \"com.apple.AppleDatabaseChanged\"))",
             // Allow stat/metadata of any path (low-risk: exposes existence only,
             // not contents) so the sandboxed process can resolve absolute path
             // components. Content reads remain denied-by-default below.
