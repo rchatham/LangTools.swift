@@ -90,11 +90,21 @@ public class MessageService: Sendable {
                     content = chunk.trimingLeadingNewlines()
                 }
                 let messageUuid = if lastIsStreamable, let last = messages.last { last.uuid } else { UUID() }
-                let message = Message(uuid: messageUuid, role: .assistant, contentType: .string(content.trimingTrailingNewlines()))
+                let trimmed = content.trimingTrailingNewlines()
 
                 await MainActor.run {
-                    if let last = messages.last, last.uuid == message.uuid { messages[messages.count - 1] = message }
-                    else { messages.append(message) }
+                    if let last = messages.last, last.uuid == messageUuid {
+                        // Update the existing assistant message in place so tool-call
+                        // state accumulated during the stream is preserved. Replacing
+                        // the instance would discard `toolCalls` written by the tool
+                        // event handler.
+                        last.contentType = .string(trimmed)
+                        if !ToolSettings.shared.keepsToolCallsInHistory {
+                            last.toolCalls = []
+                        }
+                    } else {
+                        messages.append(Message(uuid: messageUuid, role: .assistant, contentType: .string(trimmed)))
+                    }
                 }
             }
         } catch {

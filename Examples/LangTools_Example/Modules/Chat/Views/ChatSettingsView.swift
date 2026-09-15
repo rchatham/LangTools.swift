@@ -228,6 +228,10 @@ public struct ChatSettingsView: View {
                 Text("Display weather, contacts, and events as visual cards below messages")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                Toggle("Keep Tool Calls in History", isOn: $viewModel.toolSettings.keepsToolCallsInHistory)
+                Text("Show tool-call cards after the tool completes. Turn off to hide them once the response continues.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
 
             // Custom sections from app (e.g., Backend)
@@ -1078,6 +1082,16 @@ extension ChatSettingsView {
                             .padding(.vertical, 4)
 
                         Text("Display weather, contacts, and events as visual cards below messages instead of plain text.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        Divider()
+
+                        Toggle("Keep Tool Calls in History", isOn: $viewModel.toolSettings.keepsToolCallsInHistory)
+                            .toggleStyle(.switch)
+                            .padding(.vertical, 4)
+
+                        Text("Show tool-call cards after the tool completes. Turn off to hide them once the response continues.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
