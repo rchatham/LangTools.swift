@@ -25,6 +25,11 @@ public class MessageService: Sendable {
     /// Transient flag set when a tool call completes during the current send,
     /// forcing the follow-up response to start a new assistant message.
     @ObservationIgnored private var toolBreakOccurred: Bool = false
+    /// Ordered buffer of tool events fired by LangTools during a completion
+    /// cycle. Drained on the main actor before each streamed chunk is processed
+    /// so parallel tool calls all attach to the same message in order.
+    @ObservationIgnored private var pendingToolEvents: [LangToolsToolEvent] = []
+    @ObservationIgnored private let toolEventLock = NSLock()
 
     /// Callback fired when a message is added or modified (for persistence)
     public var messageUpdatedCallback: ((Message) -> Void)?
@@ -73,22 +78,20 @@ public class MessageService: Sendable {
             // Snapshot filtered tools on the main actor before entering the async stream.
             let activeTools = await filteredTools
 
-            // Surface non-agent tool-call lifecycle to ChatUI by applying
-            // LangTools tool events to the streaming assistant message. A tool
-            // completion marks a break so the follow-up response starts a new
-            // assistant message rather than continuing the pre-tool message.
+            // Buffer tool events fired by LangTools; they are drained in order on
+            // the main actor before each chunk below so parallel tool calls all
+            // attach to the same assistant message.
             let toolEventHandler: (LangToolsToolEvent) -> Void = { [weak self] event in
-                Task { @MainActor in
-                    guard let self, let last = self.messages.last, last.isAssistant else { return }
-                    last.applyToolEvent(event)
-                    if case .toolCompleted = event {
-                        self.toolBreakOccurred = true
-                    }
-                }
+                self?.enqueueToolEvent(event)
             }
 
             var content: String = ""
             for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: activeTools, toolEventHandler: toolEventHandler) {
+                // Apply any tool events that fired since the last chunk (in order)
+                // before processing this chunk, so a parallel batch of tool calls
+                // all land on the same message and the follow-up text starts a new one.
+                await MainActor.run { [weak self] in self?.drainToolEvents() }
+
                 content += chunk
                 // Continue the last message only when it is a plain assistant text
                 // message that has not been split by a tool-call break.
@@ -119,6 +122,9 @@ public class MessageService: Sendable {
                     }
                 }
             }
+            // Flush any tool events that fired after the last chunk (e.g. a tool
+            // call with no follow-up response).
+            await MainActor.run { [weak self] in self?.drainToolEvents() }
         } catch {
             if messages.last?.isAssistant ?? false {
                 // TODO: - Should mark the last message as errored
@@ -138,6 +144,33 @@ public class MessageService: Sendable {
 
     public func deleteMessage(id: UUID) { Task { @MainActor in messages.removeAll(where: { $0.uuid == id }) } }
     public func clearMessages() { Task { @MainActor in messages.removeAll() } }
+}
+
+extension MessageService {
+    /// Buffers a tool event in arrival order for ordered main-actor draining.
+    func enqueueToolEvent(_ event: LangToolsToolEvent) {
+        toolEventLock.lock()
+        pendingToolEvents.append(event)
+        toolEventLock.unlock()
+    }
+
+    /// Applies all buffered tool events (in order) to the current assistant
+    /// message on the main actor, then clears the buffer. Called before each
+    /// streamed chunk so parallel tool calls attach to the same message.
+    @MainActor
+    func drainToolEvents() {
+        toolEventLock.lock()
+        let events = pendingToolEvents
+        pendingToolEvents.removeAll()
+        toolEventLock.unlock()
+        guard !events.isEmpty, let last = messages.last, last.isAssistant else { return }
+        for event in events {
+            last.applyToolEvent(event)
+            if case .toolCompleted = event {
+                toolBreakOccurred = true
+            }
+        }
+    }
 }
 
 extension MessageService {
