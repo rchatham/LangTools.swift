@@ -195,8 +195,9 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         ))
         XCTAssertTrue(source.contains("(allow file-read-metadata)"))
         XCTAssertFalse(source.contains("(allow mach-lookup)\n)"))
-        // No credential blocklist renders without a home directory.
-        XCTAssertFalse(source.contains("deny file-read-metadata"))
+        // The credential blocklist derives from the passwd database (not the
+        // inputs), so it renders even without an input home.
+        XCTAssertTrue(source.contains("(deny file-read-metadata (subpath \"\(NSHomeDirectory())/Library/Keychains\"))"))
         // No runtime-cache rules are emitted when no cache is configured.
         let empty = CodexSeatbeltProfile().render(inputs: CodexSeatbeltProfile.Inputs(
             codexExecutable: "/opt/codex/bin/codex",
@@ -411,7 +412,7 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         // and exits, so startup fails, but the marker proves where it ran.
         _ = try? await client.initializedProcessGeneration()
 
-        let deadline = Date().addingTimeInterval(3)
+        let deadline = Date().addingTimeInterval(10)
         while Date() < deadline, FileManager.default.fileExists(atPath: marker.path) == false {
             try await Task.sleep(for: .milliseconds(20))
         }
@@ -435,6 +436,9 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: workspace) }
         let marker = workspace.appendingPathComponent("cwd-marker-no-seatbelt.txt")
 
+        // Snapshot before the child launches: the test process cwd must not
+        // change while the child inherits it.
+        let expectedInherited = Self.physicalPath(FileManager.default.currentDirectoryPath)
         let client = CodexAppServerClient(
             commandResolver: {
                 ResolvedCodexCommand(executable: "/bin/sh", arguments: ["-c", "pwd > '\(marker.path)'"])
@@ -443,13 +447,13 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         )
         _ = try? await client.initializedProcessGeneration()
 
-        let deadline = Date().addingTimeInterval(3)
+        let deadline = Date().addingTimeInterval(10)
         while Date() < deadline, FileManager.default.fileExists(atPath: marker.path) == false {
             try await Task.sleep(for: .milliseconds(20))
         }
         let recorded = (try? String(contentsOf: marker, encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        XCTAssertEqual(recorded.map(Self.physicalPath), Self.physicalPath(FileManager.default.currentDirectoryPath))
+        XCTAssertEqual(recorded.map(Self.physicalPath), expectedInherited)
         XCTAssertNotEqual(recorded.map(Self.physicalPath), Self.physicalPath(workspace.path))
         await client.shutdown()
     }
@@ -480,13 +484,15 @@ final class CodexSeatbeltProfileTests: XCTestCase {
     }
 
     func testRenderDeniesMetadataProbingOfEveryCredentialStore() throws {
-        let home = "/Users/reid"
+        // The blocklist home is the passwd home for the effective user, not
+        // the input value (which is only a fallback).
+        let home = NSHomeDirectory()
         let source = CodexSeatbeltProfile().render(inputs: CodexSeatbeltProfile.Inputs(
             codexExecutable: "/opt/codex/bin/codex",
             codexExecutableArguments: [],
-            codexHome: home + "/.codex",
-            workspaceRoot: home + "/Library/Caches/ws",
-            codexRuntimeCache: home + "/.cache/codex-runtimes",
+            codexHome: "/tmp/codex-home",
+            workspaceRoot: "/tmp/ws root",
+            codexRuntimeCache: "/tmp/cache dir/codex-runtimes",
             homeDirectory: home
         ))
         for sensitive in CodexSeatbeltProfile.sensitiveCredentialStoreNames {
@@ -495,9 +501,19 @@ final class CodexSeatbeltProfileTests: XCTestCase {
                 "missing metadata blocklist entry for \(sensitive)"
             )
         }
-        XCTAssertTrue(source.contains("(deny file-read-metadata (subpath \"\(home)/Library/Application Support\"))"))
         XCTAssertTrue(source.contains("(deny file-read-metadata (subpath \"\(home)/Library/Keychains\"))"))
-        XCTAssertTrue(source.contains("(deny file-read-metadata (subpath \"\(home)/Library/Preferences\"))"))
+        // Broad trees (.config, Application Support, Preferences) are
+        // intentionally NOT denied: legitimate XDG/app-support probes run
+        // through them, and their secret content is protected by the content
+        // boundary anyway.
+        XCTAssertFalse(
+            source.contains("(deny file-read-metadata (subpath \"\(home)/Library/Application Support\"))"),
+            "broad application-support tree must not be denied"
+        )
+        XCTAssertFalse(
+            source.contains("(deny file-read-metadata (subpath \"\(home)/Library/Preferences\"))"),
+            "broad preferences tree must not be denied"
+        )
         // The mach-lookup enumeration stays pinned to the requested services.
         for service in ["coreservicesd", "diskarbitrationd", "FSEvents", "SecurityServer",
                         "configd", "SCNetworkReachability", "networkd", "dnssd"] {

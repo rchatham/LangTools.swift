@@ -903,8 +903,10 @@ enum CodexAppServerError: LocalizedError, Sendable {
         var start = 0
         while start < bytes.count, bytes[start] & 0b1100_0000 == 0b1000_0000 { start += 1 }
         var detail = String(decoding: bytes[start...], as: UTF8.self)
-        if detail.first == "\u{FFFD}" { detail.removeFirst() }
-        while detail.last == "\u{FFFD}" { detail.removeLast() }
+        // A leading replacement character can only be produced by the byte
+        // trim cutting a multi-byte character; strip it only in that case so a
+        // legitimate U+FFFD from the original stderr survives.
+        if start > 0, detail.first == "\u{FFFD}" { detail.removeFirst() }
         if detail.isEmpty {
             // Nothing usable survived truncation; the caller falls back to the
             // plain status message.

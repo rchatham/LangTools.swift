@@ -195,12 +195,43 @@ struct CodexSeatbeltProfile: Sendable {
         ".ansible"
     ]
 
+    /// Resolves the credential-blocklist home from the passwd database for the
+    /// effective user, falling back to the provided value (typically `$HOME`)
+    /// and then to nothing. The passwd home is authoritative: a missing,
+    /// non-canonical, or symlinked `$HOME` must not disable the denies.
+    static func credentialBlocklistHome(
+        environment: [String: String],
+        fileManager: FileManager = .default
+    ) -> String? {
+        if let passwdHome = Self.passwdHomeForCurrentUser(), passwdHome.isEmpty == false {
+            return passwdHome
+        }
+        guard let home = environment["HOME"], home.isEmpty == false else { return nil }
+        let standardized = URL(fileURLWithPath: home).standardizedFileURL.path
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: standardized, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else { return nil }
+        return standardized
+    }
+
+    private static func passwdHomeForCurrentUser() -> String? {
+        #if canImport(Darwin)
+        guard let entry = getpwuid(geteuid()), entry.pointee.pw_dir != nil else { return nil }
+        return String(cString: entry.pointee.pw_dir)
+        #else
+        return nil
+        #endif
+    }
+
     private static func sensitiveCredentialPaths(home: String) -> [String] {
+        // Specific credential stores only. Broad trees (~/.config,
+        // ~/Library/Application Support, ~/Library/Preferences) are
+        // intentionally NOT denied: legitimate XDG/app-support probes run
+        // through them and a metadata deny there risks breaking codex, while
+        // their secret content is protected by the content boundary anyway.
         var paths = sensitiveCredentialStoreNames.map { home + "/" + $0 }
-        // macOS credential/token locations one level deeper than the home.
-        paths.append(home + "/Library/Application Support")
         paths.append(home + "/Library/Keychains")
-        paths.append(home + "/Library/Preferences")
         return paths
     }
 
@@ -275,11 +306,11 @@ struct CodexSeatbeltProfile: Sendable {
             // broader allow.
             "(allow file-read-metadata)"
         ]
-        if inputs.homeDirectory.isEmpty == false {
-            // Standardize first: a trailing slash or non-canonical form would
-            // produce subpaths that never match, silently disabling the deny.
-            let home = URL(fileURLWithPath: inputs.homeDirectory).standardizedFileURL.path
-            for sensitivePath in Self.sensitiveCredentialPaths(home: home) {
+        // The blocklist home comes from the passwd database for the effective
+        // user, not $HOME: credential stores live in the real home, and a
+        // missing/wrong/symlinked $HOME must not silently disable the denies.
+        if let blocklistHome = Self.credentialBlocklistHome(environment: ["HOME": inputs.homeDirectory]) {
+            for sensitivePath in Self.sensitiveCredentialPaths(home: blocklistHome) {
                 lines.append("(deny file-read-metadata (subpath \(Self.quoted(sensitivePath))))")
             }
         }
