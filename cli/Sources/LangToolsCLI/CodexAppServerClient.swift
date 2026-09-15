@@ -862,6 +862,11 @@ enum CodexAppServerError: LocalizedError, Sendable {
         while start < bytes.count, bytes[start] & 0b1100_0000 == 0b1000_0000 { start += 1 }
         var detail = String(decoding: bytes[start...], as: UTF8.self)
         if detail.first == "\u{FFFD}" { detail.removeFirst() }
+        if detail.isEmpty {
+            // Nothing usable survived truncation; the caller falls back to the
+            // plain status message.
+            return ""
+        }
         return "…" + detail + "[truncated]"
     }
 

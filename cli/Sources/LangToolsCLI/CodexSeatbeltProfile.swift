@@ -86,10 +86,14 @@ struct CodexSeatbeltProfile: Sendable {
     /// user, and existing filesystem permissions still bound everyone else.
     static func resolvedCodexRuntimeCache(
         environment: [String: String],
-        currentUser: String = NSUserName(),
+        currentUserID: UInt32 = UInt32(geteuid()),
         fileManager: FileManager = .default
     ) -> String {
         guard let home = environment["HOME"], home.isEmpty == false else { return "" }
+        // A symlinked or foreign-owned HOME is not validated here: the lexical
+        // grant below still fails safe under the seatbelt (accesses resolve to
+        // locations the allowlist does not cover), it simply means the runtime
+        // cache is unusable. Codex tolerates that.
         let cacheRoot = URL(fileURLWithPath: home, isDirectory: true)
             .appendingPathComponent(".cache", isDirectory: true)
         let cachePath = cacheRoot.appendingPathComponent("codex-runtimes", isDirectory: true)
@@ -109,8 +113,8 @@ struct CodexSeatbeltProfile: Sendable {
             // the create path.
             guard isDirectory.boolValue,
                   let attributes = try? fileManager.attributesOfItem(atPath: lexicalPath),
-                  let owner = attributes[.ownerAccountName] as? String,
-                  owner == currentUser,
+                  let ownerID = attributes[.ownerAccountID] as? NSNumber,
+                  ownerID.uint32Value == currentUserID,
                   let permissions = attributes[.posixPermissions] as? NSNumber,
                   permissions.intValue & 0o022 == 0
             else { return "" }
@@ -121,8 +125,8 @@ struct CodexSeatbeltProfile: Sendable {
                 // otherwise another local user could swap the leaf between the
                 // checks above and below. Its mode is otherwise left untouched.
                 guard let rootAttributes = try? fileManager.attributesOfItem(atPath: lexicalRoot),
-                      let rootOwner = rootAttributes[.ownerAccountName] as? String,
-                      rootOwner == currentUser,
+                      let rootOwnerID = rootAttributes[.ownerAccountID] as? NSNumber,
+                      rootOwnerID.uint32Value == currentUserID,
                       let rootPermissions = rootAttributes[.posixPermissions] as? NSNumber,
                       rootPermissions.intValue & 0o022 == 0
                 else { return "" }

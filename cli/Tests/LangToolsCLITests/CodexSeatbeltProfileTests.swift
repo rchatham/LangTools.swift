@@ -90,6 +90,13 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             0,
             "Reading user files outside the workspace must be denied by the OS."
         )
+        // Metadata of the same denied path must be ALLOWED: this pins the exact
+        // (intentional) boundary — global stat, contents denied-by-default.
+        XCTAssertEqual(
+            runSandboxed(sandboxExec: sandboxExec, profile: profileURL, argv: ["/usr/bin/stat", "-f%z", homeSentinel.path]),
+            0,
+            "Metadata probing must remain permitted (documented accepted risk)."
+        )
         // Writing inside the workspace must succeed.
         let writeTarget = workspaceRoot.appendingPathComponent("out.txt")
         XCTAssertEqual(
@@ -256,16 +263,13 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         XCTAssertEqual(
             CodexSeatbeltProfile.resolvedCodexRuntimeCache(
                 environment: ["HOME": home.path],
-                currentUser: "someone-else"
+                currentUserID: 424_242
             ),
             ""
         )
         // The real owner is still granted.
         XCTAssertNotEqual(
-            CodexSeatbeltProfile.resolvedCodexRuntimeCache(
-                environment: ["HOME": home.path],
-                currentUser: NSUserName()
-            ),
+            CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: ["HOME": home.path]),
             ""
         )
     }
@@ -416,6 +420,31 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertEqual(recorded.map(Self.physicalPath), Self.physicalPath(FileManager.default.currentDirectoryPath))
         XCTAssertNotEqual(recorded.map(Self.physicalPath), Self.physicalPath(workspace.path))
+        await client.shutdown()
+    }
+
+    func testMissingWorkspaceRootFailsClosedBeforeLaunching() async throws {
+        guard CodexSeatbeltProfile.sandboxExecPath() != nil else {
+            throw XCTSkip("Seatbelt containment is unavailable on this platform.")
+        }
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-ws-\(UUID().uuidString.lowercased())", isDirectory: true)
+
+        let client = CodexAppServerClient(
+            commandResolver: {
+                ResolvedCodexCommand(executable: "/bin/sh", arguments: ["-c", "exit 0"])
+            },
+            workspaceRootProvider: { missing }
+        )
+        do {
+            _ = try await client.initializedProcessGeneration()
+            XCTFail("Expected the missing workspace root to fail closed")
+        } catch let error as CodexAppServerError {
+            guard case .transport(let message) = error else {
+                return XCTFail("Expected a transport error, got \(error)")
+            }
+            XCTAssertTrue(message.contains("workspace root is missing"), message)
+        }
         await client.shutdown()
     }
 
