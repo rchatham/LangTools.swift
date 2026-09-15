@@ -486,7 +486,8 @@ actor CodexAppServerClient {
             codexExecutable: executable,
             codexExecutableArguments: Array(arguments.dropLast(3)),
             codexHome: codexHomeProvider(),
-            workspaceRoot: resolvedWorkspace.path
+            workspaceRoot: resolvedWorkspace.path,
+            codexRuntimeCache: CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: environment)
         )
         // A profile-write failure throws so the caller never launches the
         // Codex runtime without the intended OS-level read boundary.
