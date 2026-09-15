@@ -34,6 +34,7 @@ final class LangToolsAppUITests: XCTestCase {
         add(screenshot)
     }
 
+#if os(macOS)
     @MainActor
     func testCodexBackedChatDisplaysAssistantReply() throws {
         let app = XCUIApplication()
@@ -70,6 +71,7 @@ final class LangToolsAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["OpenAI Account Error"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Codex is not logged in.")).firstMatch.waitForExistence(timeout: 2))
     }
+#endif
 
     @MainActor
     func testLaunchPerformance() throws {
