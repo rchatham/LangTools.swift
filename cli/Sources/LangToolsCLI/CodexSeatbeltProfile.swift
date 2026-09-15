@@ -116,13 +116,15 @@ struct CodexSeatbeltProfile: Sendable {
             else { return "" }
         } else {
             if rootExisted {
-                // A pre-existing .cache the helper did not create must at least be
-                // owned by the effective user, mirroring the leaf check; its mode
-                // is intentionally left untouched (filesystem permissions continue
-                // to bound every other local process).
+                // A pre-existing .cache the helper did not create must be owned
+                // by the effective user and must not be group/other-writable:
+                // otherwise another local user could swap the leaf between the
+                // checks above and below. Its mode is otherwise left untouched.
                 guard let rootAttributes = try? fileManager.attributesOfItem(atPath: lexicalRoot),
                       let rootOwner = rootAttributes[.ownerAccountName] as? String,
-                      rootOwner == currentUser
+                      rootOwner == currentUser,
+                      let rootPermissions = rootAttributes[.posixPermissions] as? NSNumber,
+                      rootPermissions.intValue & 0o022 == 0
                 else { return "" }
             }
             do {
@@ -203,6 +205,9 @@ struct CodexSeatbeltProfile: Sendable {
                 "   (global-name \"com.apple.CoreServices.coreservicesd\")\n" +
                 "   (global-name \"com.apple.DiskArbitration.diskarbitrationd\")\n" +
                 "   (global-name \"com.apple.FSEvents\")\n" +
+                // securityd brokers per-key authorization; the lookup alone
+                // does not unlock keychain items, and codex needs it for TLS
+                // trust evaluation.
                 "   (global-name \"com.apple.SecurityServer\")\n" +
                 "   (global-name \"com.apple.SystemConfiguration.configd\")\n" +
                 "   (global-name \"com.apple.SystemConfiguration.SCNetworkReachability\")\n" +

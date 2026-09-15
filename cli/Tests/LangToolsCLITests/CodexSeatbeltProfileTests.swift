@@ -187,8 +187,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: home) }
 
         let cache = CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: ["HOME": home.path])
-        let expected = home.appendingPathComponent(".cache/codex-runtimes").standardizedFileURL.resolvingSymlinksInPath().path
-        XCTAssertEqual(cache, expected)
+        // The implementation deliberately returns the lexical path.
+        XCTAssertEqual(cache, home.appendingPathComponent(".cache/codex-runtimes").standardizedFileURL.path)
 
         var isDirectory: ObjCBool = false
         XCTAssertTrue(FileManager.default.fileExists(atPath: cache, isDirectory: &isDirectory))
@@ -268,6 +268,21 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             ),
             ""
         )
+    }
+
+    func testResolvedRuntimeCacheRefusesGroupOrOtherWritableLeaf() throws {
+        let home = makeTempDir(prefix: "home")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let leaf = home.appendingPathComponent(".cache/codex-runtimes")
+        try FileManager.default.createDirectory(at: leaf, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o707))],
+            ofItemAtPath: leaf.path
+        )
+
+        // Other-writable cached runtime data could be tampered with by any
+        // local user and then read back by the sandboxed process.
+        XCTAssertEqual(CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: ["HOME": home.path]), "")
     }
 
     func testResolvedRuntimeCacheSetsIntermediateCachePermissions() throws {

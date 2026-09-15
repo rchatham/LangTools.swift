@@ -482,6 +482,17 @@ actor CodexAppServerClient {
               let workspaceRoot = workspaceRootProvider()
         else { return nil }
         let resolvedWorkspace = workspaceRoot.resolvingSymlinksInPath()
+        // The child cwd is set to this directory; it must exist or the launch
+        // fails, so fail closed with a clear error rather than a confusing
+        // process failure.
+        var workspaceIsDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: resolvedWorkspace.path, isDirectory: &workspaceIsDirectory),
+              workspaceIsDirectory.boolValue
+        else {
+            throw CodexAppServerError.transport(
+                "Codex workspace root is missing: \(resolvedWorkspace.path)"
+            )
+        }
         let inputs = CodexSeatbeltProfile.Inputs(
             codexExecutable: executable,
             codexExecutableArguments: Array(arguments.dropLast(3)),
@@ -859,8 +870,10 @@ enum CodexAppServerError: LocalizedError, Sendable {
     /// the UI, then collapses whitespace runs.
     private static func sanitizeStderrDetail(_ value: String) -> String {
         let replaced = String(value.map { character in
-            (character.isNewline || character.unicodeScalars.allSatisfy { $0.value >= 0x20 })
-                ? character : " "
+            let printable = character.unicodeScalars.allSatisfy { scalar in
+                scalar.value >= 0x20 && !(0x7F...0x9F).contains(scalar.value)
+            }
+            return (character.isNewline || printable) ? character : " "
         })
         return replaced
             .components(separatedBy: .whitespacesAndNewlines)
