@@ -393,6 +393,11 @@ actor CodexAppServerClient {
         ) {
             process.executableURL = URL(fileURLWithPath: seatbelt.sandboxExec)
             process.arguments = ["-f", seatbelt.profilePath, command.executable] + codexArguments
+            // Run the Codex app-server with its working directory inside the
+            // allowlisted workspace root, so it never reads the arbitrary
+            // helper launch directory (e.g. the user's repo/home) to load
+            // project config.
+            process.currentDirectoryURL = seatbelt.workspaceURL
             seatbeltProfileURL = seatbelt.profileURL
         } else {
             process.executableURL = URL(fileURLWithPath: command.executable)
@@ -469,17 +474,46 @@ actor CodexAppServerClient {
         let sandboxExec: String
         let profilePath: String
         let profileURL: URL
+        let workspaceURL: URL
     }
 
     private func makeSeatbeltLaunch(executable: String, arguments: [String]) throws -> SeatbeltLaunch? {
         guard let sandboxExec = CodexSeatbeltProfile.sandboxExecPath(),
               let workspaceRoot = workspaceRootProvider()
         else { return nil }
+        let resolvedWorkspace = workspaceRoot.resolvingSymlinksInPath()
+        // The child cwd is set to this directory; it must exist or the launch
+        // fails, so fail closed with a clear error rather than a confusing
+        // process failure.
+        var workspaceIsDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: resolvedWorkspace.path, isDirectory: &workspaceIsDirectory),
+              workspaceIsDirectory.boolValue
+        else {
+            throw CodexAppServerError.transport(
+                "Codex workspace root is missing: \(resolvedWorkspace.path)"
+            )
+        }
+        // Give the app-server a dedicated, empty working directory inside the
+        // allowlisted root, so default project-config discovery does not
+        // traverse the sibling conversation workspaces sharing the root. This
+        // is a discovery-only isolation, not a read boundary: the seatbelt
+        // still grants the whole root for legitimate workspace operations.
+        // Per-turn work happens in the conversation workspace set via
+        // thread/start.
+        let appServerCWD = resolvedWorkspace
+            .appendingPathComponent("app-server-cwd", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: appServerCWD,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: NSNumber(value: Int16(0o700))]
+        )
         let inputs = CodexSeatbeltProfile.Inputs(
             codexExecutable: executable,
             codexExecutableArguments: Array(arguments.dropLast(3)),
             codexHome: codexHomeProvider(),
-            workspaceRoot: workspaceRoot.resolvingSymlinksInPath().path
+            workspaceRoot: resolvedWorkspace.path,
+            codexRuntimeCache: CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: environment),
+            homeDirectory: environment["HOME"] ?? ""
         )
         // A profile-write failure throws so the caller never launches the
         // Codex runtime without the intended OS-level read boundary.
@@ -487,7 +521,8 @@ actor CodexAppServerClient {
         return SeatbeltLaunch(
             sandboxExec: sandboxExec,
             profilePath: profileURL.path,
-            profileURL: profileURL
+            profileURL: profileURL,
+            workspaceURL: appServerCWD
         )
     }
 
@@ -822,6 +857,51 @@ enum CodexAppServerError: LocalizedError, Sendable {
     case restarted
     case shutdown
 
+    /// Maximum app-server stderr bytes embedded in a localized error message.
+    /// The runtime stderr tail is already capped (16 KB); this keeps the
+    /// user-facing error bounded. Measured in UTF-8 bytes because log sinks
+    /// and UI layers budget bytes, not characters.
+    static let maximumStderrDetailBytes = 2_048
+
+    static func truncatedStderrDetail(_ stderr: String) -> String {
+        let trimmed = sanitizeStderrDetail(stderr)
+        guard trimmed.isEmpty == false else { return "" }
+        var bytes = Array(trimmed.utf8)
+        guard bytes.count > maximumStderrDetailBytes else { return trimmed }
+        // The failure reason lives at the end of a crash log: keep the tail.
+        bytes = Array(bytes.suffix(maximumStderrDetailBytes))
+        // Drop continuation bytes of a multi-byte character split by the byte
+        // boundary; a remaining partial start byte decodes to one replacement
+        // character, which is stripped only as a leading artifact.
+        var start = 0
+        while start < bytes.count, bytes[start] & 0b1100_0000 == 0b1000_0000 { start += 1 }
+        var detail = String(decoding: bytes[start...], as: UTF8.self)
+        if detail.first == "\u{FFFD}" { detail.removeFirst() }
+        while detail.last == "\u{FFFD}" { detail.removeLast() }
+        if detail.isEmpty {
+            // Nothing usable survived truncation; the caller falls back to the
+            // plain status message.
+            return ""
+        }
+        return "…" + detail + "[truncated]"
+    }
+
+    /// Replaces control characters (other than newlines) with spaces so
+    /// embedded stderr cannot smuggle terminal escape sequences into logs or
+    /// the UI, then collapses whitespace runs.
+    private static func sanitizeStderrDetail(_ value: String) -> String {
+        let replaced = String(value.map { character in
+            let printable = character.unicodeScalars.allSatisfy { scalar in
+                scalar.value >= 0x20 && !(0x7F...0x9F).contains(scalar.value)
+            }
+            return (character.isNewline || printable) ? character : " "
+        })
+        return replaced
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { $0.isEmpty == false }
+            .joined(separator: " ")
+    }
+
     var errorDescription: String? {
         switch self {
         case .unavailable: return "Codex CLI is not available. Install it, put `codex` on PATH, or set LANGTOOLS_CODEX_PATH."
@@ -831,8 +911,12 @@ enum CodexAppServerError: LocalizedError, Sendable {
         case .invalidResponse(let message): return "Codex app-server returned an invalid response: \(message)"
         case .invalidRequest(let message), .server(_, let message): return message
         case .timeout(let method): return "Codex app-server timed out while waiting for \(method)."
-        case .exited(let status, _):
-            return "Codex app-server exited with status \(status)."
+        case .exited(let status, let stderr):
+            let detail = Self.truncatedStderrDetail(stderr)
+            if detail.isEmpty {
+                return "Codex app-server exited with status \(status)."
+            }
+            return "Codex app-server exited with status \(status): \(detail)"
         case .restarted: return "Codex app-server restarted."
         case .shutdown: return "Codex app-server shut down."
         }

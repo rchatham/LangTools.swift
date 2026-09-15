@@ -30,6 +30,12 @@ struct CodexSeatbeltProfile: Sendable {
         /// Helper-owned workspace root containing all conversation workspaces
         /// for this helper process lifetime.
         let workspaceRoot: String
+        /// Codex runtime/plugin cache (e.g. `~/.cache/codex-runtimes`). Empty
+        /// when it does not exist.
+        let codexRuntimeCache: String
+        /// The user home directory; used only to block metadata probing of
+        /// sensitive credential directories. Empty disables the blocklist.
+        let homeDirectory: String
     }
 
     /// Returns the absolute path to `sandbox-exec` when seatbelt containment is
@@ -63,6 +69,116 @@ struct CodexSeatbeltProfile: Sendable {
         )
     }
 
+    /// Resolves (creating when missing) the Codex runtime/plugin cache
+    /// directory.
+    ///
+    /// Fail-closed hardening: the seatbelt grants read/write on this directory,
+    /// and the helper does not own `~/.cache`, so the grant is only issued when
+    /// neither cache component is a symlink (a planted symlink would otherwise
+    /// hand the grant a target path directly), the path is a real directory
+    /// owned by the effective user, and a missing directory can be created
+    /// helper-owned (mode 0700, including the intermediate `.cache` when the
+    /// helper creates it). Otherwise no grant is issued and Codex simply runs
+    /// without this cache rather than gaining access to an unexpected location.
+    ///
+    /// Seatbelt evaluates file operations against symlink-resolved paths, so a
+    /// symlink swapped in after launch resolves to a non-allowlisted target and
+    /// stays denied; the checks here prevent issuing a wide grant up front.
+    /// A pre-existing directory's mode is intentionally left untouched: the
+    /// grant only applies to the sandboxed Codex process running as the same
+    /// user, and existing filesystem permissions still bound everyone else.
+    static func resolvedCodexRuntimeCache(
+        environment: [String: String],
+        currentUserID: UInt32 = UInt32(geteuid()),
+        fileManager: FileManager = .default
+    ) -> String {
+        guard let home = environment["HOME"], home.isEmpty == false else { return "" }
+        // A symlinked or foreign-owned HOME is not validated here: the lexical
+        // grant below still fails safe under the seatbelt (accesses resolve to
+        // locations the allowlist does not cover), it simply means the runtime
+        // cache is unusable. Codex tolerates that.
+        let cacheRoot = URL(fileURLWithPath: home, isDirectory: true)
+            .appendingPathComponent(".cache", isDirectory: true)
+        let cachePath = cacheRoot.appendingPathComponent("codex-runtimes", isDirectory: true)
+        let lexicalPath = cachePath.standardizedFileURL.path
+        let lexicalRoot = cacheRoot.standardizedFileURL.path
+
+        guard Self.isSymlink(at: lexicalPath, fileManager: fileManager) == false,
+              Self.isSymlink(at: lexicalRoot, fileManager: fileManager) == false
+        else { return "" }
+
+        var isDirectory: ObjCBool = false
+        let rootExisted = fileManager.fileExists(atPath: lexicalRoot, isDirectory: &isDirectory)
+        if fileManager.fileExists(atPath: lexicalPath, isDirectory: &isDirectory) {
+            // A pre-existing leaf must be owned by the effective user and must
+            // not be group/other-writable: other local users could otherwise
+            // tamper with data the sandboxed process can read back, mirroring
+            // the create path.
+            guard isDirectory.boolValue,
+                  let attributes = try? fileManager.attributesOfItem(atPath: lexicalPath),
+                  let ownerID = attributes[.ownerAccountID] as? NSNumber,
+                  ownerID.uint32Value == currentUserID,
+                  let permissions = attributes[.posixPermissions] as? NSNumber,
+                  permissions.intValue & 0o022 == 0
+            else { return "" }
+        } else {
+            if rootExisted {
+                // A pre-existing .cache the helper did not create must be owned
+                // by the effective user and must not be group/other-writable:
+                // otherwise another local user could swap the leaf between the
+                // checks above and below. Its mode is otherwise left untouched.
+                guard let rootAttributes = try? fileManager.attributesOfItem(atPath: lexicalRoot),
+                      let rootOwnerID = rootAttributes[.ownerAccountID] as? NSNumber,
+                      rootOwnerID.uint32Value == currentUserID,
+                      let rootPermissions = rootAttributes[.posixPermissions] as? NSNumber,
+                      rootPermissions.intValue & 0o022 == 0
+                else { return "" }
+            }
+            do {
+                try fileManager.createDirectory(
+                    at: cachePath,
+                    withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: NSNumber(value: Int16(0o700))]
+                )
+                try fileManager.setAttributes(
+                    [.posixPermissions: NSNumber(value: Int16(0o700))],
+                    ofItemAtPath: lexicalPath
+                )
+                // Re-assert owner-only mode explicitly so the guarantee does
+                // not depend on how Foundation applies attributes across the
+                // intermediate-directory chain.
+                if rootExisted == false {
+                    try fileManager.setAttributes(
+                        [.posixPermissions: NSNumber(value: Int16(0o700))],
+                        ofItemAtPath: lexicalRoot
+                    )
+                }
+            } catch {
+                return ""
+            }
+        }
+
+        // Re-check symlink status on both components as late as possible:
+        // attributesOfItem would follow a symlink planted between the first
+        // check and here, vouching for a target's owner.
+        guard Self.isSymlink(at: lexicalPath, fileManager: fileManager) == false,
+              Self.isSymlink(at: lexicalRoot, fileManager: fileManager) == false
+        else { return "" }
+
+        // Grant the lexical path, not a resolved one. Seatbelt evaluates file
+        // operations against symlink-resolved paths, so the allowlist below
+        // matches the physical location regardless; and if the directory is
+        // swapped for a symlink after launch, accesses through it resolve to
+        // the target and are denied because the target is not allowlisted.
+        // Resolving here instead would hand a swapped-in target path directly
+        // to the grant, so lexical is strictly safer.
+        return lexicalPath
+    }
+
+    private static func isSymlink(at path: String, fileManager: FileManager) -> Bool {
+        (try? fileManager.destinationOfSymbolicLink(atPath: path)) != nil
+    }
+
     private static func standardizedResolving(_ path: String) -> String {
         URL(fileURLWithPath: path)
             .standardizedFileURL
@@ -84,8 +200,62 @@ struct CodexSeatbeltProfile: Sendable {
             "(deny default)",
             "(import \"system.sb\")",
             "(allow process-exec process-fork signal)",
-            "(allow network*)"
+            "(allow network*)",
+            // Codex's HTTP stack (Rust reqwest/hyper) needs SystemConfiguration,
+            // network sockets, and DNS resolution to reach the backend. Services
+            // were enumerated empirically from sandbox denial reports while
+            // running real codex turns under deny-default, then scoped to that
+            // exact set: allowing every mach service would also expose
+            // clipboard/contacts-class IPC to a prompt-injected process, and
+            // file reads are not the only exfiltration channel.
+            "(allow mach-lookup\n" +
+                "   (global-name \"com.apple.CoreServices.coreservicesd\")\n" +
+                "   (global-name \"com.apple.DiskArbitration.diskarbitrationd\")\n" +
+                "   (global-name \"com.apple.FSEvents\")\n" +
+                // securityd brokers per-key authorization; the lookup alone
+                // does not unlock keychain items, and codex needs it for TLS
+                // trust evaluation.
+                "   (global-name \"com.apple.SecurityServer\")\n" +
+                "   (global-name \"com.apple.SystemConfiguration.configd\")\n" +
+                "   (global-name \"com.apple.SystemConfiguration.SCNetworkReachability\")\n" +
+                "   (global-name \"com.apple.networkd\")\n" +
+                "   (global-name \"com.apple.dnssd\")\n" +
+                ")",
+            // AF_SYSTEM control sockets only (domain 32, from the denial
+            // reports); regular TCP/UDP is covered by network* above.
+            "(allow system-socket (socket-domain 32))",
+            // Scoped to Codex's own preference domain. Codex also probes
+            // kCFPreferencesAnyApplication, which is denied and non-fatal;
+            // scoping avoids exposing every app's CFPreferences/NSUserDefaults
+            // domains (some apps store credentials in preferences).
+            "(allow user-preference-read (preference-domain \"com.openai.codex\"))",
+            // Database change-notification shared memory (CoreTypes).
+            "(allow ipc-posix-shm-write-create (global-name \"com.apple.AppleDatabaseChanged\"))",
+            // Allow stat/metadata of any path so the sandboxed process can
+            // resolve absolute path components (parent directories of the
+            // workspace/codex home are otherwise un-stat-able). Accepted risk,
+            // stated explicitly: this permits existence/metadata probing of
+            // arbitrary paths (e.g. ~/.ssh/config existing) but never contents;
+            // content reads remain denied-by-default below. Narrowing this to
+            // the allowlisted roots and their ancestor components was attempted
+            // and empirically broke app-server startup, so the broad grant is
+            // required for codex to run at all.
+            // Even with global metadata allowed, credential-store locations
+            // stay explicitly denied so existence probing of SSH/GnuPG/AWS
+            // state is not possible; the specific denies below win over this
+            // broader allow.
+            "(allow file-read-metadata)"
         ]
+        if inputs.homeDirectory.isEmpty == false {
+            let home = inputs.homeDirectory
+            for sensitive in [".ssh", ".gnupg", ".aws", ".netrc", ".kube", ".docker", ".config"] {
+                let sensitivePath = home + "/" + sensitive
+                lines.append("(deny file-read-metadata (subpath \(Self.quoted(sensitivePath))))")
+            }
+            // Application-support tokens live one level deeper; metadata of the
+            // parent is left permitted so path resolution keeps working.
+            lines.append("(deny file-read-metadata (subpath \(Self.quoted(home + "/Library/Application Support"))))")
+        }
         // System runtime roots Codex and its native tools need to exec/load.
         for root in Self.systemReadRoots {
             lines.append("(allow file-read* (subpath \(Self.quoted(root))))")
@@ -102,6 +272,12 @@ struct CodexSeatbeltProfile: Sendable {
         // Codex owns its credential/config/cache directory.
         lines.append("(allow file-read* (subpath \(codexHome)))")
         lines.append("(allow file-write* (subpath \(codexHome)))")
+        // Codex runtime/plugin cache (models cache, primary runtime plugins).
+        if inputs.codexRuntimeCache.isEmpty == false {
+            let runtimeCache = Self.quoted(inputs.codexRuntimeCache)
+            lines.append("(allow file-read* (subpath \(runtimeCache)))")
+            lines.append("(allow file-write* (subpath \(runtimeCache)))")
+        }
         // Helper-owned conversation workspaces.
         lines.append("(allow file-read* (subpath \(workspaceRoot)))")
         lines.append("(allow file-write* (subpath \(workspaceRoot)))")
