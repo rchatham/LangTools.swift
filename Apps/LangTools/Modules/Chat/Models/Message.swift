@@ -10,7 +10,7 @@ import OpenAI
 import Anthropic
 import Ollama
 
-public final class Message: Codable, Sendable, ObservableObject, Identifiable, Equatable, Hashable {
+public final class Message: Codable, ObservableObject, Identifiable, Equatable, Hashable {
     public let uuid: UUID
     public var role: Role
     @Published public var contentType: ContentType

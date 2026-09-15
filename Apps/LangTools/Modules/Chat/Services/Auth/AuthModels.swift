@@ -1,0 +1,349 @@
+import Foundation
+
+public enum AccountLoginProvider: String, Codable, CaseIterable, Identifiable, Equatable {
+    case openAI
+    case claudeCode
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .openAI: return "OpenAI"
+        case .claudeCode: return "Claude Code"
+        }
+    }
+
+    public var service: APIService {
+        switch self {
+        case .openAI: return .openAI
+        case .claudeCode: return .anthropic
+        }
+    }
+
+    public var startPathComponent: String {
+        switch self {
+        case .openAI:
+            return "openai"
+        case .claudeCode:
+            return "claude-code"
+        }
+    }
+}
+
+public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
+    case openAI
+    case codex
+    case anthropic
+    case claudeCode
+    case xAI
+    case gemini
+
+    public var id: String { rawValue }
+
+    public var service: APIService {
+        switch self {
+        case .openAI, .codex: return .openAI
+        case .anthropic, .claudeCode: return .anthropic
+        case .xAI: return .xAI
+        case .gemini: return .gemini
+        }
+    }
+
+    public var route: ModelRoute? {
+        switch self {
+        case .openAI: return .openAI
+        case .codex: return .codex
+        default: return nil
+        }
+    }
+
+    public var accountProvider: AccountLoginProvider? {
+        switch self {
+        case .codex: return .openAI
+        case .claudeCode: return .claudeCode
+        default: return nil
+        }
+    }
+
+    public var displayName: String {
+        switch self {
+        case .openAI: return "OpenAI Platform"
+        case .codex: return "Codex Subscription"
+        case .anthropic: return "Anthropic Platform"
+        case .claudeCode: return "Claude Code"
+        case .xAI: return "xAI"
+        case .gemini: return "Gemini"
+        }
+    }
+
+    public static func destination(for model: Model) -> AccessDestination? {
+        switch model.route {
+        case .openAI: return .openAI
+        case .codex: return .codex
+        case .anthropic: return .anthropic
+        case .claudeCode: return .claudeCode
+        case .xAI: return .xAI
+        case .gemini: return .gemini
+        case .ollama: return nil
+        }
+    }
+
+    public static func platform(for service: APIService) -> AccessDestination? {
+        switch service {
+        case .openAI: return .openAI
+        case .anthropic: return .anthropic
+        case .xAI: return .xAI
+        case .gemini: return .gemini
+        case .ollama, .serper: return nil
+        }
+    }
+}
+
+public enum ProviderCredential: Codable, Equatable {
+    case apiKey(service: APIService)
+    case accountSession(provider: AccountLoginProvider)
+}
+
+public enum CodexSessionMarker {
+    public static let value = "langtools-codex-app-server-session-v1"
+}
+
+public struct AccountSession: Codable, Equatable, Identifiable {
+    public let id: UUID
+    public let provider: AccountLoginProvider
+    public let accountIdentifier: String
+    public let accessToken: String
+    public let refreshToken: String?
+    public let idToken: String?
+    public let tokenType: String?
+    public let expiresAt: Date?
+    public let accessibleModelIDs: [String]
+    public let createdAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        provider: AccountLoginProvider,
+        accountIdentifier: String,
+        accessToken: String,
+        refreshToken: String? = nil,
+        idToken: String? = nil,
+        tokenType: String? = nil,
+        expiresAt: Date? = nil,
+        accessibleModelIDs: [String] = [],
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.provider = provider
+        self.accountIdentifier = accountIdentifier
+        self.accessToken = accessToken
+        self.refreshToken = refreshToken
+        self.idToken = idToken
+        self.tokenType = tokenType
+        self.expiresAt = expiresAt
+        self.accessibleModelIDs = accessibleModelIDs
+        self.createdAt = createdAt
+    }
+
+    public var canonicalized: AccountSession {
+        guard provider == .openAI else { return self }
+        return AccountSession(
+            id: id,
+            provider: provider,
+            accountIdentifier: accountIdentifier,
+            accessToken: CodexSessionMarker.value,
+            refreshToken: nil,
+            idToken: nil,
+            tokenType: nil,
+            expiresAt: nil,
+            accessibleModelIDs: Self.normalizedModelIDs(accessibleModelIDs),
+            createdAt: createdAt
+        )
+    }
+
+    public func reconcilingOpenAIHelperSession(_ helperSession: AccountSession) -> AccountSession {
+        precondition(provider == .openAI && helperSession.provider == .openAI)
+        return AccountSession(
+            id: id,
+            provider: .openAI,
+            accountIdentifier: helperSession.accountIdentifier,
+            accessToken: CodexSessionMarker.value,
+            refreshToken: nil,
+            idToken: nil,
+            tokenType: nil,
+            expiresAt: nil,
+            accessibleModelIDs: Self.normalizedModelIDs(helperSession.accessibleModelIDs),
+            createdAt: createdAt
+        )
+    }
+
+    public func reconcilingOpenAIHelperStatus(_ status: CodexHelperStatus) -> AccountSession {
+        precondition(provider == .openAI)
+        return AccountSession(
+            id: id,
+            provider: .openAI,
+            accountIdentifier: Self.normalizedAccountIdentifier(status.accountIdentifier) ?? accountIdentifier,
+            accessToken: CodexSessionMarker.value,
+            refreshToken: nil,
+            idToken: nil,
+            tokenType: nil,
+            expiresAt: nil,
+            accessibleModelIDs: Self.normalizedModelIDs(status.accessibleModelIDs ?? []),
+            createdAt: createdAt
+        )
+    }
+
+    public static func normalizedModelIDs(_ modelIDs: [String]) -> [String] {
+        var seen = Set<String>()
+        return modelIDs.compactMap { identifier in
+            var normalized = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            if normalized.hasPrefix("codex/") {
+                normalized.removeFirst("codex/".count)
+            }
+            guard normalized.isEmpty == false, seen.insert(normalized).inserted else { return nil }
+            return normalized
+        }
+    }
+
+    private static func normalizedAccountIdentifier(_ identifier: String?) -> String? {
+        guard let normalized = identifier?.trimmingCharacters(in: .whitespacesAndNewlines), normalized.isEmpty == false else {
+            return nil
+        }
+        return normalized
+    }
+
+    public var isExpired: Bool {
+        guard let expiresAt else { return false }
+        return expiresAt <= Date()
+    }
+
+    public var needsRefresh: Bool {
+        guard let expiresAt else { return false }
+        return expiresAt <= Date().addingTimeInterval(5 * 60)
+    }
+}
+
+extension AccountSession: CustomStringConvertible, CustomDebugStringConvertible {
+    public var description: String {
+        "AccountSession(id: \(id), provider: \(provider), accountIdentifier: \(accountIdentifier), accessToken: <redacted>)"
+    }
+    public var debugDescription: String { description }
+}
+
+public enum ProviderAuthStatus: Equatable {
+    case notConfigured
+    case apiKeyConfigured
+    case accountConnected(AccountLoginProvider)
+    case apiKeyAndAccount(AccountLoginProvider)
+}
+
+public struct ProviderAccessState: Equatable, Identifiable {
+    public let service: APIService
+    public let route: ModelRoute?
+    public let accessDestination: AccessDestination?
+    public let authStatus: ProviderAuthStatus
+    public let availableModels: [Model]
+    public let accountIdentifier: String?
+
+    public init(
+        service: APIService,
+        route: ModelRoute? = nil,
+        accessDestination: AccessDestination? = nil,
+        authStatus: ProviderAuthStatus,
+        availableModels: [Model],
+        accountIdentifier: String? = nil
+    ) {
+        self.service = service
+        self.route = route
+        self.accessDestination = accessDestination
+        self.authStatus = authStatus
+        self.availableModels = availableModels
+        self.accountIdentifier = accountIdentifier
+    }
+
+    public var id: String { accessDestination?.rawValue ?? route?.rawValue ?? service.rawValue }
+
+    public var displayName: String {
+        accessDestination?.displayName ?? service.displayName
+    }
+
+    public var hasAPIKey: Bool {
+        switch authStatus {
+        case .apiKeyConfigured, .apiKeyAndAccount:
+            return true
+        default:
+            return false
+        }
+    }
+
+    public var hasAccountSession: Bool {
+        switch authStatus {
+        case .accountConnected, .apiKeyAndAccount:
+            return true
+        default:
+            return false
+        }
+    }
+
+    public var statusDescription: String {
+        switch authStatus {
+        case .notConfigured:
+            return "Not configured"
+        case .apiKeyConfigured:
+            return "API key saved"
+        case .accountConnected(let provider):
+            if let accountIdentifier {
+                return "Connected via \(provider.displayName) as \(accountIdentifier)"
+            }
+            return "Connected via \(provider.displayName)"
+        case .apiKeyAndAccount(let provider):
+            if let accountIdentifier {
+                return "API key + \(provider.displayName) account (\(accountIdentifier))"
+            }
+            return "API key + \(provider.displayName) account"
+        }
+    }
+
+    public var badgeTitle: String {
+        switch authStatus {
+        case .notConfigured:
+            return "Not Connected"
+        case .apiKeyConfigured:
+            return "API Key"
+        case .accountConnected:
+            return "Account"
+        case .apiKeyAndAccount:
+            return "API Key + Account"
+        }
+    }
+
+    public var authSummary: String {
+        switch service {
+        case .openAI:
+            return "Add an API key for API requests or sign in with OpenAI to unlock account-based model access."
+        case .anthropic:
+            return "Add an Anthropic API key or sign in with Claude Code for account-based access."
+        case .xAI, .gemini:
+            return "Add an API key to enable this provider."
+        case .ollama:
+            return "Local models do not require sign-in."
+        case .serper:
+            return "Add a Serper API key for search."
+        }
+    }
+}
+
+public extension ProviderAuthStatus {
+    var isConfigured: Bool {
+        self != .notConfigured
+    }
+}
+
+public extension APIService {
+    var accountLoginProvider: AccountLoginProvider? {
+        switch self {
+        case .openAI: return .openAI
+        case .anthropic: return .claudeCode
+        default: return nil
+        }
+    }
+}

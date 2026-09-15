@@ -10,8 +10,9 @@ import LangTools
 import ToolKit
 
 
+@MainActor
 @Observable
-public class MessageService: Sendable {
+public class MessageService {
     public let networkClient: NetworkClientProtocol
     public var messages: [Message] = [] {
         didSet {
@@ -21,6 +22,8 @@ public class MessageService: Sendable {
         }
     }
     var tools: [Tool]?
+    private(set) var conversationID = UUID()
+    private var activeSends: [UUID: [UUID: Task<Void, Error>]] = [:]
 
     /// Callback fired when a message is added or modified (for persistence)
     public var messageUpdatedCallback: ((Message) -> Void)?
@@ -50,20 +53,60 @@ public class MessageService: Sendable {
     }
 
     public func send(message: String, stream: Bool = false) async throws {
-        let userMessage = Message(text: message, role: .user)
-        await MainActor.run {
-            messages.append(userMessage)
+        let requestConversationID = conversationID
+        let sendID = UUID()
+        let operation = Task { @MainActor in
+            try await performSend(
+                message: message,
+                stream: stream,
+                conversationID: requestConversationID
+            )
         }
+        activeSends[requestConversationID, default: [:]][sendID] = operation
+        defer { removeActiveSend(id: sendID, conversationID: requestConversationID) }
+
+        try await withTaskCancellationHandler {
+            try await operation.value
+        } onCancel: {
+            operation.cancel()
+        }
+    }
+
+    private func performSend(message: String, stream: Bool, conversationID requestConversationID: UUID) async throws {
+        guard conversationID == requestConversationID else { throw CancellationError() }
+        let userMessage = Message(text: message, role: .user)
+        messages.append(userMessage)
 
         do {
             var currentMessages = messages
             currentMessages.insert(Message(text: systemMessage(), role: .system), at: 0)
 
-            // Snapshot filtered tools on the main actor before entering the async stream.
-            let activeTools = await filteredTools
+            let activeTools = filteredTools
+
+            let selectedModel = UserDefaults.model
+            let responseStream: AsyncThrowingStream<String, Error>
+            if let conversationClient = networkClient as? any ConversationAwareNetworkClientProtocol {
+                responseStream = try conversationClient.streamChatCompletionRequest(
+                    messages: currentMessages,
+                    model: selectedModel,
+                    conversationID: requestConversationID,
+                    stream: stream,
+                    tools: activeTools,
+                    toolChoice: nil
+                )
+            } else {
+                responseStream = try networkClient.streamChatCompletionRequest(
+                    messages: currentMessages,
+                    model: selectedModel,
+                    stream: stream,
+                    tools: activeTools,
+                    toolChoice: nil
+                )
+            }
 
             var content: String = ""
-            for try await chunk in try networkClient.streamChatCompletionRequest(messages: currentMessages, stream: stream, tools: activeTools) {
+            for try await chunk in responseStream {
+                guard conversationID == requestConversationID else { throw CancellationError() }
                 content += chunk
                 // Only treat the last message as a continuation target when it is
                 // a plain assistant text message.  Content-card and agent-event
@@ -76,21 +119,27 @@ public class MessageService: Sendable {
                 let messageUuid = if lastIsStreamable, let last = messages.last { last.uuid } else { UUID() }
                 let message = Message(uuid: messageUuid, role: .assistant, contentType: .string(content.trimingTrailingNewlines()))
 
-                await MainActor.run {
-                    if let last = messages.last, last.uuid == message.uuid { messages[messages.count - 1] = message }
-                    else { messages.append(message) }
-                }
+                if let last = messages.last, last.uuid == message.uuid { messages[messages.count - 1] = message }
+                else { messages.append(message) }
             }
+            try Task.checkCancellation()
+            guard conversationID == requestConversationID else { throw CancellationError() }
         } catch {
+            guard conversationID == requestConversationID else { throw CancellationError() }
             if messages.last?.isAssistant ?? false {
                 // TODO: - Should mark the last message as errored
             } else {
                 // remove last user message
-                await MainActor.run {
-                    messages.removeLast()
-                }
+                messages.removeLast()
             }
             throw error
+        }
+    }
+
+    private func removeActiveSend(id: UUID, conversationID: UUID) {
+        activeSends[conversationID]?.removeValue(forKey: id)
+        if activeSends[conversationID]?.isEmpty == true {
+            activeSends.removeValue(forKey: conversationID)
         }
     }
 
@@ -98,8 +147,23 @@ public class MessageService: Sendable {
         UserDefaults.systemMessage + "\n\nWhen agent tools return results, those results are displayed visually to the user as content cards. Do not repeat or summarize information already shown in the cards. You may add a brief natural-language acknowledgment but should not list out details the user can already see. Answer follow-up questions about the content if asked. If an agent tool returns an error, explain the error to the user."
     }
 
-    public func deleteMessage(id: UUID) { Task { @MainActor in messages.removeAll(where: { $0.uuid == id }) } }
-    public func clearMessages() { Task { @MainActor in messages.removeAll() } }
+    public func deleteMessage(id: UUID) { messages.removeAll(where: { $0.uuid == id }) }
+
+    public func clearMessages() {
+        let previousConversationID = conversationID
+        let sendsToDrain = activeSends.removeValue(forKey: previousConversationID).map { Array($0.values) } ?? []
+        conversationID = UUID()
+        messages.removeAll()
+        sendsToDrain.forEach { $0.cancel() }
+
+        let conversationClient = networkClient as? any ConversationAwareNetworkClientProtocol
+        Task {
+            for send in sendsToDrain {
+                _ = await send.result
+            }
+            await conversationClient?.endConversation(id: previousConversationID)
+        }
+    }
 }
 
 extension MessageService {

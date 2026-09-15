@@ -25,6 +25,39 @@ class OllamaTests: XCTestCase {
     }
 
 
+    func testOriginalInitializerFunctionTypesRemainAvailable() {
+        let configurationInitializer: (URL, URLSession) -> Ollama.OllamaConfiguration = Ollama.OllamaConfiguration.init
+        let ollamaInitializer: (URL, URLSession) -> Ollama = Ollama.init
+        let baseURL = URL(string: "http://localhost:11434")!
+        let session = URLSession(configuration: .ephemeral)
+
+        XCTAssertEqual(configurationInitializer(baseURL, session).baseURL, baseURL)
+        XCTAssertEqual(ollamaInitializer(baseURL, session).configuration.baseURL, baseURL)
+    }
+
+    func testPrepareAddsBearerAuthorizationWhenConfigured() throws {
+        let authenticatedAPI = Ollama(
+            baseURL: URL(string: "https://ollama.com")!,
+            apiKey: "test-api-key"
+        )
+
+        let request = try authenticatedAPI.prepare(request: Ollama.VersionRequest())
+
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-api-key")
+    }
+
+    func testPrepareOmitsEmptyAuthorization() throws {
+        let request = try Ollama(apiKey: "").prepare(request: Ollama.VersionRequest())
+
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testPrepareOmitsAuthorizationByDefault() throws {
+        let request = try api.prepare(request: Ollama.VersionRequest())
+
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+    }
+
     func testGenerate() async throws {
         MockURLProtocol.mockNetworkHandlers[Ollama.GenerateRequest.endpoint] = { request in
             XCTAssertEqual(request.httpMethod, "POST")
