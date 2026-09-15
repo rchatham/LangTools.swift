@@ -28,10 +28,17 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         let homeSentinel = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("seatbelt-sentinel-\(UUID().uuidString.lowercased()).txt")
         try "SECRET".write(to: homeSentinel, atomically: true, encoding: .utf8)
+        // A runtime-cache root the helper owns, to prove the grant works at
+        // runtime (not just as rendered text).
+        let runtimeCache = makeTempDir(prefix: "cache")
+        let cacheFile = runtimeCache.appendingPathComponent("plugin-cache.json")
+        try "cache-content".write(to: cacheFile, atomically: true, encoding: .utf8)
+
         defer {
             try? FileManager.default.removeItem(at: workspaceRoot)
             try? FileManager.default.removeItem(at: codexHome)
             try? FileManager.default.removeItem(at: homeSentinel)
+            try? FileManager.default.removeItem(at: runtimeCache)
         }
 
         let inputs = CodexSeatbeltProfile.Inputs(
@@ -39,7 +46,7 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutableArguments: [],
             codexHome: codexHome.path,
             workspaceRoot: workspaceRoot.path,
-            codexRuntimeCache: ""
+            codexRuntimeCache: runtimeCache.path
         )
         let profileURL = try CodexSeatbeltProfile().writeProfile(inputs: inputs)
         defer { try? FileManager.default.removeItem(at: profileURL) }
@@ -55,6 +62,12 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             runSandboxed(sandboxExec: sandboxExec, profile: profileURL, argv: ["/bin/cat", codexFile.path]),
             0,
             "Reading the Codex home directory must be permitted."
+        )
+        // Runtime-cache reads must succeed (the grant is proven at runtime).
+        XCTAssertEqual(
+            runSandboxed(sandboxExec: sandboxExec, profile: profileURL, argv: ["/bin/cat", cacheFile.path]),
+            0,
+            "Reading the codex runtime cache must be permitted."
         )
         // A system file must be readable (networking/runtime need it).
         XCTAssertEqual(
@@ -272,6 +285,30 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         }
     }
 
+    func testResolvedRuntimeCachePreservesExistingParentPermissionsAndVerifiesOwnership() throws {
+        let home = makeTempDir(prefix: "home")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let parent = home.appendingPathComponent(".cache")
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o755))],
+            ofItemAtPath: parent.path
+        )
+
+        let cache = CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: ["HOME": home.path])
+        XCTAssertEqual(cache, home.appendingPathComponent(".cache/codex-runtimes").standardizedFileURL.path)
+
+        // Leaf is created owner-only; the pre-existing parent keeps its mode.
+        let leafPermissions = try XCTUnwrap(
+            (try FileManager.default.attributesOfItem(atPath: cache)[.posixPermissions] as? NSNumber)?.intValue
+        )
+        XCTAssertEqual(leafPermissions & 0o777, 0o700)
+        let parentPermissions = try XCTUnwrap(
+            (try FileManager.default.attributesOfItem(atPath: parent.path)[.posixPermissions] as? NSNumber)?.intValue
+        )
+        XCTAssertEqual(parentPermissions & 0o777, 0o755)
+    }
+
     func testExitedErrorTruncatesStderrDetail() {
         let short = CodexAppServerError.exited(status: 1, stderr: "boom\n")
         XCTAssertEqual(short.errorDescription, "Codex app-server exited with status 1: boom")
@@ -279,10 +316,20 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         let blank = CodexAppServerError.exited(status: 1, stderr: "   \n")
         XCTAssertEqual(blank.errorDescription, "Codex app-server exited with status 1.")
 
-        let huge = String(repeating: "x", count: 50_000)
-        let truncated = CodexAppServerError.exited(status: 2, stderr: huge).errorDescription ?? ""
-        XCTAssertLessThanOrEqual(truncated.count, CodexAppServerError.maximumStderrDetailCharacters + 64)
-        XCTAssertTrue(truncated.hasSuffix("…[truncated]"))
+        // Byte budget, not Character count: 2,048 UTF-8 bytes.
+        let multiByte = String(repeating: "日", count: 5_000) // 15,000 bytes
+        let truncatedBytes = CodexAppServerError.exited(status: 3, stderr: multiByte).errorDescription ?? ""
+        XCTAssertLessThanOrEqual(
+            truncatedBytes.utf8.count,
+            CodexAppServerError.maximumStderrDetailBytes + 64,
+            "embedded stderr detail must stay within the byte budget"
+        )
+
+        // The tail of a crash log carries the failure reason.
+        let long = String(repeating: "a", count: 3_000) + "FATAL-REASON"
+        let tail = CodexAppServerError.exited(status: 4, stderr: long).errorDescription ?? ""
+        XCTAssertTrue(tail.hasSuffix("FATAL-REASON[truncated]"))
+        XCTAssertFalse(tail.hasPrefix("aaa"))
     }
 
     func testLaunchedProcessRunsInsideWorkspaceRootUnderSeatbelt() async throws {

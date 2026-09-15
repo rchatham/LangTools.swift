@@ -105,6 +105,16 @@ struct CodexSeatbeltProfile: Sendable {
         if fileManager.fileExists(atPath: lexicalPath, isDirectory: &isDirectory) {
             guard isDirectory.boolValue else { return "" }
         } else {
+            if rootExisted {
+                // A pre-existing .cache the helper did not create must at least be
+                // owned by the effective user, mirroring the leaf check; its mode
+                // is intentionally left untouched (filesystem permissions continue
+                // to bound every other local process).
+                guard let rootAttributes = try? fileManager.attributesOfItem(atPath: lexicalRoot),
+                      let rootOwner = rootAttributes[.ownerAccountName] as? String,
+                      rootOwner == currentUser
+                else { return "" }
+            }
             do {
                 try fileManager.createDirectory(
                     at: cachePath,
@@ -115,8 +125,9 @@ struct CodexSeatbeltProfile: Sendable {
                     [.posixPermissions: NSNumber(value: Int16(0o700))],
                     ofItemAtPath: lexicalPath
                 )
-                // createDirectory applies explicit attributes only to the final
-                // component; keep the helper-created .cache owner-only too.
+                // Re-assert owner-only mode explicitly so the guarantee does
+                // not depend on how Foundation applies attributes across the
+                // intermediate-directory chain.
                 if rootExisted == false {
                     try fileManager.setAttributes(
                         [.posixPermissions: NSNumber(value: Int16(0o700))],
@@ -128,7 +139,10 @@ struct CodexSeatbeltProfile: Sendable {
             }
         }
 
-        guard let attributes = try? fileManager.attributesOfItem(atPath: lexicalPath),
+        // Re-check symlink status as late as possible: attributesOfItem would
+        // follow a symlink planted between the first check and here.
+        guard Self.isSymlink(at: lexicalPath, fileManager: fileManager) == false,
+              let attributes = try? fileManager.attributesOfItem(atPath: lexicalPath),
               let owner = attributes[.ownerAccountName] as? String,
               owner == currentUser
         else { return "" }
@@ -189,9 +203,12 @@ struct CodexSeatbeltProfile: Sendable {
             "(allow user-preference-read (preference-domain \"com.openai.codex\"))",
             // Database change-notification shared memory (CoreTypes).
             "(allow ipc-posix-shm-write-create (global-name \"com.apple.AppleDatabaseChanged\"))",
-            // Allow stat/metadata of any path (low-risk: exposes existence only,
-            // not contents) so the sandboxed process can resolve absolute path
-            // components. Content reads remain denied-by-default below.
+            // Allow stat/metadata of any path so the sandboxed process can
+            // resolve absolute path components (parent directories of the
+            // workspace/codex home are otherwise un-stat-able). Accepted risk,
+            // stated explicitly: this permits existence/metadata probing of
+            // arbitrary paths (e.g. ~/.ssh/config existing) but never contents;
+            // content reads remain denied-by-default below.
             "(allow file-read-metadata)"
         ]
         // System runtime roots Codex and its native tools need to exec/load.

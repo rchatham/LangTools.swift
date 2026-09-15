@@ -833,14 +833,20 @@ enum CodexAppServerError: LocalizedError, Sendable {
 
     /// Maximum app-server stderr bytes embedded in a localized error message.
     /// The runtime stderr tail is already capped (16 KB); this keeps the
-    /// user-facing error bounded.
-    static let maximumStderrDetailCharacters = 2_048
+    /// user-facing error bounded. Measured in UTF-8 bytes because log sinks
+    /// and UI layers budget bytes, not characters.
+    static let maximumStderrDetailBytes = 2_048
 
     static func truncatedStderrDetail(_ stderr: String) -> String {
         let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.isEmpty == false else { return "" }
-        guard trimmed.count > maximumStderrDetailCharacters else { return trimmed }
-        return String(trimmed.prefix(maximumStderrDetailCharacters)) + "…[truncated]"
+        var bytes = Array(trimmed.utf8)
+        guard bytes.count > maximumStderrDetailBytes else { return trimmed }
+        // The failure reason lives at the end of a crash log: keep the tail.
+        bytes = Array(bytes.suffix(maximumStderrDetailBytes))
+        var detail = String(decoding: bytes, as: UTF8.self)
+        while detail.first == "\u{FFFD}" { detail.removeFirst() }
+        return "…" + detail + "[truncated]"
     }
 
     var errorDescription: String? {
