@@ -133,7 +133,7 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexHome: "/tmp/codex-home",
             workspaceRoot: "/tmp/ws root",
             codexRuntimeCache: "",
-        homeDirectory: ""
+            homeDirectory: ""
         )
         let source = CodexSeatbeltProfile().render(inputs: inputs)
         XCTAssertTrue(source.contains("(deny default)"))
@@ -197,7 +197,7 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexHome: "/tmp/codex-home",
             workspaceRoot: "/tmp/ws root",
             codexRuntimeCache: "",
-        homeDirectory: ""
+            homeDirectory: ""
         ))
         XCTAssertFalse(empty.contains("codex-runtimes"))
     }

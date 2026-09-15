@@ -494,9 +494,12 @@ actor CodexAppServerClient {
             )
         }
         // Give the app-server a dedicated, empty working directory inside the
-        // allowlisted root. Its own project-config scan must not traverse the
-        // sibling conversation workspaces that share the root; per-turn work
-        // happens in the conversation workspace set via thread/start.
+        // allowlisted root, so default project-config discovery does not
+        // traverse the sibling conversation workspaces sharing the root. This
+        // is a discovery-only isolation, not a read boundary: the seatbelt
+        // still grants the whole root for legitimate workspace operations.
+        // Per-turn work happens in the conversation workspace set via
+        // thread/start.
         let appServerCWD = resolvedWorkspace
             .appendingPathComponent("app-server-cwd", isDirectory: true)
         try FileManager.default.createDirectory(
@@ -874,6 +877,7 @@ enum CodexAppServerError: LocalizedError, Sendable {
         while start < bytes.count, bytes[start] & 0b1100_0000 == 0b1000_0000 { start += 1 }
         var detail = String(decoding: bytes[start...], as: UTF8.self)
         if detail.first == "\u{FFFD}" { detail.removeFirst() }
+        while detail.last == "\u{FFFD}" { detail.removeLast() }
         if detail.isEmpty {
             // Nothing usable survived truncation; the caller falls back to the
             // plain status message.

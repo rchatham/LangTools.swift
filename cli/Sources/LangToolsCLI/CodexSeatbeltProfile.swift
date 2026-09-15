@@ -248,10 +248,13 @@ struct CodexSeatbeltProfile: Sendable {
         ]
         if inputs.homeDirectory.isEmpty == false {
             let home = inputs.homeDirectory
-            for sensitive in [".ssh", ".gnupg", ".aws"] {
+            for sensitive in [".ssh", ".gnupg", ".aws", ".netrc", ".kube", ".docker", ".config"] {
                 let sensitivePath = home + "/" + sensitive
                 lines.append("(deny file-read-metadata (subpath \(Self.quoted(sensitivePath))))")
             }
+            // Application-support tokens live one level deeper; metadata of the
+            // parent is left permitted so path resolution keeps working.
+            lines.append("(deny file-read-metadata (subpath \(Self.quoted(home + "/Library/Application Support"))))")
         }
         // System runtime roots Codex and its native tools need to exec/load.
         for root in Self.systemReadRoots {
