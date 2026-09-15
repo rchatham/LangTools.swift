@@ -33,6 +33,9 @@ struct CodexSeatbeltProfile: Sendable {
         /// Codex runtime/plugin cache (e.g. `~/.cache/codex-runtimes`). Empty
         /// when it does not exist.
         let codexRuntimeCache: String
+        /// The user home directory; used only to block metadata probing of
+        /// sensitive credential directories. Empty disables the blocklist.
+        let homeDirectory: String
     }
 
     /// Returns the absolute path to `sandbox-exec` when seatbelt containment is
@@ -237,8 +240,19 @@ struct CodexSeatbeltProfile: Sendable {
             // the allowlisted roots and their ancestor components was attempted
             // and empirically broke app-server startup, so the broad grant is
             // required for codex to run at all.
+            // Even with global metadata allowed, credential-store locations
+            // stay explicitly denied so existence probing of SSH/GnuPG/AWS
+            // state is not possible; the specific denies below win over this
+            // broader allow.
             "(allow file-read-metadata)"
         ]
+        if inputs.homeDirectory.isEmpty == false {
+            let home = inputs.homeDirectory
+            for sensitive in [".ssh", ".gnupg", ".aws"] {
+                let sensitivePath = home + "/" + sensitive
+                lines.append("(deny file-read-metadata (subpath \(Self.quoted(sensitivePath))))")
+            }
+        }
         // System runtime roots Codex and its native tools need to exec/load.
         for root in Self.systemReadRoots {
             lines.append("(allow file-read* (subpath \(Self.quoted(root))))")

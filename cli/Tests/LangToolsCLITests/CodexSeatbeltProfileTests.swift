@@ -46,7 +46,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutableArguments: [],
             codexHome: codexHome.path,
             workspaceRoot: workspaceRoot.path,
-            codexRuntimeCache: runtimeCache.path
+            codexRuntimeCache: runtimeCache.path,
+            homeDirectory: NSHomeDirectory()
         )
         let profileURL = try CodexSeatbeltProfile().writeProfile(inputs: inputs)
         defer { try? FileManager.default.removeItem(at: profileURL) }
@@ -97,6 +98,15 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             0,
             "Metadata probing must remain permitted (documented accepted risk)."
         )
+        // Credential-store locations are explicitly denied for metadata too.
+        let sshDirectory = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".ssh")
+        if FileManager.default.fileExists(atPath: sshDirectory.path) {
+            XCTAssertNotEqual(
+                runSandboxed(sandboxExec: sandboxExec, profile: profileURL, argv: ["/usr/bin/stat", sshDirectory.path]),
+                0,
+                "Metadata probing of ~/.ssh must be denied by the blocklist."
+            )
+        }
         // Writing inside the workspace must succeed.
         let writeTarget = workspaceRoot.appendingPathComponent("out.txt")
         XCTAssertEqual(
@@ -122,7 +132,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
             workspaceRoot: "/tmp/ws root",
-            codexRuntimeCache: ""
+            codexRuntimeCache: "",
+        homeDirectory: ""
         )
         let source = CodexSeatbeltProfile().render(inputs: inputs)
         XCTAssertTrue(source.contains("(deny default)"))
@@ -163,7 +174,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
             workspaceRoot: "/tmp/ws root",
-            codexRuntimeCache: "/tmp/cache dir/codex-runtimes"
+            codexRuntimeCache: "/tmp/cache dir/codex-runtimes",
+            homeDirectory: ""
         )
         let source = CodexSeatbeltProfile().render(inputs: inputs)
         XCTAssertTrue(source.contains("(allow file-read* (subpath \"/tmp/cache dir/codex-runtimes\"))"))
@@ -184,7 +196,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
             workspaceRoot: "/tmp/ws root",
-            codexRuntimeCache: ""
+            codexRuntimeCache: "",
+        homeDirectory: ""
         ))
         XCTAssertFalse(empty.contains("codex-runtimes"))
     }
