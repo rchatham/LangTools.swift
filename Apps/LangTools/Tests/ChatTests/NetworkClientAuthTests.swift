@@ -33,7 +33,7 @@ final class NetworkClientAuthTests: XCTestCase {
             accessibleModelIDs: ["gpt-5.5"]
         )
         try sessionStore.save(session)
-        accessManager.refresh()
+        await MainActor.run { accessManager.refresh() }
 
         let proxyTransport = TestAccountProxyTransport()
         let client = NetworkClient(
@@ -64,7 +64,7 @@ final class NetworkClientAuthTests: XCTestCase {
             accessibleModelIDs: [anthropicModel.rawValue]
         )
         try sessionStore.save(session)
-        accessManager.refresh()
+        await MainActor.run { accessManager.refresh() }
 
         let proxyTransport = TestAccountProxyTransport()
         let client = NetworkClient(
@@ -93,7 +93,7 @@ final class NetworkClientAuthTests: XCTestCase {
             accessToken: "access-token",
             accessibleModelIDs: ["gpt-5.5"]
         ))
-        accessManager.refresh()
+        await MainActor.run { accessManager.refresh() }
         let client = NetworkClient(
             keychainService: keychainService,
             accountLoginService: FailingLogoutAccountLoginService(),
@@ -114,7 +114,7 @@ final class NetworkClientAuthTests: XCTestCase {
             accessToken: "access-token",
             accessibleModelIDs: ["gpt-5.5"]
         ))
-        accessManager.refresh()
+        await MainActor.run { accessManager.refresh() }
         let client = NetworkClient(
             keychainService: keychainService,
             accountLoginService: StubAccountLoginService(),
@@ -386,7 +386,7 @@ final class NetworkClientAuthTests: XCTestCase {
             accessibleModelIDs: ["gpt-5.5"]
         )
         try sessionStore.save(session)
-        accessManager.refresh()
+        await MainActor.run { accessManager.refresh() }
 
         let expectedError = NetworkClient.NetworkError.accountProxyTransportFailed("OpenAI helper failed")
         let client = NetworkClient(
