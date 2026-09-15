@@ -156,14 +156,20 @@ extension MessageService {
 
     /// Applies all buffered tool events (in order) to the current assistant
     /// message on the main actor, then clears the buffer. Called before each
-    /// streamed chunk so parallel tool calls attach to the same message.
+    /// streamed chunk so parallel tool calls attach to the same message. If the
+    /// model made a tool call with no preceding text (no assistant message yet),
+    /// an assistant message is created to hold the tool-call cards.
     @MainActor
     func drainToolEvents() {
         toolEventLock.lock()
         let events = pendingToolEvents
         pendingToolEvents.removeAll()
         toolEventLock.unlock()
-        guard !events.isEmpty, let last = messages.last, last.isAssistant else { return }
+        guard !events.isEmpty else { return }
+        if messages.last?.isAssistant != true {
+            messages.append(Message(role: .assistant, contentType: .null))
+        }
+        guard let last = messages.last, last.isAssistant else { return }
         for event in events {
             last.applyToolEvent(event)
             if case .toolCompleted = event {
