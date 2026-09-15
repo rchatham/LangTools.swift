@@ -75,6 +75,7 @@ final class LangToolsAppUITests: XCTestCase {
     }
 #endif
 
+#if !os(macOS)
     @MainActor
     func testLaunchPerformance() throws {
         if #available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 7.0, *) {
@@ -84,4 +85,5 @@ final class LangToolsAppUITests: XCTestCase {
             }
         }
     }
+#endif
 }
