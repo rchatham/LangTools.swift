@@ -77,6 +77,8 @@ let package = Package(
             path: "Modules/ExampleAgents"),
 
         // Tests
+        // Hosted app tests (Tests/LangToolsAppTests, Tests/LangToolsAppUITests) are
+        // Xcode-target only; they run through the app scheme, not these SPM targets.
         .testTarget(
             name: "ToolKitTests",
             dependencies: [
