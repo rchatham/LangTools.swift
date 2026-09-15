@@ -19,13 +19,13 @@ final class LangToolsTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
 
     func test() async throws {
-        MockURLProtocol.mockNetworkHandlers[MockRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: MockRequest.endpoint) { request in
             return (.success(try MockResponse.success.data()), 200)
         }
         let response = try await api.perform(request: MockRequest())
@@ -33,7 +33,7 @@ final class LangToolsTests: XCTestCase {
     }
 
     func testStream() async throws {
-        MockURLProtocol.mockNetworkHandlers[MockRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: MockRequest.endpoint) { request in
             return (.success(try MockResponse.success.streamData()), 200)
         }
         var results: [MockResponse] = []
@@ -42,6 +42,53 @@ final class LangToolsTests: XCTestCase {
         }
         let content = results.reduce("") { $0 + ($1.status) }
         XCTAssertEqual(content, "success")
+    }
+
+    func testMockURLProtocolHandlerRegistrationIsAtomic() async throws {
+        MockURLProtocol.resetHandlers()
+
+        await withTaskGroup(of: Void.self) { group in
+            for index in 0..<250 {
+                group.addTask {
+                    MockURLProtocol.setHandler(for: "atomic-registration-\(index)") { _ in
+                        (.success(Data()), 200)
+                    }
+                }
+            }
+        }
+
+        XCTAssertEqual(MockURLProtocol.handlerCount(), 250)
+    }
+
+    func testRemoveHandlerRemovesOnlyThatEndpoint() {
+        MockURLProtocol.resetHandlers()
+        MockURLProtocol.setHandler(for: "keep-me") { _ in (.success(Data()), 200) }
+        MockURLProtocol.setHandler(for: "remove-me") { _ in (.success(Data()), 200) }
+
+        MockURLProtocol.removeHandler(for: "remove-me")
+
+        XCTAssertEqual(MockURLProtocol.handlerCount(), 1)
+        let kept = URLRequest(url: URL(string: "https://example.com/keep-me")!)
+        let removed = URLRequest(url: URL(string: "https://example.com/remove-me")!)
+        XCTAssertTrue(MockURLProtocol.canInit(with: kept), "remaining endpoint must still intercept")
+        XCTAssertFalse(MockURLProtocol.canInit(with: removed), "removed endpoint must no longer intercept")
+    }
+
+    /// Pins the fail-fast interception: a request to a known API host with no registered
+    /// handler must fail immediately with resourceUnavailable — never escape to the real
+    /// network, where an unmocked call has no bounded timeout and can hang CI.
+    func testUnmockedRequestToKnownHostFailsFast() async throws {
+        MockURLProtocol.resetHandlers()
+        let session = URLSession(configuration: MockURLProtocol.configuration)
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
+        request.httpMethod = "POST"
+        do {
+            _ = try await session.data(for: request)
+            XCTFail("Unmocked request to a known API host must fail fast, not reach the network")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .resourceUnavailable,
+                           "Fail-fast interception should surface resourceUnavailable, got \(error)")
+        }
     }
 
     // MARK: - LangToolsError Tests
@@ -127,7 +174,7 @@ final class LangToolsTests: XCTestCase {
     // MARK: - HTTP Error Response Tests
 
     func testErrorResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[MockRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: MockRequest.endpoint) { request in
             return (.success(Data()), 500)
         }
 
