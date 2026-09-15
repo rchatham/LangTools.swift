@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import LangToolsCLI
+@testable import CLI
 
 final class CodexRuntimeServiceTests: XCTestCase {
     func testAccountModelsAndImmediateTurnDeltasUseNonLossySubscription() async throws {

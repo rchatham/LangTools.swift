@@ -21,9 +21,9 @@ private struct ManageAccessPromptModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .confirmationDialog(dialogTitle, isPresented: $coordinator.isPresented, titleVisibility: .visible) {
-                actionButtons(for: currentDestination)
+                actionButtons(for: currentService)
             } message: {
-                Text(dialogMessage(for: currentDestination))
+                Text(dialogMessage(for: currentService))
             }
             .alert("Enter \(apiKeyService.displayName) API Key", isPresented: $showAPIKeyPrompt) {
                 TextField("API Key", text: $apiKeyInput)
@@ -62,51 +62,78 @@ private struct ManageAccessPromptModifier: ViewModifier {
             }
     }
 
-    private var currentDestination: AccessDestination {
-        coordinator.preferredDestination ?? AccessDestination.destination(for: UserDefaults.model) ?? .openAI
+    private var currentService: APIService {
+        coordinator.preferredDestination?.service ?? UserDefaults.model.apiService
     }
 
-    private var dialogTitle: String { "\(currentDestination.displayName) Access" }
+    private var dialogTitle: String {
+        switch currentService {
+        case .openAI:
+            return "OpenAI Access"
+        case .anthropic:
+            return "Claude / Anthropic Access"
+        default:
+            return "\(currentService.displayName) Access"
+        }
+    }
 
     @ViewBuilder
-    private func actionButtons(for destination: AccessDestination) -> some View {
-        let state = accessManager.statesForAccessUI().first { $0.accessDestination == destination }
+    private func actionButtons(for service: APIService) -> some View {
+        let state = accessManager.state(for: service)
 
-        if let accountProvider = destination.accountProvider {
-            Button(accountActionTitle(for: accountProvider, state: state)) {
+        switch service {
+        case .ollama:
+            Button("OK", role: .cancel) {
                 coordinator.dismiss()
-                handleAccountAction(for: accountProvider, state: state)
             }
-        } else {
-            Button("Enter \(destination.displayName) API Key") {
-                presentAPIKeyPrompt(for: destination.service)
+
+        case .serper:
+            Button("Enter API Key") {
+                presentAPIKeyPrompt(for: service)
             }
-            if state?.hasAPIKey == true {
-                Button("Remove API Key", role: .destructive) {
-                    removeAPIKey(for: destination.service)
+            Button("Cancel", role: .cancel) {
+                coordinator.dismiss()
+            }
+
+        default:
+            Button("Enter \(service.displayName) API Key") {
+                presentAPIKeyPrompt(for: service)
+            }
+
+            if let accountProvider = service.accountLoginProvider {
+                Button(accountActionTitle(for: accountProvider, state: state)) {
+                    coordinator.dismiss()
+                    handleAccountAction(for: accountProvider, state: state)
                 }
             }
-        }
 
-        Button("Cancel", role: .cancel) {
-            coordinator.dismiss()
+            if state.hasAPIKey {
+                Button("Remove API Key", role: .destructive) {
+                    removeAPIKey(for: service)
+                }
+            }
+
+            Button("Cancel", role: .cancel) {
+                coordinator.dismiss()
+            }
         }
     }
 
-    private func dialogMessage(for destination: AccessDestination) -> String {
-        let state = accessManager.statesForAccessUI().first { $0.accessDestination == destination }
-        let status = state?.statusDescription ?? "Not configured"
-        switch destination {
+    private func dialogMessage(for service: APIService) -> String {
+        let state = accessManager.state(for: service)
+        let status = state.statusDescription
+
+        switch service {
         case .openAI:
-            return "OpenAI Platform status: \(status). Add an API key for direct Platform API requests."
-        case .codex:
-            return "Codex Subscription status: \(status). Sign in with your ChatGPT account through the external Codex helper. This does not configure an OpenAI Platform API key."
+            return "Models are shown when their provider is configured. OpenAI status: \(status). Add an API key for direct API requests, or sign in with OpenAI via LangToolsAuthCLI to unlock account-based access like Codex."
         case .anthropic:
-            return "Anthropic Platform status: \(status). Add an Anthropic API key for direct API requests."
-        case .claudeCode:
-            return "Claude Code status: \(status). Sign in with Claude Code for account-backed access. This does not configure an Anthropic API key."
+            return "Models are shown when their provider is configured. Anthropic status: \(status). Add an Anthropic API key or sign in with Claude Code for account-based access."
         case .xAI, .gemini:
-            return "\(destination.displayName) status: \(status). Add an API key to enable this provider."
+            return "\(service.displayName) status: \(status). Use an API key to enable this provider and make its models appear in the picker."
+        case .ollama:
+            return "Ollama models run locally and do not require API keys or account login."
+        case .serper:
+            return "Use your Serper API key for web search capabilities."
         }
     }
 
@@ -145,10 +172,10 @@ private struct ManageAccessPromptModifier: ViewModifier {
         }
     }
 
-    private func handleAccountAction(for provider: AccountLoginProvider, state: ProviderAccessState?) {
+    private func handleAccountAction(for provider: AccountLoginProvider, state: ProviderAccessState) {
         Task { @MainActor in
             do {
-                if state?.hasAccountSession == true {
+                if state.hasAccountSession {
                     try await networkClient.disconnectAccount(provider)
                     presentResult(disconnectMessage(for: provider))
                 } else {
@@ -188,13 +215,13 @@ private struct ManageAccessPromptModifier: ViewModifier {
         }
     }
 
-    private func accountActionTitle(for provider: AccountLoginProvider, state: ProviderAccessState?) -> String {
-        if state?.hasAccountSession == true {
+    private func accountActionTitle(for provider: AccountLoginProvider, state: ProviderAccessState) -> String {
+        if state.hasAccountSession {
             return "Disconnect \(provider.displayName)"
         }
         switch provider {
         case .openAI:
-            return "Sign in to Codex"
+            return "Login with OpenAI via CLI"
         case .claudeCode:
             return "Login with Claude Code"
         }

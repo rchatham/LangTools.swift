@@ -93,7 +93,7 @@ public enum AgentEvent: Equatable {
         case .toolCalled(let agent, let tool, let args):
             return "🛠️ Agent '\(agent)' using tool: \(tool), arguments: \(args)"
         case .toolCompleted(let agent, let tool):
-            return "✅ Agent '\(agent)' completed tool: \(tool)"
+            return "✅ Agent '\(agent)' completed tool: \(tool ?? "unknown")"
         case .completed(let agent, let result, let is_error):
             return "\(is_error ? "⚠️" :"🏁") Agent '\(agent)' \(is_error ? "encountered an error" :"completed with result"): \(result)"
         case .error(let agent, let message):

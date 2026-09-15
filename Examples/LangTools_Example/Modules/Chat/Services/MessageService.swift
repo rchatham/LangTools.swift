@@ -202,7 +202,6 @@ extension MessageService {
                     result: result
                 )
                 messages.append(message, for: agent)
-
             case .completed(let agent, let result, let is_error):
                 // Give the app-level parser first crack at structured results.
                 // Append at the top level so content cards appear in the main conversation.

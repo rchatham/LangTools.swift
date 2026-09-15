@@ -114,7 +114,12 @@ extension OpenAI {
             self.logprobs = logprobs
             self.top_logprobs = top_logprobs
             self.user = user
-            self.response_format = response_type.flatMap { ResponseFormat(type: $0) }
+            self.response_format = response_type.map { responseType in
+                switch responseType {
+                case .text: return .text
+                case .json_object: return .json_object
+                }
+            }
             self.seed = seed
             self.tools = tools
             self.tool_choice = tool_choice

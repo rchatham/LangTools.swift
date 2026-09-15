@@ -68,7 +68,6 @@ let package = Package(
             name: "ExampleAgents",
             dependencies: [
                 .product(name: "Agents", package: "langtools.swift"),
-                .product(name: "Anthropic", package: "langtools.swift"),
                 .product(name: "JSONWithMacros", package: "json.swift"),
                 "ToolKit",
                 "KeychainAccess",
