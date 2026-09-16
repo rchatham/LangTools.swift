@@ -27,12 +27,40 @@ enum MessageLineBuilder {
     /// it is stripped here (`dedented(_:)`). A single trailing empty line — a
     /// common artifact of streamed content — is dropped so it does not consume a
     /// visible row.
+    ///
+    /// Runs of blank lines are additionally collapsed and trailing whitespace
+    /// trimmed: models occasionally emit whitespace-heavy degenerate replies
+    /// (observed after failed tool calls), which would otherwise fill the
+    /// entire tail window with blank rows and push all real content out of
+    /// view. Trimming and collapsing happen here so the tail-window row
+    /// estimator and the rendered view always agree.
     static func assistantBodyLines(for content: String) -> [String] {
         var lines = content.components(separatedBy: .newlines)
         if let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
             lines.removeLast()
         }
-        return dedented(lines)
+        return collapseBlankRuns(dedented(lines).map { String($0.reversed().drop(while: { $0 == " " || $0 == "\t" }).reversed()) })
+    }
+
+    /// Replace runs of more than `maxConsecutive` blank lines with exactly
+    /// `maxConsecutive` blank lines, preserving paragraph spacing while keeping
+    /// degenerate whitespace-heavy content compact.
+    static func collapseBlankRuns(_ lines: [String], maxConsecutive: Int = 2) -> [String] {
+        let limit = max(0, maxConsecutive)
+        var result: [String] = []
+        var blankRun = 0
+        for line in lines {
+            if line.trimmingCharacters(in: .whitespaces).isEmpty {
+                blankRun += 1
+                if blankRun <= limit {
+                    result.append(line)
+                }
+            } else {
+                blankRun = 0
+                result.append(line)
+            }
+        }
+        return result
     }
 
     // MARK: - System

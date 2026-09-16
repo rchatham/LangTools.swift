@@ -10,6 +10,42 @@ final class TailWindowTests: XCTestCase {
         XCTAssertEqual(lines, ["Hello", "World"])
     }
 
+    func testAssistantBodyLinesCollapsesBlankRuns() {
+        let lines = MessageLineBuilder.assistantBodyLines(for: "a\n\n\n\n\nb")
+        XCTAssertEqual(lines, ["a", "", "", "b"])
+    }
+
+    func testAssistantBodyLinesTrimsTrailingWhitespace() {
+        let lines = MessageLineBuilder.assistantBodyLines(for: "a   \n\tb\t")
+        XCTAssertEqual(lines, ["a", "\tb"])
+    }
+
+    func testAssistantBodyLinesWhitespaceOnlyRunCountsAsBlankRun() {
+        // A degenerate reply of padded blank lines collapses to two blanks.
+        let padded = Array(repeating: "          ", count: 20).joined(separator: "\n")
+        let lines = MessageLineBuilder.assistantBodyLines(for: padded)
+        XCTAssertEqual(lines.count, 2)
+    }
+
+    func testTailWindowKeepsOlderMessagesVisibleUnderDegenerateAssistantReply() {
+        // Regression: a whitespace-heavy assistant reply once filled the whole
+        // tail window with blank rows, pushing the tool exchange out of view.
+        var msgs: [ChatMessage] = [
+            ChatMessage(role: .user, content: "run the tool"),
+            ChatMessage(role: .toolCall, content: "{\"command\":\"echo hi\"}", toolName: "Bash"),
+            ChatMessage(role: .toolResult, content: "hi", toolName: "Bash")
+        ]
+        msgs.append(ChatMessage(role: .assistant, content: Array(repeating: " ", count: 40).joined(separator: "\n")))
+        msgs.append(ChatMessage(role: .system, content: "Warning: model attempted a tool call but produced no usable reply."))
+
+        let window = ChatTailWindow.tailWindow(messages: msgs, isStreaming: false, availableHeight: 12, availableWidth: 100)
+        // The warning (newest) and the collapsed assistant reply fit; the tool
+        // exchange remains visible above them.
+        XCTAssertTrue(window.messages.contains(where: { $0.role == .toolCall }))
+        let total = ChatTailWindow.renderedRows(of: window, isStreaming: false, width: 60)
+        XCTAssertLessThanOrEqual(total, 12)
+    }
+
     func testAssistantBodyLinesDedentsCommonLeadingWhitespace() {
         let lines = MessageLineBuilder.assistantBodyLines(for: "    line one\n    line two")
         XCTAssertEqual(lines, ["line one", "line two"])
