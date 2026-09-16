@@ -1,13 +1,13 @@
 {
-  "originHash" : "1bf0c0d87d6de3c729d7de110070dc444f37ad7b2dc48d806fa0619f38cc32c3",
+  "originHash" : "6076f17624045745b1433148166ed9331a2156a5f251b1d4683e63b6cc6cbd9c",
   "pins" : [
     {
       "identity" : "json.swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/rchatham/JSON.swift.git",
       "state" : {
-        "revision" : "9b7384ac80febbbbbf959841246c8ddf61d9c486",
-        "version" : "1.0.1"
+        "branch" : "main",
+        "revision" : "921c97415e5df0ef35e4a7133881498cac9f2650"
       }
     },
     {

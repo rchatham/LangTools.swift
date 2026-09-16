@@ -7,14 +7,12 @@
 
 import EventKit
 import LangTools
-import JSONWithMacros
 import Agents
 
 // MARK: - CalendarAgentResponse (StructuredOutput)
 
 /// The structured JSON response that CalendarAgent asks the LLM to produce.
 /// Contains an array of event cards plus an optional human-readable summary.
-@JSONSchema
 public struct CalendarAgentResponse: Codable {
     /// List of calendar events
     public let events: [CalendarEventData]
@@ -27,11 +25,20 @@ public struct CalendarAgentResponse: Codable {
     }
 }
 
-extension CalendarAgentResponse: StructuredOutput {}
+extension CalendarAgentResponse: StructuredOutput {
+    public static var jsonSchema: JSONSchema {
+        .object(
+            properties: [
+                "events": .array(items: CalendarEventData.jsonSchema, description: "List of calendar events"),
+                "message": .string(description: "Optional summary message to display to the user")
+            ],
+            required: ["events"]
+        )
+    }
+}
 
 /// Data-only event type used inside CalendarAgentResponse.
 /// The app target adds `ContentCard` conformance for SwiftUI rendering.
-@JSONSchema
 public struct CalendarEventData: Codable, Equatable {
     /// Event title
     public let title: String
@@ -71,7 +78,23 @@ public struct CalendarEventData: Codable, Equatable {
     }
 }
 
-extension CalendarEventData: StructuredOutput {}
+extension CalendarEventData: StructuredOutput {
+    public static var jsonSchema: JSONSchema {
+        .object(
+            properties: [
+                "title": .string(description: "Event title"),
+                "startDate": .string(description: "Event start in ISO 8601 format"),
+                "endDate": .string(description: "Event end in ISO 8601 format"),
+                "location": .string(description: "Event location"),
+                "notes": .string(description: "Event notes"),
+                "isAllDay": .boolean(description: "True when the event spans the full day"),
+                "calendarName": .string(description: "Calendar name"),
+                "eventIdentifier": .string(description: "System identifier for edits/deletes")
+            ],
+            required: ["title", "startDate", "endDate", "isAllDay"]
+        )
+    }
+}
 
 // MARK: - Calendar Permission Agent
 struct CalendarPermissionAgent: Agent {

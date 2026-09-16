@@ -38,8 +38,13 @@ extension Anthropic {
 
         public func encode(to encoder: any Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(role, forKey: .role)
-            try container.encode(content, forKey: .content)
+            try container.encode(role.rawValue, forKey: .role)
+            switch content {
+            case .string(let text):
+                try container.encode(text, forKey: .content)
+            case .array(let blocks):
+                try container.encode(blocks, forKey: .content)
+            }
         }
 
         enum CodingKeys: String, CodingKey {
@@ -123,7 +128,7 @@ extension Anthropic {
                     // For now, convert to text representation
                     // TODO: Implement proper audio and image support
                     let textRepresentation = String(describing: contentType)
-                    self = .text(try .init(text: textRepresentation))
+                    self = .text(.init(text: textRepresentation))
                 }
             }
 
@@ -151,12 +156,28 @@ extension Anthropic {
             var toolResult: ToolResult? { if case .toolResult(let toolResult) = self { return toolResult } else { return nil }}
 
             public init(from decoder: Decoder) throws {
-                let container = try decoder.singleValueContainer()
-                if let text = try? container.decode(TextContent.self) { self = .text(text) }
-                else if let img = try? container.decode(ImageContent.self) { self = .image(img) }
-                else if let toolUse = try? container.decode(ToolUse.self) { self = .toolUse(toolUse) }
-                else if let toolResult = try? container.decode(ToolResult.self) { self = .toolResult(toolResult) }
-                else { throw DecodingError.typeMismatch(ContentType.self, DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Unknown content type")) }
+                let container = try decoder.container(keyedBy: TypeCodingKeys.self)
+                let type = try container.decode(String.self, forKey: .type)
+                switch type {
+                case TextContent.contentType:
+                    self = .text(try TextContent(from: decoder))
+                case ImageContent.contentType:
+                    self = .image(try ImageContent(from: decoder))
+                case ToolUse.contentType:
+                    self = .toolUse(try ToolUse(from: decoder))
+                case ToolResult.contentType:
+                    self = .toolResult(try ToolResult(from: decoder))
+                default:
+                    throw DecodingError.dataCorruptedError(
+                        forKey: .type,
+                        in: container,
+                        debugDescription: "Unknown content type: \(type)"
+                    )
+                }
+            }
+
+            private enum TypeCodingKeys: String, CodingKey {
+                case type
             }
 
             public func encode(to encoder: Encoder) throws {
@@ -170,7 +191,9 @@ extension Anthropic {
             }
 
             public struct TextContent: Codable, LangToolsTextContentType {
-                public let type: String = "text"
+                static let contentType = "text"
+
+                public let type: String = contentType
                 public let text: String
                 public init(text: String) {
                     self.text = text
@@ -182,7 +205,9 @@ extension Anthropic {
             }
 
             public struct ImageContent: Codable, LangToolsImageContentType {
-                public let type: String = "image"
+                static let contentType = "image"
+
+                public let type: String = contentType
                 public let source: ImageSource
                 public init(source: ImageSource) {
                     self.source = source
@@ -212,11 +237,21 @@ extension Anthropic {
             }
 
             public struct ToolUse: Codable, LangToolsContentType, LangToolsToolSelection {
-                public let type: String = "tool_use"
+                static let contentType = "tool_use"
+
+                public let type: String = contentType
                 public let id: String?
                 public let name: String?
-                public let input: String
+                private let inputString: String?
+                private let decodedInputJSON: JSON?
 
+                /// Parsed input, evaluated on demand for string-backed streaming arguments.
+                public var inputJSON: JSON? {
+                    if let decodedInputJSON { return decodedInputJSON }
+                    return inputString.flatMap { try? JSON(string: $0) }
+                }
+
+                public var input: String { inputString ?? decodedInputJSON?.jsonString ?? "" }
                 public var arguments: String { input }
 
                 public init(_ contentType: any LangToolsContentType) throws {
@@ -226,7 +261,8 @@ extension Anthropic {
                 public init(id: String?, name: String?, input: String) {
                     self.id = id
                     self.name = name
-                    self.input = input
+                    self.inputString = input
+                    self.decodedInputJSON = nil
                 }
 
                 enum CodingKeys: String, CodingKey {
@@ -237,7 +273,13 @@ extension Anthropic {
                     let container = try decoder.container(keyedBy: CodingKeys.self)
                     self.id = try container.decodeIfPresent(String.self, forKey: .id)
                     self.name = try container.decodeIfPresent(String.self, forKey: .name)
-                    self.input = try container.decodeIfPresent(JSON.self, forKey: .input)?.jsonString ?? ""
+                    // Object probing is an optimization, not a restriction on valid JSON input.
+                    if let inputObject = try? container.decode([String: JSON].self, forKey: .input) {
+                        self.decodedInputJSON = .object(inputObject)
+                    } else {
+                        self.decodedInputJSON = try container.decodeIfPresent(JSON.self, forKey: .input)
+                    }
+                    self.inputString = nil
                 }
 
                 public func encode(to encoder: any Encoder) throws {
@@ -245,12 +287,18 @@ extension Anthropic {
                     try container.encode(type, forKey: .type)
                     try container.encodeIfPresent(id, forKey: .id)
                     try container.encodeIfPresent(name, forKey: .name)
-                    if !input.isEmpty { try container.encode(try JSON(string: input), forKey: .input) }
+                    if let decodedInputJSON {
+                        try container.encode(decodedInputJSON, forKey: .input)
+                    } else if let inputString, !inputString.isEmpty {
+                        try container.encode(try JSON(string: inputString), forKey: .input)
+                    }
                 }
             }
 
             public struct ToolResult: Codable, LangToolsToolResultContentType {
-                public let type: String = "tool_result"
+                static let contentType = "tool_result"
+
+                public let type: String = contentType
                 public let tool_use_id: String
                 public let is_error: Bool
                 public let content: Content // Cannot be toolUse or toolResult ContentType

@@ -1,0 +1,206 @@
+import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
+
+/// An OS-enforced (macOS seatbelt) read-containment profile for the Codex
+/// app-server process and every command it spawns.
+///
+/// The profile is deny-by-default for file access and re-allows only the
+/// roots Codex needs to function: system runtime paths, the Codex home
+/// directory (auth/config/cache), the helper-owned conversation workspace
+/// root, and process temporary directories. Reads of the user's home tree
+/// (`~/.ssh`, `~/Documents`, `~/.aws`, …) and any other non-allowlisted path
+/// are denied by the kernel, so a prompt or prompt injection cannot exfiltrate
+/// user files through the model. Native Codex tools keep working because
+/// `process-exec`/`process-fork`/`network` remain allowed; spawned commands
+/// inherit the same seatbelt, so they cannot read outside the allowlist
+/// either.
+struct CodexSeatbeltProfile: Sendable {
+    struct Inputs: Sendable {
+        /// Path to the Codex executable (or runtime such as `node`/`bun`)
+        /// exactly as resolved by `OpenAIAccountChatCommand.resolveCodexCommand`.
+        let codexExecutable: String
+        /// Arguments for a runtime-backed command (e.g. `["…/dist/cli.js"]`).
+        /// Empty for a self-contained Codex binary.
+        let codexExecutableArguments: [String]
+        /// Resolved Codex home directory (`LANGTOOLS_CODEX_HOME`/`CODEX_HOME`
+        /// or `~/.codex`).
+        let codexHome: String
+        /// Helper-owned workspace root containing all conversation workspaces
+        /// for this helper process lifetime.
+        let workspaceRoot: String
+    }
+
+    /// Returns the absolute path to `sandbox-exec` when seatbelt containment is
+    /// available, otherwise `nil` (non-macOS or missing binary).
+    static func sandboxExecPath() -> String? {
+        #if os(macOS)
+        let path = "/usr/bin/sandbox-exec"
+        guard FileManager.default.isExecutableFile(atPath: path) else { return nil }
+        return path
+        #else
+        return nil
+        #endif
+    }
+
+    /// True when seatbelt read containment can be applied.
+    static func isAvailable() -> Bool {
+        sandboxExecPath() != nil
+    }
+
+    /// Resolves the active Codex home using the documented precedence:
+    /// `LANGTOOLS_CODEX_HOME`, then `CODEX_HOME`, then `~/.codex`.
+    static func resolvedCodexHome(environment: [String: String]) -> String {
+        for key in ["LANGTOOLS_CODEX_HOME", "CODEX_HOME"] {
+            if let value = environment[key], value.isEmpty == false {
+                return Self.standardizedResolving(value)
+            }
+        }
+        return Self.standardizedResolving(
+            URL(fileURLWithPath: NSHomeDirectory())
+                .appendingPathComponent(".codex").path
+        )
+    }
+
+    private static func standardizedResolving(_ path: String) -> String {
+        URL(fileURLWithPath: path)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+    }
+
+    /// Renders the seatbelt profile source for the given inputs.
+    func render(inputs: Inputs) -> String {
+        let codexHome = Self.quoted(inputs.codexHome)
+        let workspaceRoot = Self.quoted(inputs.workspaceRoot)
+        // Apple's canonical shared seatbelt profile (shipped at
+        // /System/Library/Sandbox/Profiles/system.sb and imported by Apple's
+        // own /usr/share/sandbox profiles). It supplies the boilerplate allows
+        // a process needs to exec/load under deny-default; without it deny-default
+        // aborts at startup. Loadability is exercised by the real sandbox-exec tests.
+        var lines: [String] = [
+            "(version 1)",
+            "(deny default)",
+            "(import \"system.sb\")",
+            "(allow process-exec process-fork signal)",
+            "(allow network*)"
+        ]
+        // System runtime roots Codex and its native tools need to exec/load.
+        for root in Self.systemReadRoots {
+            lines.append("(allow file-read* (subpath \(Self.quoted(root))))")
+        }
+        // Codex executable + runtime resources (covers npm/node installs that
+        // may live under the user home tree, which is otherwise denied).
+        let executableReadRoots = Self.executableReadRoots(
+            executable: inputs.codexExecutable,
+            arguments: inputs.codexExecutableArguments
+        )
+        for root in executableReadRoots {
+            lines.append("(allow file-read* (subpath \(Self.quoted(root))))")
+        }
+        // Codex owns its credential/config/cache directory.
+        lines.append("(allow file-read* (subpath \(codexHome)))")
+        lines.append("(allow file-write* (subpath \(codexHome)))")
+        // Helper-owned conversation workspaces.
+        lines.append("(allow file-read* (subpath \(workspaceRoot)))")
+        lines.append("(allow file-write* (subpath \(workspaceRoot)))")
+        // Process temporary directories.
+        for root in Self.tempWriteRoots {
+            lines.append("(allow file-read* (subpath \(Self.quoted(root))))")
+            lines.append("(allow file-write* (subpath \(Self.quoted(root))))")
+        }
+        lines.append("(allow file-write* (literal \"/dev/null\"))")
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Writes the rendered profile to a mode-0600 temporary file and returns
+    /// its URL. The caller owns cleanup.
+    func writeProfile(inputs: Inputs) throws -> URL {
+        let source = render(inputs: inputs)
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-codex-seatbelt", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: tempDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: NSNumber(value: Int16(0o700))]
+        )
+        let profileURL = tempDirectory
+            .appendingPathComponent("profile-\(UUID().uuidString.lowercased()).sb")
+        try source.write(to: profileURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o600))],
+            ofItemAtPath: profileURL.path
+        )
+        return profileURL
+    }
+
+    private static let systemReadRoots: [String] = [
+        "/usr",
+        "/System",
+        "/bin",
+        "/sbin",
+        "/lib",
+        "/Library",
+        "/etc",
+        "/private/etc",
+        "/private/var",
+        "/dev",
+        "/opt"
+    ]
+
+    private static let tempWriteRoots: [String] = [
+        "/tmp",
+        "/private/tmp",
+        "/private/var/folders"
+    ]
+
+    private static func executableReadRoots(executable: String, arguments: [String]) -> [String] {
+        var roots = Set<String>()
+        let resolvedExecutable = URL(fileURLWithPath: executable)
+            .resolvingSymlinksInPath()
+            .deletingLastPathComponent().path
+        roots.insert(resolvedExecutable)
+        // The original (possibly symlink) executable's directory, in case the
+        // resolved real binary lives elsewhere and the symlink directory is
+        // not already covered by a system root.
+        let literalParent = URL(fileURLWithPath: executable)
+            .deletingLastPathComponent().standardizedFileURL.path
+        roots.insert(literalParent)
+        if let firstArgument = arguments.first,
+           firstArgument.hasSuffix(".js") || firstArgument.hasSuffix(".mjs") || firstArgument.hasSuffix(".ts") {
+            let resourceRoot = URL(fileURLWithPath: firstArgument)
+                .resolvingSymlinksInPath()
+                .deletingLastPathComponent().path
+            roots.insert(resourceRoot)
+            // Node/bun resolve modules up the tree; allow the nearest enclosing
+            // package root (the directory containing the runtime script) and
+            // its node_modules siblings by allowing two levels up as well.
+            let twoUp = URL(fileURLWithPath: resourceRoot)
+                .deletingLastPathComponent().deletingLastPathComponent().path
+            roots.insert(twoUp)
+        }
+        return roots.sorted().filter { candidate in
+            guard candidate.isEmpty == false else { return false }
+            let resolved = URL(fileURLWithPath: candidate)
+                .standardizedFileURL.resolvingSymlinksInPath().path
+            let home = URL(fileURLWithPath: NSHomeDirectory())
+                .standardizedFileURL.resolvingSymlinksInPath().path
+            // Never grant read access to the user home itself or any of its
+            // ancestors: that would defeat the read-containment boundary.
+            // Descendants of home (e.g. a project install dir) remain allowed.
+            if resolved == home { return false }
+            if home.hasPrefix(resolved + "/") { return false }
+            return true
+        }
+    }
+
+    private static func quoted(_ path: String) -> String {
+        // Seatbelt path literals are wrapped in double quotes; escape any
+        // embedded quotes/backslashes.
+        let escaped = path
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+}

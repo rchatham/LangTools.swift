@@ -11,7 +11,7 @@ import Anthropic
 import Ollama
 import ChatUI
 
-public final class Message: Codable, Sendable, ObservableObject, Identifiable, Equatable, Hashable {
+public final class Message: Codable, ObservableObject, Identifiable, Equatable, Hashable {
     public let uuid: UUID
     public var role: Role
     @Published public var contentType: ContentType
