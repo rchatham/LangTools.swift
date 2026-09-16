@@ -152,12 +152,24 @@ struct CodexSeatbeltProfile: Sendable {
             else { return "" }
         } else {
             do {
-                createdLeaf = true
+                // Re-stat the parent immediately before creating the leaf: if
+                // another user created it between the first probe and here,
+                // refuse rather than create helper-owned data inside it (and
+                // never chmod a foreign-owned directory).
+                if rootExisted == false,
+                   let freshRoot = try? fileManager.attributesOfItem(atPath: lexicalRoot) {
+                    guard let freshOwner = freshRoot[.ownerAccountID] as? NSNumber,
+                          freshOwner.uint32Value == currentUserID,
+                          let freshMode = freshRoot[.posixPermissions] as? NSNumber,
+                          freshMode.intValue & 0o022 == 0
+                    else { return "" }
+                }
                 try fileManager.createDirectory(
                     at: cachePath,
                     withIntermediateDirectories: true,
                     attributes: [.posixPermissions: NSNumber(value: Int16(0o700))]
                 )
+                createdLeaf = true
                 try fileManager.setAttributes(
                     [.posixPermissions: NSNumber(value: Int16(0o700))],
                     ofItemAtPath: lexicalPath
@@ -199,6 +211,13 @@ struct CodexSeatbeltProfile: Sendable {
 
     /// Credential/token stores whose metadata probing is denied even though
     /// global `file-read-metadata` is required for app-server startup.
+    ///
+    /// This list is deliberately not exhaustive: broad trees (`.config`,
+    /// `Library/Application Support`, `Library/Preferences`) and allowlisted
+    /// Codex-adjacent locations stay probeable for metadata by design — their
+    /// secret content is protected by the deny-by-default content boundary.
+    /// Widening or narrowing this list is a deliberate decision pinned by the
+    /// render and runtime tests.
     // Deliberately excludes broad trees (~/.config, ~/Library/Application
     // Support, ~/Library/Preferences): legitimate XDG/app-support probes run
     // through them and a metadata deny there risks breaking codex. Their
@@ -226,10 +245,12 @@ struct CodexSeatbeltProfile: Sendable {
     /// non-canonical, or symlinked `$HOME` must not disable the denies.
     static func credentialBlocklistHome(
         environment: [String: String],
+        passwdHome: String? = nil,
         fileManager: FileManager = .default
     ) -> String? {
-        if let passwdHome = Self.passwdHomeForCurrentUser(), passwdHome.isEmpty == false {
-            return passwdHome
+        let authoritative = passwdHome ?? Self.passwdHomeForCurrentUser()
+        if let authoritative, authoritative.isEmpty == false {
+            return URL(fileURLWithPath: authoritative).standardizedFileURL.path
         }
         guard let home = environment["HOME"], home.isEmpty == false else { return nil }
         let standardized = URL(fileURLWithPath: home).standardizedFileURL.path

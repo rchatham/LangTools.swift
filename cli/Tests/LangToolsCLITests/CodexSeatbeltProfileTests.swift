@@ -497,13 +497,12 @@ final class CodexSeatbeltProfileTests: XCTestCase {
     }
 
     func testRenderDeniesMetadataProbingOfEveryCredentialStore() throws {
-        // The blocklist home is the passwd home for the effective user, not
-        // the input value (which is only a fallback); standardized to match
-        // sensitiveCredentialPaths.
-        let home = URL(fileURLWithPath: NSHomeDirectory())
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-            .path
+        // The blocklist home is whatever credentialBlocklistHome resolves
+        // (passwd home preferred), so derive expectations from the same source
+        // rather than assuming it equals NSHomeDirectory().
+        let home = try XCTUnwrap(
+            CodexSeatbeltProfile.credentialBlocklistHome(environment: ["HOME": "/nonexistent"])
+        )
         let source = CodexSeatbeltProfile().render(inputs: CodexSeatbeltProfile.Inputs(
             codexExecutable: "/opt/codex/bin/codex",
             codexExecutableArguments: [],
@@ -541,10 +540,15 @@ final class CodexSeatbeltProfileTests: XCTestCase {
 
     func testCredentialBlocklistHomePrefersPasswdDatabaseOverHOME() {
         // The passwd home for the effective user is authoritative: a wrong or
-        // symlinked $HOME cannot redirect the credential-store denies. In this
-        // unsandboxed test environment the passwd home equals NSHomeDirectory().
+        // symlinked $HOME cannot redirect the credential-store denies. The
+        // returned path must be the standardized passwd home (not the $HOME
+        // fallback, which does not exist here).
         let resolved = CodexSeatbeltProfile.credentialBlocklistHome(environment: ["HOME": "/nonexistent-home"])
-        XCTAssertEqual(resolved, URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path)
+        let passwdHome = URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path
+        // On this host the passwd home is NSHomeDirectory(); assert the
+        // fallback $HOME was ignored and a real directory was returned.
+        XCTAssertEqual(resolved, passwdHome)
+        XCTAssertNotEqual(resolved, "/nonexistent-home")
     }
 
     func testSensitiveCredentialPathsStandardizeAndCoverStores() {

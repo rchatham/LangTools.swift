@@ -394,10 +394,10 @@ actor CodexAppServerClient {
             process.executableURL = URL(fileURLWithPath: seatbelt.sandboxExec)
             process.arguments = ["-f", seatbelt.profilePath, command.executable] + codexArguments
             // Run the Codex app-server with its working directory in the
-            // dedicated per-launch temp directory (OUTSIDE the shared
-            // workspace root), so project-config discovery neither reads the
-            // arbitrary helper launch directory nor sibling conversation
-            // workspaces.
+            // resolved Codex home: it is allowlisted for read and write, it is
+            // Codex's own trusted configuration surface, and discovery walking
+            // up from it cannot read anything outside the allowlist. The
+            // directory is user data — the helper never removes it.
             process.currentDirectoryURL = seatbelt.cwdURL
             seatbeltProfileURL = seatbelt.profileURL
         } else {
@@ -518,6 +518,16 @@ actor CodexAppServerClient {
         let codexHomeURL = URL(
             fileURLWithPath: codexHomeProvider()
         ).standardizedFileURL.resolvingSymlinksInPath()
+        // Process requires the cwd to exist at launch; fail closed with a
+        // clear error rather than an opaque NSPOSIXError.
+        var homeIsDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: codexHomeURL.path, isDirectory: &homeIsDirectory),
+              homeIsDirectory.boolValue
+        else {
+            throw CodexAppServerError.transport(
+                "Codex home directory is missing: \(codexHomeURL.path)"
+            )
+        }
         return SeatbeltLaunch(
             sandboxExec: sandboxExec,
             profilePath: profileURL.path,
