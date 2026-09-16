@@ -320,14 +320,19 @@ struct CodexSeatbeltProfile: Sendable {
             // seatbelt matches resolved paths, so a home reached through a
             // symlink (e.g. /Users/me -> /Volumes/Data/me) would otherwise
             // bypass the lexical deny and fall through to the global allow.
-            var blocklistHomes = [blocklistHome]
-            let resolvedHome = URL(fileURLWithPath: blocklistHome).resolvingSymlinksInPath().path
-            if resolvedHome != blocklistHome {
-                blocklistHomes.append(resolvedHome)
-            }
+            var blocklistHomes = Set([blocklistHome,
+                                      URL(fileURLWithPath: blocklistHome).resolvingSymlinksInPath().path])
+            // Each blocklist entry is denied under both its lexical and its
+            // symlink-resolved location: seatbelt matches resolved paths, and
+            // a per-entry symlink (e.g. ~/.ssh -> /Volumes/Key/.ssh) would
+            // otherwise bypass the home-level deny.
             for home in blocklistHomes {
                 for sensitivePath in Self.sensitiveCredentialPaths(home: home) {
                     lines.append("(deny file-read-metadata (subpath \(Self.quoted(sensitivePath))))")
+                    let resolvedEntry = URL(fileURLWithPath: sensitivePath).resolvingSymlinksInPath().path
+                    if resolvedEntry != sensitivePath {
+                        lines.append("(deny file-read-metadata (subpath \(Self.quoted(resolvedEntry))))")
+                    }
                 }
             }
         }

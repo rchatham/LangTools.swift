@@ -105,6 +105,7 @@ actor CodexAppServerClient {
     private let codexHomeProvider: CodexHomeProvider
     private var process: Process?
     private var seatbeltProfileURL: URL?
+    private var seatbeltCWDURL: URL?
     private var stdinHandle: FileHandle?
     private var stdoutBuffer = Data()
     private var pending: [Int: PendingRequest] = [:]
@@ -399,6 +400,7 @@ actor CodexAppServerClient {
             // project config.
             process.currentDirectoryURL = seatbelt.workspaceURL
             seatbeltProfileURL = seatbelt.profileURL
+            seatbeltCWDURL = seatbelt.cwdURL
         } else {
             process.executableURL = URL(fileURLWithPath: command.executable)
             process.arguments = codexArguments
@@ -475,6 +477,8 @@ actor CodexAppServerClient {
         let profilePath: String
         let profileURL: URL
         let workspaceURL: URL
+        /// Dedicated per-launch working directory, removed on shutdown.
+        let cwdURL: URL
     }
 
     private func makeSeatbeltLaunch(executable: String, arguments: [String]) throws -> SeatbeltLaunch? {
@@ -551,7 +555,8 @@ actor CodexAppServerClient {
             sandboxExec: sandboxExec,
             profilePath: profileURL.path,
             profileURL: profileURL,
-            workspaceURL: appServerCWD
+            workspaceURL: appServerCWD,
+            cwdURL: appServerCWD
         )
     }
 
@@ -848,6 +853,10 @@ actor CodexAppServerClient {
             seatbeltProfileURL = nil
             try? FileManager.default.removeItem(at: profileURL)
         }
+        if let cwdURL = seatbeltCWDURL {
+            seatbeltCWDURL = nil
+            try? FileManager.default.removeItem(at: cwdURL)
+        }
 
         let requests = pending.values
         pending.removeAll()
@@ -904,11 +913,11 @@ enum CodexAppServerError: LocalizedError, Sendable {
         // character, which is stripped only as a leading artifact.
         var start = 0
         while start < bytes.count, bytes[start] & 0b1100_0000 == 0b1000_0000 { start += 1 }
-        var detail = String(decoding: bytes[start...], as: UTF8.self)
-        // A leading replacement character can only be produced by the byte
-        // trim cutting a multi-byte character; strip it only in that case so a
-        // legitimate U+FFFD from the original stderr survives.
-        if start > 0, detail.first == "\u{FFFD}" { detail.removeFirst() }
+        // The suffix end coincides with the original string end (a valid UTF-8
+        // boundary), and the leading continuation-byte trim removes only whole
+        // partial sequences, so decoding the kept range never introduces a
+        // replacement character that the original did not contain.
+        let detail = String(decoding: bytes[start...], as: UTF8.self)
         if detail.isEmpty {
             // Nothing usable survived truncation; the caller falls back to the
             // plain status message.

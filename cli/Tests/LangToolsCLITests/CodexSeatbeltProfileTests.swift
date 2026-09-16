@@ -491,8 +491,12 @@ final class CodexSeatbeltProfileTests: XCTestCase {
 
     func testRenderDeniesMetadataProbingOfEveryCredentialStore() throws {
         // The blocklist home is the passwd home for the effective user, not
-        // the input value (which is only a fallback).
-        let home = NSHomeDirectory()
+        // the input value (which is only a fallback); standardized to match
+        // sensitiveCredentialPaths.
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
         let source = CodexSeatbeltProfile().render(inputs: CodexSeatbeltProfile.Inputs(
             codexExecutable: "/opt/codex/bin/codex",
             codexExecutableArguments: [],
