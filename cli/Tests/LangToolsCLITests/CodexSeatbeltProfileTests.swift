@@ -422,16 +422,21 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         let recorded = (try? String(contentsOf: marker, encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         // getcwd returns the physical path (/private/var for /var on macOS).
-        // The child runs in a dedicated, per-launch empty directory inside the
-        // workspace root, not in the root itself.
+        // The child runs in a dedicated per-launch empty directory OUTSIDE the
+        // workspace root (under the temp dir), so project-config discovery
+        // cannot see sibling conversation workspaces.
         let recordedURL = recorded.map { URL(fileURLWithPath: $0) }
-        let expectedParent = Self.physicalPath(workspace.path)
-        XCTAssertEqual(recordedURL?.deletingLastPathComponent().path, expectedParent)
+        XCTAssertNotEqual(recordedURL?.deletingLastPathComponent().path, Self.physicalPath(workspace.path))
         XCTAssertTrue(
-            recordedURL?.lastPathComponent.hasPrefix("app-server-cwd-") == true,
-            "child cwd must be the dedicated per-launch directory: \(recorded ?? "nil")"
+            recordedURL?.path.contains("langtools-codex-cwd/cwd-") == true,
+            "child cwd must be the dedicated per-launch temp directory: \(recorded ?? "nil")"
         )
+        let recordedPath = recordedURL?.path
         await client.shutdown()
+        // The per-launch directory is removed on shutdown.
+        if let recordedPath {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: recordedPath))
+        }
     }
 
     func testLaunchedProcessKeepsInheritedWorkingDirectoryWithoutSeatbelt() async throws {

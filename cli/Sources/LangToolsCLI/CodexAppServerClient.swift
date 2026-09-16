@@ -399,6 +399,10 @@ actor CodexAppServerClient {
             // helper launch directory (e.g. the user's repo/home) to load
             // project config.
             process.currentDirectoryURL = seatbelt.workspaceURL
+            // A relaunch/retry must not orphan the previous launch's cwd.
+            if let previousCWD = seatbeltCWDURL {
+                try? FileManager.default.removeItem(at: previousCWD)
+            }
             seatbeltProfileURL = seatbelt.profileURL
             seatbeltCWDURL = seatbelt.cwdURL
         } else {
@@ -497,19 +501,32 @@ actor CodexAppServerClient {
                 "Codex workspace root is missing: \(resolvedWorkspace.path)"
             )
         }
-        // Give the app-server a dedicated, empty working directory inside the
-        // allowlisted root, so default project-config discovery does not
-        // traverse the sibling conversation workspaces sharing the root. This
-        // is a discovery-only isolation, not a read boundary: the seatbelt
-        // still grants the whole root for legitimate workspace operations.
-        // Per-turn work happens in the conversation workspace set via
-        // thread/start.
-        // A unique per-launch name means a sibling conversation cannot
-        // pre-plant or reuse the directory: it exists only for this launch.
-        let appServerCWD = resolvedWorkspace
-            .appendingPathComponent("app-server-cwd-\(UUID().uuidString.lowercased())", isDirectory: true)
-        // A sibling conversation could plant a symlink here (the root is
-        // writable inside the sandbox), so remove any symlink before creating.
+        // Write the seatbelt profile first: a failure here throws before any
+        // filesystem state for this launch is created.
+        let inputs = CodexSeatbeltProfile.Inputs(
+            codexExecutable: executable,
+            codexExecutableArguments: Array(arguments.dropLast(3)),
+            codexHome: codexHomeProvider(),
+            workspaceRoot: resolvedWorkspace.path,
+            codexRuntimeCache: CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: environment),
+            homeDirectory: environment["HOME"] ?? ""
+        )
+        let profileURL = try CodexSeatbeltProfile().writeProfile(inputs: inputs)
+        // Give the app-server a dedicated, empty working directory OUTSIDE the
+        // shared workspace root (under the process temp dir, which the seatbelt
+        // already allows): project-config discovery walks up the parent chain,
+        // so a cwd inside the root would let a sibling conversation plant
+        // config markers (e.g. .codex/, AGENTS.md) in the root for the
+        // app-server to discover. Per-turn work happens in the conversation
+        // workspace set via thread/start. The unique per-launch name prevents
+        // pre-planting or reuse, and the directory is removed on shutdown.
+        let appServerCWD = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-codex-cwd", isDirectory: true)
+            .appendingPathComponent("cwd-\(UUID().uuidString.lowercased())", isDirectory: true)
+        // A sibling conversation could still swap the directory between this
+        // verification and process launch; that residual window is accepted —
+        // it only redirects config discovery, and the seatbelt content
+        // boundary still holds.
         if (try? FileManager.default.destinationOfSymbolicLink(atPath: appServerCWD.path)) != nil {
             try FileManager.default.removeItem(at: appServerCWD)
         }
@@ -518,8 +535,6 @@ actor CodexAppServerClient {
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: NSNumber(value: Int16(0o700))]
         )
-        // Re-assert owner-only mode in case a prior launch created it with a
-        // different umask or the mode drifted.
         try FileManager.default.setAttributes(
             [.posixPermissions: NSNumber(value: Int16(0o700))],
             ofItemAtPath: appServerCWD.path
@@ -540,17 +555,15 @@ actor CodexAppServerClient {
                 "Codex app-server working directory is not a safe helper-owned directory: \(appServerCWD.path)"
             )
         }
-        let inputs = CodexSeatbeltProfile.Inputs(
-            codexExecutable: executable,
-            codexExecutableArguments: Array(arguments.dropLast(3)),
-            codexHome: codexHomeProvider(),
-            workspaceRoot: resolvedWorkspace.path,
-            codexRuntimeCache: CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: environment),
-            homeDirectory: environment["HOME"] ?? ""
-        )
-        // A profile-write failure throws so the caller never launches the
-        // Codex runtime without the intended OS-level read boundary.
-        let profileURL = try CodexSeatbeltProfile().writeProfile(inputs: inputs)
+        var launchComplete = false
+        defer {
+            // Keep the directory only when the launch is fully built; any
+            // throw after creation would otherwise orphan it.
+            if launchComplete == false {
+                try? FileManager.default.removeItem(at: appServerCWD)
+            }
+        }
+        launchComplete = true
         return SeatbeltLaunch(
             sandboxExec: sandboxExec,
             profilePath: profileURL.path,
