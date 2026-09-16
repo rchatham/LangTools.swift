@@ -121,10 +121,64 @@ extension Message {
 //}
 
 public extension Array<Message> {
-    func toOpenAIMessages() -> [OpenAI.Message] { map { .init(role: $0.role, content: $0.text ?? "") } }
-    func toAnthropicMessages() -> [Anthropic.Message] { filter { $0.role != .system }.map { .init(role: .init($0.role), content: $0.text ?? "") } }
+    /// Messages whose `toolCalls` are retained (kept in history) are replayed to
+    /// the API as proper provider tool messages so the model retains tool-call
+    /// context across turns. When `keepsToolCallsInHistory` is off, `toolCalls` is
+    /// empty, so only text is sent (unchanged behavior).
+    func toOpenAIMessages() -> [OpenAI.Message] {
+        flatMap { message -> [OpenAI.Message] in
+            let completed = message.toolCalls.filter { $0.status != .pending }
+            guard !completed.isEmpty else {
+                return [OpenAI.Message(role: message.role, content: message.text ?? "")]
+            }
+            let toolCalls = completed.enumerated().map { idx, call in
+                OpenAI.Message.ToolCall(index: idx, id: call.id, type: .function, function: .init(name: call.name, arguments: call.arguments ?? "{}"))
+            }
+            let assistant: OpenAI.Message
+            if let text = message.text, !text.isEmpty {
+                assistant = try! OpenAI.Message(role: .assistant, content: .string(text), tool_calls: toolCalls)
+            } else {
+                assistant = OpenAI.Message(tool_selection: toolCalls)
+            }
+            var messages: [OpenAI.Message] = [assistant]
+            for call in completed {
+                messages.append(OpenAI.Message(tool_selection_id: call.id, result: call.result ?? ""))
+            }
+            return messages
+        }
+    }
+
+    func toAnthropicMessages() -> [Anthropic.Message] {
+        flatMap { message -> [Anthropic.Message] in
+            guard message.role != .system else { return [] }
+            let completed = message.toolCalls.filter { $0.status != .pending }
+            guard !completed.isEmpty else {
+                return [Anthropic.Message(role: .init(message.role), content: message.text ?? "")]
+            }
+            var content: [Anthropic.Message.Content.ContentType] = []
+            if let text = message.text, !text.isEmpty {
+                content.append(.text(.init(text: text)))
+            }
+            for call in completed {
+                content.append(.toolUse(.init(id: call.id, name: call.name, input: call.arguments ?? "{}")))
+            }
+            let assistant = Anthropic.Message(role: .assistant, content: .array(content))
+            let results: [Anthropic.Message.Content.ContentType] = completed.map {
+                .toolResult(.init(tool_selection_id: $0.id, result: $0.result ?? "", is_error: $0.status == .failure))
+            }
+            return [assistant, Anthropic.Message(role: .user, content: .array(results))]
+        }
+    }
+
     func createAnthropicSystemMessage() -> String? { filter { $0.isSystem }.reduce("") { (!$0.isEmpty ? $0 + "\n---\n" : "") + ($1.text ?? "") } }
-    func toOllamaMessages() -> [Ollama.Message] { map { .init(role: .init($0.role), content: $0.text ?? "") } }
+
+    func toOllamaMessages() -> [Ollama.Message] {
+        // Ollama tool-call replay is not supported: `Ollama.ChatToolCall` has no
+        // public initializer, so retained tool calls cannot be reconstructed into
+        // provider messages. Tool-call context is therefore not replayed to
+        // Ollama across turns (text-only, unchanged behavior).
+        map { Ollama.Message(role: .init($0.role), content: $0.text ?? "") }
+    }
 }
 
 public extension Array<Tool> {
