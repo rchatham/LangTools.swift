@@ -151,16 +151,7 @@ extension MessageService {
     func enqueueToolEvent(_ event: LangToolsToolEvent) {
         toolEventLock.lock()
         pendingToolEvents.append(event)
-        let count = pendingToolEvents.count
         toolEventLock.unlock()
-        #if DEBUG
-        switch event {
-        case .toolCalled(let sel):
-            print("🛠️ [tool] queued .toolCalled name=\(sel.name ?? "?") id=\(sel.id ?? "nil") buffer=\(count)")
-        case .toolCompleted(let res):
-            print("🛠️ [tool] queued .toolCompleted id=\(res?.tool_selection_id ?? "nil") buffer=\(count)")
-        }
-        #endif
     }
 
     /// Applies all buffered tool events (in order) to the current assistant
@@ -185,9 +176,6 @@ extension MessageService {
                 toolBreakOccurred = true
             }
         }
-        #if DEBUG
-        print("🛠️ [tool] drained \(events.count) event(s) onto message \(last.uuid) — toolCalls now: \(last.toolCalls.count) names=\(last.toolCalls.map { $0.name })")
-        #endif
     }
 }
 

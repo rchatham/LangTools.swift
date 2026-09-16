@@ -298,25 +298,26 @@ extension Message {
     public func applyToolEvent(_ event: LangToolsToolEvent) {
         switch event {
         case .toolCalled(let selection):
-            let id = selection.id ?? selection.name ?? UUID().uuidString
+            // Always append a new pending card. Provider tool-call ids are not
+            // guaranteed to be unique (e.g. Ollama reports "ollama" for every
+            // call), so we cannot dedupe by id. Each completion is matched to
+            // the most recent pending card in `.toolCompleted` below.
             let arguments = selection.arguments.isEmpty ? nil : selection.arguments
-            let call = ChatToolCall(
-                id: id,
-                name: selection.name ?? "tool",
-                arguments: arguments,
-                status: .pending,
-                result: nil
+            toolCalls.append(
+                ChatToolCall(
+                    id: UUID().uuidString,
+                    name: selection.name ?? "tool",
+                    arguments: arguments,
+                    status: .pending,
+                    result: nil
+                )
             )
-            if let index = toolCalls.firstIndex(where: { $0.id == id }) {
-                toolCalls[index] = call
-            } else {
-                toolCalls.append(call)
-            }
         case .toolCompleted(let result):
             guard let result else { return }
-            let id = result.tool_selection_id
             let status: ChatToolCall.Status = result.is_error ? .failure : .success
-            if let index = toolCalls.firstIndex(where: { $0.id == id }) {
+            // Tool events arrive as strict (.toolCalled, .toolCompleted) pairs
+            // in arrival order, so complete the most recent pending card.
+            if let index = toolCalls.lastIndex(where: { $0.status == .pending }) {
                 let existing = toolCalls[index]
                 toolCalls[index] = ChatToolCall(
                     id: existing.id,
@@ -328,7 +329,7 @@ extension Message {
             } else {
                 toolCalls.append(
                     ChatToolCall(
-                        id: id,
+                        id: UUID().uuidString,
                         name: "tool",
                         arguments: nil,
                         status: status,
