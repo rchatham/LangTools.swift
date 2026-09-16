@@ -11,7 +11,7 @@ The project follows a modular architecture with these key components:
 - **LangTools Core**: Foundation protocols and utilities for LLM interactions
 - **Provider Modules**: OpenAI, Anthropic, X.AI (XAI), Google Gemini, and Ollama implementations
 - **Agents Module**: Framework for building specialized AI assistants with tools and delegation
-- **ChatCLI**: Command-line interface executable for testing
+- **langtools CLI**: Standalone command-line interface in the `cli/` Swift package
 
 ### Module Structure
 
@@ -23,15 +23,17 @@ Sources/
 ├── Anthropic/      # Anthropic implementation
 ├── XAI/            # X.AI implementation
 ├── Gemini/         # Google Gemini implementation
-├── Ollama/         # Ollama implementation
-└── ChatCLI/        # CLI executable
+└── Ollama/         # Ollama implementation
 ```
+
+The `langtools` executable is maintained separately under `cli/Sources/LangToolsCLI/`.
 
 ## Build and Test Commands
 
 ### Building
 ```bash
 swift build -v
+cd cli && swift build --product langtools
 ```
 
 ### Testing

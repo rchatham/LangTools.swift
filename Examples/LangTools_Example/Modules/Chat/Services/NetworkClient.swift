@@ -56,22 +56,23 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     private let keychainService: KeychainService
     private let accountLoginService: AccountLoginService
     private let accountProxyTransport: AccountProxyTransportProtocol
+    private let openAIAccountChatBridge: OpenAIAccountChatBridging
     public let providerAccessManager: ProviderAccessManager
 
     private var userDefaults: UserDefaults { .standard }
     private var langToolchain = LangToolchain()
-    private let conversationLock = NSLock()
-    private var codexConversationIDs = Set<UUID>()
 
     public init(
         keychainService: KeychainService = .shared,
         accountLoginService: AccountLoginService = BrowserAccountLoginService.shared,
         accountProxyTransport: AccountProxyTransportProtocol = AccountProxyTransport(),
+        openAIAccountChatBridge: OpenAIAccountChatBridging = CLIAccountSessionBridge(),
         providerAccessManager: ProviderAccessManager = .shared
     ) {
         self.keychainService = keychainService
         self.accountLoginService = accountLoginService
         self.accountProxyTransport = accountProxyTransport
+        self.openAIAccountChatBridge = openAIAccountChatBridge
         self.providerAccessManager = providerAccessManager
         super.init()
         APIService.llms.forEach { llm in keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) } }
@@ -88,6 +89,10 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         try ensureModelAccess(for: model)
 
         if let session = accountSession(for: model) {
+            if session.provider == .openAI {
+                return try await openAIAccountChatBridge.performOpenAIChat(messages: messages, model: model)
+            }
+
             return try await accountProxyTransport.performChatCompletionRequest(
                 messages: messages,
                 model: model,
@@ -104,10 +109,57 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         return Message(text: text, role: .assistant)
     }
 
+    /// Conversation-aware variant. Codex-route models are bridged through the
+    /// CLI helper, which is stateless: each call re-sends the full transcript,
+    /// so `conversationID` is accepted for API compatibility but not used.
+    public func performChatCompletionRequest(
+        messages: [Message],
+        model: Model,
+        conversationID: UUID,
+        tools: [Tool]?,
+        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?
+    ) async throws -> Message {
+        try await performChatCompletionRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice)
+    }
+
+    /// Conversation-aware streaming variant. See the non-streaming variant:
+    /// the CLI bridge is stateless, so `conversationID` is accepted but unused.
+    public func streamChatCompletionRequest(
+        messages: [Message],
+        model: Model,
+        conversationID: UUID,
+        stream: Bool,
+        tools: [Tool]?,
+        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?
+    ) throws -> AsyncThrowingStream<String, Error> {
+        try streamChatCompletionRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)
+    }
+
+    public func endConversation(id: UUID) async {
+        // The CLI bridge keeps no server-side conversation state.
+    }
+
     public func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<String, Error> {
         try ensureModelAccess(for: model)
 
         if let session = accountSession(for: model) {
+            if session.provider == .openAI {
+                return AsyncThrowingStream { continuation in
+                    let task = Task {
+                        do {
+                            let message = try await openAIAccountChatBridge.performOpenAIChat(messages: messages, model: model)
+                            if let text = message.text {
+                                continuation.yield(text)
+                            }
+                            continuation.finish()
+                        } catch {
+                            continuation.finish(throwing: error)
+                        }
+                    }
+                    continuation.onTermination = { _ in task.cancel() }
+                }
+            }
+
             return try accountProxyTransport.streamChatCompletionRequest(
                 messages: messages,
                 model: model,
@@ -121,77 +173,6 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         return try langToolchain.stream(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { $0.content?.text }
     }
 
-    public func performChatCompletionRequest(
-        messages: [Message],
-        model: Model,
-        conversationID: UUID,
-        tools: [Tool]?,
-        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?
-    ) async throws -> Message {
-        try ensureModelAccess(for: model)
-        guard case .codex = model,
-              let session = accountSession(for: model),
-              let transport = accountProxyTransport as? ConversationAwareAccountProxyTransportProtocol
-        else {
-            return try await performChatCompletionRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice)
-        }
-        rememberCodexConversation(conversationID)
-        return try await transport.performChatCompletionRequest(
-            messages: messages,
-            model: model,
-            session: session,
-            conversationID: conversationID,
-            tools: tools,
-            toolChoice: toolChoice
-        )
-    }
-
-    public func streamChatCompletionRequest(
-        messages: [Message],
-        model: Model,
-        conversationID: UUID,
-        stream: Bool,
-        tools: [Tool]?,
-        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?
-    ) throws -> AsyncThrowingStream<String, Error> {
-        try ensureModelAccess(for: model)
-        guard case .codex = model,
-              let session = accountSession(for: model),
-              let transport = accountProxyTransport as? ConversationAwareAccountProxyTransportProtocol
-        else {
-            return try streamChatCompletionRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)
-        }
-        rememberCodexConversation(conversationID)
-        return try transport.streamChatCompletionRequest(
-            messages: messages,
-            model: model,
-            session: session,
-            conversationID: conversationID,
-            stream: stream,
-            tools: tools,
-            toolChoice: toolChoice
-        )
-    }
-
-    public func endConversation(id: UUID) async {
-        guard takeCodexConversation(id),
-              let transport = accountProxyTransport as? ConversationAwareAccountProxyTransportProtocol
-        else { return }
-        await transport.endConversation(id: id)
-    }
-
-    private func rememberCodexConversation(_ id: UUID) {
-        conversationLock.lock()
-        codexConversationIDs.insert(id)
-        conversationLock.unlock()
-    }
-
-    private func takeCodexConversation(_ id: UUID) -> Bool {
-        conversationLock.lock()
-        defer { conversationLock.unlock() }
-        return codexConversationIDs.remove(id) != nil
-    }
-
     public func playAudio(for text: String) async throws {
         let audioReq = OpenAI.AudioSpeechRequest(model: .tts_1_hd, input: text, voice: .alloy, responseFormat: .mp3, speed: 1.2)
         let audioResponse: Data = try await langToolchain.perform(request: audioReq)
@@ -202,7 +183,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) -> any LangToolsChatRequest & LangToolsStreamableRequest {
         switch model {
         case .anthropic(let model), .claudeCode(let model): return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.convertTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
-        case .openAI(let model), .codex(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), /*n: 3,*/ stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice/*, choose: {_ in 2}*/)
+        case .openAI(let model), .codex(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice)
         case .xAI(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice)
         case .gemini(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream/*, tools: tools?.convertTools(), tool_choice: toolChoice*/)
         case .ollama(let model): return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools?.convertTools())
@@ -253,6 +234,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         do {
             try await accountLoginService.logout(provider: provider)
         } catch {
+            // A remote logout failure must not leave a stale local session behind.
             NSLog("Remote %@ logout failed; clearing the local session: %@", provider.displayName, error.localizedDescription)
         }
         try await MainActor.run {
@@ -293,24 +275,19 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             throw NetworkError.missingApiKey
         }
 
-        guard state.availableModels.contains(model) else {
+        if !state.availableModels.isEmpty, state.availableModels.contains(model) == false {
             throw NetworkError.modelAccessUnavailable(model.rawValue)
         }
     }
 
     private func accountSession(for model: Model) -> AccountSession? {
-        guard let provider = model.apiService.accountLoginProvider else {
+        let state = providerAccessManager.state(for: model.apiService)
+        guard state.hasAccountSession, state.hasAPIKey == false,
+              let provider = model.apiService.accountLoginProvider
+        else {
             return nil
         }
-
-        switch model {
-        case .codex, .claudeCode:
-            return providerAccessManager.session(for: provider)
-        case .openAI, .anthropic:
-            return nil
-        default:
-            return nil
-        }
+        return providerAccessManager.session(for: provider)
     }
 }
 

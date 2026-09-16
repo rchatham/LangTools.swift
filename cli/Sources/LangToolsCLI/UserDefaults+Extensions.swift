@@ -8,9 +8,6 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
-#if canImport(SwiftUI)
-import SwiftUI
-#endif
 
 extension UserDefaults {
     static var model: Model {
