@@ -205,14 +205,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         switch model {
         case .anthropic(let model), .claudeCode(let model): return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.convertTools(), tool_choice: toolChoice?.toAnthropicToolChoice(), toolEventHandler: toolEventHandler)
         case .openAI(let model), .codex(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), /*n: 3,*/ stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice, toolEventHandler: toolEventHandler/*, choose: {_ in 2}*/)
-        case .xAI(let model):
-            var req = OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice)
-            req.toolEventHandler = toolEventHandler
-            return req
-        case .gemini(let model):
-            var req = OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream/*, tools: tools?.convertTools(), tool_choice: toolChoice*/)
-            req.toolEventHandler = toolEventHandler
-            return req
+        case .xAI(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice, toolEventHandler: toolEventHandler)
+        case .gemini(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, toolEventHandler: toolEventHandler/*, tools: tools?.convertTools(), tool_choice: toolChoice*/)
         case .ollama(let model): return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools?.convertTools(), toolEventHandler: toolEventHandler)
         }
     }
