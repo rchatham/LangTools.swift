@@ -37,6 +37,7 @@ private var ansiColorsEnabled = true
 
 @main
 struct CLI {
+    @MainActor
     static func main() async {
         do {
             try await run()
@@ -46,6 +47,15 @@ struct CLI {
         }
     }
 
+    /// The TUI owns SwiftTUI's renderer, which is not thread-safe: its
+    /// scheduled updates, SIGWINCH and stdin sources all run on the main
+    /// queue, while a nonisolated async entrypoint would run `Application`
+    /// construction and the first draw on a cooperative-pool thread — racing
+    /// the main-queue handlers and crashing in `Renderer.drawPixel` (malloc
+    /// double free / "deallocated with non-zero retain count"). Pinning the
+    /// entire run path to the main actor keeps every renderer touch on one
+    /// thread.
+    @MainActor
     static func run() async throws {
         let args = CommandLine.arguments
         let subcommandArguments = Array(args.dropFirst())
@@ -106,8 +116,8 @@ struct CLI {
             }
 
             #if os(macOS)
-            // Async `@main` already runs on libdispatch's main loop. Calling
-            // `dispatchMain()` again traps, so let AppKit own the TUI loop.
+            // Already on the main actor (see `run()`); calling `dispatchMain()`
+            // again would trap, so let AppKit own the TUI loop.
             Application(rootView: rootView, runLoopType: .cocoa).start()
             #else
             Application(rootView: rootView).start()
