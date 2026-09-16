@@ -7,6 +7,7 @@ import Foundation
 import LangTools
 import OpenAI
 import Anthropic
+import Ollama
 import ChatUI
 import XCTest
 @testable import Chat
@@ -56,7 +57,6 @@ final class ToolCallHistoryReplayTests: XCTestCase {
             ChatToolCall(id: "p", name: "calculate", arguments: "{}", status: .pending, result: nil)
         ])].toOpenAIMessages()
 
-        // Pending calls are not replayed; message falls back to text-only.
         XCTAssertEqual(msgs.count, 1)
         XCTAssertNil(msgs[0].tool_calls)
     }
@@ -84,6 +84,20 @@ final class ToolCallHistoryReplayTests: XCTestCase {
             completed("calculate", id: "c", result: "1")
         ])].toAnthropicMessages()
 
-        XCTAssertEqual(msgs.count, 2) // system filtered, then assistant + user tool result
+        XCTAssertEqual(msgs.count, 2)
+    }
+
+    // MARK: - Ollama
+
+    func testOllamaReplayExpandsCompletedToolCalls() {
+        let msgs = [message(text: "checking", toolCalls: [
+            completed("calculate", id: "ollama", args: #"{"expression":"1+1"}"#, result: "2")
+        ])].toOllamaMessages()
+
+        XCTAssertEqual(msgs.count, 2)
+        XCTAssertEqual(msgs[0].role, .assistant)
+        XCTAssertEqual(msgs[0].tool_calls?.count, 1)
+        XCTAssertEqual(msgs[0].tool_calls?[0].name, "calculate")
+        XCTAssertEqual(msgs[1].role, .tool)
     }
 }
