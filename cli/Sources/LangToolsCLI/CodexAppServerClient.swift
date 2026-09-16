@@ -142,8 +142,11 @@ actor CodexAppServerClient {
         self.defaultTimeout = defaultTimeout
         self.requestTimeoutSleeper = requestTimeoutSleeper
         self.workspaceRootProvider = workspaceRootProvider
+        // Resolve from the injected environment (not ProcessInfo) so callers
+        // that pass an `environment` override get a consistent codex home,
+        // matching the runtime-cache resolution below.
         self.codexHomeProvider = codexHomeProvider ?? {
-            CodexSeatbeltProfile.resolvedCodexHome(environment: ProcessInfo.processInfo.environment)
+            CodexSeatbeltProfile.resolvedCodexHome(environment: environment)
         }
     }
 

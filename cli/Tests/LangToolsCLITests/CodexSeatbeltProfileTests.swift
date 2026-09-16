@@ -402,12 +402,21 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         }
         let workspace = makeTempDir(prefix: "ws")
         defer { try? FileManager.default.removeItem(at: workspace) }
+        // The child's cwd is the resolved Codex home and the fake command
+        // writes a RELATIVE marker into it, so the environment must pin a
+        // disposable home. Without this override the resolved home is the
+        // user's real ~/.codex and every test run would pollute it.
+        let codexHome = makeTempDir(prefix: "codex-home")
+        defer { try? FileManager.default.removeItem(at: codexHome) }
+        var environment = ProcessInfo.processInfo.environment
+        environment["LANGTOOLS_CODEX_HOME"] = codexHome.path
+        environment["CODEX_HOME"] = codexHome.path
         // The marker is first written with a RELATIVE path (proving the child's
         // cwd — the resolved Codex home — is itself writable under the
         // seatbelt), then copied into the workspace so the test can read it
         // after the startup failure.
         let marker = workspace.appendingPathComponent("cwd-marker.txt")
-        let expectedCWD = CodexSeatbeltProfile.resolvedCodexHome(environment: [:])
+        let expectedCWD = CodexSeatbeltProfile.resolvedCodexHome(environment: environment)
 
         let client = CodexAppServerClient(
             commandResolver: {
@@ -416,6 +425,7 @@ final class CodexSeatbeltProfileTests: XCTestCase {
                     arguments: ["-c", "pwd > marker.txt && cp marker.txt '\(marker.path)'"]
                 )
             },
+            environment: environment,
             workspaceRootProvider: { workspace }
         )
         // Startup launches the command under the seatbelt with its working
