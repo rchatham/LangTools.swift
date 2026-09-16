@@ -148,8 +148,10 @@ struct CodexSeatbeltProfile: Sendable {
                 // not depend on how Foundation applies attributes across the
                 // intermediate-directory chain.
                 if rootExisted == false {
+                    // The intermediate .cache follows the XDG convention; only
+                    // the leaf (helper-owned runtime data) is owner-only.
                     try fileManager.setAttributes(
-                        [.posixPermissions: NSNumber(value: Int16(0o700))],
+                        [.posixPermissions: NSNumber(value: Int16(0o755))],
                         ofItemAtPath: lexicalRoot
                     )
                 }
@@ -177,6 +179,10 @@ struct CodexSeatbeltProfile: Sendable {
 
     /// Credential/token stores whose metadata probing is denied even though
     /// global `file-read-metadata` is required for app-server startup.
+    // Deliberately excludes broad trees (~/.config, ~/Library/Application
+    // Support, ~/Library/Preferences): legitimate XDG/app-support probes run
+    // through them and a metadata deny there risks breaking codex. Their
+    // secret content stays protected by the deny-by-default content boundary.
     static let sensitiveCredentialStoreNames = [
         ".ssh",
         ".gnupg",
@@ -184,7 +190,6 @@ struct CodexSeatbeltProfile: Sendable {
         ".netrc",
         ".kube",
         ".docker",
-        ".config",
         ".gitconfig",
         ".npmrc",
         ".pypirc",
@@ -230,8 +235,9 @@ struct CodexSeatbeltProfile: Sendable {
         // intentionally NOT denied: legitimate XDG/app-support probes run
         // through them and a metadata deny there risks breaking codex, while
         // their secret content is protected by the content boundary anyway.
-        var paths = sensitiveCredentialStoreNames.map { home + "/" + $0 }
-        paths.append(home + "/Library/Keychains")
+        let standardized = URL(fileURLWithPath: home).standardizedFileURL.path
+        var paths = sensitiveCredentialStoreNames.map { standardized + "/" + $0 }
+        paths.append(standardized + "/Library/Keychains")
         return paths
     }
 

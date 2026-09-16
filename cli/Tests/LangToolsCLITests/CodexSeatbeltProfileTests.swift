@@ -101,7 +101,7 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         // Credential-store locations are explicitly denied for metadata too,
         // for every blocklist entry that exists under the real home.
         let home = URL(fileURLWithPath: NSHomeDirectory())
-        for sensitive in ["~/.ssh", "~/.gnupg", "~/.aws", "~/.config", "~/.gitconfig", "~/Library/Keychains"] {
+        for sensitive in ["~/.ssh", "~/.gnupg", "~/.aws", "~/.gitconfig", "~/Library/Keychains"] {
             let expanded = home.appendingPathComponent(
                 sensitive.replacingOccurrences(of: "~/", with: "")
             )
@@ -323,11 +323,13 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         XCTAssertNotNil(CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: ["HOME": home.path]))
 
         let root = home.appendingPathComponent(".cache")
-        for path in [root, root.appendingPathComponent("codex-runtimes")] {
+        // The intermediate follows the XDG convention (0755); the helper-owned
+        // leaf is owner-only (0700).
+        for (path, mode) in [(root, 0o755), (root.appendingPathComponent("codex-runtimes"), 0o700)] {
             let permissions = try XCTUnwrap(
                 (try FileManager.default.attributesOfItem(atPath: path.path)[.posixPermissions] as? NSNumber)?.intValue
             )
-            XCTAssertEqual(permissions & 0o777, 0o700, "\(path.path) should be owner-only")
+            XCTAssertEqual(permissions & 0o777, mode, "\(path.path) has the wrong mode")
         }
     }
 
