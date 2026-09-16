@@ -196,7 +196,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         XCTAssertTrue(source.contains("(allow file-read-metadata)"))
         XCTAssertFalse(source.contains("(allow mach-lookup)\n)"))
         // The credential blocklist derives from the passwd database (not the
-        // inputs), so it renders even without an input home.
+        // inputs), so it renders even without an input home — and covers both
+        // the lexical and resolved home locations.
         XCTAssertTrue(source.contains("(deny file-read-metadata (subpath \"\(NSHomeDirectory())/Library/Keychains\"))"))
         // No runtime-cache rules are emitted when no cache is configured.
         let empty = CodexSeatbeltProfile().render(inputs: CodexSeatbeltProfile.Inputs(
@@ -421,11 +422,14 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         let recorded = (try? String(contentsOf: marker, encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         // getcwd returns the physical path (/private/var for /var on macOS).
-        // The child runs in a dedicated empty directory inside the workspace
-        // root, not in the root itself.
-        XCTAssertEqual(
-            recorded.map(Self.physicalPath),
-            Self.physicalPath(workspace.appendingPathComponent("app-server-cwd").path)
+        // The child runs in a dedicated, per-launch empty directory inside the
+        // workspace root, not in the root itself.
+        let recordedURL = recorded.map { URL(fileURLWithPath: $0) }
+        let expectedParent = Self.physicalPath(workspace.path)
+        XCTAssertEqual(recordedURL?.deletingLastPathComponent().path, expectedParent)
+        XCTAssertTrue(
+            recordedURL?.lastPathComponent.hasPrefix("app-server-cwd-") == true,
+            "child cwd must be the dedicated per-launch directory: \(recorded ?? "nil")"
         )
         await client.shutdown()
     }
@@ -522,6 +526,26 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             XCTAssertTrue(source.contains(service), "missing mach service \(service)")
         }
         XCTAssertFalse(source.contains("(allow mach-lookup)\n)"))
+    }
+
+    func testCredentialBlocklistHomePrefersPasswdDatabaseOverHOME() {
+        // The passwd home for the effective user is authoritative: a wrong or
+        // symlinked $HOME cannot redirect the credential-store denies. In this
+        // unsandboxed test environment the passwd home equals NSHomeDirectory().
+        let resolved = CodexSeatbeltProfile.credentialBlocklistHome(environment: ["HOME": "/nonexistent-home"])
+        XCTAssertEqual(resolved, URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path)
+    }
+
+    func testSensitiveCredentialPathsStandardizeAndCoverStores() {
+        // A trailing slash on the home cannot disable a deny.
+        let paths = CodexSeatbeltProfile.sensitiveCredentialPaths(home: "/Users/reid/")
+        XCTAssertTrue(paths.contains("/Users/reid/.ssh"))
+        XCTAssertTrue(paths.contains("/Users/reid/Library/Keychains"))
+        XCTAssertFalse(paths.contains("/Users/reid//.ssh"))
+        // Broad trees are intentionally not denied.
+        XCTAssertFalse(paths.contains("/Users/reid/.config"))
+        XCTAssertFalse(paths.contains("/Users/reid/Library/Application Support"))
+        XCTAssertFalse(paths.contains("/Users/reid/Library/Preferences"))
     }
 
     // MARK: - Helpers

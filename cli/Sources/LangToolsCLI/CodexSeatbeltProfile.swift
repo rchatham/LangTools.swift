@@ -229,7 +229,7 @@ struct CodexSeatbeltProfile: Sendable {
         #endif
     }
 
-    private static func sensitiveCredentialPaths(home: String) -> [String] {
+    static func sensitiveCredentialPaths(home: String) -> [String] {
         // Specific credential stores only. Broad trees (~/.config,
         // ~/Library/Application Support, ~/Library/Preferences) are
         // intentionally NOT denied: legitimate XDG/app-support probes run
@@ -316,8 +316,19 @@ struct CodexSeatbeltProfile: Sendable {
         // user, not $HOME: credential stores live in the real home, and a
         // missing/wrong/symlinked $HOME must not silently disable the denies.
         if let blocklistHome = Self.credentialBlocklistHome(environment: ["HOME": inputs.homeDirectory]) {
-            for sensitivePath in Self.sensitiveCredentialPaths(home: blocklistHome) {
-                lines.append("(deny file-read-metadata (subpath \(Self.quoted(sensitivePath))))")
+            // Denies must cover both the lexical and symlink-resolved home:
+            // seatbelt matches resolved paths, so a home reached through a
+            // symlink (e.g. /Users/me -> /Volumes/Data/me) would otherwise
+            // bypass the lexical deny and fall through to the global allow.
+            var blocklistHomes = [blocklistHome]
+            let resolvedHome = URL(fileURLWithPath: blocklistHome).resolvingSymlinksInPath().path
+            if resolvedHome != blocklistHome {
+                blocklistHomes.append(resolvedHome)
+            }
+            for home in blocklistHomes {
+                for sensitivePath in Self.sensitiveCredentialPaths(home: home) {
+                    lines.append("(deny file-read-metadata (subpath \(Self.quoted(sensitivePath))))")
+                }
             }
         }
         // System runtime roots Codex and its native tools need to exec/load.
@@ -337,10 +348,19 @@ struct CodexSeatbeltProfile: Sendable {
         lines.append("(allow file-read* (subpath \(codexHome)))")
         lines.append("(allow file-write* (subpath \(codexHome)))")
         // Codex runtime/plugin cache (models cache, primary runtime plugins).
+        // Granted for both the lexical and the symlink-resolved location: a
+        // symlinked HOME would otherwise leave the cache silently unusable.
         if inputs.codexRuntimeCache.isEmpty == false {
-            let runtimeCache = Self.quoted(inputs.codexRuntimeCache)
-            lines.append("(allow file-read* (subpath \(runtimeCache)))")
-            lines.append("(allow file-write* (subpath \(runtimeCache)))")
+            let lexicalRuntimeCache = Self.quoted(inputs.codexRuntimeCache)
+            lines.append("(allow file-read* (subpath \(lexicalRuntimeCache)))")
+            lines.append("(allow file-write* (subpath \(lexicalRuntimeCache)))")
+            let resolvedRuntimeCache = Self.quoted(
+                URL(fileURLWithPath: inputs.codexRuntimeCache).resolvingSymlinksInPath().path
+            )
+            if resolvedRuntimeCache != lexicalRuntimeCache {
+                lines.append("(allow file-read* (subpath \(resolvedRuntimeCache)))")
+                lines.append("(allow file-write* (subpath \(resolvedRuntimeCache)))")
+            }
         }
         // Helper-owned conversation workspaces.
         lines.append("(allow file-read* (subpath \(workspaceRoot)))")

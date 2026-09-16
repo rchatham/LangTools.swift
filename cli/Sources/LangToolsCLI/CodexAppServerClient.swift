@@ -500,8 +500,10 @@ actor CodexAppServerClient {
         // still grants the whole root for legitimate workspace operations.
         // Per-turn work happens in the conversation workspace set via
         // thread/start.
+        // A unique per-launch name means a sibling conversation cannot
+        // pre-plant or reuse the directory: it exists only for this launch.
         let appServerCWD = resolvedWorkspace
-            .appendingPathComponent("app-server-cwd", isDirectory: true)
+            .appendingPathComponent("app-server-cwd-\(UUID().uuidString.lowercased())", isDirectory: true)
         // A sibling conversation could plant a symlink here (the root is
         // writable inside the sandbox), so remove any symlink before creating.
         if (try? FileManager.default.destinationOfSymbolicLink(atPath: appServerCWD.path)) != nil {
