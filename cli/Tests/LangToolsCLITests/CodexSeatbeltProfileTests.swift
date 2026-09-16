@@ -402,10 +402,12 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         }
         let workspace = makeTempDir(prefix: "ws")
         defer { try? FileManager.default.removeItem(at: workspace) }
-        // The marker is written with a RELATIVE path so it lands inside the
-        // child's working directory: this proves the dedicated cwd is itself
-        // writable and readable under the seatbelt.
+        // The marker is first written with a RELATIVE path (proving the child's
+        // cwd — the resolved Codex home — is itself writable under the
+        // seatbelt), then copied into the workspace so the test can read it
+        // after the startup failure.
         let marker = workspace.appendingPathComponent("cwd-marker.txt")
+        let expectedCWD = CodexSeatbeltProfile.resolvedCodexHome(environment: [:])
 
         let client = CodexAppServerClient(
             commandResolver: {
@@ -430,27 +432,13 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             if recorded == nil { try await Task.sleep(for: .milliseconds(20)) }
         }
         // getcwd returns the physical path (/private/var for /var on macOS).
-        // The child runs in a dedicated per-launch empty directory OUTSIDE the
-        // workspace root (under the temp dir), so project-config discovery
-        // cannot see sibling conversation workspaces.
-        let recordedURL = recorded.map { URL(fileURLWithPath: $0) }
-        XCTAssertNotEqual(recordedURL?.deletingLastPathComponent().path, Self.physicalPath(workspace.path))
-        XCTAssertTrue(
-            recordedURL?.path.contains("langtools-codex-cwd/cwd-") == true,
-            "child cwd must be the dedicated per-launch temp directory: \(recorded ?? "nil")"
-        )
-        // A relaunch removes the previous launch's directory before recording
-        // the new one (the relaunch itself fails when the fake command exits,
-        // which is expected here).
-        let previousCWD = recordedURL?.path
-        _ = try? await client.restart()
-        if let previousCWD {
-            XCTAssertFalse(
-                FileManager.default.fileExists(atPath: previousCWD),
-                "the previous launch's cwd must be removed on relaunch"
-            )
-        }
+        // The child runs in the resolved Codex home, not the workspace root or
+        // the helper launch directory.
+        XCTAssertEqual(recorded.map(Self.physicalPath), Self.physicalPath(expectedCWD))
         await client.shutdown()
+        // The Codex home is user data: shutdown must never remove it.
+        XCTAssertTrue(FileManager.default.fileExists(atPath: expectedCWD))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
     }
 
     func testLaunchedProcessKeepsInheritedWorkingDirectoryWithoutSeatbelt() async throws {

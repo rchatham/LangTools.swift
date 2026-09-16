@@ -105,7 +105,6 @@ actor CodexAppServerClient {
     private let codexHomeProvider: CodexHomeProvider
     private var process: Process?
     private var seatbeltProfileURL: URL?
-    private var seatbeltCWDURL: URL?
     private var stdinHandle: FileHandle?
     private var stdoutBuffer = Data()
     private var pending: [Int: PendingRequest] = [:]
@@ -400,12 +399,7 @@ actor CodexAppServerClient {
             // arbitrary helper launch directory nor sibling conversation
             // workspaces.
             process.currentDirectoryURL = seatbelt.cwdURL
-            // A relaunch/retry must not orphan the previous launch's cwd.
-            if let previousCWD = seatbeltCWDURL {
-                try? FileManager.default.removeItem(at: previousCWD)
-            }
             seatbeltProfileURL = seatbelt.profileURL
-            seatbeltCWDURL = seatbelt.cwdURL
         } else {
             process.executableURL = URL(fileURLWithPath: command.executable)
             process.arguments = codexArguments
@@ -513,63 +507,22 @@ actor CodexAppServerClient {
             homeDirectory: environment["HOME"] ?? ""
         )
         let profileURL = try CodexSeatbeltProfile().writeProfile(inputs: inputs)
-        // Give the app-server a dedicated, empty working directory OUTSIDE the
-        // shared workspace root (under the process temp dir, which the seatbelt
-        // already allows): project-config discovery walks up the parent chain,
-        // so a cwd inside the root would let a sibling conversation plant
-        // config markers (e.g. .codex/, AGENTS.md) in the root for the
-        // app-server to discover. Per-turn work happens in the conversation
-        // workspace set via thread/start. The unique per-launch name prevents
-        // pre-planting or reuse, and the directory is removed on shutdown.
-        let appServerCWD = FileManager.default.temporaryDirectory
-            .appendingPathComponent("langtools-codex-cwd", isDirectory: true)
-            .appendingPathComponent("cwd-\(UUID().uuidString.lowercased())", isDirectory: true)
-        // A sibling conversation could still swap the directory between this
-        // verification and process launch; that residual window is accepted —
-        // it only redirects config discovery, and the seatbelt content
-        // boundary still holds.
-        if (try? FileManager.default.destinationOfSymbolicLink(atPath: appServerCWD.path)) != nil {
-            try FileManager.default.removeItem(at: appServerCWD)
-        }
-        try FileManager.default.createDirectory(
-            at: appServerCWD,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: NSNumber(value: Int16(0o700))]
-        )
-        try FileManager.default.setAttributes(
-            [.posixPermissions: NSNumber(value: Int16(0o700))],
-            ofItemAtPath: appServerCWD.path
-        )
-        // Verify the final state: a real directory, owned by the effective
-        // user, not group/other-writable, and still not a symlink.
-        var cwdIsDirectory: ObjCBool = false
-        guard (try? FileManager.default.destinationOfSymbolicLink(atPath: appServerCWD.path)) == nil,
-              FileManager.default.fileExists(atPath: appServerCWD.path, isDirectory: &cwdIsDirectory),
-              cwdIsDirectory.boolValue,
-              let cwdAttributes = try? FileManager.default.attributesOfItem(atPath: appServerCWD.path),
-              let cwdOwnerID = cwdAttributes[.ownerAccountID] as? NSNumber,
-              cwdOwnerID.uint32Value == UInt32(geteuid()),
-              let cwdPermissions = cwdAttributes[.posixPermissions] as? NSNumber,
-              cwdPermissions.intValue & 0o022 == 0
-        else {
-            throw CodexAppServerError.transport(
-                "Codex app-server working directory is not a safe helper-owned directory: \(appServerCWD.path)"
-            )
-        }
-        var launchComplete = false
-        defer {
-            // Keep the directory only when the launch is fully built; any
-            // throw after creation would otherwise orphan it.
-            if launchComplete == false {
-                try? FileManager.default.removeItem(at: appServerCWD)
-            }
-        }
-        launchComplete = true
+        // Run the app-server with its working directory in the resolved Codex
+        // home: it is allowlisted for read and write, it is Codex's own trusted
+        // configuration surface (a sibling conversation can already write
+        // there through the codexHome grant, so no new exposure is added), and
+        // project-config discovery walking up from it cannot read anything
+        // outside the allowlist (the home tree above it is content-denied).
+        // This also means the helper never creates or deletes anything in the
+        // user home as a launch side effect.
+        let codexHomeURL = URL(
+            fileURLWithPath: codexHomeProvider()
+        ).standardizedFileURL.resolvingSymlinksInPath()
         return SeatbeltLaunch(
             sandboxExec: sandboxExec,
             profilePath: profileURL.path,
             profileURL: profileURL,
-            cwdURL: appServerCWD
+            cwdURL: codexHomeURL
         )
     }
 
@@ -862,14 +815,14 @@ actor CodexAppServerClient {
         oldProcess?.standardOutput.flatMap { $0 as? Pipe }?.fileHandleForReading.readabilityHandler = nil
         oldProcess?.standardError.flatMap { $0 as? Pipe }?.fileHandleForReading.readabilityHandler = nil
         if oldProcess?.isRunning == true { oldProcess?.terminate() }
+        // Only the seatbelt profile (helper-generated) is cleaned up on
+        // shutdown. The child cwd is the user's Codex home — user data that
+        // must never be removed by the helper.
         if let profileURL = seatbeltProfileURL {
             seatbeltProfileURL = nil
             try? FileManager.default.removeItem(at: profileURL)
         }
-        if let cwdURL = seatbeltCWDURL {
-            seatbeltCWDURL = nil
-            try? FileManager.default.removeItem(at: cwdURL)
-        }
+
 
         let requests = pending.values
         pending.removeAll()
