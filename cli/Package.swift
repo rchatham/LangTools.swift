@@ -12,7 +12,11 @@ let package = Package(
     ],
     dependencies: [
         .package(name: "langtools-cli", path: ".."),
-        .package(url: "https://github.com/rensbreur/SwiftTUI", branch: "main"),
+        // Vendored copy of rensbreur/SwiftTUI (rev 5371330) with a thread-safety
+        // fix: the upstream renderer and control tree are not safe for
+        // concurrent access, and `Application.start()` may run on a different
+        // thread than SwiftTUI's main-queue sources (see cli/Vendor/SwiftTUI).
+        .package(path: "Vendor/SwiftTUI"),
     ],
     targets: [
         .executableTarget(

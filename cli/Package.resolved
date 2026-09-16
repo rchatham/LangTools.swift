@@ -73,15 +73,6 @@
       }
     },
     {
-      "identity" : "swifttui",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/rensbreur/SwiftTUI",
-      "state" : {
-        "branch" : "main",
-        "revision" : "537133031bc2b2731048d00748c69700e1b48185"
-      }
-    },
-    {
       "identity" : "whisperkit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/argmaxinc/WhisperKit.git",
