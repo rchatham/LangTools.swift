@@ -121,6 +121,23 @@ struct CodexSeatbeltProfile: Sendable {
                   rootPermissions.intValue & 0o022 == 0
             else { return "" }
         }
+        // Tracks filesystem state created by this call: if the final grant
+        // checks refuse the path (e.g. a symlink planted after creation), the
+        // helper-owned state is removed so it cannot be orphaned inside an
+        // attacker-chosen target.
+        var createdLeaf = false
+        var createdRoot = false
+        var grantIssued = false
+        defer {
+            if grantIssued == false {
+                if createdLeaf {
+                    try? fileManager.removeItem(atPath: lexicalPath)
+                }
+                if createdRoot {
+                    try? fileManager.removeItem(atPath: lexicalRoot)
+                }
+            }
+        }
         if fileManager.fileExists(atPath: lexicalPath, isDirectory: &isDirectory) {
             // A pre-existing leaf must be owned by the effective user and must
             // not be group/other-writable: other local users could otherwise
@@ -135,6 +152,7 @@ struct CodexSeatbeltProfile: Sendable {
             else { return "" }
         } else {
             do {
+                createdLeaf = true
                 try fileManager.createDirectory(
                     at: cachePath,
                     withIntermediateDirectories: true,
@@ -150,6 +168,7 @@ struct CodexSeatbeltProfile: Sendable {
                 if rootExisted == false {
                     // The intermediate .cache follows the XDG convention; only
                     // the leaf (helper-owned runtime data) is owner-only.
+                    createdRoot = true
                     try fileManager.setAttributes(
                         [.posixPermissions: NSNumber(value: Int16(0o755))],
                         ofItemAtPath: lexicalRoot
@@ -167,6 +186,7 @@ struct CodexSeatbeltProfile: Sendable {
               Self.isSymlink(at: lexicalRoot, fileManager: fileManager) == false
         else { return "" }
 
+        grantIssued = true
         // Grant the lexical path, not a resolved one. Seatbelt evaluates file
         // operations against symlink-resolved paths, so the allowlist below
         // matches the physical location regardless; and if the directory is

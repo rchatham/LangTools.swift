@@ -394,11 +394,12 @@ actor CodexAppServerClient {
         ) {
             process.executableURL = URL(fileURLWithPath: seatbelt.sandboxExec)
             process.arguments = ["-f", seatbelt.profilePath, command.executable] + codexArguments
-            // Run the Codex app-server with its working directory inside the
-            // allowlisted workspace root, so it never reads the arbitrary
-            // helper launch directory (e.g. the user's repo/home) to load
-            // project config.
-            process.currentDirectoryURL = seatbelt.workspaceURL
+            // Run the Codex app-server with its working directory in the
+            // dedicated per-launch temp directory (OUTSIDE the shared
+            // workspace root), so project-config discovery neither reads the
+            // arbitrary helper launch directory nor sibling conversation
+            // workspaces.
+            process.currentDirectoryURL = seatbelt.cwdURL
             // A relaunch/retry must not orphan the previous launch's cwd.
             if let previousCWD = seatbeltCWDURL {
                 try? FileManager.default.removeItem(at: previousCWD)
@@ -480,8 +481,8 @@ actor CodexAppServerClient {
         let sandboxExec: String
         let profilePath: String
         let profileURL: URL
-        let workspaceURL: URL
-        /// Dedicated per-launch working directory, removed on shutdown.
+        /// Dedicated per-launch working directory (outside the workspace
+        /// root), removed on shutdown and on relaunch.
         let cwdURL: URL
     }
 
@@ -568,7 +569,6 @@ actor CodexAppServerClient {
             sandboxExec: sandboxExec,
             profilePath: profileURL.path,
             profileURL: profileURL,
-            workspaceURL: appServerCWD,
             cwdURL: appServerCWD
         )
     }

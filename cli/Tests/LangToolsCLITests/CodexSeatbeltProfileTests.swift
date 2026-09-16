@@ -402,25 +402,33 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         }
         let workspace = makeTempDir(prefix: "ws")
         defer { try? FileManager.default.removeItem(at: workspace) }
+        // The marker is written with a RELATIVE path so it lands inside the
+        // child's working directory: this proves the dedicated cwd is itself
+        // writable and readable under the seatbelt.
         let marker = workspace.appendingPathComponent("cwd-marker.txt")
 
         let client = CodexAppServerClient(
             commandResolver: {
-                ResolvedCodexCommand(executable: "/bin/sh", arguments: ["-c", "pwd > '\(marker.path)'"])
+                ResolvedCodexCommand(
+                    executable: "/bin/sh",
+                    arguments: ["-c", "pwd > marker.txt && cp marker.txt '\(marker.path)'"]
+                )
             },
             workspaceRootProvider: { workspace }
         )
         // Startup launches the command under the seatbelt with its working
-        // directory set to the workspace root; the fake command records its cwd
-        // and exits, so startup fails, but the marker proves where it ran.
+        // directory in the dedicated per-launch temp directory; the fake
+        // command records its cwd and exits, so startup fails, but the marker
+        // proves where it ran.
         _ = try? await client.initializedProcessGeneration()
 
         let deadline = Date().addingTimeInterval(10)
-        while Date() < deadline, FileManager.default.fileExists(atPath: marker.path) == false {
-            try await Task.sleep(for: .milliseconds(20))
+        var recorded: String?
+        while Date() < deadline, recorded == nil {
+            recorded = (try? String(contentsOf: marker, encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if recorded == nil { try await Task.sleep(for: .milliseconds(20)) }
         }
-        let recorded = (try? String(contentsOf: marker, encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
         // getcwd returns the physical path (/private/var for /var on macOS).
         // The child runs in a dedicated per-launch empty directory OUTSIDE the
         // workspace root (under the temp dir), so project-config discovery
@@ -431,12 +439,18 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             recordedURL?.path.contains("langtools-codex-cwd/cwd-") == true,
             "child cwd must be the dedicated per-launch temp directory: \(recorded ?? "nil")"
         )
-        let recordedPath = recordedURL?.path
-        await client.shutdown()
-        // The per-launch directory is removed on shutdown.
-        if let recordedPath {
-            XCTAssertFalse(FileManager.default.fileExists(atPath: recordedPath))
+        // A relaunch removes the previous launch's directory before recording
+        // the new one (the relaunch itself fails when the fake command exits,
+        // which is expected here).
+        let previousCWD = recordedURL?.path
+        _ = try? await client.restart()
+        if let previousCWD {
+            XCTAssertFalse(
+                FileManager.default.fileExists(atPath: previousCWD),
+                "the previous launch's cwd must be removed on relaunch"
+            )
         }
+        await client.shutdown()
     }
 
     func testLaunchedProcessKeepsInheritedWorkingDirectoryWithoutSeatbelt() async throws {
