@@ -114,6 +114,13 @@ public class ToolSettings: ObservableObject {
         didSet { saveSettings() }
     }
 
+    /// Keep tool-call cards visible in chat history after the tool completes and
+    /// the follow-up response streams in. When disabled, cards are cleared once
+    /// the follow-up text begins streaming.
+    @Published public var keepsToolCallsInHistory: Bool {
+        didSet { saveSettings() }
+    }
+
     // MARK: - Voice Input (STT) Settings
 
     /// Enable/disable voice input
@@ -170,6 +177,7 @@ public class ToolSettings: ObservableObject {
 
     private init() {
         self.richContentEnabled = UserDefaults.standard.object(forKey: "richContentEnabled") as? Bool ?? true
+        self.keepsToolCallsInHistory = UserDefaults.standard.object(forKey: "keepsToolCallsInHistory") as? Bool ?? true
         self.voiceInputEnabled = UserDefaults.standard.object(forKey: "voiceInputEnabled") as? Bool ?? true
 
         if let rawValue = UserDefaults.standard.string(forKey: "sttProviderRawValue"),
@@ -217,6 +225,7 @@ public class ToolSettings: ObservableObject {
 
     func saveSettings() {
         UserDefaults.standard.set(richContentEnabled, forKey: "richContentEnabled")
+        UserDefaults.standard.set(keepsToolCallsInHistory, forKey: "keepsToolCallsInHistory")
         UserDefaults.standard.set(voiceInputEnabled, forKey: "voiceInputEnabled")
         UserDefaults.standard.set(sttProvider.rawValue, forKey: "sttProviderRawValue")
         UserDefaults.standard.set(voiceButtonReplaceSend, forKey: "voiceButtonReplaceSend")
@@ -231,6 +240,7 @@ public class ToolSettings: ObservableObject {
 
     func resetToDefaults() {
         richContentEnabled = true
+        keepsToolCallsInHistory = true
         voiceInputEnabled = true
         sttProvider = .appleSpeech
         voiceButtonReplaceSend = false
