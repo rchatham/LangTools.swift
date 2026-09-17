@@ -86,6 +86,9 @@ class MessageService: ObservableObject {
 
     func getChatCompletion(for message: String, stream: Bool, silent: Bool = false) async throws {
         await MainActor.run {
+            if !messages.contains(where: { $0.role == .system }) {
+                messages.append(Self.contextSystemMessage(cwd: FileManager.default.currentDirectoryPath))
+            }
             messages.append(Message(text: message, role: .user))
         }
 
@@ -366,6 +369,19 @@ class MessageService: ObservableObject {
         for line in lines {
             print("  \(line)")
         }
+    }
+
+    /// Grounding context so the model resolves project-relative paths against
+    /// the real working directory instead of guessing absolute paths.
+    static func contextSystemMessage(cwd: String) -> Message {
+        Message(
+            text: """
+            You are the assistant embedded in the LangTools CLI, a terminal chat application.
+            The user's current working directory is: \(cwd)
+            When using file tools, resolve project-relative paths against this directory.
+            """,
+            role: .system
+        )
     }
 
     func resolvedAssistantContent(content: String, toolTrace: ToolCallTrace, model: Model) -> String {

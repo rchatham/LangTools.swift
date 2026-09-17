@@ -87,6 +87,11 @@ public class Application {
         }
     }
 
+    /// Rows scrolled per PageUp/PageDown keypress.
+    private var pageScrollAmount: Extended {
+        max(1, window.layer.frame.size.height - 4)
+    }
+
     private func setInputMode() {
         var tattr = termios()
         tcgetattr(STDIN_FILENO, &tattr)
@@ -108,6 +113,24 @@ public class Application {
             if arrowKeyParser.parse(character: char) {
                 guard let key = arrowKeyParser.arrowKey else { continue }
                 arrowKeyParser.arrowKey = nil
+                // Scroll keys stay usable regardless of which control (e.g. the
+                // text field) holds focus.
+                if key == .pageUp {
+                    window.firstScrollView()?.scrollBy(lines: pageScrollAmount)
+                    continue
+                }
+                if key == .pageDown {
+                    window.firstScrollView()?.scrollBy(lines: -pageScrollAmount)
+                    continue
+                }
+                if key == .home {
+                    window.firstScrollView()?.scrollToTop()
+                    continue
+                }
+                if key == .end {
+                    window.firstScrollView()?.scrollToBottom()
+                    continue
+                }
                 if key == .down {
                     if let next = window.firstResponder?.selectableElement(below: 0) {
                         window.firstResponder?.resignFirstResponder()

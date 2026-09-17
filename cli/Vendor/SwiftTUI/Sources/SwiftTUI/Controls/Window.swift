@@ -22,4 +22,26 @@ class Window: LayerDrawing {
     func cell(at position: Position) -> Cell? {
         Cell(char: " ")
     }
+
+    /// The first scroll view control in the tree, if any — the target for
+    /// keyboard scrolling (PageUp/PageDown/Home/End).
+    func firstScrollView() -> ScrollControl? {
+        func search(_ control: Control) -> ScrollControl? {
+            if let scroll = control as? ScrollControl {
+                return scroll
+            }
+            for child in control.children {
+                if let found = search(child) {
+                    return found
+                }
+            }
+            return nil
+        }
+        for control in controls {
+            if let found = search(control) {
+                return found
+            }
+        }
+        return nil
+    }
 }

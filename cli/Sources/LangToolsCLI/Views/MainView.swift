@@ -151,6 +151,10 @@ struct MainView: @preconcurrency View {
     private func handleInput(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        // Every submitted input produces output below the current viewport;
+        // if the user is scrolled up, jump back to follow the response.
+        ScrollView<EmptyView>.requestFollowBottom()
+
         if toolExecutionState.pendingApproval != nil {
             switch ToolApprovalInput(text: trimmed) {
             case .approve:

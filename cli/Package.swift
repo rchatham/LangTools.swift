@@ -40,6 +40,7 @@ let package = Package(
                 .product(name: "LangTools", package: "langtools-cli"),
                 .product(name: "OpenAI", package: "langtools-cli"),
                 .product(name: "Ollama", package: "langtools-cli"),
+                .product(name: "SwiftTUI", package: "SwiftTUI"),
             ]
         ),
     ]

@@ -40,6 +40,16 @@ struct Rect: Equatable {
         position.column <= maxColumn &&
         position.line <= maxLine
     }
+
+    /// The overlapping rectangle of the two, or nil when they do not overlap.
+    func intersection(_ other: Rect) -> Rect? {
+        let minLine = Swift.max(self.minLine, other.minLine)
+        let maxLine = Swift.min(self.maxLine, other.maxLine)
+        let minColumn = Swift.max(self.minColumn, other.minColumn)
+        let maxColumn = Swift.min(self.maxColumn, other.maxColumn)
+        guard maxLine >= minLine, maxColumn >= minColumn else { return nil }
+        return Rect(minColumn: minColumn, minLine: minLine, maxColumn: maxColumn, maxLine: maxLine)
+    }
 }
 
 extension Rect: CustomStringConvertible {

@@ -9,15 +9,8 @@ import SwiftTUI
 import Foundation
 
 /// View for displaying a single chat message.
-///
-/// When `clippedRows` is non-nil the message renders those pre-wrapped rows
-/// instead of its full content. This is used by the tail window when the
-/// newest message alone exceeds the visible budget: only its newest rows are
-/// drawn so the rendered layer never exceeds the window (SwiftTUI's renderer
-/// has no clipping and traps on overflow).
 struct MessageView: View {
     let message: ChatMessage
-    var clippedRows: [String]? = nil
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -41,16 +34,6 @@ struct MessageView: View {
                     content: message.content
                 )
             }
-        }
-    }
-
-    /// Base text color per role, used for clipped rendering.
-    static func baseColor(for role: ChatMessage.Role) -> Color {
-        switch role {
-        case .user, .assistant, .toolCall, .toolResult:
-            return .white
-        case .system:
-            return .cyan
         }
     }
 }

@@ -12,9 +12,8 @@ import Foundation
 /// indentation on continuation/wrapped lines.
 ///
 /// These helpers are intentionally free of SwiftTUI dependencies so they can be
-/// unit-tested directly. The rendered views (`MessageView` and friends) and the
-/// tail-window selector (`ChatTailWindow`) both consume these helpers so that
-/// computed row counts match what is drawn on screen.
+/// unit-tested directly. The rendered views (`MessageView` and friends) consume
+/// them, so what is unit-tested matches what is drawn on screen.
 enum MessageLineBuilder {
 
     // MARK: - Assistant

@@ -49,7 +49,17 @@ class Renderer {
         SwiftTUILock.shared.lock()
         defer { SwiftTUILock.shared.unlock() }
         if rect == nil { layer.invalidated = nil }
-        let rect = rect ?? Rect(position: .zero, size: layer.frame.size)
+        var rect = rect ?? Rect(position: .zero, size: layer.frame.size)
+        // Clamp to the layer bounds. Oversized child layers (e.g. a scroll
+        // view's tall content) and stale invalidation rects must never index
+        // outside the cache, which is sized to the window: unclamped access
+        // corrupted the heap and aborted in drawPixel. Cells outside the
+        // window are not on screen anyway.
+        if let clamped = rect.intersection(Rect(position: .zero, size: layer.frame.size)) {
+            rect = clamped
+        } else {
+            return
+        }
         guard rect.size.width > 0, rect.size.height > 0 else {
             assertionFailure("Trying to draw in empty rect")
             return
