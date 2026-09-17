@@ -190,9 +190,15 @@ extension Ollama {
 
         public let function: Function
 
+        public init(function: Function) { self.function = function }
+
         public struct Function: Codable {
             public let name: String
             public let arguments: [String:String]
+            public init(name: String, arguments: [String:String]) {
+                self.name = name
+                self.arguments = arguments
+            }
         }
     }
 
