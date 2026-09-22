@@ -33,6 +33,7 @@ public class MessageService {
     /// cycle. Drained on the main actor before each streamed chunk is processed
     /// so parallel tool calls all attach to the same message in order.
     @ObservationIgnored nonisolated(unsafe) private var pendingToolEvents: [LangToolsToolEvent] = []
+    @ObservationIgnored nonisolated(unsafe) private var pendingAgentEvents: [AgentEvent] = []
     @ObservationIgnored nonisolated(unsafe) private let toolEventLock = NSLock()
     /// ids of tool calls made by agent-wrapped tools this send, so their lifecycle
     /// events can be skipped (agents surface their own UI via `handleAgentEvent`).
@@ -151,10 +152,11 @@ public class MessageService {
             var content: String = ""
             for try await chunk in responseStream {
                 guard conversationID == requestConversationID else { throw CancellationError() }
-                // Apply any tool events that fired since the last chunk (in order)
+                // Apply any tool/agent events that fired since the last chunk (in order)
                 // before processing this chunk, so a parallel batch of tool calls
                 // all land on the same message and the follow-up text starts a new one.
                 drainToolEvents()
+                drainAgentEvents()
 
                 content += chunk
                 // Continue the last message only when it is a plain assistant text
@@ -186,9 +188,10 @@ public class MessageService {
             }
             try Task.checkCancellation()
             guard conversationID == requestConversationID else { throw CancellationError() }
-            // Flush any tool events that fired after the last chunk (e.g. a tool
+            // Flush any tool/agent events that fired after the last chunk (e.g. a tool
             // call with no follow-up response).
             drainToolEvents()
+            drainAgentEvents()
         } catch {
             guard conversationID == requestConversationID else { throw CancellationError() }
             // Drop any tool events that fired but were never drained so they don't
@@ -248,6 +251,7 @@ extension MessageService {
     nonisolated func clearPendingToolEvents() {
         toolEventLock.lock()
         pendingToolEvents.removeAll()
+        pendingAgentEvents.removeAll()
         agentCallIDs.removeAll()
         toolEventLock.unlock()
     }
@@ -293,60 +297,78 @@ extension MessageService {
 }
 
 extension MessageService {
-    func handleAgentEvent(_ event: AgentEvent) {
-        Task { @MainActor in
-            guard let last = messages.last, last.isAssistant else { return }
-            switch event {
-            case .started(let agent, let parent, let task):
-                let call = ChatToolCall(id: UUID().uuidString, name: agent, kind: .agent, status: .pending, details: "started: \(task)")
-                if let parent {
-                    var calls = last.toolCalls
-                    Self.appendChild(call, toAgent: parent, in: &calls)
-                    last.toolCalls = calls
-                } else {
-                    last.toolCalls.append(call)
-                }
+    /// Buffers an agent event in arrival order. Called from the agent framework
+    /// (off the main actor); drained in order on the main actor by `drainAgentEvents`.
+    nonisolated func handleAgentEvent(_ event: AgentEvent) {
+        toolEventLock.lock()
+        pendingAgentEvents.append(event)
+        toolEventLock.unlock()
+    }
 
-            case .agentTransfer(let agent, let to, let reason):
-                let call = ChatToolCall(id: UUID().uuidString, name: to, kind: .agent, status: .pending, details: "delegated: \(reason)")
+    /// Applies all buffered agent events (in order) to the current assistant
+    /// message's `toolCalls`, building agent cards with nested children.
+    func drainAgentEvents() {
+        toolEventLock.lock()
+        let events = pendingAgentEvents
+        pendingAgentEvents.removeAll()
+        toolEventLock.unlock()
+        guard !events.isEmpty, let last = messages.last, last.isAssistant else { return }
+        for event in events {
+            applyAgentEvent(event, to: last)
+        }
+    }
+
+    @MainActor
+    private func applyAgentEvent(_ event: AgentEvent, to last: Message) {
+        switch event {
+        case .started(let agent, let parent, let task):
+            let call = ChatToolCall(id: UUID().uuidString, name: agent, kind: .agent, status: .pending, details: "started: \(task)")
+            if let parent {
                 var calls = last.toolCalls
-                Self.appendChild(call, toAgent: agent, in: &calls)
+                Self.appendChild(call, toAgent: parent, in: &calls)
                 last.toolCalls = calls
+            } else {
+                last.toolCalls.append(call)
+            }
 
-            case .toolCalled(let agent, let tool, let args):
-                let call = ChatToolCall(id: UUID().uuidString, name: tool, kind: .tool, arguments: args, status: .pending)
-                var calls = last.toolCalls
-                Self.appendChild(call, toAgent: agent, in: &calls)
-                last.toolCalls = calls
+        case .agentTransfer(let agent, let to, let reason):
+            let call = ChatToolCall(id: UUID().uuidString, name: to, kind: .agent, status: .pending, details: "delegated: \(reason)")
+            var calls = last.toolCalls
+            Self.appendChild(call, toAgent: agent, in: &calls)
+            last.toolCalls = calls
 
-            case .toolCompleted(let agent, let result):
-                guard let result else { break }
-                var calls = last.toolCalls
-                Self.completeLastPendingChild(ofAgent: agent, result: result, in: &calls)
-                last.toolCalls = calls
+        case .toolCalled(let agent, let tool, let args):
+            let call = ChatToolCall(id: UUID().uuidString, name: tool, kind: .tool, arguments: args, status: .pending)
+            var calls = last.toolCalls
+            Self.appendChild(call, toAgent: agent, in: &calls)
+            last.toolCalls = calls
 
-            case .completed(let agent, let result, let is_error):
-                var calls = last.toolCalls
-                if !is_error, let cardMessage = agentResultParser?(result, agent) {
-                    // Structured result renders as a content card; don't also dump it in the card.
-                    Self.setAgentStatus(agent, status: .success, result: nil, in: &calls)
-                    last.toolCalls = calls
-                    toolBreakOccurred = true
-                    messages.append(cardMessage)
-                } else {
-                    Self.setAgentStatus(agent, status: is_error ? .failure : .success, result: result, in: &calls)
-                    last.toolCalls = calls
-                    toolBreakOccurred = true
-                }
+        case .toolCompleted(let agent, let result):
+            guard let result else { break }
+            var calls = last.toolCalls
+            Self.completePendingChild(ofAgent: agent, result: result, in: &calls)
+            last.toolCalls = calls
 
-            case .error(let agent, let error):
-                var calls = last.toolCalls
-                Self.setAgentStatus(agent, status: .failure, result: error, in: &calls)
+        case .completed(let agent, let result, let is_error):
+            var calls = last.toolCalls
+            if !is_error, let cardMessage = agentResultParser?(result, agent) {
+                Self.setAgentStatus(agent, status: .success, result: nil, in: &calls)
                 last.toolCalls = calls
                 toolBreakOccurred = true
-
-            default: break
+                messages.append(cardMessage)
+            } else {
+                Self.setAgentStatus(agent, status: is_error ? .failure : .success, result: result, in: &calls)
+                last.toolCalls = calls
+                toolBreakOccurred = true
             }
+
+        case .error(let agent, let error):
+            var calls = last.toolCalls
+            Self.setAgentStatus(agent, status: .failure, result: error, in: &calls)
+            last.toolCalls = calls
+            toolBreakOccurred = true
+
+        default: break
         }
     }
 
@@ -362,18 +384,20 @@ extension MessageService {
         }
     }
 
-    /// Completes the most recent pending child of the agent call named `agent`.
+    /// Completes the oldest pending child of the agent call named `agent`.
+    /// `AgentEvent.toolCompleted` carries no tool name, so match in call order
+    /// (FIFO) — robust for both sequential and concurrent tool calls.
     @MainActor
-    static func completeLastPendingChild(ofAgent agent: String, result: String, in calls: inout [ChatToolCall]) {
+    static func completePendingChild(ofAgent agent: String, result: String, in calls: inout [ChatToolCall]) {
         for i in calls.indices {
             if calls[i].kind == .agent && calls[i].name == agent {
-                if let idx = calls[i].children.lastIndex(where: { $0.status == .pending }) {
+                if let idx = calls[i].children.firstIndex(where: { $0.status == .pending }) {
                     calls[i].children[idx].status = .success
                     calls[i].children[idx].result = result
                 }
                 return
             }
-            completeLastPendingChild(ofAgent: agent, result: result, in: &calls[i].children)
+            completePendingChild(ofAgent: agent, result: result, in: &calls[i].children)
         }
     }
 

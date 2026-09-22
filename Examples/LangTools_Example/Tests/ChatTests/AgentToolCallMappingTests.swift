@@ -24,7 +24,7 @@ final class AgentToolCallMappingTests: XCTestCase {
             toAgent: "Research", in: &calls)
 
         // .toolCompleted(Research, "42")
-        MessageService.completeLastPendingChild(ofAgent: "Research", result: "42", in: &calls)
+        MessageService.completePendingChild(ofAgent: "Research", result: "42", in: &calls)
 
         // .completed(Research, "42", false)
         MessageService.setAgentStatus("Research", status: .success, result: "42", in: &calls)
@@ -69,5 +69,20 @@ final class AgentToolCallMappingTests: XCTestCase {
         XCTAssertEqual(calls[0].status, .pending)
         XCTAssertEqual(calls[1].status, .failure)
         XCTAssertEqual(calls[1].result, "oops")
+    }
+
+    func testConcurrentToolCallsCompleteInCallOrder() {
+        // toolCompleted carries no tool name, so completions match in call order (FIFO).
+        var calls: [ChatToolCall] = [ChatToolCall(id: "a", name: "A", kind: .agent, status: .pending)]
+        MessageService.appendChild(ChatToolCall(id: "t1", name: "toolA", kind: .tool, status: .pending), toAgent: "A", in: &calls)
+        MessageService.appendChild(ChatToolCall(id: "t2", name: "toolB", kind: .tool, status: .pending), toAgent: "A", in: &calls)
+        MessageService.completePendingChild(ofAgent: "A", result: "resA", in: &calls)
+        MessageService.completePendingChild(ofAgent: "A", result: "resB", in: &calls)
+        XCTAssertEqual(calls[0].children[0].name, "toolA")
+        XCTAssertEqual(calls[0].children[0].result, "resA")
+        XCTAssertEqual(calls[0].children[0].status, .success)
+        XCTAssertEqual(calls[0].children[1].name, "toolB")
+        XCTAssertEqual(calls[0].children[1].result, "resB")
+        XCTAssertEqual(calls[0].children[1].status, .success)
     }
 }
