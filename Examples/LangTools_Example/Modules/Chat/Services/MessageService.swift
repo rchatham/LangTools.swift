@@ -5,6 +5,7 @@
 //
 
 import Agents
+import ChatUI
 import Foundation
 import LangTools
 import ToolKit
@@ -294,68 +295,100 @@ extension MessageService {
 extension MessageService {
     func handleAgentEvent(_ event: AgentEvent) {
         Task { @MainActor in
-
+            guard let last = messages.last, last.isAssistant else { return }
             switch event {
             case .started(let agent, let parent, let task):
-                let message = Message.createAgentStartEvent(agentName: agent, task: task)
+                let call = ChatToolCall(id: UUID().uuidString, name: agent, kind: .agent, status: .pending, details: "started: \(task)")
                 if let parent {
-                    messages.append(message, for: parent)
+                    var calls = last.toolCalls
+                    Self.appendChild(call, toAgent: parent, in: &calls)
+                    last.toolCalls = calls
                 } else {
-                    messages.append(message)
+                    last.toolCalls.append(call)
                 }
 
             case .agentTransfer(let agent, let to, let reason):
-                let message = Message.createAgentDelegationEvent(
-                    fromAgent: agent,
-                    toAgent: to,
-                    reason: reason
-                )
-                messages.append(message, for: agent)
+                let call = ChatToolCall(id: UUID().uuidString, name: to, kind: .agent, status: .pending, details: "delegated: \(reason)")
+                var calls = last.toolCalls
+                Self.appendChild(call, toAgent: agent, in: &calls)
+                last.toolCalls = calls
 
             case .toolCalled(let agent, let tool, let args):
-                let message = Message.createAgentToolCallEvent(
-                    agentName: agent,
-                    tool: tool,
-                    arguments: args
-                )
-                messages.append(message, for: agent)
+                let call = ChatToolCall(id: UUID().uuidString, name: tool, kind: .tool, arguments: args, status: .pending)
+                var calls = last.toolCalls
+                Self.appendChild(call, toAgent: agent, in: &calls)
+                last.toolCalls = calls
 
             case .toolCompleted(let agent, let result):
                 guard let result else { break }
-                let message = Message.createAgentToolReturnedEvent(
-                    agentName: agent,
-                    result: result
-                )
-                messages.append(message, for: agent)
+                var calls = last.toolCalls
+                Self.completeLastPendingChild(ofAgent: agent, result: result, in: &calls)
+                last.toolCalls = calls
 
             case .completed(let agent, let result, let is_error):
-                // Give the app-level parser first crack at structured results.
-                // Append at the top level so content cards appear in the main conversation.
-                // agentResultParser is the injection point for structured agent results.
-                // ContentCardRegistry.shared.agentResultParser provides the default implementation.
+                var calls = last.toolCalls
                 if !is_error, let cardMessage = agentResultParser?(result, agent) {
+                    // Structured result renders as a content card; don't also dump it in the card.
+                    Self.setAgentStatus(agent, status: .success, result: nil, in: &calls)
+                    last.toolCalls = calls
+                    toolBreakOccurred = true
                     messages.append(cardMessage)
                 } else {
-                    let message = Message.createAgentCompletionEvent(
-                        agentName: agent,
-                        result: result,
-                        is_error: is_error
-                    )
-                    messages.append(message, for: agent)
+                    Self.setAgentStatus(agent, status: is_error ? .failure : .success, result: result, in: &calls)
+                    last.toolCalls = calls
+                    toolBreakOccurred = true
                 }
 
             case .error(let agent, let error):
-                let message = Message.createAgentErrorEvent(
-                    agentName: agent,
-                    error: error
-                )
-                messages.append(message, for: agent)
+                var calls = last.toolCalls
+                Self.setAgentStatus(agent, status: .failure, result: error, in: &calls)
+                last.toolCalls = calls
+                toolBreakOccurred = true
 
-            default: fatalError("we are not testing this right now")
+            default: break
             }
         }
     }
 
+    /// Recursively appends a child tool call under the agent call named `agent`.
+    @MainActor
+    static func appendChild(_ child: ChatToolCall, toAgent agent: String, in calls: inout [ChatToolCall]) {
+        for i in calls.indices {
+            if calls[i].kind == .agent && calls[i].name == agent {
+                calls[i].children.append(child)
+                return
+            }
+            appendChild(child, toAgent: agent, in: &calls[i].children)
+        }
+    }
+
+    /// Completes the most recent pending child of the agent call named `agent`.
+    @MainActor
+    static func completeLastPendingChild(ofAgent agent: String, result: String, in calls: inout [ChatToolCall]) {
+        for i in calls.indices {
+            if calls[i].kind == .agent && calls[i].name == agent {
+                if let idx = calls[i].children.lastIndex(where: { $0.status == .pending }) {
+                    calls[i].children[idx].status = .success
+                    calls[i].children[idx].result = result
+                }
+                return
+            }
+            completeLastPendingChild(ofAgent: agent, result: result, in: &calls[i].children)
+        }
+    }
+
+    /// Sets the status/result of the agent call named `agent`.
+    @MainActor
+    static func setAgentStatus(_ agent: String, status: ChatToolCall.Status, result: String?, in calls: inout [ChatToolCall]) {
+        for i in calls.indices {
+            if calls[i].kind == .agent && calls[i].name == agent {
+                calls[i].status = status
+                if let result { calls[i].result = result }
+                return
+            }
+            setAgentStatus(agent, status: status, result: result, in: &calls[i].children)
+        }
+    }
 }
 
 extension Array<Message> {

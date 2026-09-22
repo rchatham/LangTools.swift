@@ -342,6 +342,7 @@ extension Message {
                 ChatToolCall(
                     id: UUID().uuidString,
                     name: selection.name ?? "tool",
+                    kind: .tool,
                     arguments: arguments,
                     status: .pending,
                     result: nil
@@ -357,9 +358,12 @@ extension Message {
                 toolCalls[index] = ChatToolCall(
                     id: existing.id,
                     name: existing.name,
+                    kind: existing.kind,
                     arguments: existing.arguments,
                     status: status,
-                    result: result.result
+                    result: result.result,
+                    details: existing.details,
+                    children: existing.children
                 )
             } else {
                 toolCalls.append(
