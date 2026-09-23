@@ -26,6 +26,13 @@ import AppKit
 @MainActor
 final class OllamaToolCallE2ETests: XCTestCase {
 
+    private enum ScreenshotError: Error, Equatable {
+        case imageRenderingFailed(name: String)
+        case tiffConversionFailed(name: String)
+        case bitmapRepresentationFailed(name: String)
+        case pngConversionFailed(name: String)
+    }
+
     private let outputDir = "/tmp/chatui-toolcall-e2e"
     private let ollamaURL = URL(string: "http://localhost:11434")!
 
@@ -44,21 +51,43 @@ final class OllamaToolCallE2ETests: XCTestCase {
         let renderer = ImageRenderer(content: host)
         renderer.scale = 2
         #if canImport(AppKit)
-        guard let image = renderer.nsImage,
-              let tiff = image.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff),
-              let png = rep.representation(using: .png, properties: [:]) else {
-            return
-        }
+        let image = try requireScreenshotValue(
+            renderer.nsImage,
+            error: .imageRenderingFailed(name: name)
+        )
+        let tiff = try requireScreenshotValue(
+            image.tiffRepresentation,
+            error: .tiffConversionFailed(name: name)
+        )
+        let representation = try requireScreenshotValue(
+            NSBitmapImageRep(data: tiff),
+            error: .bitmapRepresentationFailed(name: name)
+        )
+        let png = try requireScreenshotValue(
+            representation.representation(using: .png, properties: [:]),
+            error: .pngConversionFailed(name: name)
+        )
         try png.write(to: URL(fileURLWithPath: "\(outputDir)/\(name).png"))
         print("📸 e2e wrote \(outputDir)/\(name).png")
+        #else
+        throw XCTSkip("PNG screenshot rendering requires AppKit")
         #endif
+    }
+
+    private func requireScreenshotValue<Value>(
+        _ value: Value?,
+        error: ScreenshotError
+    ) throws -> Value {
+        guard let value else {
+            throw error
+        }
+        return value
     }
 
     func testOllamaToolCallRendersCollapsedAndExpanded() async throws {
         let reachable = await ollamaReachable()
         try XCTSkipUnless(reachable, "Ollama not reachable at \(ollamaURL.absoluteString)")
-        try? FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
 
         let ollama = Ollama()
         guard let model = Ollama.Model(rawValue: "llama3.1") else {
@@ -92,7 +121,7 @@ final class OllamaToolCallE2ETests: XCTestCase {
     func testAgentCardCollapsedAndExpanded() throws {
         // Real agents need platform APIs/credentials, so simulate the event-derived
         // ChatToolCall tree and render collapsed + expanded.
-        try? FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
         let agent = ChatToolCall(
             id: "a1", name: "CalendarAgent", kind: .agent, status: .success, details: "started: list today's events",
             children: [
@@ -107,13 +136,23 @@ final class OllamaToolCallE2ETests: XCTestCase {
     func testDelegationRetryScreenshots() throws {
         // Render cards assembled from the same agent lifecycle events as a real
         // delegation; only the provider responses are simulated here.
-        try? FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
         try renderRetry(secondAttemptFails: true, name: "calendar-retry-failed")
         try renderRetry(secondAttemptFails: false, name: "calendar-retry-recovered")
     }
 
+    func testScreenshotConversionFailureThrows() {
+        let expectedError = ScreenshotError.pngConversionFailed(name: "failed-screenshot")
+
+        XCTAssertThrowsError(
+            try requireScreenshotValue(nil as Data?, error: expectedError)
+        ) { error in
+            XCTAssertEqual(error as? ScreenshotError, expectedError)
+        }
+    }
+
     private func renderRetry(secondAttemptFails: Bool, name: String) throws {
-        let service = MessageService()
+        let service = MessageService(networkClient: ScreenshotNetworkStub())
         service.messages = [Message(role: .assistant, contentType: .null)]
         let events: [AgentEvent] = [
             .started(agent: "calendarAgent", parent: nil, task: "check upcoming events"),
@@ -142,4 +181,44 @@ final class OllamaToolCallE2ETests: XCTestCase {
         XCTAssertFalse(root.children.contains { $0.status == .pending })
         try render(ToolCallView(toolCall: root, isExpanded: true), name: name, width: 600)
     }
+}
+
+private final class ScreenshotNetworkStub: NetworkClientProtocol {
+    static let shared: NetworkClientProtocol = ScreenshotNetworkStub()
+
+    func performChatCompletionRequest(
+        messages: [Message],
+        model: Model,
+        tools: [Tool]?,
+        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?,
+        toolEventHandler: @escaping (LangToolsToolEvent) -> Void
+    ) async throws -> Message {
+        throw NetworkClient.NetworkError.incompatibleRequest
+    }
+
+    func streamChatCompletionRequest(
+        messages: [Message],
+        model: Model,
+        stream: Bool,
+        tools: [Tool]?,
+        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?,
+        toolEventHandler: @escaping (LangToolsToolEvent) -> Void
+    ) throws -> AsyncThrowingStream<String, Error> {
+        throw NetworkClient.NetworkError.incompatibleRequest
+    }
+
+    func playAudio(for text: String) async throws {}
+
+    func agentContext(
+        messages: [Message],
+        model: Model,
+        eventHandler: @escaping (AgentEvent) -> Void
+    ) throws -> AgentContext {
+        throw NetworkClient.NetworkError.incompatibleRequest
+    }
+
+    func updateApiKey(_ apiKey: String, for llm: APIService) throws {}
+    func removeApiKey(for llm: APIService) throws {}
+    func connectAccount(_ provider: AccountLoginProvider) async throws {}
+    func disconnectAccount(_ provider: AccountLoginProvider) async throws {}
 }
