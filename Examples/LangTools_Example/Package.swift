@@ -94,5 +94,12 @@ let package = Package(
                 "KeychainAccess",
             ],
             path: "Tests/ChatTests"),
+        .testTarget(
+            name: "ExampleAgentsTests",
+            dependencies: [
+                "ExampleAgents",
+                .product(name: "LangTools", package: "langtools.swift"),
+            ],
+            path: "Tests/ExampleAgentsTests"),
     ]
 )

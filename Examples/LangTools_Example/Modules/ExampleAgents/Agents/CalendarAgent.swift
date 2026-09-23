@@ -29,10 +29,18 @@ extension CalendarAgentResponse: StructuredOutput {
     public static var jsonSchema: JSONSchema {
         .object(
             properties: [
-                "events": .array(items: CalendarEventData.jsonSchema, description: "List of calendar events"),
-                "message": .string(description: "Optional summary message to display to the user")
+                "events": .array(
+                    items: CalendarEventData.jsonSchema,
+                    description: "List of calendar events"
+                ),
+                "message": .anyOf([
+                    .string(description: "Optional summary message to display to the user"),
+                    .null()
+                ])
             ],
-            required: ["events"]
+            required: ["events", "message"],
+            additionalProperties: .bool(false),
+            title: "CalendarAgentResponse"
         )
     }
 }
@@ -85,13 +93,36 @@ extension CalendarEventData: StructuredOutput {
                 "title": .string(description: "Event title"),
                 "startDate": .string(description: "Event start in ISO 8601 format"),
                 "endDate": .string(description: "Event end in ISO 8601 format"),
-                "location": .string(description: "Event location"),
-                "notes": .string(description: "Event notes"),
+                "location": .anyOf([
+                    .string(description: "Event location"),
+                    .null()
+                ]),
+                "notes": .anyOf([
+                    .string(description: "Event notes"),
+                    .null()
+                ]),
                 "isAllDay": .boolean(description: "True when the event spans the full day"),
-                "calendarName": .string(description: "Calendar name"),
-                "eventIdentifier": .string(description: "System identifier for edits/deletes")
+                "calendarName": .anyOf([
+                    .string(description: "Calendar name"),
+                    .null()
+                ]),
+                "eventIdentifier": .anyOf([
+                    .string(description: "System identifier for edits/deletes"),
+                    .null()
+                ])
             ],
-            required: ["title", "startDate", "endDate", "isAllDay"]
+            required: [
+                "title",
+                "startDate",
+                "endDate",
+                "location",
+                "notes",
+                "isAllDay",
+                "calendarName",
+                "eventIdentifier"
+            ],
+            additionalProperties: .bool(false),
+            title: "CalendarEventData"
         )
     }
 }
