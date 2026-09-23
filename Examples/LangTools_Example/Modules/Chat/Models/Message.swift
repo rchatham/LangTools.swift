@@ -28,6 +28,20 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         }
     }
 
+    /// Context sent to AI providers when this message is replayed in history.
+    ///
+    /// For content-card messages this is the card summary plus deterministic
+    /// card details and metadata (see `ContentCardsContent.providerContext`);
+    /// `text` stays the terse optional visible summary. For every other content
+    /// type this is exactly `text`, so non-card provider semantics are
+    /// unchanged.
+    public var providerContext: String? {
+        switch contentType {
+        case .contentCards(let cards): return cards.providerContext
+        default: return text
+        }
+    }
+
     public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil, createdAt: Date = Date()) {
         self.uuid = uuid
         self.role = role
@@ -110,10 +124,10 @@ extension Message {
 //}
 
 public extension Array<Message> {
-    func toOpenAIMessages() -> [OpenAI.Message] { map { .init(role: $0.role, content: $0.text ?? "") } }
-    func toAnthropicMessages() -> [Anthropic.Message] { filter { $0.role != .system }.map { .init(role: .init($0.role), content: $0.text ?? "") } }
-    func createAnthropicSystemMessage() -> String? { filter { $0.isSystem }.reduce("") { (!$0.isEmpty ? $0 + "\n---\n" : "") + ($1.text ?? "") } }
-    func toOllamaMessages() -> [Ollama.Message] { map { .init(role: .init($0.role), content: $0.text ?? "") } }
+    func toOpenAIMessages() -> [OpenAI.Message] { map { .init(role: $0.role, content: $0.providerContext ?? "") } }
+    func toAnthropicMessages() -> [Anthropic.Message] { filter { $0.role != .system }.map { .init(role: .init($0.role), content: $0.providerContext ?? "") } }
+    func createAnthropicSystemMessage() -> String? { filter { $0.isSystem }.reduce("") { (!$0.isEmpty ? $0 + "\n---\n" : "") + ($1.providerContext ?? "") } }
+    func toOllamaMessages() -> [Ollama.Message] { map { .init(role: .init($0.role), content: $0.providerContext ?? "") } }
 }
 
 public extension Array<Tool> {

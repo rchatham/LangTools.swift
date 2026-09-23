@@ -92,5 +92,14 @@ let package = Package(
                 .product(name: "LangTools", package: "langtools.swift"),
             ],
             path: "Tests/ExampleAgentsTests"),
+        .testTarget(
+            name: "ChatTests",
+            dependencies: [
+                "Chat",
+                .product(name: "OpenAI", package: "langtools.swift"),
+                .product(name: "Anthropic", package: "langtools.swift"),
+                .product(name: "Ollama", package: "langtools.swift"),
+            ],
+            path: "Tests/ChatTests"),
     ]
 )
