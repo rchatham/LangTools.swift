@@ -1104,7 +1104,8 @@ final class CodexRuntimeServiceFocusedTests: XCTestCase {
             },
             environment: ProcessInfo.processInfo.environment.merging(environment) { _, override in override },
             defaultTimeout: .seconds(1),
-            requestTimeoutSleeper: requestTimeoutSleeper
+            requestTimeoutSleeper: requestTimeoutSleeper,
+            containmentMode: .disabledForTesting
         )
     }
 

@@ -26,11 +26,7 @@ enum CodexContainment {
     static let excludeSlashTmp = true
 
     static var isSupported: Bool {
-        #if os(macOS)
-        true
-        #else
-        false
-        #endif
+        CodexSeatbeltProfile.isAvailable()
     }
 
     static func sandboxPolicy(workspace: URL) -> CodexSandboxPolicy {
@@ -609,7 +605,7 @@ actor CodexRuntimeService {
         lifecycle: (conversationID: UUID, lifecycleID: UUID)? = nil
     ) async throws -> (id: String, generation: UUID) {
         guard CodexContainment.isSupported else {
-            throw CodexRuntimeError.runtime("Codex account chat containment is supported only on macOS.")
+            throw CodexRuntimeError.runtime("Codex account chat requires macOS sandbox-exec containment, which is unavailable.")
         }
         let thread: CodexThreadStartResponse = try await client.request(
             method: "thread/start",

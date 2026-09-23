@@ -17,7 +17,8 @@ final class CodexAppServerClientTests: XCTestCase {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
             environment: ["LANGTOOLS_CODEX_HOME": "/tmp/langtools-test-codex-home"],
-            defaultTimeout: .seconds(5)
+            defaultTimeout: .seconds(5),
+            containmentMode: .disabledForTesting
         )
 
         let initialGeneration = try await client.initializedProcessGeneration()
@@ -40,7 +41,8 @@ final class CodexAppServerClientTests: XCTestCase {
             commandResolver: {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
-            defaultTimeout: .seconds(2)
+            defaultTimeout: .seconds(2),
+            containmentMode: .disabledForTesting
         )
 
         let subscription = await client.subscribeToNotifications(methods: ["chunk/event"])
@@ -68,7 +70,8 @@ final class CodexAppServerClientTests: XCTestCase {
             commandResolver: {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
-            defaultTimeout: .seconds(2)
+            defaultTimeout: .seconds(2),
+            containmentMode: .disabledForTesting
         )
         do {
             _ = try await client.initializedProcessGeneration()
@@ -94,7 +97,8 @@ final class CodexAppServerClientTests: XCTestCase {
             commandResolver: {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
-            defaultTimeout: .seconds(2)
+            defaultTimeout: .seconds(2),
+            containmentMode: .disabledForTesting
         )
         let first = await client.subscribeToNotifications(
             methods: ["thread/event"],
@@ -203,7 +207,8 @@ final class CodexAppServerClientTests: XCTestCase {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
             environment: ["COUNT_FILE": countURL.path],
-            defaultTimeout: .seconds(2)
+            defaultTimeout: .seconds(2),
+            containmentMode: .disabledForTesting
         )
 
         let initialGeneration = try await client.initializedProcessGeneration()
@@ -241,7 +246,8 @@ final class CodexAppServerClientTests: XCTestCase {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
             environment: ["ACCEPTED": acceptedURL.path],
-            defaultTimeout: .seconds(30)
+            defaultTimeout: .seconds(30),
+            containmentMode: .disabledForTesting
         )
         let cancelledScope = UUID()
         let blocked = Task {
@@ -319,7 +325,8 @@ final class CodexAppServerClientTests: XCTestCase {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
             environment: ["ACCEPTED": acceptedURL.path],
-            defaultTimeout: .seconds(2)
+            defaultTimeout: .seconds(2),
+            containmentMode: .disabledForTesting
         )
         let cancelledScope = UUID()
         let blocked = Task {
@@ -381,7 +388,8 @@ final class CodexAppServerClientTests: XCTestCase {
                 "COUNT_FILE": countURL.path,
                 "LIMIT": String(CodexAppServerClient.maximumStdoutNDJSONLineBytes)
             ],
-            defaultTimeout: .seconds(5)
+            defaultTimeout: .seconds(5),
+            containmentMode: .disabledForTesting
         )
         let subscription = await client.subscribeToNotifications(methods: ["never/event"])
         let notificationWaiter = Task {

@@ -2,12 +2,6 @@ import Foundation
 import LangTools
 import OpenAI
 
-private struct CodexProcessResult {
-    let status: Int32
-    let stdout: String
-    let stderr: String
-}
-
 struct ResolvedCodexCommand: Sendable {
     let executable: String
     let arguments: [String]
@@ -25,15 +19,19 @@ struct OpenAIAccountChatCommand {
         let workspace = try CodexWorkspace(session: session)
         defer { workspace.remove() }
 
-        let result = try runCodex(
+        let result = try await runCodex(
             command: codex,
             model: model.rawValue,
             prompt: prompt,
             workspace: workspace
         )
 
-        guard result.status == 0 else {
+        guard result.exitCode == 0 else {
             throw OpenAIAccountChatCommandError.codexFailed(message: failureMessage(for: result))
+        }
+        guard result.stdoutCaptureLimitExceeded == false,
+              result.stderrCaptureLimitExceeded == false else {
+            throw OpenAIAccountChatCommandError.responseTooLarge
         }
 
         let content = result.stdout.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
@@ -100,9 +98,7 @@ struct OpenAIAccountChatCommand {
             }
         }
 
-        let result = try runProcess(executable: "/usr/bin/which", arguments: ["codex"])
-        let resolved = result.stdout.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-        if result.status == 0, resolved.isEmpty == false,
+        if let resolved = ProcessService.executablePath(for: "codex"),
            let command = codexCommand(for: resolved) {
             return command
         }
@@ -210,41 +206,45 @@ struct OpenAIAccountChatCommand {
         return nil
     }
 
-    private static func runCodex(command: ResolvedCodexCommand, model: String, prompt: String, workspace: CodexWorkspace) throws -> CodexProcessResult {
-        try runProcess(
-            executable: command.executable,
-            arguments: command.arguments + ["-q", "-m", model, prompt],
-            environment: workspace.environment
-        )
-    }
-
-    private static func runProcess(executable: String, arguments: [String], environment: [String: String]? = nil) throws -> CodexProcessResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        if let environment {
-            process.environment = environment
+    static func runCodex(
+        command: ResolvedCodexCommand,
+        model: String,
+        prompt: String,
+        workspace: CodexWorkspace,
+        sandboxExecPath: String? = CodexSeatbeltProfile.sandboxExecPath()
+    ) async throws -> ProcessResult {
+        guard let sandboxExecPath else {
+            throw OpenAIAccountChatCommandError.containmentUnavailable
         }
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
+        let inputs = CodexSeatbeltProfile.Inputs(
+            codexExecutable: command.executable,
+            codexExecutableArguments: command.arguments,
+            codexHome: workspace.directoryURL.path,
+            workspaceRoot: workspace.directoryURL.path,
+            processTemporaryDirectory: workspace.temporaryDirectoryURL.path,
+            codexRuntimeCache: CodexSeatbeltProfile.resolvedCodexRuntimeCache(
+                environment: workspace.parentEnvironment
+            ),
+            homeDirectory: workspace.parentEnvironment["HOME"] ?? ""
+        )
+        let profileURL = try CodexSeatbeltProfile().writeProfile(inputs: inputs)
+        defer { try? FileManager.default.removeItem(at: profileURL) }
 
         do {
-            try process.run()
-        } catch {
-            throw OpenAIAccountChatCommandError.codexUnavailable
+            return try await ProcessService.execute(
+                executable: sandboxExecPath,
+                arguments: ["-f", profileURL.path, command.executable]
+                    + command.arguments
+                    + ["-q", "-m", model, prompt],
+                workingDirectory: workspace.temporaryDirectoryURL.path,
+                environment: workspace.environment
+            )
+        } catch let error as ProcessError {
+            if case .executionFailed = error {
+                throw OpenAIAccountChatCommandError.codexUnavailable
+            }
+            throw error
         }
-
-        process.waitUntilExit()
-        let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-        return CodexProcessResult(
-            status: process.terminationStatus,
-            stdout: String(decoding: outData, as: UTF8.self),
-            stderr: String(decoding: errData, as: UTF8.self)
-        )
     }
 
     private static func renderPrompt(messages: [Message]) -> String {
@@ -272,7 +272,7 @@ struct OpenAIAccountChatCommand {
         """
     }
 
-    private static func failureMessage(for result: CodexProcessResult) -> String {
+    private static func failureMessage(for result: ProcessResult) -> String {
         let stderr = result.stderr.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
         if stderr.isEmpty == false {
             return stderr
@@ -283,7 +283,7 @@ struct OpenAIAccountChatCommand {
             return stdout
         }
 
-        return "Codex CLI exited with status \(result.status)."
+        return "Codex CLI exited with status \(result.exitCode)."
     }
 }
 
@@ -292,9 +292,14 @@ struct CodexWorkspace {
     private static let filePermissions: Int = 0o600
 
     let directoryURL: URL
+    let temporaryDirectoryURL: URL
     let environment: [String: String]
+    let parentEnvironment: [String: String]
 
-    init(session: StoredAccountSession) throws {
+    init(
+        session: StoredAccountSession,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) throws {
         guard let idToken = session.idToken, idToken.split(separator: ".").count == 3 else {
             throw OpenAIAccountChatCommandError.invalidSession
         }
@@ -302,28 +307,42 @@ struct CodexWorkspace {
             throw OpenAIAccountChatCommandError.invalidSession
         }
 
-        directoryURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let workspaceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-codex-account-\(UUID().uuidString.lowercased())", isDirectory: true)
         try FileManager.default.createDirectory(
-            at: directoryURL,
+            at: workspaceURL,
             withIntermediateDirectories: false,
             attributes: [.posixPermissions: Self.directoryPermissions]
         )
+        do {
+            try FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: Int16(Self.directoryPermissions))],
+                ofItemAtPath: workspaceURL.path
+            )
+            let authJSON = try Self.makeAuthJSON(session: session, idToken: idToken, refreshToken: refreshToken)
+            let authURL = workspaceURL.appendingPathComponent("auth.json")
+            try Self.writePrivateFile(contents: authJSON, to: authURL)
 
-        let authJSON = try Self.makeAuthJSON(session: session, idToken: idToken, refreshToken: refreshToken)
-        let authURL = directoryURL.appendingPathComponent("auth.json")
-        try Self.writePrivateFile(contents: authJSON, to: authURL)
+            let config = "cli_auth_credentials_store = \"file\"\n"
+            let configURL = workspaceURL.appendingPathComponent("config.toml")
+            try Self.writePrivateFile(contents: config, to: configURL)
 
-        let config = "cli_auth_credentials_store = \"file\"\n"
-        let configURL = directoryURL.appendingPathComponent("config.toml")
-        try Self.writePrivateFile(contents: config, to: configURL)
-
-        var env = ProcessInfo.processInfo.environment
-        env["CODEX_HOME"] = directoryURL.path
-        env.removeValue(forKey: "CODEX_API_KEY")
-        env.removeValue(forKey: "OPENAI_API_KEY")
-        env.removeValue(forKey: "OPENAI_BASE_URL")
-        environment = env
+            let processTemp = try CodexProcessTemporaryDirectory.create(
+                inside: workspaceURL,
+                prefix: "one-shot"
+            )
+            directoryURL = workspaceURL
+            temporaryDirectoryURL = processTemp
+            parentEnvironment = environment
+            self.environment = CodexChildEnvironment.make(
+                parent: environment,
+                codexHome: workspaceURL,
+                temporaryDirectory: processTemp
+            )
+        } catch {
+            try? FileManager.default.removeItem(at: workspaceURL)
+            throw error
+        }
     }
 
     func remove() {
@@ -425,8 +444,10 @@ private enum OpenAIAccountChatCommandError: LocalizedError {
     case usage
     case invalidModel(String)
     case invalidResponse
+    case responseTooLarge
     case invalidSession
     case codexUnavailable
+    case containmentUnavailable
     case codexFailed(message: String)
     case codexHomeMustBeConfiguredInEnvironment
 
@@ -438,10 +459,14 @@ private enum OpenAIAccountChatCommandError: LocalizedError {
             return "Unsupported OpenAI model: \(modelID)"
         case .invalidResponse:
             return "Codex CLI returned an empty response."
+        case .responseTooLarge:
+            return "Codex CLI response exceeded the 4 MiB output limit."
         case .invalidSession:
             return "The stored OpenAI account session is missing Codex authentication tokens. Sign in again from Manage Access."
         case .codexUnavailable:
             return "Codex CLI is not available. Install it and ensure the `codex` binary is on your PATH, or set LANGTOOLS_CODEX_PATH."
+        case .containmentUnavailable:
+            return "Codex read containment is unavailable. Refusing to launch account chat without macOS sandbox-exec."
         case .codexFailed(let message):
             return message
         case .codexHomeMustBeConfiguredInEnvironment:

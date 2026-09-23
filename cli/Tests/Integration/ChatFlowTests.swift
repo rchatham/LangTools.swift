@@ -181,26 +181,39 @@ final class ChatFlowTests: XCTestCase {
     }
 
     func testCodexWorkspaceUsesPrivatePermissions() throws {
-        let workspace = try CodexWorkspace(session: StoredAccountSession(
-            provider: "openai",
-            accountIdentifier: "chatgpt-account",
-            accessToken: "access-token",
-            refreshToken: "refresh-token",
-            idToken: "header.payload.signature",
-            tokenType: "Bearer",
-            expiresAt: nil,
-            accessibleModelIDs: ["gpt-5.1-codex"],
-            createdAt: Date(),
-            id: UUID()
-        ))
+        let workspace = try CodexWorkspace(
+            session: StoredAccountSession(
+                provider: "openai",
+                accountIdentifier: "chatgpt-account",
+                accessToken: "access-token",
+                refreshToken: "refresh-token",
+                idToken: "header.payload.signature",
+                tokenType: "Bearer",
+                expiresAt: nil,
+                accessibleModelIDs: ["gpt-5.1-codex"],
+                createdAt: Date(),
+                id: UUID()
+            ),
+            environment: [
+                "PATH": "/usr/bin:/bin",
+                "CODEX_API_KEY": "must-be-removed",
+                "OPENAI_API_KEY": "must-be-removed",
+                "OPENAI_BASE_URL": "must-be-removed",
+            ]
+        )
         defer { workspace.remove() }
 
         XCTAssertEqual(workspace.environment["CODEX_HOME"], workspace.directoryURL.path)
+        XCTAssertEqual(workspace.environment["PATH"], "/usr/bin:/bin")
+        XCTAssertNil(workspace.environment["CODEX_API_KEY"])
+        XCTAssertNil(workspace.environment["OPENAI_API_KEY"])
+        XCTAssertNil(workspace.environment["OPENAI_BASE_URL"])
         XCTAssertEqual(try octalPermissions(at: workspace.directoryURL.path), 0o700)
         XCTAssertEqual(try octalPermissions(at: workspace.directoryURL.appendingPathComponent("auth.json").path), 0o600)
         XCTAssertEqual(try octalPermissions(at: workspace.directoryURL.appendingPathComponent("config.toml").path), 0o600)
         XCTAssertEqual(workspace.directoryURL.deletingLastPathComponent(), FileManager.default.temporaryDirectory)
-        XCTAssertFalse(workspace.directoryURL.lastPathComponent.hasPrefix("langtools-codex-"))
+        XCTAssertTrue(workspace.directoryURL.lastPathComponent.hasPrefix("langtools-codex-account-"))
+        XCTAssertEqual(try octalPermissions(at: workspace.temporaryDirectoryURL.path), 0o700)
     }
 
     func testNonInteractiveCommandAllowlist() {
