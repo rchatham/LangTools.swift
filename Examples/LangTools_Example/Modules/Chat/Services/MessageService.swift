@@ -360,13 +360,11 @@ extension MessageService {
             let status: ChatToolCall.Status = is_error ? .failure : .success
             if !is_error, let cardMessage = agentResultParser?(result, agent) {
                 Self.setAgentStatus(agent, status: .success, result: nil, in: &calls)
-                Self.completeRemainingPending(ofAgent: agent, status: .success, in: &calls)
                 last.toolCalls = calls
                 toolBreakOccurred = true
                 messages.append(cardMessage)
             } else {
                 Self.setAgentStatus(agent, status: status, result: result, in: &calls)
-                Self.completeRemainingPending(ofAgent: agent, status: status, in: &calls)
                 last.toolCalls = calls
                 toolBreakOccurred = true
             }
@@ -384,77 +382,108 @@ extension MessageService {
         }
     }
 
-    /// Recursively appends a child tool call under the agent call named `agent`.
+    /// Appends beneath the most recently created pending invocation named `agent`.
     @MainActor
     static func appendChild(_ child: ChatToolCall, toAgent agent: String, in calls: inout [ChatToolCall]) {
-        for i in calls.indices {
-            if calls[i].kind == .agent && calls[i].name == agent {
-                calls[i].children.append(child)
-                return
-            }
-            appendChild(child, toAgent: agent, in: &calls[i].children)
+        _ = updateMostRecentPendingAgent(agent, in: &calls) { call in
+            call.children.append(child)
         }
     }
 
-    /// If the agent named `agent` already has a child agent named `agent` under
-    /// `parent`, append `append` to that child's details (deduping delegations).
+    /// Updates the most recent pending delegated invocation under the most recent
+    /// pending parent, keeping repeated same-named delegations as separate cards.
     @MainActor
     static func updateAgentChildDetails(_ agent: String, parent: String, append details: String, in calls: inout [ChatToolCall]) -> Bool {
-        for i in calls.indices {
-            if calls[i].kind == .agent && calls[i].name == parent {
-                if let j = calls[i].children.firstIndex(where: { $0.kind == .agent && $0.name == agent }) {
-                    calls[i].children[j].details = [calls[i].children[j].details, details].compactMap { $0 }.joined(separator: "\n")
-                    return true
-                }
-                return false
+        var didUpdate = false
+        _ = updateMostRecentPendingAgent(parent, in: &calls) { parentCall in
+            guard let index = parentCall.children.lastIndex(where: {
+                $0.kind == .agent && $0.name == agent && $0.status == .pending
+            }) else { return }
+            parentCall.children[index].details = [parentCall.children[index].details, details]
+                .compactMap { $0 }
+                .joined(separator: "\n")
+            didUpdate = true
+        }
+        return didUpdate
+    }
+
+    /// Completes the oldest pending tool child of the most recent pending agent
+    /// invocation. Agent children are never consumed by tool completion/error events.
+    @MainActor
+    static func completePendingChild(ofAgent agent: String, result: String, status: ChatToolCall.Status, in calls: inout [ChatToolCall]) {
+        _ = updateMostRecentPendingAgent(agent, in: &calls) { call in
+            guard let index = call.children.firstIndex(where: {
+                $0.kind == .tool && $0.status == .pending
+            }) else { return }
+            call.children[index].status = status
+            call.children[index].result = result
+        }
+    }
+
+    /// Reconciles every pending descendant of the most recent matching invocation.
+    /// Existing terminal states, especially failures, are preserved.
+    @MainActor
+    static func completeRemainingPending(ofAgent agent: String, status: ChatToolCall.Status, in calls: inout [ChatToolCall]) {
+        _ = updateMostRecentAgent(agent, in: &calls) { call in
+            reconcilePendingDescendants(in: &call.children, status: status)
+        }
+    }
+
+    /// Terminates the most recent pending invocation and reconciles all of its
+    /// descendants without modifying earlier terminal invocations.
+    @MainActor
+    static func setAgentStatus(_ agent: String, status: ChatToolCall.Status, result: String?, in calls: inout [ChatToolCall]) {
+        _ = updateMostRecentPendingAgent(agent, in: &calls) { call in
+            call.status = status
+            if let result { call.result = result }
+            reconcilePendingDescendants(in: &call.children, status: status)
+        }
+    }
+
+    @MainActor
+    private static func updateMostRecentPendingAgent(
+        _ agent: String,
+        in calls: inout [ChatToolCall],
+        update: (inout ChatToolCall) -> Void
+    ) -> Bool {
+        for index in calls.indices.reversed() {
+            if updateMostRecentPendingAgent(agent, in: &calls[index].children, update: update) {
+                return true
             }
-            if updateAgentChildDetails(agent, parent: parent, append: details, in: &calls[i].children) { return true }
+            if calls[index].kind == .agent && calls[index].name == agent && calls[index].status == .pending {
+                update(&calls[index])
+                return true
+            }
         }
         return false
     }
 
-    /// Completes the oldest pending child of the agent call named `agent`.
-    /// `AgentEvent.toolCompleted`/`.error` carry no tool name, so match in call
-    /// order (FIFO) — robust for both sequential and concurrent tool calls.
     @MainActor
-    static func completePendingChild(ofAgent agent: String, result: String, status: ChatToolCall.Status, in calls: inout [ChatToolCall]) {
-        for i in calls.indices {
-            if calls[i].kind == .agent && calls[i].name == agent {
-                if let idx = calls[i].children.firstIndex(where: { $0.status == .pending }) {
-                    calls[i].children[idx].status = status
-                    calls[i].children[idx].result = result
-                }
-                return
+    private static func updateMostRecentAgent(
+        _ agent: String,
+        in calls: inout [ChatToolCall],
+        update: (inout ChatToolCall) -> Void
+    ) -> Bool {
+        for index in calls.indices.reversed() {
+            if updateMostRecentAgent(agent, in: &calls[index].children, update: update) {
+                return true
             }
-            completePendingChild(ofAgent: agent, result: result, status: status, in: &calls[i].children)
+            if calls[index].kind == .agent && calls[index].name == agent {
+                update(&calls[index])
+                return true
+            }
         }
+        return false
     }
 
-    /// Marks any still-pending direct children of the agent as `status`. Safety
-    /// net so no child stays on the spinner once the agent has terminated.
     @MainActor
-    static func completeRemainingPending(ofAgent agent: String, status: ChatToolCall.Status, in calls: inout [ChatToolCall]) {
-        for i in calls.indices {
-            if calls[i].kind == .agent && calls[i].name == agent {
-                for j in calls[i].children.indices where calls[i].children[j].status == .pending {
-                    calls[i].children[j].status = status
-                }
-                return
+    private static func reconcilePendingDescendants(in calls: inout [ChatToolCall], status: ChatToolCall.Status) {
+        for index in calls.indices {
+            let descendantStatus: ChatToolCall.Status = calls[index].status == .failure ? .failure : status
+            if calls[index].status == .pending {
+                calls[index].status = descendantStatus
             }
-            completeRemainingPending(ofAgent: agent, status: status, in: &calls[i].children)
-        }
-    }
-
-    /// Sets the status/result of the agent call named `agent`.
-    @MainActor
-    static func setAgentStatus(_ agent: String, status: ChatToolCall.Status, result: String?, in calls: inout [ChatToolCall]) {
-        for i in calls.indices {
-            if calls[i].kind == .agent && calls[i].name == agent {
-                calls[i].status = status
-                if let result { calls[i].result = result }
-                return
-            }
-            setAgentStatus(agent, status: status, result: result, in: &calls[i].children)
+            reconcilePendingDescendants(in: &calls[index].children, status: descendantStatus)
         }
     }
 }
