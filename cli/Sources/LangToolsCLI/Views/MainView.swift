@@ -59,6 +59,11 @@ struct MainView: @preconcurrency View {
 
         }
         .padding(2)
+        .onAppear {
+            // Populate the Ollama model list for the /model picker (the
+            // non-TUI CLI does this in changeModel(); the TUI must do it too).
+            Task { await NetworkClient.shared.fetchOllamaModels() }
+        }
     }
 
     // MARK: - Main Content View
@@ -188,6 +193,16 @@ struct MainView: @preconcurrency View {
 
         // Check if this should trigger autocomplete
         if CommandSuggestionEngine.shouldShowAutocomplete(for: trimmed) {
+            // An exact command match executes immediately: showing only the
+            // suggestion dropdown made commands like /model require a second
+            // invocation before doing anything.
+            let suggestions = CommandSuggestionEngine.suggestions(for: trimmed)
+            if suggestions.count == 1,
+               trimmed.lowercased() == CommandSuggestionEngine.displayText(for: suggestions[0]).lowercased() {
+                dismissAutocomplete()
+                _ = handleCommand(trimmed)
+                return
+            }
             triggerAutocomplete(for: trimmed)
             return
         }
@@ -369,6 +384,7 @@ struct MainView: @preconcurrency View {
 
         case "model":
             // Open settings overlay directly to model menu
+            Task { await NetworkClient.shared.fetchOllamaModels() }
             settingsMode = .model
             showSettingsOverlay = true
             statusMessage = "Settings"
@@ -384,6 +400,7 @@ struct MainView: @preconcurrency View {
 
         case "settings":
             // Open settings overlay instead of printing menu
+            Task { await NetworkClient.shared.fetchOllamaModels() }
             settingsMode = .main
             showSettingsOverlay = true
             statusMessage = "Settings"
