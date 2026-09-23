@@ -24,7 +24,7 @@ final class AgentToolCallMappingTests: XCTestCase {
             toAgent: "Research", in: &calls)
 
         // .toolCompleted(Research, "42")
-        MessageService.completePendingChild(ofAgent: "Research", result: "42", in: &calls)
+        MessageService.completePendingChild(ofAgent: "Research", result: "42", status: .success, in: &calls)
 
         // .completed(Research, "42", false)
         MessageService.setAgentStatus("Research", status: .success, result: "42", in: &calls)
@@ -75,7 +75,7 @@ final class AgentToolCallMappingTests: XCTestCase {
         // toolCompleted may fire with a nil result; the child must still complete.
         var calls: [ChatToolCall] = [ChatToolCall(id: "a", name: "A", kind: .agent, status: .pending)]
         MessageService.appendChild(ChatToolCall(id: "t", name: "tool", kind: .tool, status: .pending), toAgent: "A", in: &calls)
-        MessageService.completePendingChild(ofAgent: "A", result: "", in: &calls)
+        MessageService.completePendingChild(ofAgent: "A", result: "", status: .success, in: &calls)
         XCTAssertEqual(calls[0].children[0].status, .success)
         XCTAssertEqual(calls[0].children[0].result, "")
     }
@@ -85,13 +85,45 @@ final class AgentToolCallMappingTests: XCTestCase {
         var calls: [ChatToolCall] = [ChatToolCall(id: "a", name: "A", kind: .agent, status: .pending)]
         MessageService.appendChild(ChatToolCall(id: "t1", name: "toolA", kind: .tool, status: .pending), toAgent: "A", in: &calls)
         MessageService.appendChild(ChatToolCall(id: "t2", name: "toolB", kind: .tool, status: .pending), toAgent: "A", in: &calls)
-        MessageService.completePendingChild(ofAgent: "A", result: "resA", in: &calls)
-        MessageService.completePendingChild(ofAgent: "A", result: "resB", in: &calls)
+        MessageService.completePendingChild(ofAgent: "A", result: "resA", status: .success, in: &calls)
+        MessageService.completePendingChild(ofAgent: "A", result: "resB", status: .success, in: &calls)
         XCTAssertEqual(calls[0].children[0].name, "toolA")
         XCTAssertEqual(calls[0].children[0].result, "resA")
         XCTAssertEqual(calls[0].children[0].status, .success)
         XCTAssertEqual(calls[0].children[1].name, "toolB")
         XCTAssertEqual(calls[0].children[1].result, "resB")
+        XCTAssertEqual(calls[0].children[1].status, .success)
+    }
+
+    func testDelegationDoesNotDuplicateAgentCard() {
+        // agentTransfer then started(to, parent) must produce a single sub-agent card.
+        var calls: [ChatToolCall] = [ChatToolCall(id: "main", name: "Main", kind: .agent, status: .pending)]
+        // .agentTransfer(Main, to: Research, reason)
+        MessageService.appendChild(ChatToolCall(id: "d", name: "Research", kind: .agent, status: .pending, details: "delegated: because"), toAgent: "Main", in: &calls)
+        // .started(Research, parent: Main, task) -> should update existing, not duplicate
+        let updated = MessageService.updateAgentChildDetails("Research", parent: "Main", append: "started: find", in: &calls)
+        XCTAssertTrue(updated)
+        XCTAssertEqual(calls[0].children.count, 1)
+        XCTAssertEqual(calls[0].children[0].name, "Research")
+        XCTAssertTrue(calls[0].children[0].details?.contains("delegated") == true)
+        XCTAssertTrue(calls[0].children[0].details?.contains("started") == true)
+    }
+
+    func testToolErrorCompletesPendingChildAsFailure() {
+        var calls: [ChatToolCall] = [ChatToolCall(id: "a", name: "A", kind: .agent, status: .pending)]
+        MessageService.appendChild(ChatToolCall(id: "t", name: "tool", kind: .tool, status: .pending), toAgent: "A", in: &calls)
+        MessageService.completePendingChild(ofAgent: "A", result: "boom", status: .failure, in: &calls)
+        XCTAssertEqual(calls[0].children[0].status, .failure)
+        XCTAssertEqual(calls[0].children[0].result, "boom")
+    }
+
+    func testCompleteRemainingPendingClearsStuckChildren() {
+        var calls: [ChatToolCall] = [ChatToolCall(id: "a", name: "A", kind: .agent, status: .pending, children: [
+            ChatToolCall(id: "c1", name: "toolA", kind: .tool, status: .pending),
+            ChatToolCall(id: "c2", name: "toolB", kind: .tool, status: .success, result: "ok")
+        ])]
+        MessageService.completeRemainingPending(ofAgent: "A", status: .success, in: &calls)
+        XCTAssertEqual(calls[0].children[0].status, .success)
         XCTAssertEqual(calls[0].children[1].status, .success)
     }
 }

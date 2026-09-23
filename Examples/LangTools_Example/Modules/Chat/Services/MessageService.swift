@@ -322,17 +322,22 @@ extension MessageService {
     private func applyAgentEvent(_ event: AgentEvent, to last: Message) {
         switch event {
         case .started(let agent, let parent, let task):
-            let call = ChatToolCall(id: UUID().uuidString, name: agent, kind: .agent, status: .pending, details: "started: \(task)")
+            // If a delegation card already exists under `parent` (created by
+            // agentTransfer/agentHandoff), update its details instead of creating
+            // a duplicate — otherwise one card stays pending forever.
             if let parent {
                 var calls = last.toolCalls
-                Self.appendChild(call, toAgent: parent, in: &calls)
+                if !Self.updateAgentChildDetails(agent, parent: parent, append: "started: \(task)", in: &calls) {
+                    Self.appendChild(ChatToolCall(id: UUID().uuidString, name: agent, kind: .agent, status: .pending, details: "started: \(task)"), toAgent: parent, in: &calls)
+                }
                 last.toolCalls = calls
             } else {
-                last.toolCalls.append(call)
+                last.toolCalls.append(ChatToolCall(id: UUID().uuidString, name: agent, kind: .agent, status: .pending, details: "started: \(task)"))
             }
 
-        case .agentTransfer(let agent, let to, let reason):
-            let call = ChatToolCall(id: UUID().uuidString, name: to, kind: .agent, status: .pending, details: "delegated: \(reason)")
+        case .agentTransfer(let agent, let to, let reason), .agentHandoff(let agent, let to, let reason):
+            let label = event.isHandoff ? "handed off" : "delegated"
+            let call = ChatToolCall(id: UUID().uuidString, name: to, kind: .agent, status: .pending, details: "\(label): \(reason)")
             var calls = last.toolCalls
             Self.appendChild(call, toAgent: agent, in: &calls)
             last.toolCalls = calls
@@ -347,27 +352,33 @@ extension MessageService {
             // result can be nil when a tool produces no output; still complete the
             // pending child so it doesn't stay stuck on the spinner.
             var calls = last.toolCalls
-            Self.completePendingChild(ofAgent: agent, result: result ?? "", in: &calls)
+            Self.completePendingChild(ofAgent: agent, result: result ?? "", status: .success, in: &calls)
             last.toolCalls = calls
 
         case .completed(let agent, let result, let is_error):
             var calls = last.toolCalls
+            let status: ChatToolCall.Status = is_error ? .failure : .success
             if !is_error, let cardMessage = agentResultParser?(result, agent) {
                 Self.setAgentStatus(agent, status: .success, result: nil, in: &calls)
+                Self.completeRemainingPending(ofAgent: agent, status: .success, in: &calls)
                 last.toolCalls = calls
                 toolBreakOccurred = true
                 messages.append(cardMessage)
             } else {
-                Self.setAgentStatus(agent, status: is_error ? .failure : .success, result: result, in: &calls)
+                Self.setAgentStatus(agent, status: status, result: result, in: &calls)
+                Self.completeRemainingPending(ofAgent: agent, status: status, in: &calls)
                 last.toolCalls = calls
                 toolBreakOccurred = true
             }
 
-        case .error(let agent, let error):
+        case .error(let agent, let message):
+            // A tool error: complete the pending tool child as a failure. The agent
+            // itself may continue, so do NOT mark the agent failed here; `completed`
+            // handles agent status. (If this is an agent-level error, there is no
+            // pending child to complete, which is harmless.)
             var calls = last.toolCalls
-            Self.setAgentStatus(agent, status: .failure, result: error, in: &calls)
+            Self.completePendingChild(ofAgent: agent, result: message, status: .failure, in: &calls)
             last.toolCalls = calls
-            toolBreakOccurred = true
 
         default: break
         }
@@ -385,20 +396,52 @@ extension MessageService {
         }
     }
 
-    /// Completes the oldest pending child of the agent call named `agent`.
-    /// `AgentEvent.toolCompleted` carries no tool name, so match in call order
-    /// (FIFO) — robust for both sequential and concurrent tool calls.
+    /// If the agent named `agent` already has a child agent named `agent` under
+    /// `parent`, append `append` to that child's details (deduping delegations).
     @MainActor
-    static func completePendingChild(ofAgent agent: String, result: String, in calls: inout [ChatToolCall]) {
+    static func updateAgentChildDetails(_ agent: String, parent: String, append details: String, in calls: inout [ChatToolCall]) -> Bool {
+        for i in calls.indices {
+            if calls[i].kind == .agent && calls[i].name == parent {
+                if let j = calls[i].children.firstIndex(where: { $0.kind == .agent && $0.name == agent }) {
+                    calls[i].children[j].details = [calls[i].children[j].details, details].compactMap { $0 }.joined(separator: "\n")
+                    return true
+                }
+                return false
+            }
+            if updateAgentChildDetails(agent, parent: parent, append: details, in: &calls[i].children) { return true }
+        }
+        return false
+    }
+
+    /// Completes the oldest pending child of the agent call named `agent`.
+    /// `AgentEvent.toolCompleted`/`.error` carry no tool name, so match in call
+    /// order (FIFO) — robust for both sequential and concurrent tool calls.
+    @MainActor
+    static func completePendingChild(ofAgent agent: String, result: String, status: ChatToolCall.Status, in calls: inout [ChatToolCall]) {
         for i in calls.indices {
             if calls[i].kind == .agent && calls[i].name == agent {
                 if let idx = calls[i].children.firstIndex(where: { $0.status == .pending }) {
-                    calls[i].children[idx].status = .success
+                    calls[i].children[idx].status = status
                     calls[i].children[idx].result = result
                 }
                 return
             }
-            completePendingChild(ofAgent: agent, result: result, in: &calls[i].children)
+            completePendingChild(ofAgent: agent, result: result, status: status, in: &calls[i].children)
+        }
+    }
+
+    /// Marks any still-pending direct children of the agent as `status`. Safety
+    /// net so no child stays on the spinner once the agent has terminated.
+    @MainActor
+    static func completeRemainingPending(ofAgent agent: String, status: ChatToolCall.Status, in calls: inout [ChatToolCall]) {
+        for i in calls.indices {
+            if calls[i].kind == .agent && calls[i].name == agent {
+                for j in calls[i].children.indices where calls[i].children[j].status == .pending {
+                    calls[i].children[j].status = status
+                }
+                return
+            }
+            completeRemainingPending(ofAgent: agent, status: status, in: &calls[i].children)
         }
     }
 
@@ -413,6 +456,13 @@ extension MessageService {
             }
             setAgentStatus(agent, status: status, result: result, in: &calls[i].children)
         }
+    }
+}
+
+private extension AgentEvent {
+    var isHandoff: Bool {
+        if case .agentHandoff = self { return true }
+        return false
     }
 }
 
