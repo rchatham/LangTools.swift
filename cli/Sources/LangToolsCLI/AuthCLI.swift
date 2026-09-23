@@ -249,7 +249,7 @@ private struct OpenAICLIAuthFlow {
     func login() async throws -> StoredAccountSession {
         let listener = LocalCallbackListener(port: 1455)
         let redirectURL = try await listener.start()
-        logger.log("listener started redirectURL=\(redirectURL.absoluteString)")
+        logger.log("listener started redirect=\(AuthDebugLogger.urlMetadata(redirectURL))")
         defer {
             logger.log("listener stopping")
             listener.stop()
@@ -258,10 +258,10 @@ private struct OpenAICLIAuthFlow {
         let pkce = PKCEChallenge()
         let state = randomHex(bytes: 16)
         let authURL = makeAuthorizeURL(state: state, redirectURI: redirectURL.absoluteString, codeChallenge: pkce.codeChallenge)
-        logger.log("opening browser authURL=\(authURL.absoluteString)")
+        logger.log("opening browser destination=\(AuthDebugLogger.urlMetadata(authURL)) query=<redacted>")
         try openBrowser(url: authURL)
         let callback = try await listener.waitForCallback()
-        logger.log("received callback url=\(callback.absoluteString)")
+        logger.log("received callback destination=\(AuthDebugLogger.urlMetadata(callback)) query=<redacted>")
         let payload = try parseCallback(callback, expectedState: state)
         logger.log("parsed callback successfully state matched")
         let token = try await exchangeCode(code: payload.code, codeVerifier: pkce.codeVerifier, redirectURI: redirectURL.absoluteString)
@@ -481,7 +481,7 @@ private final class LocalCallbackListener {
                   let requestTarget = requestLine.split(separator: " ").dropFirst().first,
                   let url = self.callbackURL(from: String(requestTarget))
             else {
-                self.logger.log("invalid callback request raw=\(String(data: data ?? Data(), encoding: .utf8) ?? "<non-utf8>")")
+                self.logger.log("invalid callback request bytes=\(data?.count ?? 0) contents=<redacted>")
 
                 self.respond(connection: connection, status: "400 Bad Request", body: Self.callbackHTML(title: "Authentication failed", message: "The callback request was invalid. You can close this tab and try again.", success: false, showsReturnButton: false)) {
                     connection.cancel()
@@ -489,7 +489,8 @@ private final class LocalCallbackListener {
                 return
             }
 
-            self.logger.log("requestLine=\(requestLine) parsedURL=\(url.absoluteString)")
+            let requestMethod = requestLine.split(separator: " ").first.map(String.init) ?? "<unknown>"
+            self.logger.log("callback request method=\(requestMethod) destination=\(AuthDebugLogger.urlMetadata(url)) query=<redacted>")
 
             guard url.path == self.path else {
                 self.respond(connection: connection, status: "404 Not Found", body: Self.callbackHTML(title: "Authentication failed", message: "The callback path was not recognized. You can close this tab and return to LangToolsCLI.", success: false, showsReturnButton: false)) {
@@ -758,10 +759,11 @@ private struct PKCEChallenge {
     }
 }
 
-private final class AuthDebugLogger {
+final class AuthDebugLogger {
     static let shared = AuthDebugLogger()
 
     private let fileURL: URL
+    private let isEnabled: Bool
     private let queue = DispatchQueue(label: "LangToolsAuthCLI.AuthDebugLogger")
     private let formatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -769,30 +771,46 @@ private final class AuthDebugLogger {
         return formatter
     }()
 
-    private init() {
+    init(fileURL: URL? = nil, enabled: Bool? = nil) {
         let logsDirectory = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Logs", isDirectory: true)
             .appendingPathComponent("LangTools", isDirectory: true)
-        try? FileManager.default.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
-        self.fileURL = logsDirectory.appendingPathComponent("LangToolsAuthCLI.log")
+        self.fileURL = fileURL ?? logsDirectory.appendingPathComponent("LangToolsAuthCLI.log")
+        self.isEnabled = enabled ?? (ProcessInfo.processInfo.environment["LANGTOOLS_AUTH_DEBUG_LOGGING"] == "1")
+
+        if isEnabled {
+            try? FileManager.default.createDirectory(
+                at: self.fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+        }
     }
 
     func log(_ message: String) {
+        guard isEnabled else { return }
         let line = "[\(formatter.string(from: Date()))] \(message)\n"
-        if let data = line.data(using: .utf8) {
-            queue.async {
-                if FileManager.default.fileExists(atPath: self.fileURL.path) == false {
-                    FileManager.default.createFile(atPath: self.fileURL.path, contents: data)
-                    return
-                }
-                guard let handle = try? FileHandle(forWritingTo: self.fileURL) else { return }
-                defer { try? handle.close() }
-                _ = try? handle.seekToEnd()
-                try? handle.write(contentsOf: data)
+        guard let data = line.data(using: .utf8) else { return }
+        queue.sync {
+            if FileManager.default.fileExists(atPath: fileURL.path) == false {
+                FileManager.default.createFile(atPath: fileURL.path, contents: data)
+                return
             }
+            guard let handle = try? FileHandle(forWritingTo: fileURL) else { return }
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
         }
         fputs(line, stderr)
+    }
+
+    static func urlMetadata(_ url: URL) -> String {
+        var components = URLComponents()
+        components.scheme = url.scheme
+        components.host = url.host
+        components.port = url.port
+        components.path = url.path
+        return components.string ?? "<invalid-url>"
     }
 }
 
