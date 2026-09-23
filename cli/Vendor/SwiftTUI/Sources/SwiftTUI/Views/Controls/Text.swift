@@ -49,6 +49,7 @@ public struct Text: View, PrimitiveView {
         control.italic = italic
         control.underline = underline
         control.strikethrough = strikethrough
+        control.invalidateWrap()
         control.layer.invalidate()
     }
     
@@ -85,16 +86,81 @@ public struct Text: View, PrimitiveView {
         }
         
         override func size(proposedSize: Size) -> Size {
-            return Size(width: Extended(characterCount), height: 1)
+            let count = Extended(characterCount)
+            // Wrap when a finite width is proposed (scroll views, frames and
+            // stacks propose the available width). Zero or infinite proposals
+            // keep the intrinsic single-line size.
+            let width = proposedSize.width
+            if width != .infinity, width != -.infinity, width > 0, count > width {
+                let rows = Extended((count.intValue + width.intValue - 1) / width.intValue)
+                return Size(width: width, height: rows)
+            }
+            return Size(width: count, height: 1)
         }
-        
-        override func cell(at position: Position) -> Cell? {
-            guard position.line == 0 else { return nil }
-            guard position.column < Extended(characterCount) else { return .init(char: " ") }
+
+        /// Row layout for the last wrapped width: (character start, length)
+        /// pairs indexing into the text.
+        private var wrapWidth: Extended = -1
+        private var wrappedRows: [(start: Int, length: Int)] = []
+
+        /// Forces re-wrapping when the text content changes.
+        func invalidateWrap() {
+            wrapWidth = -1
+            wrappedRows = []
+        }
+
+        private var characters: [Character] {
             if #available(macOS 12, *), let attributedText {
-                let characters = attributedText.characters
-                let i = characters.index(characters.startIndex, offsetBy: position.column.intValue)
-                let char = attributedText[i ..< characters.index(after: i)]
+                return Array(attributedText.characters)
+            }
+            return Array(text ?? "")
+        }
+
+        private func prepareRows(width: Extended) {
+            guard wrapWidth != width else { return }
+            wrapWidth = width
+            let chars = characters
+            let count = chars.count
+            let intWidth = max(1, width.intValue)
+            var rows: [(start: Int, length: Int)] = []
+            var start = 0
+            while start < count {
+                var length = min(intWidth, count - start)
+                if start + length < count {
+                    // Prefer breaking at a word boundary within the row (keeping
+                    // at least half the width) so prose stays readable.
+                    let window = chars[start ..< (start + length)]
+                    if let lastSpace = window.lastIndex(where: { $0 == " " }) {
+                        let offset = lastSpace - window.startIndex
+                        if offset >= length / 2 {
+                            length = offset + 1
+                        }
+                    }
+                }
+                rows.append((start, length))
+                start += length
+            }
+            wrappedRows = rows
+        }
+
+        override func layout(size: Size) {
+            super.layout(size: size)
+            prepareRows(width: size.width)
+            // Match the layer height to the wrapped row count in case the
+            // parent laid us out at a height measured with a different width.
+            layer.frame.size.height = Extended(max(1, wrappedRows.count))
+        }
+
+        override func cell(at position: Position) -> Cell? {
+            prepareRows(width: layer.frame.size.width)
+            let row = position.line.intValue
+            guard row < wrappedRows.count else { return nil }
+            let column = position.column.intValue
+            guard column < wrappedRows[row].length else { return .init(char: " ") }
+            let characterIndex = wrappedRows[row].start + column
+            if #available(macOS 12, *), let attributedText {
+                let i = attributedText.characters.index(attributedText.characters.startIndex, offsetBy: characterIndex)
+                let char = attributedText[i ..< attributedText.characters.index(after: i)]
                 let cellAttributes = CellAttributes(
                     bold: char.bold ?? bold,
                     italic: char.italic ?? italic,
@@ -117,7 +183,7 @@ public struct Text: View, PrimitiveView {
                     strikethrough: strikethrough
                 )
                 return Cell(
-                    char: text[text.index(text.startIndex, offsetBy: position.column.intValue)],
+                    char: text[text.index(text.startIndex, offsetBy: characterIndex)],
                     foregroundColor: foregroundColor,
                     attributes: cellAttributes
                 )

@@ -82,7 +82,10 @@ class ScrollControl: Control {
 
     override func layout(size: Size) {
         super.layout(size: size)
-        let contentSize = contentControl.size(proposedSize: .zero)
+        // Propose the available width so wrapped content measures the same
+        // height it will render at; height stays unconstrained so the content
+        // control reports its full (scrollable) height.
+        let contentSize = contentControl.size(proposedSize: Size(width: size.width, height: .infinity))
         contentControl.layout(size: contentSize)
         if pinnedToBottom || ScrollControl.consumeFollowRequest() {
             pinnedToBottom = true
