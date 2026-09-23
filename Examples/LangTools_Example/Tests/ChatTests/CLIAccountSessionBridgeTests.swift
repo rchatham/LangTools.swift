@@ -63,6 +63,8 @@ final class CLIAccountSessionBridgeTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("json")
         let runner = StubCommandRunner { _, arguments in
+            let modelIndex = try XCTUnwrap(arguments.firstIndex(of: "--model"))
+            XCTAssertEqual(arguments[safe: modelIndex + 1], "gpt-5.5")
             let fileIndex = try XCTUnwrap(arguments.firstIndex(of: "--messages-file"))
             let path = try XCTUnwrap(arguments[safe: fileIndex + 1])
             let data = try Data(contentsOf: URL(fileURLWithPath: path))
@@ -79,7 +81,7 @@ final class CLIAccountSessionBridgeTests: XCTestCase {
                 toolMessage,
                 eventMessage,
             ],
-            model: .openAI(.gpt5_5)
+            model: .codex(.gpt5_5)
         )
         let requestContents = try String(contentsOf: requestCaptureURL, encoding: .utf8)
 

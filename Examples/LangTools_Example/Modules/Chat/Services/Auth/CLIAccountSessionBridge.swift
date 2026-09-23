@@ -80,7 +80,7 @@ public struct CLIAccountSessionBridge: OpenAIAccountChatBridging {
 
         let result = try await runLogged(
             command: command,
-            extraArguments: ["openai-chat", "--model", model.rawValue, "--messages-file", requestFileURL.path],
+            extraArguments: ["openai-chat", "--model", model.slug, "--messages-file", requestFileURL.path],
             action: "OpenAI chat"
         )
         guard result.status == 0 else {

@@ -16,8 +16,8 @@ public typealias Role = OpenAI.Message.Role
 
 public protocol NetworkClientProtocol {
     static var shared: NetworkClientProtocol { get }
-    func performChatCompletionRequest(messages: [Message], model: Model, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message
-    func streamChatCompletionRequest(messages: [Message], model: Model, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error>
+    func performChatCompletionRequest(messages: [Message], model: Model, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) async throws -> Message
+    func streamChatCompletionRequest(messages: [Message], model: Model, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> AsyncThrowingStream<String, Error>
     func playAudio(for text: String) async throws
     func agentContext(messages: [Message], model: Model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext
     func updateApiKey(_ apiKey: String, for llm: APIService) throws
@@ -27,22 +27,22 @@ public protocol NetworkClientProtocol {
 }
 
 public protocol ConversationAwareNetworkClientProtocol: NetworkClientProtocol {
-    func performChatCompletionRequest(messages: [Message], model: Model, conversationID: UUID, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message
-    func streamChatCompletionRequest(messages: [Message], model: Model, conversationID: UUID, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error>
+    func performChatCompletionRequest(messages: [Message], model: Model, conversationID: UUID, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) async throws -> Message
+    func streamChatCompletionRequest(messages: [Message], model: Model, conversationID: UUID, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> AsyncThrowingStream<String, Error>
     func endConversation(id: UUID) async
 }
 
 extension NetworkClientProtocol {
-    public func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
-        try await performChatCompletionRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice)
+    public func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) async throws -> Message {
+        try await performChatCompletionRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
     }
 
-    public func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<String, Error> {
-        try streamChatCompletionRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)
+    public func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> AsyncThrowingStream<String, Error> {
+        try streamChatCompletionRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
     }
 
-    func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) -> any LangToolsChatRequest & LangToolsStreamableRequest where Self: NetworkClient {
-        self.request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)
+    func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) -> any LangToolsChatRequest & LangToolsStreamableRequest where Self: NetworkClient {
+        self.request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
     }
 
     func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
@@ -61,6 +61,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
 
     private var userDefaults: UserDefaults { .standard }
     private var langToolchain = LangToolchain()
+    private let conversationLock = NSLock()
+    private var codexConversationIDs = Set<UUID>()
 
     public init(
         keychainService: KeychainService = .shared,
@@ -85,11 +87,12 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         providerAccessManager.refresh()
     }
 
-    public func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) async throws -> Message {
+    public func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) async throws -> Message {
         try ensureModelAccess(for: model)
 
         if let session = accountSession(for: model) {
-            if session.provider == .openAI {
+            if session.provider == .openAI,
+               session.accessToken != CodexSessionMarker.value {
                 return try await openAIAccountChatBridge.performOpenAIChat(messages: messages, model: model)
             }
 
@@ -102,48 +105,19 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             )
         }
 
-        let response = try await langToolchain.perform(request: request(messages: messages, model: model, tools: tools, toolChoice: toolChoice))
+        let response = try await langToolchain.perform(request: request(messages: messages, model: model, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler))
         guard let text = response.content?.text else {
             throw NetworkError.unexpectedResponseFormat
         }
         return Message(text: text, role: .assistant)
     }
 
-    /// Conversation-aware variant. Codex-route models are bridged through the
-    /// CLI helper, which is stateless: each call re-sends the full transcript,
-    /// so `conversationID` is accepted for API compatibility but not used.
-    public func performChatCompletionRequest(
-        messages: [Message],
-        model: Model,
-        conversationID: UUID,
-        tools: [Tool]?,
-        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?
-    ) async throws -> Message {
-        try await performChatCompletionRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice)
-    }
-
-    /// Conversation-aware streaming variant. See the non-streaming variant:
-    /// the CLI bridge is stateless, so `conversationID` is accepted but unused.
-    public func streamChatCompletionRequest(
-        messages: [Message],
-        model: Model,
-        conversationID: UUID,
-        stream: Bool,
-        tools: [Tool]?,
-        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?
-    ) throws -> AsyncThrowingStream<String, Error> {
-        try streamChatCompletionRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)
-    }
-
-    public func endConversation(id: UUID) async {
-        // The CLI bridge keeps no server-side conversation state.
-    }
-
-    public func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) throws -> AsyncThrowingStream<String, Error> {
+    public func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> AsyncThrowingStream<String, Error> {
         try ensureModelAccess(for: model)
 
         if let session = accountSession(for: model) {
-            if session.provider == .openAI {
+            if session.provider == .openAI,
+               session.accessToken != CodexSessionMarker.value {
                 return AsyncThrowingStream { continuation in
                     let task = Task {
                         do {
@@ -170,7 +144,84 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             )
         }
 
-        return try langToolchain.stream(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice)).compactMapAsyncThrowingStream { $0.content?.text }
+        return try langToolchain.stream(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)).compactMapAsyncThrowingStream { $0.content?.text }
+    }
+
+    public func performChatCompletionRequest(
+        messages: [Message],
+        model: Model,
+        conversationID: UUID,
+        tools: [Tool]?,
+        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?,
+        toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }
+    ) async throws -> Message {
+        try ensureModelAccess(for: model)
+        guard case .codex = model,
+              let session = accountSession(for: model),
+              session.provider == .openAI,
+              session.accessToken == CodexSessionMarker.value,
+              let transport = accountProxyTransport as? ConversationAwareAccountProxyTransportProtocol
+        else {
+            return try await performChatCompletionRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
+        }
+        rememberCodexConversation(conversationID)
+        return try await transport.performChatCompletionRequest(
+            messages: messages,
+            model: model,
+            session: session,
+            conversationID: conversationID,
+            tools: tools,
+            toolChoice: toolChoice
+        )
+    }
+
+    public func streamChatCompletionRequest(
+        messages: [Message],
+        model: Model,
+        conversationID: UUID,
+        stream: Bool,
+        tools: [Tool]?,
+        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?,
+        toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }
+    ) throws -> AsyncThrowingStream<String, Error> {
+        try ensureModelAccess(for: model)
+        guard case .codex = model,
+              let session = accountSession(for: model),
+              session.provider == .openAI,
+              session.accessToken == CodexSessionMarker.value,
+              let transport = accountProxyTransport as? ConversationAwareAccountProxyTransportProtocol
+        else {
+            return try streamChatCompletionRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
+        }
+        rememberCodexConversation(conversationID)
+        return try transport.streamChatCompletionRequest(
+            messages: messages,
+            model: model,
+            session: session,
+            conversationID: conversationID,
+            stream: stream,
+            tools: tools,
+            toolChoice: toolChoice
+        )
+    }
+
+    public func endConversation(id: UUID) async {
+        guard takeCodexConversation(id),
+              let transport = accountProxyTransport as? ConversationAwareAccountProxyTransportProtocol
+        else { return }
+        await transport.endConversation(id: id)
+    }
+
+    private func rememberCodexConversation(_ id: UUID) {
+        conversationLock.lock()
+        codexConversationIDs.insert(id)
+        conversationLock.unlock()
+    }
+
+    private func takeCodexConversation(_ id: UUID) -> Bool {
+        conversationLock.lock()
+        defer { conversationLock.unlock() }
+        return codexConversationIDs.remove(id) != nil
     }
 
     public func playAudio(for text: String) async throws {
@@ -180,13 +231,13 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         catch { print(error.localizedDescription) }
     }
 
-    func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil) -> any LangToolsChatRequest & LangToolsStreamableRequest {
+    func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) -> any LangToolsChatRequest & LangToolsStreamableRequest {
         switch model {
-        case .anthropic(let model), .claudeCode(let model): return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.convertTools(), tool_choice: toolChoice?.toAnthropicToolChoice())
-        case .openAI(let model), .codex(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice)
-        case .xAI(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice)
-        case .gemini(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream/*, tools: tools?.convertTools(), tool_choice: toolChoice*/)
-        case .ollama(let model): return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools?.convertTools())
+        case .anthropic(let model), .claudeCode(let model): return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.convertTools(), tool_choice: toolChoice?.toAnthropicToolChoice(), toolEventHandler: toolEventHandler)
+        case .openAI(let model), .codex(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice, toolEventHandler: toolEventHandler)
+        case .xAI(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice, toolEventHandler: toolEventHandler)
+        case .gemini(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, toolEventHandler: toolEventHandler/*, tools: tools?.convertTools(), tool_choice: toolChoice*/)
+        case .ollama(let model): return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools?.convertTools(), toolEventHandler: toolEventHandler)
         }
     }
 

@@ -192,6 +192,8 @@ extension Ollama {
 
         public let function: Function
 
+        public init(function: Function) { self.function = function }
+
         enum CodingKeys: String, CodingKey {
             case id, function
         }
@@ -211,6 +213,11 @@ extension Ollama {
         public struct Function: Codable {
             public let name: String
             public let arguments: [String: JSON]
+
+            public init(name: String, arguments: [String: JSON]) {
+                self.name = name
+                self.arguments = arguments
+            }
         }
     }
 

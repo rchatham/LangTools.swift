@@ -76,7 +76,7 @@ struct LangTools_ExampleApp: App {
                 iconName: "magnifyingglass",
                 isAgent: true
             ),
-        ])
+        ] + BuiltInTools.configurations())
     }
 
     @MainActor
@@ -342,7 +342,7 @@ private struct UITestNetworkClient: NetworkClientProtocol {
 
     let mode: UITestMode
 
-    func performChatCompletionRequest(messages: [Message], model: Model, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message {
+    func performChatCompletionRequest(messages: [Message], model: Model, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) async throws -> Message {
         switch mode {
         case .codexSuccess:
             return Message(text: "OK", role: .assistant)
@@ -353,7 +353,7 @@ private struct UITestNetworkClient: NetworkClientProtocol {
         }
     }
 
-    func streamChatCompletionRequest(messages: [Message], model: Model, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error> {
+    func streamChatCompletionRequest(messages: [Message], model: Model, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             switch mode {
             case .codexSuccess:
