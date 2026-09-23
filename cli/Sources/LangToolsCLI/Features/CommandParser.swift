@@ -75,11 +75,11 @@ enum CommandType: String, CaseIterable {
         case .exit, .quit:
             return .init(description: "Exit the application", usage: "/exit", examples: ["/exit"])
         case .save:
-            return .init(description: "Save current session", usage: "/save [name]", examples: ["/save", "/save refactor-session"])
+            return .init(description: "Save this conversation and keep saving future turns", usage: "/save [name]", examples: ["/save", "/save refactor-session"])
         case .load:
-            return .init(description: "Load a saved session", usage: "/load <session-id>", examples: ["/load 123E4567-E89B-12D3-A456-426614174000"])
+            return .init(description: "Continue a session saved in this directory", usage: "/load <session-id>", examples: ["/load 123E4567-E89B-12D3-A456-426614174000"])
         case .sessions:
-            return .init(description: "List saved sessions", usage: "/sessions", examples: ["/sessions"])
+            return .init(description: "List sessions saved in this directory", usage: "/sessions", examples: ["/sessions"])
         case .model:
             return .init(
                 description: "Change the current model",

@@ -62,12 +62,10 @@ final class SessionManager {
     /// Auto-save interval in seconds
     var autoSaveInterval: TimeInterval = 30
 
-    private init() {
-        // Create sessions directory in ~/.claude/sessions/
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser
-        self.sessionsDirectory = homeDir
-            .appendingPathComponent(".claude")
-            .appendingPathComponent("sessions")
+    init(sessionsDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".claude")
+        .appendingPathComponent("sessions")) {
+        self.sessionsDirectory = sessionsDirectory
 
         // Ensure directory exists
         try? FileManager.default.createDirectory(
@@ -127,7 +125,7 @@ final class SessionManager {
         encoder.dateEncodingStrategy = .iso8601
 
         let data = try encoder.encode(session)
-        try data.write(to: fileURL)
+        try data.write(to: fileURL, options: .atomic)
     }
 
     /// Delete a session
@@ -165,6 +163,57 @@ final class SessionManager {
             }
             return session
         }.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// List only sessions created in this working directory.
+    func listSessions(in workingDirectory: String) throws -> [SavedSession] {
+        let directory = URL(fileURLWithPath: workingDirectory).resolvingSymlinksInPath().standardizedFileURL.path
+        return try listSessions().filter {
+            URL(fileURLWithPath: $0.metadata.workingDirectory).resolvingSymlinksInPath().standardizedFileURL.path == directory
+        }
+    }
+
+    /// Resolve an unambiguous ID prefix in the current working directory.
+    func session(matching prefix: String, in workingDirectory: String) throws -> SavedSession? {
+        let matches = try listSessions(in: workingDirectory).filter {
+            $0.id.uuidString.lowercased().hasPrefix(prefix.lowercased())
+        }
+        guard matches.count <= 1 else { throw SessionError.ambiguousSessionPrefix }
+        return matches.first
+    }
+
+    /// Restore conversational roles and stable IDs for subsequent snapshots.
+    func restoredMessages(from session: SavedSession) -> [Message] {
+        session.messages.compactMap { saved in
+            let role: Role
+            switch saved.role {
+            case .user: role = .user
+            case .assistant: role = .assistant
+            case .tool, .system: return nil
+            }
+            return Message(uuid: saved.id, text: saved.content, role: role)
+        }
+    }
+
+    /// Persist the full current conversation atomically after each turn or clear.
+    func replaceMessages(_ messages: [Message]) throws {
+        guard let id = currentSessionId else { return }
+        var session = try loadSession(id: id)
+        let previousMessages = Dictionary(uniqueKeysWithValues: session.messages.map { ($0.id, $0) })
+        session.messages = messages.compactMap { message in
+            let role: SavedMessage.MessageRole
+            switch message.role {
+            case .user: role = .user
+            case .assistant: role = .assistant
+            default: return nil
+            }
+            let previous = previousMessages[message.uuid]
+            return SavedMessage(id: message.uuid, role: role, content: message.text ?? "",
+                                timestamp: previous?.timestamp ?? Date(), toolCalls: previous?.toolCalls)
+        }
+        session.metadata.messageCount = session.messages.count
+        session.metadata.model = UserDefaults.model.rawValue
+        try saveSession(session)
     }
 
     /// Get recent sessions (last 10)
@@ -231,6 +280,7 @@ final class SessionManager {
 enum SessionError: LocalizedError {
     case sessionNotFound(id: UUID)
     case noActiveSession
+    case ambiguousSessionPrefix
     case saveFailed(reason: String)
     case loadFailed(reason: String)
 
@@ -240,6 +290,8 @@ enum SessionError: LocalizedError {
             return "Session not found: \(id.uuidString)"
         case .noActiveSession:
             return "No active session"
+        case .ambiguousSessionPrefix:
+            return "Session ID prefix is ambiguous; enter more characters"
         case .saveFailed(let reason):
             return "Failed to save session: \(reason)"
         case .loadFailed(let reason):

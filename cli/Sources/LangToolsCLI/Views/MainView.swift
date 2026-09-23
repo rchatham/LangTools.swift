@@ -185,6 +185,15 @@ struct MainView: @preconcurrency View {
             return
         }
 
+        // Commands with arguments must bypass autocomplete so the ID/name
+        // isn't discarded when selecting the command suggestion.
+        let commandParts = trimmed.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+        if commandParts.count > 1, ["/load", "/save"].contains(commandParts[0].lowercased()) {
+            dismissAutocomplete()
+            _ = handleCommand(trimmed)
+            return
+        }
+
         // If autocomplete is showing, handle selection or filter
         if showAutocomplete {
             handleAutocompleteInput(trimmed)
@@ -254,6 +263,11 @@ struct MainView: @preconcurrency View {
                 if messages.last?.content.isEmpty == true {
                     messages.removeLast()
                 }
+            }
+            do {
+                try SessionManager.shared.replaceMessages(messageService.messages)
+            } catch {
+                errorMessage = "Could not save session: \(error.localizedDescription)"
             }
             isStreaming = false
         }
@@ -363,7 +377,9 @@ struct MainView: @preconcurrency View {
     /// Handle special commands
     /// Returns true if command was handled
     private func handleCommand(_ text: String) -> Bool {
-        let command = text.lowercased()
+        let parts = text.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+        let command = String(parts.first ?? "").lowercased()
+        let argument = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : ""
 
         // Support both /command and plain command syntax
         let normalizedCommand = command.hasPrefix("/") ? String(command.dropFirst()) : command
@@ -373,9 +389,18 @@ struct MainView: @preconcurrency View {
             exit(0)
 
         case "clear":
+            guard !isStreaming else {
+                statusMessage = "Wait for the reply before clearing"
+                return true
+            }
             messages.removeAll()
             messageService.clearMessages()
-            statusMessage = "Cleared"
+            do {
+                try SessionManager.shared.replaceMessages(messageService.messages)
+                statusMessage = "Cleared"
+            } catch {
+                errorMessage = "Could not save cleared session: \(error.localizedDescription)"
+            }
             return true
 
         case "help":
@@ -418,35 +443,69 @@ struct MainView: @preconcurrency View {
             return true
 
         case "save":
-            let name: String? = nil // no arg parsing in TUI single-input currently
-            let wd = FileManager.default.currentDirectoryPath
+            guard !isStreaming else {
+                statusMessage = "Wait for the reply before saving"
+                return true
+            }
             let session = SessionManager.shared.createSession(
-                name: name,
-                workingDirectory: wd,
+                name: argument.isEmpty ? nil : argument,
+                workingDirectory: FileManager.default.currentDirectoryPath,
                 model: UserDefaults.model.rawValue
             )
-            for msg in messageService.messages {
-                try? SessionManager.shared.addMessage(
-                    role: msg.role == .user ? .user : .assistant,
-                    content: msg.text ?? ""
-                )
+            do {
+                try SessionManager.shared.replaceMessages(messageService.messages)
+                messages.append(ChatMessage(role: .system,
+                    content: "Session saved: \(session.name) [\(session.id.uuidString.prefix(8))]"))
+            } catch {
+                errorMessage = "Could not save session: \(error.localizedDescription)"
             }
-            messages.append(ChatMessage(role: .system,
-                content: "Session saved: \(session.name) [\(session.id.uuidString.prefix(8))]"))
+            return true
+
+        case "load":
+            guard !isStreaming else {
+                statusMessage = "Wait for the reply before loading"
+                return true
+            }
+            guard !argument.isEmpty else {
+                messages.append(ChatMessage(role: .system, content: "Usage: /load <session-id>. Use /sessions to find an ID."))
+                return true
+            }
+            do {
+                guard let session = try SessionManager.shared.session(
+                    matching: argument, in: FileManager.default.currentDirectoryPath
+                ) else {
+                    messages.append(ChatMessage(role: .system, content: "Session not found in this directory: \(argument)"))
+                    return true
+                }
+                messageService.messages = SessionManager.shared.restoredMessages(from: session)
+                messages = messageService.messages.map {
+                    ChatMessage(role: $0.role == .user ? .user : .assistant, content: $0.text ?? "")
+                }
+                SessionManager.shared.currentSessionId = session.id
+                if let model = Model(rawValue: session.metadata.model) { UserDefaults.model = model }
+                messages.append(ChatMessage(role: .system,
+                    content: "Loaded session '\(session.name)' (\(session.messages.count) messages)"))
+            } catch {
+                errorMessage = "Could not load session: \(error.localizedDescription)"
+            }
             return true
 
         case "sessions":
-            let sessions = (try? SessionManager.shared.listSessions()) ?? []
-            if sessions.isEmpty {
-                messages.append(ChatMessage(role: .system, content: "No saved sessions."))
-            } else {
-                let lines = sessions.map { s -> String in
-                    let short = s.id.uuidString.prefix(8)
-                    let date = DateFormatter.localizedString(from: s.updatedAt, dateStyle: .short, timeStyle: .short)
-                    return "  \(short)  \(s.name)  (\(s.metadata.messageCount) msgs, \(date))"
+            do {
+                let sessions = try SessionManager.shared.listSessions(in: FileManager.default.currentDirectoryPath)
+                if sessions.isEmpty {
+                    messages.append(ChatMessage(role: .system, content: "No saved sessions in this directory."))
+                } else {
+                    let lines = sessions.map { s -> String in
+                        let short = s.id.uuidString.prefix(8)
+                        let date = DateFormatter.localizedString(from: s.updatedAt, dateStyle: .short, timeStyle: .short)
+                        return "  \(short)  \(s.name)  (\(s.metadata.messageCount) msgs, \(date))"
+                    }
+                    messages.append(ChatMessage(role: .system,
+                        content: "Saved sessions:\n\(lines.joined(separator: "\n"))\n\nUse /load <id-prefix> to restore"))
                 }
-                messages.append(ChatMessage(role: .system,
-                    content: "Saved sessions:\n\(lines.joined(separator: "\n"))\n\nUse /load <id-prefix> to restore"))
+            } catch {
+                errorMessage = "Could not list sessions: \(error.localizedDescription)"
             }
             return true
 
@@ -465,6 +524,11 @@ struct MainView: @preconcurrency View {
                     Message(text: $0.content, role: $0.role == .user ? .user : .assistant)
                 }
                 messages = compacted
+                do {
+                    try SessionManager.shared.replaceMessages(messageService.messages)
+                } catch {
+                    errorMessage = "Could not save compacted session: \(error.localizedDescription)"
+                }
                 messages.append(ChatMessage(role: .system,
                     content: "Compacted \(before) → \(compacted.count) messages"))
             }

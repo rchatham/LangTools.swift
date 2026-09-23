@@ -286,6 +286,11 @@ struct CLI {
             } catch {
                 print("Error: \(error.localizedDescription)".red)
             }
+            do {
+                try SessionManager.shared.replaceMessages(messageService.messages)
+            } catch {
+                print("Could not save session: \(error.localizedDescription)".red)
+            }
             return false
         }
     }
@@ -366,6 +371,11 @@ struct CLI {
 
         case .clear:
             messageService.clearMessages()
+            do {
+                try SessionManager.shared.replaceMessages(messageService.messages)
+            } catch {
+                print("Could not save cleared session: \(error.localizedDescription)".red)
+            }
             print("Conversation history cleared.".yellow)
 
         case .tools:
@@ -419,14 +429,12 @@ struct CLI {
             workingDirectory: wd,
             model: UserDefaults.model.rawValue
         )
-        // Persist current messages into the session
-        for msg in messageService.messages {
-            try? SessionManager.shared.addMessage(
-                role: msg.role == .user ? .user : .assistant,
-                content: msg.text ?? ""
-            )
+        do {
+            try SessionManager.shared.replaceMessages(messageService.messages)
+            print("Session saved: \(session.name) [\(session.id.uuidString.prefix(8))]".green)
+        } catch {
+            print("Could not save session: \(error.localizedDescription)".red)
         }
-        print("Session saved: \(session.name) [\(session.id.uuidString.prefix(8))]".green)
     }
 
     static func handleLoadCommand(_ command: SlashCommand) async {
@@ -436,33 +444,36 @@ struct CLI {
             return
         }
 
-        // Support prefix matching on UUID
-        let sessions = (try? SessionManager.shared.listSessions()) ?? []
-        let match = sessions.first { $0.id.uuidString.lowercased().hasPrefix(idString.lowercased()) }
-
-        guard let session = match else {
-            print("Session not found: \(idString)".red)
+        let session: SavedSession
+        do {
+            guard let match = try SessionManager.shared.session(
+                matching: idString, in: FileManager.default.currentDirectoryPath
+            ) else {
+                print("Session not found in this directory: \(idString)".red)
+                return
+            }
+            session = match
+        } catch {
+            print("Could not load session: \(error.localizedDescription)".red)
             return
         }
 
         // Replace current messages with saved ones
         messageService.clearMessages()
-        for saved in session.messages {
-            let role: Role = saved.role == .user ? .user : .assistant
-            messageService.messages.append(Message(text: saved.content, role: role))
-        }
+        messageService.messages = SessionManager.shared.restoredMessages(from: session)
 
         SessionManager.shared.currentSessionId = session.id
+        if let model = Model(rawValue: session.metadata.model) { UserDefaults.model = model }
         print("Loaded session '\(session.name)' (\(session.messages.count) messages)".green)
     }
 
     static func showSessions() {
-        guard let sessions = try? SessionManager.shared.listSessions() else {
+        guard let sessions = try? SessionManager.shared.listSessions(in: FileManager.default.currentDirectoryPath) else {
             print("Failed to list sessions".red)
             return
         }
         if sessions.isEmpty {
-            print("No saved sessions.".yellow)
+            print("No saved sessions in this directory.".yellow)
             return
         }
         print("\n\("Saved sessions".blue)")
@@ -490,6 +501,11 @@ struct CLI {
         let compacted = ContextManager.shared.compactMessages(chatMessages)
         messageService.messages = compacted.map {
             Message(text: $0.content, role: $0.role == .user ? .user : .assistant)
+        }
+        do {
+            try SessionManager.shared.replaceMessages(messageService.messages)
+        } catch {
+            print("Could not save compacted session: \(error.localizedDescription)".red)
         }
         print("Compacted \(before) → \(messageService.messages.count) messages (\(usage.formattedUsage))".green)
     }
