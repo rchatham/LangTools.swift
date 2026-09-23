@@ -227,6 +227,28 @@ final class AccountLoginServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testCodexHelperLoginCanonicalizesSessionAndLogoutUsesHelper() async throws {
+        let helper = TestCodexHelperClient()
+        let service = BrowserAccountLoginService(
+            coordinator: TestAccountLoginCoordinator(),
+            backendClient: TestAccountLoginBackendClient(
+                exchangeSession: AccountSession(provider: .claudeCode, accountIdentifier: "unused", accessToken: "unused")
+            ),
+            sessionStore: AuthSessionStore(keychain: .init(service: "AccountLoginServiceTests.\(UUID().uuidString)")),
+            configuration: AccountBackendConfiguration(baseURL: URL(string: "http://localhost:8080")!),
+            codexHelperClient: helper
+        )
+
+        let session = try await service.beginCodexHelperLogin()
+        try await service.logoutCodexHelper()
+
+        XCTAssertEqual(session.accessToken, CodexSessionMarker.value)
+        XCTAssertNil(session.refreshToken)
+        XCTAssertEqual(session.accessibleModelIDs, ["gpt-5.5"])
+        XCTAssertTrue(helper.didLogout)
+    }
+
+    @MainActor
     func testBeginLoginReturnsSessionAfterBrowserCallbackForClaudeCode() async throws {
         let coordinator = TestAccountLoginCoordinator()
         let backendClient = TestAccountLoginBackendClient(
@@ -322,6 +344,31 @@ final class AccountLoginServiceTests: XCTestCase {
         configuration.protocolClasses = [MockURLProtocol.self]
         return URLSession(configuration: configuration)
     }
+}
+
+private final class TestCodexHelperClient: CodexHelperClientProtocol {
+    private(set) var didLogout = false
+
+    func loginOpenAI() async throws -> AccountSession {
+        AccountSession(
+            provider: .openAI,
+            accountIdentifier: "helper-user",
+            accessToken: "unsafe-access-token",
+            refreshToken: "unsafe-refresh-token",
+            accessibleModelIDs: [" codex/gpt-5.5 "]
+        )
+    }
+
+    func logoutOpenAI() async throws {
+        didLogout = true
+    }
+
+    func statusOpenAI() async throws -> CodexHelperStatus {
+        CodexHelperStatus(provider: "openAI", authenticated: true, accountIdentifier: "helper-user", expiresAt: nil, accessibleModelIDs: ["gpt-5.5"])
+    }
+
+    func listOpenAIModels() async throws -> [String] { ["gpt-5.5"] }
+    func healthCheck() async throws -> HelperHealthStatus { HelperHealthStatus(status: "ok", version: 1) }
 }
 
 private final class TestAccountLoginCoordinator: AccountLoginCoordinating {

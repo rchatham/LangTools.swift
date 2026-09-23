@@ -62,8 +62,17 @@ private struct ManageAccessPromptModifier: ViewModifier {
             }
     }
 
+    private var currentDestination: AccessDestination? {
+        coordinator.preferredDestination ?? AccessDestination.destination(for: UserDefaults.model)
+    }
+
     private var currentService: APIService {
-        coordinator.preferredDestination?.service ?? UserDefaults.model.apiService
+        currentDestination?.service ?? UserDefaults.model.apiService
+    }
+
+    private var currentState: ProviderAccessState {
+        accessManager.statesForAccessUI().first { $0.accessDestination == currentDestination }
+            ?? accessManager.state(for: currentService)
     }
 
     private var dialogTitle: String {
@@ -79,7 +88,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
 
     @ViewBuilder
     private func actionButtons(for service: APIService) -> some View {
-        let state = accessManager.state(for: service)
+        let state = currentState
 
         switch service {
         case .ollama:
@@ -96,20 +105,22 @@ private struct ManageAccessPromptModifier: ViewModifier {
             }
 
         default:
-            Button("Enter \(service.displayName) API Key") {
-                presentAPIKeyPrompt(for: service)
-            }
-
-            if let accountProvider = service.accountLoginProvider {
+            if currentDestination == .codex {
+                codexAccountButtons(state: state)
+            } else if let accountProvider = currentDestination?.accountProvider {
                 Button(accountActionTitle(for: accountProvider, state: state)) {
                     coordinator.dismiss()
                     handleAccountAction(for: accountProvider, state: state)
                 }
-            }
+            } else {
+                Button("Enter \(service.displayName) API Key") {
+                    presentAPIKeyPrompt(for: service)
+                }
 
-            if state.hasAPIKey {
-                Button("Remove API Key", role: .destructive) {
-                    removeAPIKey(for: service)
+                if state.hasAPIKey {
+                    Button("Remove API Key", role: .destructive) {
+                        removeAPIKey(for: service)
+                    }
                 }
             }
 
@@ -119,13 +130,43 @@ private struct ManageAccessPromptModifier: ViewModifier {
         }
     }
 
+    @ViewBuilder
+    private func codexAccountButtons(state: ProviderAccessState) -> some View {
+        let usesHelper = accessManager.session(for: .openAI)?.accessToken == CodexSessionMarker.value
+
+        if state.hasAccountSession {
+            Button(usesHelper ? "Disconnect Codex Helper" : "Disconnect OpenAI CLI", role: .destructive) {
+                coordinator.dismiss()
+                handleCodexDisconnect(usesHelper: usesHelper)
+            }
+            Button(usesHelper ? "Switch to Bundled CLI Login" : "Switch to Codex Helper Login") {
+                coordinator.dismiss()
+                if usesHelper {
+                    handleAccountConnect(for: .openAI)
+                } else {
+                    handleCodexHelperConnect()
+                }
+            }
+        } else {
+            Button("Login with OpenAI via Bundled CLI") {
+                coordinator.dismiss()
+                handleAccountConnect(for: .openAI)
+            }
+            Button("Login with OpenAI via Codex Helper") {
+                coordinator.dismiss()
+                handleCodexHelperConnect()
+            }
+        }
+    }
+
     private func dialogMessage(for service: APIService) -> String {
-        let state = accessManager.state(for: service)
-        let status = state.statusDescription
+        let status = currentState.statusDescription
 
         switch service {
+        case .openAI where currentDestination == .codex:
+            return "Codex status: \(status). Sign in with the bundled CLI for direct account bridging, or use the configured Codex helper for marker-based helper routing."
         case .openAI:
-            return "Models are shown when their provider is configured. OpenAI status: \(status). Add an API key for direct API requests, or sign in with OpenAI via LangToolsAuthCLI to unlock account-based access like Codex."
+            return "OpenAI Platform status: \(status). Add an API key for direct API requests. Account credentials are selected separately for the Codex model route."
         case .anthropic:
             return "Models are shown when their provider is configured. Anthropic status: \(status). Add an Anthropic API key or sign in with Claude Code for account-based access."
         case .xAI, .gemini:
@@ -173,17 +214,61 @@ private struct ManageAccessPromptModifier: ViewModifier {
     }
 
     private func handleAccountAction(for provider: AccountLoginProvider, state: ProviderAccessState) {
+        if state.hasAccountSession {
+            handleAccountDisconnect(for: provider)
+        } else {
+            handleAccountConnect(for: provider)
+        }
+    }
+
+    private func handleAccountConnect(for provider: AccountLoginProvider) {
         Task { @MainActor in
             do {
-                if state.hasAccountSession {
-                    try await networkClient.disconnectAccount(provider)
-                    presentResult(disconnectMessage(for: provider))
+                try await networkClient.connectAccount(provider)
+                accessManager.refresh()
+                let updatedState = accessManager.statesForAccessUI().first { $0.accessDestination?.accountProvider == provider }
+                    ?? accessManager.state(for: provider.service)
+                presentResult(connectMessage(for: provider, state: updatedState))
+            } catch {
+                presentError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func handleAccountDisconnect(for provider: AccountLoginProvider) {
+        Task { @MainActor in
+            do {
+                try await networkClient.disconnectAccount(provider)
+                accessManager.refresh()
+                presentResult(disconnectMessage(for: provider))
+            } catch {
+                presentError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func handleCodexHelperConnect() {
+        Task { @MainActor in
+            do {
+                try await networkClient.connectCodexHelper()
+                accessManager.refresh()
+                presentResult("Connected OpenAI through the Codex helper. Codex model access has been refreshed.")
+            } catch {
+                presentError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func handleCodexDisconnect(usesHelper: Bool) {
+        Task { @MainActor in
+            do {
+                if usesHelper {
+                    try await networkClient.disconnectCodexHelper()
                 } else {
-                    try await networkClient.connectAccount(provider)
-                    let updatedState = accessManager.state(for: provider.service)
-                    presentResult(connectMessage(for: provider, state: updatedState))
+                    try await networkClient.disconnectAccount(.openAI)
                 }
                 accessManager.refresh()
+                presentResult(usesHelper ? "Disconnected the Codex helper." : disconnectMessage(for: .openAI))
             } catch {
                 presentError(error.localizedDescription)
             }

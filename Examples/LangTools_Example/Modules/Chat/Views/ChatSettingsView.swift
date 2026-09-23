@@ -206,7 +206,7 @@ public struct ChatSettingsView: View {
                         }
                     }
 
-                    Text("For OpenAI account-backed Codex models, start the external helper and paste its URL/token below.")
+                    Text("Codex supports either the bundled CLI bridge or the external helper. Configure the helper URL/token below if you want marker-based helper routing.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     TextField("Codex Helper URL", text: $viewModel.codexHelperBaseURLString)
@@ -467,7 +467,7 @@ public struct ChatSettingsView: View {
                                     .textFieldStyle(.roundedBorder)
                                 SecureField("Codex Helper Token", text: $viewModel.codexHelperToken)
                                     .textFieldStyle(.roundedBorder)
-                                Text("OpenAI account-backed models use the external Codex helper. API-key-backed OpenAI Platform models continue to use the regular API path.")
+                                Text("Codex account models can use either the bundled CLI bridge or this external helper. OpenAI Platform models use the regular API-key path.")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -1174,7 +1174,7 @@ extension ChatSettingsView {
         }
 
         var codexHelperCommand: String {
-            "swift run LangToolsCLI serve"
+            "swift run --package-path cli langtools serve"
         }
 
         func modelPickerTitle(for model: Model) -> String {

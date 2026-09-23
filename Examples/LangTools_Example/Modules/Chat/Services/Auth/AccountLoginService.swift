@@ -67,10 +67,22 @@ public struct AuthRedirectPayload: Equatable {
 @MainActor
 public protocol AccountLoginService {
     func beginLogin(for provider: AccountLoginProvider) async throws -> AccountSession
+    func beginCodexHelperLogin() async throws -> AccountSession
     func handleRedirect(_ url: URL) async throws -> AccountSession
     func refreshSession(_ session: AccountSession) async throws -> AccountSession
     func logout(provider: AccountLoginProvider) async throws
+    func logoutCodexHelper() async throws
     func fetchAccessibleModels(for provider: AccountLoginProvider) async throws -> [String]
+}
+
+public extension AccountLoginService {
+    func beginCodexHelperLogin() async throws -> AccountSession {
+        throw AccountLoginError.sessionExchangeFailed("Codex helper login is not configured.")
+    }
+
+    func logoutCodexHelper() async throws {
+        throw AccountLoginError.sessionExchangeFailed("Codex helper logout is not configured.")
+    }
 }
 
 public protocol AccountLoginBackendClientProtocol {
@@ -90,6 +102,7 @@ public final class BrowserAccountLoginService: AccountLoginService {
     private let sessionStore: AuthSessionStore
     private let configuration: AccountBackendConfiguration
     private let cliBridge: CLIAccountSessionBridge
+    private let codexHelperClient: CodexHelperClientProtocol
 
     private struct PendingLogin {
         let provider: AccountLoginProvider
@@ -107,12 +120,14 @@ public final class BrowserAccountLoginService: AccountLoginService {
         backendClient: AccountLoginBackendClientProtocol? = nil,
         sessionStore: AuthSessionStore = .shared,
         configuration: AccountBackendConfiguration = AccountBackendConfiguration(),
-        cliBridge: CLIAccountSessionBridge = CLIAccountSessionBridge()
+        cliBridge: CLIAccountSessionBridge = CLIAccountSessionBridge(),
+        codexHelperClient: CodexHelperClientProtocol? = nil
     ) {
         self.coordinator = coordinator
         self.sessionStore = sessionStore
         self.configuration = configuration
         self.cliBridge = cliBridge
+        self.codexHelperClient = codexHelperClient ?? CodexHelperClient(configuration: configuration)
         self.backendClient = backendClient ?? AccountLoginBackendClient(configuration: configuration)
     }
 
@@ -143,6 +158,12 @@ public final class BrowserAccountLoginService: AccountLoginService {
             provider: provider
         )
         return try await handleRedirect(callbackURL)
+    }
+
+    public func beginCodexHelperLogin() async throws -> AccountSession {
+        try reserveLoginSlot()
+        defer { releaseLoginSlot() }
+        return try await codexHelperClient.loginOpenAI().canonicalized
     }
 
     public func handleRedirect(_ url: URL) async throws -> AccountSession {
@@ -204,6 +225,10 @@ public final class BrowserAccountLoginService: AccountLoginService {
 
         let session = try sessionStore.session(for: provider)
         try await backendClient.logout(provider: provider, session: session)
+    }
+
+    public func logoutCodexHelper() async throws {
+        try await codexHelperClient.logoutOpenAI()
     }
 
     public func fetchAccessibleModels(for provider: AccountLoginProvider) async throws -> [String] {

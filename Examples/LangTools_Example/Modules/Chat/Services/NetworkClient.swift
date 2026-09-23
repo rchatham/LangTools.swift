@@ -23,7 +23,9 @@ public protocol NetworkClientProtocol {
     func updateApiKey(_ apiKey: String, for llm: APIService) throws
     func removeApiKey(for llm: APIService) throws
     func connectAccount(_ provider: AccountLoginProvider) async throws
+    func connectCodexHelper() async throws
     func disconnectAccount(_ provider: AccountLoginProvider) async throws
+    func disconnectCodexHelper() async throws
 }
 
 public protocol ConversationAwareNetworkClientProtocol: NetworkClientProtocol {
@@ -33,6 +35,14 @@ public protocol ConversationAwareNetworkClientProtocol: NetworkClientProtocol {
 }
 
 extension NetworkClientProtocol {
+    public func connectCodexHelper() async throws {
+        throw AccountLoginError.sessionExchangeFailed("Codex helper login is not supported by this client.")
+    }
+
+    public func disconnectCodexHelper() async throws {
+        throw AccountLoginError.sessionExchangeFailed("Codex helper logout is not supported by this client.")
+    }
+
     public func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) async throws -> Message {
         try await performChatCompletionRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
     }
@@ -236,7 +246,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .anthropic(let model), .claudeCode(let model): return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.convertTools(), tool_choice: toolChoice?.toAnthropicToolChoice(), toolEventHandler: toolEventHandler)
         case .openAI(let model), .codex(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice, toolEventHandler: toolEventHandler)
         case .xAI(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice, toolEventHandler: toolEventHandler)
-        case .gemini(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, toolEventHandler: toolEventHandler/*, tools: tools?.convertTools(), tool_choice: toolChoice*/)
+        case .gemini(let model): return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice, toolEventHandler: toolEventHandler)
         case .ollama(let model): return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools?.convertTools(), toolEventHandler: toolEventHandler)
         }
     }
@@ -251,7 +261,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .gemini(let model): return AgentContext(langTool: try requiredLangTool(Gemini.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
         case .openAI(let model), .codex(let model): return AgentContext(langTool: try requiredLangTool(OpenAI.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
         case .xAI(let model): return AgentContext(langTool: try requiredLangTool(XAI.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
-        case .ollama(let model): return AgentContext(langTool: try requiredLangTool(Ollama.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .ollama(let model): return AgentContext(langTool: try requiredLangTool(Ollama.self), model: model, messages: messages.toOllamaMessages(), eventHandler: eventHandler)
         }
     }
 
@@ -281,7 +291,21 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         }
     }
 
+    public func connectCodexHelper() async throws {
+        let session = try await accountLoginService.beginCodexHelperLogin()
+        try await MainActor.run {
+            try providerAccessManager.saveAccountSession(session.canonicalized)
+        }
+    }
+
     public func disconnectAccount(_ provider: AccountLoginProvider) async throws {
+        let sessionBeingDisconnected = providerAccessManager.session(for: provider)
+        if provider == .openAI,
+           sessionBeingDisconnected?.accessToken == CodexSessionMarker.value {
+            try await disconnectCodexHelper()
+            return
+        }
+
         do {
             try await accountLoginService.logout(provider: provider)
         } catch {
@@ -289,7 +313,29 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             NSLog("Remote %@ logout failed; clearing the local session: %@", provider.displayName, error.localizedDescription)
         }
         try await MainActor.run {
+            guard providerAccessManager.session(for: provider)?.id == sessionBeingDisconnected?.id else {
+                return
+            }
             try providerAccessManager.removeAccountSession(for: provider)
+        }
+    }
+
+    public func disconnectCodexHelper() async throws {
+        let sessionBeingDisconnected = providerAccessManager.session(for: .openAI)
+        do {
+            try await accountLoginService.logoutCodexHelper()
+        } catch {
+            // Keep the local marker from advertising a helper session that can no longer be used.
+            NSLog("Remote Codex helper logout failed; clearing the local session: %@", error.localizedDescription)
+        }
+        try await MainActor.run {
+            guard let sessionBeingDisconnected,
+                  sessionBeingDisconnected.accessToken == CodexSessionMarker.value,
+                  providerAccessManager.session(for: .openAI)?.id == sessionBeingDisconnected.id
+            else {
+                return
+            }
+            try providerAccessManager.removeAccountSession(for: .openAI)
         }
     }
 
@@ -311,8 +357,6 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         }
     }
     private func ensureModelAccess(for model: Model) throws {
-        let state = providerAccessManager.state(for: model.apiService)
-
         switch model.apiService {
         case .ollama:
             return
@@ -322,20 +366,31 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             break
         }
 
+        guard let destination = AccessDestination.destination(for: model),
+              let state = providerAccessManager.statesForAccessUI().first(where: { $0.accessDestination == destination })
+        else {
+            throw NetworkError.missingApiKey
+        }
+
         if state.authStatus == .notConfigured {
             throw NetworkError.missingApiKey
         }
 
-        if !state.availableModels.isEmpty, state.availableModels.contains(model) == false {
+        // The destination's model list is authoritative. In particular, an
+        // account session that reports no models must not become an allow-all.
+        guard state.availableModels.contains(model) else {
             throw NetworkError.modelAccessUnavailable(model.rawValue)
         }
     }
 
     private func accountSession(for model: Model) -> AccountSession? {
-        let state = providerAccessManager.state(for: model.apiService)
-        guard state.hasAccountSession, state.hasAPIKey == false,
-              let provider = model.apiService.accountLoginProvider
-        else {
+        let provider: AccountLoginProvider
+        switch model.route {
+        case .codex:
+            provider = .openAI
+        case .claudeCode:
+            provider = .claudeCode
+        default:
             return nil
         }
         return providerAccessManager.session(for: provider)
