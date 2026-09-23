@@ -101,6 +101,74 @@ final class TailWindowTests: XCTestCase {
         XCTAssertEqual(ScrollMath.maxOffset(contentHeight: 60, viewport: 20), 40)
     }
 
+    /// Follow requests queued while already pinned (every input submission
+    /// queues one) must be drained on that layout pass — otherwise they linger
+    /// and snap the user back to the bottom after an explicit Home/PageUp.
+    func testStaleFollowRequestDoesNotHijackExplicitScroll() {
+        let scroll = ScrollControl()
+        let content = FixedHeightControl(height: 60)
+        scroll.contentControl = content
+
+        ScrollView<EmptyView>.requestFollowBottom()
+        scroll.layout(size: Size(width: 80, height: 20))
+        XCTAssertEqual(content.layer.frame.position.line, -40)
+
+        scroll.scrollToTop()
+        scroll.layout(size: Size(width: 80, height: 20))
+        XCTAssertEqual(scroll.contentOffset, 0, "stale follow request must not re-pin")
+        XCTAssertEqual(content.layer.frame.position.line, 0)
+        XCTAssertFalse(scroll.pinnedToBottom)
+
+        // A follow request queued while scrolled up (new message submit) still
+        // re-pins to the response.
+        ScrollView<EmptyView>.requestFollowBottom()
+        scroll.layout(size: Size(width: 80, height: 20))
+        XCTAssertTrue(scroll.pinnedToBottom)
+        XCTAssertEqual(content.layer.frame.position.line, -40)
+    }
+
+    func testHomeAndEndUseAbsoluteOffsetsAndPinState() {
+        let scroll = ScrollControl()
+        let content = FixedHeightControl(height: 60)
+        scroll.contentControl = content
+        scroll.layout(size: Size(width: 80, height: 20))
+
+        scroll.scrollToTop()
+        XCTAssertEqual(scroll.contentOffset, 0)
+        XCTAssertFalse(scroll.pinnedToBottom)
+
+        scroll.scrollToBottom()
+        XCTAssertEqual(scroll.contentOffset, 40)
+        XCTAssertTrue(scroll.pinnedToBottom)
+    }
+
+    /// Scroll keys run outside `layout(size:)`, so they must re-apply the
+    /// offset to the child layer frame — otherwise the offset changes but
+    /// the visible rows never move.
+    func testScrollKeysMoveChildLayerFrame() {
+        let scroll = ScrollControl()
+        let content = FixedHeightControl(height: 60)
+        scroll.contentControl = content
+        scroll.layout(size: Size(width: 80, height: 20))
+        XCTAssertEqual(content.layer.frame.position.line, -40, "initial layout pins to the bottom")
+
+        scroll.scrollToTop()
+        XCTAssertEqual(content.layer.frame.position.line, 0)
+
+        scroll.scrollToBottom()
+        XCTAssertEqual(content.layer.frame.position.line, -40)
+
+        // Positive lines scroll towards older content (offset shrinks).
+        scroll.scrollBy(lines: 15)
+        XCTAssertEqual(content.layer.frame.position.line, -25)
+        XCTAssertFalse(scroll.pinnedToBottom)
+
+        // Above the top, the offset clamps to 0.
+        scroll.scrollToTop()
+        scroll.scrollBy(lines: 5)
+        XCTAssertEqual(content.layer.frame.position.line, 0, "cannot scroll above the top")
+    }
+
     // MARK: - Working-directory grounding
 
     func testContextSystemMessageIncludesWorkingDirectory() {
@@ -189,6 +257,36 @@ final class TailWindowTests: XCTestCase {
         XCTAssertEqual(CLI.requestedModelArgument(["langtools", "--model", "llama3.2:latest"]), "llama3.2:latest")
         XCTAssertEqual(CLI.model(fromArgument: CLI.requestedModelArgument(["langtools", "--model=glm-5.2:cloud"]) ?? ""), .ollama(Ollama.Model(rawValue: "glm-5.2:cloud")!))
         XCTAssertNil(CLI.requestedModelArgument(["langtools", "--tui"]))
+    }
+
+    func testEnvironmentAPIKeysAreAvailableToPreModeConfiguration() {
+        let keys = CLI.apiKeysFromEnvironment([
+            "ANTHROPIC_API_KEY": " anthropic-key ",
+            "OPENAI_API_KEY": "openai-key",
+            "XAI_API_KEY": "   ",
+            "GEMINI_API_KEY": "gemini-key",
+        ])
+
+        XCTAssertEqual(keys[.anthropic], "anthropic-key")
+        XCTAssertEqual(keys[.openAI], "openai-key")
+        XCTAssertNil(keys[.xAI])
+        XCTAssertEqual(keys[.gemini], "gemini-key")
+    }
+
+    func testEnvironmentLoaderRegistersEnvOnlyKey() {
+        let previous = UserDefaults.getApiKey(for: .xAI)
+        UserDefaults.removeApiKey(for: .xAI)
+        defer {
+            if let previous {
+                UserDefaults.setApiKey(previous, for: .xAI)
+            } else {
+                UserDefaults.removeApiKey(for: .xAI)
+            }
+        }
+
+        CLI.loadAPIKeysFromEnvironment(["XAI_API_KEY": "env-only-key"])
+
+        XCTAssertEqual(UserDefaults.getApiKey(for: .xAI), "env-only-key")
     }
 }
 

@@ -14,13 +14,13 @@ import Glibc
 #endif
 
 /// A question option
-struct QuestionOption: Codable {
+struct QuestionOption: Codable, Sendable {
     let label: String
     let description: String
 }
 
 /// A question to ask the user
-struct UserQuestion: Codable {
+struct UserQuestion: Codable, Sendable {
     let question: String
     let header: String
     let options: [QuestionOption]
@@ -42,24 +42,39 @@ final class UserQuestionManager: ObservableObject {
     /// Response continuation for async waiting
     private var responseContinuation: CheckedContinuation<String, Never>?
 
+    private struct QueuedQuestion {
+        let question: UserQuestion
+        let continuation: CheckedContinuation<String, Never>
+    }
+
+    private var queuedQuestions: [QueuedQuestion] = []
+
     private init() {}
 
-    /// Set questions and wait for response
+    /// Set questions and wait for response.
     func askQuestions(_ questions: [UserQuestion]) async -> String {
-        pendingQuestions = questions
-        currentQuestion = questions.first
+        guard let firstQuestion = questions.first else {
+            return "[No answer provided]"
+        }
 
         return await withCheckedContinuation { continuation in
-            responseContinuation = continuation
+            if currentQuestion == nil {
+                currentQuestion = firstQuestion
+                responseContinuation = continuation
+            } else {
+                queuedQuestions.append(QueuedQuestion(
+                    question: firstQuestion,
+                    continuation: continuation
+                ))
+            }
+            pendingQuestions = [currentQuestion].compactMap { $0 }
+                + queuedQuestions.map(\.question)
         }
     }
 
-    /// User selects an answer
+    /// User selects an answer.
     func selectAnswer(_ answer: String) {
-        responseContinuation?.resume(returning: answer)
-        responseContinuation = nil
-        currentQuestion = nil
-        pendingQuestions.removeAll()
+        resolveCurrentQuestion(with: answer)
     }
 
     /// User provides custom input
@@ -67,12 +82,53 @@ final class UserQuestionManager: ObservableObject {
         selectAnswer(answer)
     }
 
-    /// Cancel current question
+    /// Cancel all pending questions.
     func cancel() {
         responseContinuation?.resume(returning: "[Cancelled]")
+        queuedQuestions.forEach { $0.continuation.resume(returning: "[Cancelled]") }
         responseContinuation = nil
+        queuedQuestions.removeAll()
         currentQuestion = nil
         pendingQuestions.removeAll()
+    }
+
+    private func resolveCurrentQuestion(with answer: String) {
+        responseContinuation?.resume(returning: answer)
+
+        if queuedQuestions.isEmpty {
+            responseContinuation = nil
+            currentQuestion = nil
+            pendingQuestions.removeAll()
+            return
+        }
+
+        let next = queuedQuestions.removeFirst()
+        currentQuestion = next.question
+        responseContinuation = next.continuation
+        pendingQuestions = [next.question] + queuedQuestions.map(\.question)
+    }
+}
+
+/// Routes questions to SwiftTUI when its handler is installed. Without that
+/// handler, the tool retains its standard terminal-input fallback.
+actor UserQuestionRouter {
+    typealias TUIHandler = @Sendable (UserQuestion) async -> String
+
+    static let shared = UserQuestionRouter()
+
+    private var tuiHandler: TUIHandler?
+
+    func installTUIHandler(_ handler: @escaping TUIHandler) {
+        tuiHandler = handler
+    }
+
+    func removeTUIHandler() {
+        tuiHandler = nil
+    }
+
+    func request(_ question: UserQuestion) async -> String? {
+        guard let tuiHandler else { return nil }
+        return await tuiHandler(question)
     }
 }
 
@@ -119,8 +175,6 @@ struct AskUserQuestionTool: ExecutableTool {
     )
 
     static func execute(parameters: [String: Any]) async throws -> String {
-        try validateInteractiveInput(isInteractive: isInteractiveSession())
-
         guard let jsonString = ToolRegistry.extractString(parameters, key: "questionsJson"),
               let data = jsonString.data(using: .utf8) else {
             throw ToolError.missingRequiredParameter(tool: name, parameter: "questionsJson")
@@ -128,57 +182,73 @@ struct AskUserQuestionTool: ExecutableTool {
 
         do {
             let questions = try JSONDecoder().decode([UserQuestion].self, from: data)
-
-            guard !questions.isEmpty else {
-                throw ToolError.invalidParameters(tool: name, reason: "At least one question is required")
-            }
-
-            var responses: [String] = []
-
-            for question in questions {
-                print("\n\("Question: ".blue)\(question.question)")
-                if !question.options.isEmpty {
-                    for (i, option) in question.options.enumerated() {
-                        print("  \(i + 1). \(option.label) — \(option.description)")
-                    }
-                    if question.multiSelect {
-                        print("  (Enter numbers separated by commas, or type a custom answer)")
-                    } else {
-                        print("  (Enter a number, or type a custom answer)")
-                    }
-                }
-                print("Your answer: ".green, terminator: "")
-                fflush(stdout)
-
-                let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-                if input.isEmpty {
-                    responses.append("[No answer provided]")
-                } else if !question.options.isEmpty {
-                    // Resolve numeric selections to option labels
-                    let parts = input.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-                    let resolved = parts.map { part -> String in
-                        if let idx = Int(part), idx >= 1, idx <= question.options.count {
-                            return question.options[idx - 1].label
-                        }
-                        return part
-                    }
-                    responses.append(resolved.joined(separator: ", "))
-                } else {
-                    responses.append(input)
-                }
-            }
-
-            let combined = zip(questions, responses)
-                .map { q, r in "\(q.header): \(r)" }
-                .joined(separator: "\n")
-
-            return "User answers:\n\(combined)"
+            return try await collectAnswers(for: questions)
         } catch let error as ToolError {
             throw error
         } catch {
             throw ToolError.invalidParameters(tool: name, reason: "Invalid JSON: \(error.localizedDescription)")
         }
+    }
+
+    static func collectAnswers(
+        for questions: [UserQuestion],
+        isInteractive: Bool = isInteractiveSession(),
+        lineReader: @escaping () -> String? = { readLine() }
+    ) async throws -> String {
+        guard !questions.isEmpty else {
+            throw ToolError.invalidParameters(tool: name, reason: "At least one question is required")
+        }
+
+        var responses: [String] = []
+        for question in questions {
+            let input: String
+            if let tuiInput = await UserQuestionRouter.shared.request(question) {
+                // SwiftTUI owns stdin while this handler is installed. Waiting
+                // on its manager is the only input path in TUI mode.
+                input = tuiInput
+            } else {
+                try validateInteractiveInput(isInteractive: isInteractive)
+                printTerminalQuestion(question)
+                input = lineReader() ?? ""
+            }
+            responses.append(resolvedAnswer(input, for: question))
+        }
+
+        let combined = zip(questions, responses)
+            .map { question, response in "\(question.header): \(response)" }
+            .joined(separator: "\n")
+        return "User answers:\n\(combined)"
+    }
+
+    static func resolvedAnswer(_ input: String, for question: UserQuestion) -> String {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "[No answer provided]" }
+        guard !question.options.isEmpty else { return trimmed }
+
+        let parts = trimmed.components(separatedBy: ",").map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }
+        return parts.map { part in
+            guard let index = Int(part), index >= 1,
+                  question.options.indices.contains(index - 1) else { return part }
+            return question.options[index - 1].label
+        }.joined(separator: ", ")
+    }
+
+    private static func printTerminalQuestion(_ question: UserQuestion) {
+        print("\n\("Question: ".blue)\(question.question)")
+        if !question.options.isEmpty {
+            for (index, option) in question.options.enumerated() {
+                print("  \(index + 1). \(option.label) — \(option.description)")
+            }
+            if question.multiSelect {
+                print("  (Enter numbers separated by commas, or type a custom answer)")
+            } else {
+                print("  (Enter a number, or type a custom answer)")
+            }
+        }
+        print("Your answer: ".green, terminator: "")
+        fflush(stdout)
     }
 
     static func validateInteractiveInput(isInteractive: Bool) throws {

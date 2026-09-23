@@ -26,6 +26,7 @@ enum SettingsMode: Equatable {
 @MainActor
 struct MainView: @preconcurrency View {
     @ObservedObject private var toolExecutionState: ToolExecutionState
+    @ObservedObject private var userQuestionManager: UserQuestionManager
     @State private var messages: [ChatMessage] = []
     @State private var isStreaming: Bool = false
     @State private var currentTool: String? = nil
@@ -45,6 +46,7 @@ struct MainView: @preconcurrency View {
 
     init(toolExecutionState: ToolExecutionState) {
         _toolExecutionState = ObservedObject(wrappedValue: toolExecutionState)
+        _userQuestionManager = ObservedObject(wrappedValue: UserQuestionManager.shared)
     }
 
     var body: some View {
@@ -90,7 +92,11 @@ struct MainView: @preconcurrency View {
                 config: Configuration.load().infoLine
             )
 
-            if let request = toolExecutionState.pendingApproval {
+            if let question = userQuestionManager.currentQuestion {
+                UserQuestionRequestView(question: question) { text in
+                    handleInput(text)
+                }
+            } else if let request = toolExecutionState.pendingApproval {
                 ApprovalRequestView(request: request) { text in
                     handleInput(text)
                 }
@@ -106,7 +112,7 @@ struct MainView: @preconcurrency View {
 
                 InputView(
                     hint: inputHint,
-                    isDisabled: showSettingsOverlay
+                    isDisabled: showSettingsOverlay || isStreaming
                 ) { text in
                     handleInput(text)
                 }
@@ -160,6 +166,12 @@ struct MainView: @preconcurrency View {
         // if the user is scrolled up, jump back to follow the response.
         ScrollView<EmptyView>.requestFollowBottom()
 
+        if userQuestionManager.currentQuestion != nil {
+            userQuestionManager.provideCustomAnswer(trimmed)
+            statusMessage = "Answer submitted"
+            return
+        }
+
         if toolExecutionState.pendingApproval != nil {
             switch ToolApprovalInput(text: trimmed) {
             case .approve:
@@ -171,6 +183,11 @@ struct MainView: @preconcurrency View {
             case .invalid:
                 statusMessage = "Awaiting tool approval: enter y or n"
             }
+            return
+        }
+
+        guard !isStreaming else {
+            statusMessage = "Wait for the current reply"
             return
         }
 
@@ -447,12 +464,12 @@ struct MainView: @preconcurrency View {
                 statusMessage = "Wait for the reply before saving"
                 return true
             }
-            let session = SessionManager.shared.createSession(
-                name: argument.isEmpty ? nil : argument,
-                workingDirectory: FileManager.default.currentDirectoryPath,
-                model: UserDefaults.model.rawValue
-            )
             do {
+                let session = try SessionManager.shared.createSession(
+                    name: argument.isEmpty ? nil : argument,
+                    workingDirectory: FileManager.default.currentDirectoryPath,
+                    model: UserDefaults.model.rawValue
+                )
                 try SessionManager.shared.replaceMessages(messageService.messages)
                 messages.append(ChatMessage(role: .system,
                     content: "Session saved: \(session.name) [\(session.id.uuidString.prefix(8))]"))
@@ -646,6 +663,46 @@ struct MainView: @preconcurrency View {
             return ChatMessage(role: .system, content: text)
         case .tool:
             return ChatMessage(role: .toolResult, content: text)
+        }
+    }
+}
+
+@MainActor
+private struct UserQuestionRequestView: @preconcurrency View {
+    let question: UserQuestion
+    let onSubmit: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("? \(question.header)")
+                    .foregroundColor(.cyan)
+                    .bold()
+                Text(" \(question.question)")
+                    .foregroundColor(.white)
+            }
+
+            ForEach(question.options.indices, id: \.self) { index in
+                let option = question.options[index]
+                Text("  \(index + 1). \(option.label) — \(option.description)")
+                    .foregroundColor(.white)
+            }
+
+            if !question.options.isEmpty {
+                Text(question.multiSelect
+                    ? "  Enter numbers separated by commas, or type a custom answer"
+                    : "  Enter a number, or type a custom answer")
+                    .foregroundColor(.white)
+                    .italic()
+            }
+
+            HStack {
+                Text("  Answer:")
+                    .foregroundColor(.green)
+                    .bold()
+                Text(" ")
+                TextField(placeholder: "Your answer", action: onSubmit)
+            }
         }
     }
 }

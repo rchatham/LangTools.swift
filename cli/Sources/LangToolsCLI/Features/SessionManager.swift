@@ -59,6 +59,10 @@ final class SessionManager {
     /// Current session ID
     var currentSessionId: UUID?
 
+    /// Retained so a failed initialization can be surfaced by the next
+    /// throwing persistence operation instead of being silently ignored.
+    private var directoryPreparationError: Error?
+
     /// Auto-save interval in seconds
     var autoSaveInterval: TimeInterval = 30
 
@@ -67,17 +71,17 @@ final class SessionManager {
         .appendingPathComponent("sessions")) {
         self.sessionsDirectory = sessionsDirectory
 
-        // Ensure directory exists
-        try? FileManager.default.createDirectory(
-            at: sessionsDirectory,
-            withIntermediateDirectories: true
-        )
+        do {
+            try prepareSessionsDirectory()
+        } catch {
+            directoryPreparationError = error
+        }
     }
 
     // MARK: - Session Operations
 
     /// Create a new session
-    func createSession(name: String? = nil, workingDirectory: String, model: String) -> SavedSession {
+    func createSession(name: String? = nil, workingDirectory: String, model: String) throws -> SavedSession {
         let session = SavedSession(
             id: UUID(),
             name: name ?? generateSessionName(),
@@ -92,16 +96,15 @@ final class SessionManager {
             )
         )
 
+        // Do not activate the session until its initial snapshot is durable.
+        try saveSession(session)
         currentSessionId = session.id
-
-        // Save immediately
-        try? saveSession(session)
-
         return session
     }
 
     /// Load a session by ID
     func loadSession(id: UUID) throws -> SavedSession {
+        try prepareSessionsDirectory()
         let fileURL = sessionsDirectory.appendingPathComponent("\(id.uuidString).json")
 
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
@@ -116,6 +119,7 @@ final class SessionManager {
 
     /// Save a session
     func saveSession(_ session: SavedSession) throws {
+        try prepareSessionsDirectory()
         let fileURL = sessionsDirectory.appendingPathComponent("\(session.id.uuidString).json")
         var session = session
         session.updatedAt = Date()
@@ -126,10 +130,17 @@ final class SessionManager {
 
         let data = try encoder.encode(session)
         try data.write(to: fileURL, options: .atomic)
+        // Atomic writes may replace the inode, so enforce the mode after every
+        // write rather than only when the session is first created.
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: fileURL.path
+        )
     }
 
     /// Delete a session
     func deleteSession(id: UUID) throws {
+        try prepareSessionsDirectory()
         let fileURL = sessionsDirectory.appendingPathComponent("\(id.uuidString).json")
 
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
@@ -145,6 +156,7 @@ final class SessionManager {
 
     /// List all saved sessions
     func listSessions() throws -> [SavedSession] {
+        try prepareSessionsDirectory()
         let files = try FileManager.default.contentsOfDirectory(
             at: sessionsDirectory,
             includingPropertiesForKeys: [.contentModificationDateKey],
@@ -267,6 +279,25 @@ final class SessionManager {
     }
 
     // MARK: - Helpers
+
+    private func prepareSessionsDirectory() throws {
+        do {
+            try FileManager.default.createDirectory(
+                at: sessionsDirectory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            // createDirectory leaves an existing directory's mode unchanged.
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: sessionsDirectory.path
+            )
+            directoryPreparationError = nil
+        } catch {
+            directoryPreparationError = error
+            throw error
+        }
+    }
 
     private func generateSessionName() -> String {
         let formatter = DateFormatter()

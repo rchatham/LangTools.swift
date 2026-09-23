@@ -515,9 +515,9 @@ final class ChatFlowTests: XCTestCase {
 
     // MARK: - Session Manager Integration Tests
 
-    func testSessionManagerCreatesSession() {
+    func testSessionManagerCreatesSession() throws {
         let manager = SessionManager.shared
-        let session = manager.createSession(
+        let session = try manager.createSession(
             name: "Test Session",
             workingDirectory: "/tmp",
             model: "test-model"
@@ -531,7 +531,7 @@ final class ChatFlowTests: XCTestCase {
 
     func testSessionManagerSavesAndLoadsSession() throws {
         let manager = SessionManager.shared
-        let session = manager.createSession(
+        let session = try manager.createSession(
             name: "Persistence Test",
             workingDirectory: "/tmp",
             model: "test-model"

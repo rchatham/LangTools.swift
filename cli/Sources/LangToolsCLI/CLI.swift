@@ -91,6 +91,10 @@ struct CLI {
             }
         }
 
+        // Configure credentials before choosing a UI so environment-only keys
+        // are available to both the SwiftTUI and traditional CLI paths.
+        loadAPIKeysFromEnvironment()
+
         let runMode = CLIRunMode.current
         ansiColorsEnabled = runMode.isInteractive
 
@@ -99,6 +103,7 @@ struct CLI {
 
         if useTUI {
             let toolExecutionState = await MainActor.run { ToolExecutionState() }
+            await installTUIQuestionHandler()
             await ToolApprovalRouter.shared.installTUIHandler { toolName, parameters in
                 let request = await MainActor.run {
                     toolExecutionState.requestApproval(
@@ -126,6 +131,8 @@ struct CLI {
             #else
             Application(rootView: rootView).start()
             #endif
+
+            await removeTUIQuestionHandler()
         } else {
             try await runTraditionalCLI(runMode: runMode)
         }
@@ -217,7 +224,6 @@ struct CLI {
     }
 
     static func runTraditionalCLI(runMode: CLIRunMode) async throws {
-        loadAPIKeysFromEnvironment()
         await networkClient.fetchOllamaModels()
         try await checkAndRequestAPIKeys(runMode: runMode)
 
@@ -295,27 +301,49 @@ struct CLI {
         }
     }
 
+    static func installTUIQuestionHandler() async {
+        await UserQuestionRouter.shared.installTUIHandler { question in
+            await UserQuestionManager.shared.askQuestions([question])
+        }
+    }
+
+    static func removeTUIQuestionHandler() async {
+        await UserQuestionRouter.shared.removeTUIHandler()
+        await MainActor.run { UserQuestionManager.shared.cancel() }
+    }
+
     // MARK: - Environment variable API key loading
 
-    static func loadAPIKeysFromEnvironment() {
-        let envMap: [(APIService, String)] = [
-            (.anthropic, "ANTHROPIC_API_KEY"),
-            (.openAI,    "OPENAI_API_KEY"),
-            (.xAI,       "XAI_API_KEY"),
-            (.gemini,    "GEMINI_API_KEY"),
-        ]
-        for (service, envVar) in envMap {
-            if let key = ProcessInfo.processInfo.environment[envVar], !key.isEmpty {
-                // Only set if not already stored (env acts as a fallback)
-                if UserDefaults.getApiKey(for: service) == nil {
-                    try? networkClient.updateApiKey(key, for: service)
-                }
+    static func loadAPIKeysFromEnvironment(
+        _ environment: [String: String] = ProcessInfo.processInfo.environment
+    ) {
+        for (service, key) in apiKeysFromEnvironment(environment) {
+            // Only set if not already stored (env acts as a fallback).
+            if UserDefaults.getApiKey(for: service) == nil {
+                try? networkClient.updateApiKey(key, for: service)
             }
         }
+
         // Allow overriding the Ollama base URL via OLLAMA_HOST (e.g. http://192.168.1.10:11434)
-        if let host = ProcessInfo.processInfo.environment["OLLAMA_HOST"], !host.isEmpty,
+        if let host = environment["OLLAMA_HOST"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !host.isEmpty,
            let url = URL(string: host) {
             networkClient.registerOllama(baseURL: url)
+        }
+    }
+
+    static func apiKeysFromEnvironment(_ environment: [String: String]) -> [APIService: String] {
+        let variableByService: [APIService: String] = [
+            .anthropic: "ANTHROPIC_API_KEY",
+            .openAI: "OPENAI_API_KEY",
+            .xAI: "XAI_API_KEY",
+            .gemini: "GEMINI_API_KEY",
+        ]
+
+        return variableByService.reduce(into: [:]) { result, entry in
+            guard let key = environment[entry.value]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !key.isEmpty else { return }
+            result[entry.key] = key
         }
     }
 
@@ -424,12 +452,12 @@ struct CLI {
     static func handleSaveCommand(_ command: SlashCommand) async {
         let name = command.arguments.first
         let wd = FileManager.default.currentDirectoryPath
-        let session = SessionManager.shared.createSession(
-            name: name,
-            workingDirectory: wd,
-            model: UserDefaults.model.rawValue
-        )
         do {
+            let session = try SessionManager.shared.createSession(
+                name: name,
+                workingDirectory: wd,
+                model: UserDefaults.model.rawValue
+            )
             try SessionManager.shared.replaceMessages(messageService.messages)
             print("Session saved: \(session.name) [\(session.id.uuidString.prefix(8))]".green)
         } catch {

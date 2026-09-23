@@ -87,7 +87,11 @@ class ScrollControl: Control {
         // control reports its full (scrollable) height.
         let contentSize = contentControl.size(proposedSize: Size(width: size.width, height: .infinity))
         contentControl.layout(size: contentSize)
-        if pinnedToBottom || ScrollControl.consumeFollowRequest() {
+        // Drain one pending follow request per layout pass regardless of the
+        // pinned state: requests queued while already pinned must not linger
+        // and hijack the user's next explicit scroll (Home/PageUp).
+        let followRequested = ScrollControl.consumeFollowRequest()
+        if pinnedToBottom || followRequested {
             pinnedToBottom = true
             contentOffset = ScrollMath.maxOffset(contentHeight: contentSize.height, viewport: size.height)
         } else {
@@ -104,6 +108,7 @@ class ScrollControl: Control {
         } else if contentOffset < destination - layer.frame.size.height + 1 {
             contentOffset = destination - layer.frame.size.height + 1
         }
+        applyOffsetToLayer()
     }
 
     /// Scroll `lines` rows (positive = towards older content at the top).
@@ -113,16 +118,29 @@ class ScrollControl: Control {
         let maxOffset = ScrollMath.maxOffset(contentHeight: contentControl.layer.frame.size.height, viewport: layer.frame.size.height)
         contentOffset = ScrollMath.clampOffset(proposed, contentHeight: contentControl.layer.frame.size.height, viewport: layer.frame.size.height)
         pinnedToBottom = proposed >= maxOffset
-        layer.invalidate()
+        applyOffsetToLayer()
     }
 
     func scrollToBottom() {
+        contentOffset = ScrollMath.maxOffset(
+            contentHeight: contentControl.layer.frame.size.height,
+            viewport: layer.frame.size.height
+        )
         pinnedToBottom = true
-        scrollBy(lines: .infinity)
+        applyOffsetToLayer()
     }
 
     func scrollToTop() {
+        contentOffset = 0
         pinnedToBottom = false
-        scrollBy(lines: .infinity)
+        applyOffsetToLayer()
+    }
+
+    /// Scroll keys run outside `layout(size:)`, so the child layer position
+    /// must be re-applied here: invalidation re-renders with the live frame
+    /// but does not re-run layout.
+    private func applyOffsetToLayer() {
+        contentControl.layer.frame.position.line = -contentOffset
+        layer.invalidate()
     }
 }
