@@ -129,7 +129,12 @@ public extension Array<Message> {
             let calls = m.toolCalls.filter { $0.status != .pending }
             guard !calls.isEmpty else { return [OpenAI.Message(role: m.role, content: m.text ?? "")] }
             let toolCalls = calls.enumerated().map { idx, call in OpenAI.Message.ToolCall(index: idx, id: call.id, type: .function, function: .init(name: call.name, arguments: call.arguments ?? "{}")) }
-            return [OpenAI.Message(tool_selection: toolCalls)] + calls.map { OpenAI.Message(tool_selection_id: $0.id, result: $0.result ?? "") }
+            let assistant = try! OpenAI.Message(
+                role: .assistant,
+                content: m.text.map(OpenAI.Message.Content.string) ?? .null,
+                tool_calls: toolCalls
+            )
+            return [assistant] + calls.map { OpenAI.Message(tool_selection_id: $0.id, result: $0.result ?? "") }
         }
     }
 
@@ -138,9 +143,15 @@ public extension Array<Message> {
             guard m.role != .system else { return [] }
             let calls = m.toolCalls.filter { $0.status != .pending }
             guard !calls.isEmpty else { return [Anthropic.Message(role: .init(m.role), content: m.text ?? "")] }
+            let text: [Anthropic.Message.Content.ContentType]
+            if let messageText = m.text, !messageText.isEmpty {
+                text = [.text(.init(text: messageText))]
+            } else {
+                text = []
+            }
             let use = calls.map { Anthropic.Message.Content.ContentType.toolUse(.init(id: $0.id, name: $0.name, input: $0.arguments ?? "{}")) }
             let results = calls.map { Anthropic.Message.Content.ContentType.toolResult(.init(tool_selection_id: $0.id, result: $0.result ?? "", is_error: $0.status == .failure)) }
-            return [Anthropic.Message(role: .assistant, content: .array(use)), Anthropic.Message(role: .user, content: .array(results))]
+            return [Anthropic.Message(role: .assistant, content: .array(text + use)), Anthropic.Message(role: .user, content: .array(results))]
         }
     }
 
@@ -372,6 +383,21 @@ extension Message {
                     )
                 )
             }
+        }
+    }
+
+    /// Marks tool calls that never emitted a completion as failed while leaving
+    /// already completed calls untouched.
+    public func failPendingToolCalls(reason: String) {
+        for index in toolCalls.indices where toolCalls[index].status == .pending {
+            let call = toolCalls[index]
+            toolCalls[index] = ChatToolCall(
+                id: call.id,
+                name: call.name,
+                arguments: call.arguments,
+                status: .failure,
+                result: reason
+            )
         }
     }
 

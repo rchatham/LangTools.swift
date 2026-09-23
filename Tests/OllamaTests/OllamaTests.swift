@@ -385,6 +385,32 @@ class OllamaTests: XCTestCase {
         XCTAssertEqual(response.status, "success")
     }
 
+    func testChatRequestFactoryPreservesNativeToolCallHistory() throws {
+        let toolCall = Ollama.ChatToolCall(function: .init(
+            name: "calculate",
+            arguments: ["expression": .string("1+1")]
+        ))
+        let messages = [
+            Ollama.Message(role: .assistant, content: "Let me check.", tool_calls: [toolCall]),
+            Ollama.Message(role: .tool, content: "2")
+        ]
+
+        let genericRequest = try Ollama.chatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: messages,
+            tools: nil,
+            responseSchema: nil,
+            toolEventHandler: { _ in }
+        )
+        let request = try XCTUnwrap(genericRequest as? Ollama.ChatRequest)
+
+        XCTAssertEqual(request.messages.count, 2)
+        XCTAssertEqual(request.messages[0].tool_calls?.first?.name, "calculate")
+        XCTAssertEqual(request.messages[0].tool_calls?.first?.function.arguments["expression"]?.stringValue, "1+1")
+        XCTAssertEqual(request.messages[1].role, .tool)
+        XCTAssertEqual(request.messages[1].content.text, "2")
+    }
+
     func testChat() async throws {
         MockURLProtocol.setHandler(for: Ollama.ChatRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")

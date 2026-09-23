@@ -31,6 +31,7 @@ final class ToolCallHistoryReplayTests: XCTestCase {
 
         XCTAssertEqual(msgs.count, 2)
         XCTAssertEqual(msgs[0].role, .assistant)
+        XCTAssertEqual(msgs[0].content.string, "Let me check.")
         XCTAssertEqual(msgs[0].tool_calls?.count, 1)
         XCTAssertEqual(msgs[0].tool_calls?[0].id, "call-1")
         XCTAssertEqual(msgs[0].tool_calls?[0].function.name, "calculate")
@@ -76,7 +77,18 @@ final class ToolCallHistoryReplayTests: XCTestCase {
 
         XCTAssertEqual(msgs.count, 2)
         XCTAssertEqual(msgs[0].role, .assistant)
+        XCTAssertEqual(msgs[0].content.string, "checking")
+        XCTAssertEqual(msgs[0].tool_selection?.count, 1)
         XCTAssertEqual(msgs[1].role, .user)
+    }
+
+    func testAnthropicReplayOmitsEmptyTextBlockBeforeToolUse() {
+        let msgs = [message(text: "", toolCalls: [
+            completed("calculate", id: "call-1", result: "2")
+        ])].toAnthropicMessages()
+
+        XCTAssertEqual(msgs[0].content.array?.count, 1)
+        XCTAssertEqual(msgs[0].tool_selection?.count, 1)
     }
 
     func testAnthropicReplayFiltersSystemMessages() {
@@ -116,5 +128,24 @@ final class ToolCallHistoryReplayTests: XCTestCase {
         XCTAssertEqual(arguments["multiSelect"]?.boolValue, false)
         XCTAssertEqual(arguments["options"]?.arrayValue?.count, 0)
         XCTAssertEqual(arguments["limit"]?.intValue, 3)
+    }
+
+    func testOllamaAgentContextRetainsNativeToolHistory() throws {
+        let model = try XCTUnwrap(Ollama.Model(rawValue: "llama3.2"))
+        let context = try NetworkClient().agentContext(
+            messages: [message(text: "checking", toolCalls: [
+                completed("calculate", id: "ollama", args: #"{"expression":"1+1"}"#, result: "2")
+            ])],
+            model: .ollama(model),
+            eventHandler: { _ in }
+        )
+
+        XCTAssertEqual(context.messages.count, 2)
+        let assistant = try XCTUnwrap(context.messages[0] as? Ollama.Message)
+        XCTAssertEqual(assistant.tool_calls?.first?.name, "calculate")
+        XCTAssertEqual(assistant.tool_calls?.first?.function.arguments["expression"]?.stringValue, "1+1")
+        let result = try XCTUnwrap(context.messages[1] as? Ollama.Message)
+        XCTAssertEqual(result.role, .tool)
+        XCTAssertEqual(result.content.text, "2")
     }
 }

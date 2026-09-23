@@ -25,13 +25,10 @@ public class MessageService {
     private(set) var conversationID = UUID()
     private var activeSends: [UUID: [UUID: Task<Void, Error>]] = [:]
 
-    /// Transient flag set when a tool call completes during the current send,
-    /// forcing the follow-up response to start a new assistant message.
-    @ObservationIgnored private var toolBreakOccurred: Bool = false
-    /// Ordered buffer of tool events fired by LangTools during a completion
-    /// cycle. Drained on the main actor before each streamed chunk is processed
-    /// so parallel tool calls all attach to the same message in order.
-    @ObservationIgnored nonisolated(unsafe) private var pendingToolEvents: [LangToolsToolEvent] = []
+    /// Ordered buffers of tool events fired by LangTools during each completion
+    /// cycle. Events are keyed by send so concurrent streams cannot consume or
+    /// discard one another's tool history.
+    @ObservationIgnored nonisolated(unsafe) private var pendingToolEventsBySendID: [UUID: [LangToolsToolEvent]] = [:]
     @ObservationIgnored nonisolated(unsafe) private let toolEventLock = NSLock()
 
     /// Callback fired when a message is added or modified (for persistence)
@@ -75,7 +72,8 @@ public class MessageService {
             try await performSend(
                 message: message,
                 stream: stream,
-                conversationID: requestConversationID
+                conversationID: requestConversationID,
+                sendID: sendID
             )
         }
         activeSends[requestConversationID, default: [:]][sendID] = operation
@@ -88,13 +86,15 @@ public class MessageService {
         }
     }
 
-    private func performSend(message: String, stream: Bool, conversationID requestConversationID: UUID) async throws {
+    private func performSend(message: String, stream: Bool, conversationID requestConversationID: UUID, sendID: UUID) async throws {
         guard conversationID == requestConversationID else { throw CancellationError() }
-        // Reset per-send tool state so a prior send's break can't leak into this one.
-        toolBreakOccurred = false
-        clearPendingToolEvents()
+        beginToolEventBuffer(for: sendID)
+        defer { clearPendingToolEvents(for: sendID) }
+
         let userMessage = Message(text: message, role: .user)
         messages.append(userMessage)
+        var assistantMessageID: UUID?
+        var assistantMessageIDs: Set<UUID> = []
 
         do {
             var currentMessages = messages
@@ -104,9 +104,9 @@ public class MessageService {
 
             // Buffer tool events fired by LangTools; they are drained in order on
             // the main actor before each chunk below so parallel tool calls all
-            // attach to the same assistant message.
+            // attach to this send's assistant message.
             let toolEventHandler: (LangToolsToolEvent) -> Void = { [weak self] event in
-                self?.enqueueToolEvent(event)
+                self?.enqueueToolEvent(event, for: sendID)
             }
 
             let selectedModel = UserDefaults.model
@@ -132,57 +132,66 @@ public class MessageService {
                 )
             }
 
-            var content: String = ""
+            var content = ""
             for try await chunk in responseStream {
                 guard conversationID == requestConversationID else { throw CancellationError() }
-                // Apply any tool events that fired since the last chunk (in order)
-                // before processing this chunk, so a parallel batch of tool calls
-                // all land on the same message and the follow-up text starts a new one.
-                drainToolEvents()
-
-                content += chunk
-                // Continue the last message only when it is a plain assistant text
-                // message that has not been split by a tool-call break.
-                let lastIsStreamable = messages.last.map { $0.isAssistant && $0.isStringContent && $0.toolCalls.isEmpty && !toolBreakOccurred } ?? false
-                if !lastIsStreamable {
-                    if chunk.isEmpty { continue }
-                    content = chunk.trimingLeadingNewlines()
+                // Apply this send's tool events before its next chunk. A completed
+                // call splits follow-up text into a new assistant message.
+                if drainToolEvents(
+                    for: sendID,
+                    assistantMessageID: &assistantMessageID,
+                    assistantMessageIDs: &assistantMessageIDs
+                ) {
+                    if let assistantMessageID,
+                       !ToolSettings.shared.keepsToolCallsInHistory,
+                       let toolMessage = messages.first(where: { $0.uuid == assistantMessageID }) {
+                        toolMessage.toolCalls = []
+                    }
+                    assistantMessageID = nil
+                    content = ""
                 }
-                let messageUuid = if lastIsStreamable, let last = messages.last { last.uuid } else { UUID() }
+
+                guard !chunk.isEmpty else { continue }
+                content += assistantMessageID == nil ? chunk.trimingLeadingNewlines() : chunk
                 let trimmed = content.trimingTrailingNewlines()
 
-                if let last = messages.last, last.uuid == messageUuid {
-                    // Update the existing assistant message in place so tool-call
-                    // state accumulated on it is preserved.
-                    last.contentType = .string(trimmed)
+                if let assistantMessageID,
+                   let assistantMessage = messages.first(where: { $0.uuid == assistantMessageID }) {
+                    assistantMessage.contentType = .string(trimmed)
                 } else {
-                    // Starting a new assistant message. If a tool-call break
-                    // caused the split, the previous message retains its tool
-                    // cards unless keepsToolCallsInHistory is disabled.
-                    if toolBreakOccurred, let last = messages.last {
-                        if !ToolSettings.shared.keepsToolCallsInHistory {
-                            last.toolCalls = []
-                        }
-                        toolBreakOccurred = false
-                    }
-                    messages.append(Message(uuid: messageUuid, role: .assistant, contentType: .string(trimmed)))
+                    let assistantMessage = Message(role: .assistant, contentType: .string(trimmed))
+                    messages.append(assistantMessage)
+                    assistantMessageID = assistantMessage.uuid
+                    assistantMessageIDs.insert(assistantMessage.uuid)
                 }
             }
             try Task.checkCancellation()
             guard conversationID == requestConversationID else { throw CancellationError() }
             // Flush any tool events that fired after the last chunk (e.g. a tool
             // call with no follow-up response).
-            drainToolEvents()
+            _ = drainToolEvents(
+                for: sendID,
+                assistantMessageID: &assistantMessageID,
+                assistantMessageIDs: &assistantMessageIDs
+            )
+            failPendingToolCalls(
+                in: assistantMessageIDs,
+                reason: "Tool call ended without a completion result."
+            )
         } catch {
             guard conversationID == requestConversationID else { throw CancellationError() }
-            // Drop any tool events that fired but were never drained so they don't
-            // attach to a future send's assistant message.
-            clearPendingToolEvents()
-            if messages.last?.isAssistant ?? false {
-                // TODO: - Should mark the last message as errored
+            // A nested follow-up can fail after tools have already emitted their
+            // lifecycle events but before yielding text. Preserve those events and
+            // mark every incomplete call owned by this send as failed.
+            _ = drainToolEvents(
+                for: sendID,
+                assistantMessageID: &assistantMessageID,
+                assistantMessageIDs: &assistantMessageIDs
+            )
+            if assistantMessageIDs.isEmpty {
+                messages.removeAll(where: { $0.uuid == userMessage.uuid })
             } else {
-                // remove last user message
-                messages.removeLast()
+                failPendingToolCalls(in: assistantMessageIDs, reason: error.localizedDescription)
             }
             throw error
         }
@@ -219,42 +228,72 @@ public class MessageService {
 }
 
 extension MessageService {
+    /// Registers a send before its callback can emit tool events.
+    nonisolated func beginToolEventBuffer(for sendID: UUID) {
+        toolEventLock.lock()
+        pendingToolEventsBySendID[sendID] = []
+        toolEventLock.unlock()
+    }
+
     /// Buffers a tool event in arrival order for ordered main-actor draining.
     /// Called from LangTools' completion loop (off the main actor); the lock
     /// makes this safe without main-actor isolation.
-    nonisolated func enqueueToolEvent(_ event: LangToolsToolEvent) {
+    nonisolated func enqueueToolEvent(_ event: LangToolsToolEvent, for sendID: UUID) {
         toolEventLock.lock()
-        pendingToolEvents.append(event)
-        toolEventLock.unlock()
-    }
-
-    /// Clears any buffered tool events without applying them.
-    nonisolated func clearPendingToolEvents() {
-        toolEventLock.lock()
-        pendingToolEvents.removeAll()
-        toolEventLock.unlock()
-    }
-
-    /// Applies all buffered tool events (in order) to the current assistant
-    /// message on the main actor, then clears the buffer. Called before each
-    /// streamed chunk so parallel tool calls attach to the same message. If the
-    /// model made a tool call with no preceding text (no assistant message yet),
-    /// an assistant message is created to hold the tool-call cards.
-    func drainToolEvents() {
-        toolEventLock.lock()
-        let events = pendingToolEvents
-        pendingToolEvents.removeAll()
-        toolEventLock.unlock()
-        guard !events.isEmpty else { return }
-        if messages.last?.isAssistant != true {
-            messages.append(Message(role: .assistant, contentType: .null))
+        if pendingToolEventsBySendID[sendID] != nil {
+            pendingToolEventsBySendID[sendID, default: []].append(event)
         }
-        guard let last = messages.last, last.isAssistant else { return }
+        toolEventLock.unlock()
+    }
+
+    /// Clears one send's buffered tool events without affecting concurrent sends.
+    nonisolated func clearPendingToolEvents(for sendID: UUID) {
+        toolEventLock.lock()
+        pendingToolEventsBySendID.removeValue(forKey: sendID)
+        toolEventLock.unlock()
+    }
+
+    /// Applies one send's buffered events to its current assistant message and
+    /// returns whether a completed call requires follow-up text to start a new
+    /// message. If no assistant message exists yet, one is created for the cards.
+    @discardableResult
+    func drainToolEvents(
+        for sendID: UUID,
+        assistantMessageID: inout UUID?,
+        assistantMessageIDs: inout Set<UUID>
+    ) -> Bool {
+        toolEventLock.lock()
+        let events = pendingToolEventsBySendID[sendID] ?? []
+        if pendingToolEventsBySendID[sendID] != nil {
+            pendingToolEventsBySendID[sendID] = []
+        }
+        toolEventLock.unlock()
+        guard !events.isEmpty else { return false }
+
+        let assistantMessage: Message
+        if let assistantMessageID,
+           let existingMessage = messages.first(where: { $0.uuid == assistantMessageID }) {
+            assistantMessage = existingMessage
+        } else {
+            assistantMessage = Message(role: .assistant, contentType: .null)
+            messages.append(assistantMessage)
+            assistantMessageID = assistantMessage.uuid
+        }
+        assistantMessageIDs.insert(assistantMessage.uuid)
+
+        var completedToolCall = false
         for event in events {
-            last.applyToolEvent(event)
+            assistantMessage.applyToolEvent(event)
             if case .toolCompleted = event {
-                toolBreakOccurred = true
+                completedToolCall = true
             }
+        }
+        return completedToolCall
+    }
+
+    private func failPendingToolCalls(in assistantMessageIDs: Set<UUID>, reason: String) {
+        for message in messages where assistantMessageIDs.contains(message.uuid) {
+            message.failPendingToolCalls(reason: reason)
         }
     }
 }

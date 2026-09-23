@@ -11,7 +11,8 @@ extension Ollama {
             print("[LangTools] ⚠️ Ollama does not support structured output. The responseSchema parameter will be ignored.")
         }
         #endif
-        return Ollama.ChatRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { OpenAI.Tool($0) }, toolEventHandler: toolEventHandler)
+        let providerMessages = messages.map { ($0 as? Message) ?? Message($0) }
+        return Ollama.ChatRequest(model: model, messages: providerMessages, tools: tools?.map { OpenAI.Tool($0) }, toolEventHandler: toolEventHandler)
     }
 
     public struct ChatRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest {

@@ -22,7 +22,9 @@ public extension Anthropic {
     }
 
     static func toAnthropicMessages(_ messages: [any LangToolsMessage]) -> [Anthropic.Message] {
-        return messages.filter { !$0.role.isSystem && !$0.role.isTool }.map { Anthropic.Message($0) }
+        messages
+            .filter { !$0.role.isSystem && !$0.role.isTool }
+            .map { ($0 as? Anthropic.Message) ?? Anthropic.Message($0) }
     }
 
     static func toAnthropicSystemMessage(_ messages: [any LangToolsMessage]) -> String? {
