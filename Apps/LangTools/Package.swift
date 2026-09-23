@@ -50,6 +50,7 @@ let package = Package(
                 .product(name: "XAI", package: "langtools.swift"),
                 .product(name: "Gemini", package: "langtools.swift"),
                 .product(name: "Ollama", package: "langtools.swift"),
+                .product(name: "ChatUI", package: "ChatUI"),
                 "ToolKit",
                 "KeychainAccess",
             ],

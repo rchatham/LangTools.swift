@@ -76,7 +76,7 @@ struct LangToolsApp: App {
                 iconName: "magnifyingglass",
                 isAgent: true
             ),
-        ])
+        ] + BuiltInTools.configurations())
     }
 
     @MainActor
