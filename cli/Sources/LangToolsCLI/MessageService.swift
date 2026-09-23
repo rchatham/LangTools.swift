@@ -161,10 +161,12 @@ class MessageService: ObservableObject {
         silent: Bool = false
     ) throws -> AsyncThrowingStream<String, Error> {
         // The working-directory grounding message is not stored in the visible
-        // history; it is prepended to every outgoing request instead.
-        let outgoing = messages.contains(where: { $0.role == .system })
-            ? messages
-            : [Self.contextSystemMessage(cwd: FileManager.default.currentDirectoryPath)] + messages
+        // history; it is prepended to every outgoing request instead. Other
+        // system messages (for example tool warnings) must not suppress it.
+        let outgoing = Self.messagesWithContext(
+            messages,
+            cwd: FileManager.default.currentDirectoryPath
+        )
         let request = networkClient.request(
             messages: outgoing,
             model: model,
@@ -371,6 +373,10 @@ class MessageService: ObservableObject {
         for line in lines {
             print("  \(line)")
         }
+    }
+
+    static func messagesWithContext(_ messages: [Message], cwd: String) -> [Message] {
+        [contextSystemMessage(cwd: cwd)] + messages
     }
 
     /// Grounding context so the model resolves project-relative paths against

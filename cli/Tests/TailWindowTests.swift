@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 import Ollama
 @testable import CLI
@@ -111,6 +112,51 @@ final class TailWindowTests: XCTestCase {
         XCTAssertTrue(text.contains("current working directory"))
     }
 
+    func testExistingSystemMessageDoesNotSuppressWorkingDirectoryContext() {
+        let warning = Message(text: "Tool warning", role: .system)
+        let outgoing = MessageService.messagesWithContext(
+            [warning, Message(text: "Hello", role: .user)],
+            cwd: "/tmp/example-repo"
+        )
+
+        XCTAssertEqual(outgoing.first?.role, .system)
+        XCTAssertTrue(outgoing.first?.text?.contains("/tmp/example-repo") == true)
+        XCTAssertEqual(outgoing.dropFirst().first?.text, "Tool warning")
+    }
+
+    func testAnthropicRequestSeparatesSystemMessagesWithoutFatalRoleConversion() throws {
+        let messages = [
+            Message(text: "cwd context", role: .system),
+            Message(text: "developer instruction", role: .developer),
+            Message(text: "Hello", role: .user),
+            Message(text: "Hi", role: .assistant),
+        ]
+
+        XCTAssertNil(Role.system.toAnthropicRole())
+        XCTAssertNil(Role.developer.toAnthropicRole())
+        XCTAssertEqual(messages.toAnthropicMessages().map(\.role.rawValue), ["user", "assistant"])
+        XCTAssertEqual(
+            messages.toAnthropicSystemMessage(),
+            "cwd context\n---\ndeveloper instruction"
+        )
+
+        let request = NetworkClient().request(
+            messages: messages,
+            model: .anthropic(.claude46Sonnet),
+            stream: false,
+            tools: nil,
+            toolChoice: nil
+        )
+        let encoded = try JSONEncoder().encode(request)
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(
+            payload["system"] as? String,
+            "cwd context\n---\ndeveloper instruction"
+        )
+        let payloadMessages = try XCTUnwrap(payload["messages"] as? [[String: Any]])
+        XCTAssertEqual(payloadMessages.compactMap { $0["role"] as? String }, ["user", "assistant"])
+    }
+
     // MARK: - --model argument parsing
 
     func testModelFromArgumentAcceptsBareIDs() {
@@ -143,5 +189,17 @@ final class TailWindowTests: XCTestCase {
         XCTAssertEqual(CLI.requestedModelArgument(["langtools", "--model", "llama3.2:latest"]), "llama3.2:latest")
         XCTAssertEqual(CLI.model(fromArgument: CLI.requestedModelArgument(["langtools", "--model=glm-5.2:cloud"]) ?? ""), .ollama(Ollama.Model(rawValue: "glm-5.2:cloud")!))
         XCTAssertNil(CLI.requestedModelArgument(["langtools", "--tui"]))
+    }
+}
+
+private final class FixedHeightControl: Control {
+    private let height: Extended
+
+    init(height: Extended) {
+        self.height = height
+    }
+
+    override func size(proposedSize: Size) -> Size {
+        Size(width: proposedSize.width, height: height)
     }
 }

@@ -55,7 +55,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }
     ) -> any LangToolsChatRequest & LangToolsStreamableRequest {
         if case .anthropic(let model) = model {
-            return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice(), toolEventHandler: toolEventHandler)
+            return Anthropic.MessageRequest(model: model, messages: messages.toAnthropicMessages(), stream: stream, system: messages.toAnthropicSystemMessage(), tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice(), toolEventHandler: toolEventHandler)
         } else if case .openAI(let model) = model {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice, toolEventHandler: toolEventHandler)
         } else if case .xAI(let model) = model {
@@ -65,7 +65,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         } else if case .ollama(let model) = model {
             return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), stream: stream, tools: tools, toolEventHandler: toolEventHandler)
         } else {
-            return Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages.toAnthropicMessages(), stream: stream, tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice(), toolEventHandler: toolEventHandler)
+            return Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages.toAnthropicMessages(), stream: stream, system: messages.toAnthropicSystemMessage(), tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice(), toolEventHandler: toolEventHandler)
         }
     }
 

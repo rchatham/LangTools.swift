@@ -68,9 +68,20 @@ extension Array<Message> {
     }
 
     func toAnthropicMessages() -> [Anthropic.Message] {
-        return self.map { message in
-            Anthropic.Message(role: message.role.toAnthropicRole(), content: message.text ?? "")
+        compactMap { message in
+            guard let role = message.role.toAnthropicRole() else { return nil }
+            return Anthropic.Message(role: role, content: message.text ?? "")
         }
+    }
+
+    func toAnthropicSystemMessage() -> String? {
+        let systemMessages = compactMap { message -> String? in
+            guard message.role == .system || message.role == .developer,
+                  let text = message.text,
+                  !text.isEmpty else { return nil }
+            return text
+        }
+        return systemMessages.isEmpty ? nil : systemMessages.joined(separator: "\n---\n")
     }
 
     func toOllamaMessages() -> [Ollama.Message] {
@@ -100,11 +111,11 @@ extension Array<OpenAI.Tool> {
 }
 
 extension OpenAI.Message.Role {
-    func toAnthropicRole() -> Anthropic.Role {
+    func toAnthropicRole() -> Anthropic.Role? {
         switch self {
         case .assistant: return .assistant
         case .user: return .user
-        default: fatalError("role not handled ya fool!")
+        case .system, .developer, .tool: return nil
         }
     }
 }
