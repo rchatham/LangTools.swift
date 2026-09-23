@@ -10,6 +10,94 @@ import Foundation
 import LangTools
 import ToolKit
 
+private enum BufferedMessageEvent {
+    case tool(LangToolsToolEvent)
+    case agent(AgentEvent)
+}
+
+private struct AgentReplayArguments: Encodable {
+    let reason: String
+}
+
+/// Thread-safe request-scoped event storage. Provider and agent callbacks can
+/// arrive off the main actor, so they only enqueue here; rendering remains on
+/// `MessageService`'s main actor.
+private final class SendEventBuffer: @unchecked Sendable {
+    private struct State {
+        var events: [BufferedMessageEvent] = []
+        var agentCallIDCounts: [String: Int] = [:]
+    }
+
+    private let lock = NSLock()
+    private var states: [UUID: State] = [:]
+
+    func register(_ sendID: UUID) {
+        lock.withLock { states[sendID] = State() }
+    }
+
+    func registerIfNeeded(_ sendID: UUID) {
+        lock.withLock {
+            if states[sendID] == nil {
+                states[sendID] = State()
+            }
+        }
+    }
+
+    func remove(_ sendID: UUID) {
+        lock.withLock { _ = states.removeValue(forKey: sendID) }
+    }
+
+    func enqueueAgent(_ event: AgentEvent, for sendID: UUID) {
+        lock.withLock {
+            guard states[sendID] != nil else { return }
+            states[sendID]?.events.append(.agent(event))
+        }
+    }
+
+    func enqueueTool(_ event: LangToolsToolEvent, for sendID: UUID, agentToolNames: Set<String>) {
+        lock.withLock {
+            guard var state = states[sendID] else { return }
+            switch event {
+            case .toolCalled(let selection):
+                let id = selection.id ?? selection.name ?? ""
+                if agentToolNames.contains(selection.name ?? "") {
+                    if !id.isEmpty {
+                        state.agentCallIDCounts[id, default: 0] += 1
+                    }
+                    states[sendID] = state
+                    return
+                }
+            case .toolCompleted(let result):
+                let id = result?.tool_selection_id ?? ""
+                if !id.isEmpty, let count = state.agentCallIDCounts[id], count > 0 {
+                    if count == 1 {
+                        state.agentCallIDCounts.removeValue(forKey: id)
+                    } else {
+                        state.agentCallIDCounts[id] = count - 1
+                    }
+                    states[sendID] = state
+                    return
+                }
+            }
+            state.events.append(.tool(event))
+            states[sendID] = state
+        }
+    }
+
+    func takeEvents(for sendID: UUID) -> [BufferedMessageEvent] {
+        lock.withLock {
+            guard var state = states[sendID] else { return [] }
+            let events = state.events
+            state.events.removeAll(keepingCapacity: true)
+            states[sendID] = state
+            return events
+        }
+    }
+
+    var eventCount: Int {
+        lock.withLock { states.values.reduce(0) { $0 + $1.events.count } }
+    }
+}
 
 @MainActor
 @Observable
@@ -18,26 +106,20 @@ public class MessageService {
     public var messages: [Message] = [] {
         didSet {
             if let last = messages.last {
-                messageUpdatedCallback?(last)
+                notifyMessageUpdated(
+                    last,
+                    keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory
+                )
             }
         }
     }
     var tools: [Tool]?
+    @ObservationIgnored private let agents: [any Agent]
     private(set) var conversationID = UUID()
     private var activeSends: [UUID: [UUID: Task<Void, Error>]] = [:]
-
-    /// Transient flag set when a tool call completes during the current send,
-    /// forcing the follow-up response to start a new assistant message.
-    @ObservationIgnored private var toolBreakOccurred: Bool = false
-    /// Ordered buffer of tool events fired by LangTools during a completion
-    /// cycle. Drained on the main actor before each streamed chunk is processed
-    /// so parallel tool calls all attach to the same message in order.
-    @ObservationIgnored nonisolated(unsafe) private var pendingToolEvents: [LangToolsToolEvent] = []
-    @ObservationIgnored nonisolated(unsafe) private var pendingAgentEvents: [AgentEvent] = []
-    @ObservationIgnored nonisolated(unsafe) private let toolEventLock = NSLock()
-    /// ids of tool calls made by agent-wrapped tools this send, so their lifecycle
-    /// events can be skipped (agents surface their own UI via `handleAgentEvent`).
-    @ObservationIgnored nonisolated(unsafe) private var agentCallIDs: Set<String> = []
+    @ObservationIgnored private let eventBuffer = SendEventBuffer()
+    /// Retains the pre-request test/helper API without sharing production send state.
+    @ObservationIgnored private let compatibilitySendID = UUID()
 
     /// Callback fired when a message is added or modified (for persistence)
     public var messageUpdatedCallback: ((Message) -> Void)?
@@ -55,14 +137,19 @@ public class MessageService {
     /// logic are automatically picked up here.
     /// Hops to the main actor because ToolManager is @MainActor-isolated.
     @MainActor
-    var filteredTools: [Tool]? {
+    func filteredTools(for sendID: UUID) -> [Tool]? {
         guard let enabledTools = ToolManager.shared.filteredTools() else { return nil }
         let enabledNames = Set(enabledTools.map { $0.name })
-        // Agent tools come from `self.tools` (they carry the agent event handler).
-        var result: [Tool] = (tools ?? []).filter { enabledNames.contains($0.name) }
-        // Non-agent configs provide their own callbacks and are not in `self.tools`.
-        let selfToolNames = Set((tools ?? []).map { $0.name })
-        for config in ToolManager.shared.allToolConfigurations() where !config.isAgent && enabledNames.contains(config.id) && !selfToolNames.contains(config.id) {
+        let agentTools = agents
+            .filter { enabledNames.contains($0.name) }
+            .map { agent in
+                Tool(agent: agent) { [weak self] event in
+                    self?.enqueueAgentEvent(event, for: sendID)
+                }
+            }
+        var result = agentTools + (tools ?? []).filter { enabledNames.contains($0.name) }
+        let suppliedToolNames = Set(result.map { $0.name })
+        for config in ToolManager.shared.allToolConfigurations() where !config.isAgent && enabledNames.contains(config.id) && !suppliedToolNames.contains(config.id) {
             result.append(Tool(config.toTool()))
         }
         return result
@@ -70,21 +157,27 @@ public class MessageService {
 
     public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [any Agent]? = nil, tools: [Tool]? = nil) {
         self.networkClient = networkClient
-        self.tools = agents?.map { .init(agent: $0, eventHandler: handleAgentEvent) } + tools
+        self.agents = agents ?? []
+        self.tools = tools
     }
 
     public func send(message: String, stream: Bool = false) async throws {
         let requestConversationID = conversationID
         let sendID = UUID()
+        eventBuffer.register(sendID)
         let operation = Task { @MainActor in
             try await performSend(
                 message: message,
                 stream: stream,
-                conversationID: requestConversationID
+                conversationID: requestConversationID,
+                sendID: sendID
             )
         }
         activeSends[requestConversationID, default: [:]][sendID] = operation
-        defer { removeActiveSend(id: sendID, conversationID: requestConversationID) }
+        defer {
+            eventBuffer.remove(sendID)
+            removeActiveSend(id: sendID, conversationID: requestConversationID)
+        }
 
         try await withTaskCancellationHandler {
             try await operation.value
@@ -93,37 +186,23 @@ public class MessageService {
         }
     }
 
-    private func performSend(message: String, stream: Bool, conversationID requestConversationID: UUID) async throws {
+    private func performSend(message: String, stream: Bool, conversationID requestConversationID: UUID, sendID: UUID) async throws {
         guard conversationID == requestConversationID else { throw CancellationError() }
-        // Reset per-send tool state so a prior send's break can't leak into this one.
-        toolBreakOccurred = false
-        clearPendingToolEvents()
         let userMessage = Message(text: message, role: .user)
+        let userMessageID = userMessage.uuid
         messages.append(userMessage)
+        var anchorMessageID: UUID?
+        var toolBreakOccurred = false
+        let keepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
 
         do {
-            var currentMessages = messages
+            var currentMessages = requestMessages(keepsToolCallsInHistory: keepsToolCallsInHistory)
             currentMessages.insert(Message(text: systemMessage(), role: .system), at: 0)
 
-            let activeTools = filteredTools
-
-            // Agent tools surface their own UI via `handleAgentEvent`; skip their
-            // tool-call events so they don't also render as ChatToolCall cards.
-            let agentToolNames = Set(ToolManager.shared.allToolConfigurations().filter { $0.isAgent }.map { $0.id })
+            let activeTools = filteredTools(for: sendID)
+            let agentToolNames = Set(agents.map(\.name))
             let toolEventHandler: (LangToolsToolEvent) -> Void = { [weak self] event in
-                guard let self else { return }
-                switch event {
-                case .toolCalled(let sel):
-                    let id = sel.id ?? sel.name ?? ""
-                    if agentToolNames.contains(sel.name ?? "") {
-                        self.rememberAgentCall(id)
-                        return
-                    }
-                    self.enqueueToolEvent(event)
-                case .toolCompleted(let res):
-                    if self.forgetAgentCall(res?.tool_selection_id ?? "") { return }
-                    self.enqueueToolEvent(event)
-                }
+                self?.enqueueToolEvent(event, for: sendID, agentToolNames: agentToolNames)
             }
 
             let selectedModel = UserDefaults.model
@@ -149,59 +228,63 @@ public class MessageService {
                 )
             }
 
-            var content: String = ""
+            var content = ""
             for try await chunk in responseStream {
                 guard conversationID == requestConversationID else { throw CancellationError() }
-                // Apply any tool/agent events that fired since the last chunk (in order)
-                // before processing this chunk, so a parallel batch of tool calls
-                // all land on the same message and the follow-up text starts a new one.
-                drainToolEvents()
-                drainAgentEvents()
+                drainEvents(
+                    for: sendID,
+                    anchorMessageID: &anchorMessageID,
+                    toolBreakOccurred: &toolBreakOccurred,
+                    keepsToolCallsInHistory: keepsToolCallsInHistory
+                )
 
                 content += chunk
-                // Continue the last message only when it is a plain assistant text
-                // message that has not been split by a tool-call break.
-                let lastIsStreamable = messages.last.map { $0.isAssistant && $0.isStringContent && $0.toolCalls.isEmpty && !toolBreakOccurred } ?? false
-                if !lastIsStreamable {
+                let anchor = assistantMessage(withID: anchorMessageID)
+                let anchorIsStreamable = anchor.map {
+                    $0.isAssistant && $0.isStringContent && $0.toolCalls.isEmpty && !toolBreakOccurred
+                } ?? false
+                if !anchorIsStreamable {
                     if chunk.isEmpty { continue }
                     content = chunk.trimingLeadingNewlines()
                 }
-                let messageUuid = if lastIsStreamable, let last = messages.last { last.uuid } else { UUID() }
                 let trimmed = content.trimingTrailingNewlines()
 
-                if let last = messages.last, last.uuid == messageUuid {
-                    // Update the existing assistant message in place so tool-call
-                    // state accumulated on it is preserved.
-                    last.contentType = .string(trimmed)
+                if anchorIsStreamable, let anchor {
+                    anchor.contentType = .string(trimmed)
+                    notifyMessageUpdated(anchor, keepsToolCallsInHistory: keepsToolCallsInHistory)
                 } else {
-                    // Starting a new assistant message. If a tool-call break
-                    // caused the split, the previous message retains its tool
-                    // cards unless keepsToolCallsInHistory is disabled.
-                    if toolBreakOccurred, let last = messages.last {
-                        if !ToolSettings.shared.keepsToolCallsInHistory {
-                            last.toolCalls = []
-                        }
+                    if toolBreakOccurred {
+                        clearToolHistoryIfNeeded(
+                            for: anchorMessageID,
+                            keepsToolCallsInHistory: keepsToolCallsInHistory
+                        )
                         toolBreakOccurred = false
                     }
-                    messages.append(Message(uuid: messageUuid, role: .assistant, contentType: .string(trimmed)))
+                    let responseMessage = Message(role: .assistant, contentType: .string(trimmed))
+                    anchorMessageID = responseMessage.uuid
+                    messages.append(responseMessage)
                 }
             }
             try Task.checkCancellation()
             guard conversationID == requestConversationID else { throw CancellationError() }
-            // Flush any tool/agent events that fired after the last chunk (e.g. a tool
-            // call with no follow-up response).
-            drainToolEvents()
-            drainAgentEvents()
+            drainEvents(
+                for: sendID,
+                anchorMessageID: &anchorMessageID,
+                toolBreakOccurred: &toolBreakOccurred,
+                keepsToolCallsInHistory: keepsToolCallsInHistory
+            )
+            clearToolHistoryIfNeeded(
+                for: anchorMessageID,
+                keepsToolCallsInHistory: keepsToolCallsInHistory
+            )
         } catch {
             guard conversationID == requestConversationID else { throw CancellationError() }
-            // Drop any tool events that fired but were never drained so they don't
-            // attach to a future send's assistant message.
-            clearPendingToolEvents()
-            if messages.last?.isAssistant ?? false {
-                // TODO: - Should mark the last message as errored
-            } else {
-                // remove last user message
-                messages.removeLast()
+            clearToolHistoryIfNeeded(
+                for: anchorMessageID,
+                keepsToolCallsInHistory: keepsToolCallsInHistory
+            )
+            if anchorMessageID == nil {
+                messages.removeAll { $0.uuid == userMessageID }
             }
             throw error
         }
@@ -222,7 +305,9 @@ public class MessageService {
 
     public func clearMessages() {
         let previousConversationID = conversationID
-        let sendsToDrain = activeSends.removeValue(forKey: previousConversationID).map { Array($0.values) } ?? []
+        let sends = activeSends.removeValue(forKey: previousConversationID) ?? [:]
+        let sendsToDrain = Array(sends.values)
+        sends.keys.forEach { eventBuffer.remove($0) }
         conversationID = UUID()
         messages.removeAll()
         sendsToDrain.forEach { $0.cancel() }
@@ -238,106 +323,218 @@ public class MessageService {
 }
 
 extension MessageService {
-    /// Buffers a tool event in arrival order for ordered main-actor draining.
-    /// Called from LangTools' completion loop (off the main actor); the lock
-    /// makes this safe without main-actor isolation.
+    nonisolated private func enqueueToolEvent(_ event: LangToolsToolEvent, for sendID: UUID, agentToolNames: Set<String>) {
+        eventBuffer.enqueueTool(event, for: sendID, agentToolNames: agentToolNames)
+    }
+
+    nonisolated private func enqueueAgentEvent(_ event: AgentEvent, for sendID: UUID) {
+        eventBuffer.enqueueAgent(event, for: sendID)
+    }
+
+    /// Compatibility helpers used by focused mapping tests. Production callbacks
+    /// always use a request-specific send id.
     nonisolated func enqueueToolEvent(_ event: LangToolsToolEvent) {
-        toolEventLock.lock()
-        pendingToolEvents.append(event)
-        toolEventLock.unlock()
+        eventBuffer.registerIfNeeded(compatibilitySendID)
+        eventBuffer.enqueueTool(event, for: compatibilitySendID, agentToolNames: [])
     }
 
-    /// Clears any buffered tool events without applying them.
-    nonisolated func clearPendingToolEvents() {
-        toolEventLock.lock()
-        pendingToolEvents.removeAll()
-        pendingAgentEvents.removeAll()
-        agentCallIDs.removeAll()
-        toolEventLock.unlock()
+    nonisolated func handleAgentEvent(_ event: AgentEvent) {
+        eventBuffer.registerIfNeeded(compatibilitySendID)
+        eventBuffer.enqueueAgent(event, for: compatibilitySendID)
     }
 
-    /// Records a tool-call id as belonging to an agent tool so its events are skipped.
-    nonisolated func rememberAgentCall(_ id: String) {
-        guard !id.isEmpty else { return }
-        toolEventLock.lock()
-        agentCallIDs.insert(id)
-        toolEventLock.unlock()
-    }
-
-    /// Returns true (and removes the id) if the tool-call id belongs to an agent tool.
-    nonisolated func forgetAgentCall(_ id: String) -> Bool {
-        guard !id.isEmpty else { return false }
-        toolEventLock.lock()
-        defer { toolEventLock.unlock() }
-        return agentCallIDs.remove(id) != nil
-    }
-
-    /// Applies all buffered tool events (in order) to the current assistant
-    /// message on the main actor, then clears the buffer. Called before each
-    /// streamed chunk so parallel tool calls attach to the same message. If the
-    /// model made a tool call with no preceding text (no assistant message yet),
-    /// an assistant message is created to hold the tool-call cards.
     func drainToolEvents() {
-        toolEventLock.lock()
-        let events = pendingToolEvents
-        pendingToolEvents.removeAll()
-        toolEventLock.unlock()
+        drainCompatibilityEvents()
+    }
+
+    func drainAgentEvents() {
+        drainCompatibilityEvents()
+    }
+
+    /// Focused test hook for verifying callbacks from completed sends are rejected.
+    var bufferedEventCountForTesting: Int {
+        eventBuffer.eventCount
+    }
+
+    private func drainCompatibilityEvents() {
+        var anchorMessageID = messages.last(where: \.isAssistant)?.uuid
+        var toolBreakOccurred = false
+        drainEvents(
+            for: compatibilitySendID,
+            anchorMessageID: &anchorMessageID,
+            toolBreakOccurred: &toolBreakOccurred,
+            keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory
+        )
+    }
+
+    private func drainEvents(
+        for sendID: UUID,
+        anchorMessageID: inout UUID?,
+        toolBreakOccurred: inout Bool,
+        keepsToolCallsInHistory: Bool
+    ) {
+        let events = eventBuffer.takeEvents(for: sendID)
         guard !events.isEmpty else { return }
-        if messages.last?.isAssistant != true {
-            messages.append(Message(role: .assistant, contentType: .null))
+
+        let anchor: Message
+        if let existing = assistantMessage(withID: anchorMessageID) {
+            anchor = existing
+        } else {
+            anchor = Message(role: .assistant, contentType: .null)
+            anchorMessageID = anchor.uuid
+            messages.append(anchor)
         }
-        guard let last = messages.last, last.isAssistant else { return }
+
         for event in events {
-            last.applyToolEvent(event)
-            if case .toolCompleted = event {
-                toolBreakOccurred = true
+            switch event {
+            case .tool(let toolEvent):
+                anchor.applyToolEvent(toolEvent)
+                if case .toolCompleted = toolEvent {
+                    toolBreakOccurred = true
+                }
+            case .agent(let agentEvent):
+                applyAgentEvent(
+                    agentEvent,
+                    to: anchor,
+                    toolBreakOccurred: &toolBreakOccurred,
+                    keepsToolCallsInHistory: keepsToolCallsInHistory
+                )
             }
         }
-    }
-}
-
-extension MessageService {
-    /// Buffers an agent event in arrival order. Called from the agent framework
-    /// (off the main actor); drained in order on the main actor by `drainAgentEvents`.
-    nonisolated func handleAgentEvent(_ event: AgentEvent) {
-        toolEventLock.lock()
-        pendingAgentEvents.append(event)
-        toolEventLock.unlock()
-    }
-
-    /// Applies all buffered agent events (in order) to the current assistant
-    /// message's `toolCalls`, building agent cards with nested children.
-    func drainAgentEvents() {
-        toolEventLock.lock()
-        let events = pendingAgentEvents
-        pendingAgentEvents.removeAll()
-        toolEventLock.unlock()
-        guard !events.isEmpty, let last = messages.last, last.isAssistant else { return }
-        for event in events {
-            applyAgentEvent(event, to: last)
+        if !keepsToolCallsInHistory {
+            anchor.providerToolResults = [:]
         }
+        notifyMessageUpdated(anchor, keepsToolCallsInHistory: keepsToolCallsInHistory)
+    }
+
+    private func requestMessages(keepsToolCallsInHistory: Bool) -> [Message] {
+        guard !keepsToolCallsInHistory else { return messages }
+        return messages.compactMap { message in
+            let sanitized = sanitizedHistoryCopy(of: message)
+            return isSemanticallyEmptyAssistantAnchor(sanitized) ? nil : sanitized
+        }
+    }
+
+    private func clearToolHistoryIfNeeded(for anchorMessageID: UUID?, keepsToolCallsInHistory: Bool) {
+        guard !keepsToolCallsInHistory,
+              let anchor = assistantMessage(withID: anchorMessageID)
+        else { return }
+        let hadToolHistory = !anchor.toolCalls.isEmpty || !anchor.providerToolResults.isEmpty
+        anchor.toolCalls = []
+        anchor.providerToolResults = [:]
+        if isSemanticallyEmptyAssistantAnchor(anchor) {
+            messages.removeAll { $0.uuid == anchor.uuid }
+        } else if hadToolHistory {
+            notifyMessageUpdated(anchor, keepsToolCallsInHistory: false)
+        }
+    }
+
+    private func notifyMessageUpdated(_ message: Message, keepsToolCallsInHistory: Bool) {
+        guard let messageUpdatedCallback else { return }
+        if keepsToolCallsInHistory {
+            messageUpdatedCallback(message)
+            return
+        }
+
+        let sanitized = sanitizedHistoryCopy(of: message)
+        guard !isSemanticallyEmptyAssistantAnchor(sanitized) else { return }
+        messageUpdatedCallback(sanitized)
+    }
+
+    private func sanitizedHistoryCopy(of message: Message) -> Message {
+        Message(
+            uuid: message.uuid,
+            role: message.role,
+            contentType: message.contentType,
+            imageDetail: message.imageDetail,
+            createdAt: message.createdAt
+        )
+    }
+
+    private func isSemanticallyEmptyAssistantAnchor(_ message: Message) -> Bool {
+        guard message.isAssistant,
+              message.toolCalls.isEmpty,
+              message.providerToolResults.isEmpty
+        else { return false }
+
+        switch message.contentType {
+        case .null:
+            return true
+        case .string(let content):
+            return content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .array(let content):
+            return content.allSatisfy {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+        case .agentEvent, .contentCards:
+            return false
+        }
+    }
+
+    private func assistantMessage(withID id: UUID?) -> Message? {
+        guard let id else { return nil }
+        return messages.first { $0.uuid == id && $0.isAssistant }
     }
 
     @MainActor
-    private func applyAgentEvent(_ event: AgentEvent, to last: Message) {
+    private func applyAgentEvent(
+        _ event: AgentEvent,
+        to last: Message,
+        toolBreakOccurred: inout Bool,
+        keepsToolCallsInHistory: Bool
+    ) {
         switch event {
         case .started(let agent, let parent, let task):
+            let arguments = Self.agentReplayArguments(reason: task)
             // If a delegation card already exists under `parent` (created by
-            // agentTransfer/agentHandoff), update its details instead of creating
-            // a duplicate — otherwise one card stays pending forever.
+            // agentTransfer/agentHandoff), update its details and replay arguments
+            // instead of creating a duplicate — otherwise one card stays pending forever.
             if let parent {
                 var calls = last.toolCalls
-                if !Self.updateAgentChildDetails(agent, parent: parent, append: "started: \(task)", in: &calls) {
-                    Self.appendChild(ChatToolCall(id: UUID().uuidString, name: agent, kind: .agent, status: .pending, details: "started: \(task)"), toAgent: parent, in: &calls)
+                if !Self.updateAgentChildDetails(
+                    agent,
+                    parent: parent,
+                    append: "started: \(task)",
+                    arguments: arguments,
+                    in: &calls
+                ) {
+                    Self.appendChild(
+                        ChatToolCall(
+                            id: UUID().uuidString,
+                            name: agent,
+                            kind: .agent,
+                            arguments: arguments,
+                            status: .pending,
+                            details: "started: \(task)"
+                        ),
+                        toAgent: parent,
+                        in: &calls
+                    )
                 }
                 last.toolCalls = calls
             } else {
-                last.toolCalls.append(ChatToolCall(id: UUID().uuidString, name: agent, kind: .agent, status: .pending, details: "started: \(task)"))
+                last.toolCalls.append(
+                    ChatToolCall(
+                        id: UUID().uuidString,
+                        name: agent,
+                        kind: .agent,
+                        arguments: arguments,
+                        status: .pending,
+                        details: "started: \(task)"
+                    )
+                )
             }
 
         case .agentTransfer(let agent, let to, let reason), .agentHandoff(let agent, let to, let reason):
             let label = event.isHandoff ? "handed off" : "delegated"
-            let call = ChatToolCall(id: UUID().uuidString, name: to, kind: .agent, status: .pending, details: "\(label): \(reason)")
+            let call = ChatToolCall(
+                id: UUID().uuidString,
+                name: to,
+                kind: .agent,
+                arguments: Self.agentReplayArguments(reason: reason),
+                status: .pending,
+                details: "\(label): \(reason)"
+            )
             var calls = last.toolCalls
             Self.appendChild(call, toAgent: agent, in: &calls)
             last.toolCalls = calls
@@ -359,7 +556,10 @@ extension MessageService {
             var calls = last.toolCalls
             let status: ChatToolCall.Status = is_error ? .failure : .success
             if !is_error, let cardMessage = agentResultParser?(result, agent) {
-                Self.setAgentStatus(agent, status: .success, result: nil, in: &calls)
+                if let callID = Self.setAgentStatus(agent, status: .success, result: nil, in: &calls),
+                   keepsToolCallsInHistory {
+                    last.providerToolResults[callID] = result
+                }
                 last.toolCalls = calls
                 toolBreakOccurred = true
                 messages.append(cardMessage)
@@ -378,7 +578,15 @@ extension MessageService {
             Self.completePendingChild(ofAgent: agent, result: message, status: .failure, in: &calls)
             last.toolCalls = calls
 
-        default: break
+        }
+    }
+
+    private static func agentReplayArguments(reason: String) -> String {
+        do {
+            let data = try JSONEncoder().encode(AgentReplayArguments(reason: reason))
+            return String(decoding: data, as: UTF8.self)
+        } catch {
+            preconditionFailure("Failed to encode agent replay arguments: \(error)")
         }
     }
 
@@ -393,15 +601,32 @@ extension MessageService {
     /// Updates the most recent pending delegated invocation under the most recent
     /// pending parent, keeping repeated same-named delegations as separate cards.
     @MainActor
-    static func updateAgentChildDetails(_ agent: String, parent: String, append details: String, in calls: inout [ChatToolCall]) -> Bool {
+    static func updateAgentChildDetails(
+        _ agent: String,
+        parent: String,
+        append details: String,
+        arguments: String? = nil,
+        in calls: inout [ChatToolCall]
+    ) -> Bool {
         var didUpdate = false
         _ = updateMostRecentPendingAgent(parent, in: &calls) { parentCall in
             guard let index = parentCall.children.lastIndex(where: {
                 $0.kind == .agent && $0.name == agent && $0.status == .pending
             }) else { return }
-            parentCall.children[index].details = [parentCall.children[index].details, details]
+            let existing = parentCall.children[index]
+            let updatedDetails = [existing.details, details]
                 .compactMap { $0 }
                 .joined(separator: "\n")
+            parentCall.children[index] = ChatToolCall(
+                id: existing.id,
+                name: existing.name,
+                kind: existing.kind,
+                arguments: arguments ?? existing.arguments,
+                status: existing.status,
+                result: existing.result,
+                details: updatedDetails,
+                children: existing.children
+            )
             didUpdate = true
         }
         return didUpdate
@@ -432,12 +657,16 @@ extension MessageService {
     /// Terminates the most recent pending invocation and reconciles all of its
     /// descendants without modifying earlier terminal invocations.
     @MainActor
-    static func setAgentStatus(_ agent: String, status: ChatToolCall.Status, result: String?, in calls: inout [ChatToolCall]) {
+    @discardableResult
+    static func setAgentStatus(_ agent: String, status: ChatToolCall.Status, result: String?, in calls: inout [ChatToolCall]) -> String? {
+        var updatedCallID: String?
         _ = updateMostRecentPendingAgent(agent, in: &calls) { call in
+            updatedCallID = call.id
             call.status = status
             if let result { call.result = result }
             reconcilePendingDescendants(in: &call.children, status: status)
         }
+        return updatedCallID
     }
 
     @MainActor

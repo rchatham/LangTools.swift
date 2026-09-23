@@ -14,8 +14,13 @@ import XCTest
 
 final class ToolCallHistoryReplayTests: XCTestCase {
 
-    private func message(text: String?, toolCalls: [ChatToolCall]) -> Message {
-        Message(role: .assistant, contentType: text.map { .string($0) } ?? .null, toolCalls: toolCalls)
+    private func message(text: String?, toolCalls: [ChatToolCall], providerToolResults: [String: String] = [:]) -> Message {
+        Message(
+            role: .assistant,
+            contentType: text.map { .string($0) } ?? .null,
+            toolCalls: toolCalls,
+            providerToolResults: providerToolResults
+        )
     }
 
     private func completed(_ name: String, id: String, args: String = "{}", result: String, failure: Bool = false) -> ChatToolCall {
@@ -65,6 +70,41 @@ final class ToolCallHistoryReplayTests: XCTestCase {
         let msgs = [Message(text: "hi", role: .assistant)].toOpenAIMessages()
         XCTAssertEqual(msgs.count, 1)
         XCTAssertNil(msgs[0].tool_calls)
+    }
+
+    func testStructuredAgentResultOverrideReplaysWithoutVisibleCardResult() {
+        let rawResult = #"{"items":[{"title":"Result"}]}"#
+        let agentCall = ChatToolCall(
+            id: "agent-1",
+            name: "Research",
+            kind: .agent,
+            arguments: "{}",
+            status: .success,
+            result: nil
+        )
+        let message = message(
+            text: nil,
+            toolCalls: [agentCall],
+            providerToolResults: [agentCall.id: rawResult]
+        )
+
+        let openAIMessages = [message].toOpenAIMessages()
+        guard case .toolResult(let openAIResult) = openAIMessages[1].content.array?.first else {
+            return XCTFail("Expected OpenAI tool result")
+        }
+        XCTAssertEqual(openAIResult.result, rawResult)
+
+        let anthropicMessages = [message].toAnthropicMessages()
+        guard case .array(let anthropicBlocks) = anthropicMessages[1].content,
+              case .toolResult(let anthropicResult) = anthropicBlocks.first
+        else {
+            return XCTFail("Expected Anthropic tool result")
+        }
+        XCTAssertEqual(anthropicResult.result, rawResult)
+
+        let ollamaMessages = [message].toOllamaMessages()
+        XCTAssertEqual(ollamaMessages[1].content.text, rawResult)
+        XCTAssertNil(message.toolCalls[0].result)
     }
 
     // MARK: - Anthropic

@@ -4,9 +4,11 @@
 //
 
 import Agents
+import Anthropic
 import ChatUI
 import Foundation
 import LangTools
+import Ollama
 import OpenAI
 import XCTest
 @testable import Chat
@@ -71,6 +73,171 @@ final class AgentToolCallMappingTests: XCTestCase {
         XCTAssertEqual(calls[0].status, .pending)
         XCTAssertEqual(calls[1].status, .failure)
         XCTAssertEqual(calls[1].result, "oops")
+    }
+
+    func testAgentOnlyEventsWithoutPreambleCreateAssistantCard() throws {
+        let service = MessageService(networkClient: AgentEventNetworkStub())
+
+        service.handleAgentEvent(.started(agent: "Research", parent: nil, task: "find weather"))
+        service.handleAgentEvent(.completed(agent: "Research", result: "sunny"))
+        service.drainAgentEvents()
+
+        let message = try XCTUnwrap(service.messages.first)
+        XCTAssertTrue(message.isAssistant)
+        XCTAssertNil(message.text)
+        XCTAssertEqual(message.toolCalls.count, 1)
+        XCTAssertEqual(message.toolCalls[0].name, "Research")
+        XCTAssertEqual(message.toolCalls[0].status, .success)
+        XCTAssertEqual(message.toolCalls[0].result, "sunny")
+    }
+
+    func testAgentEventLifecyclePreservesReplayReasonsAcrossProviders() throws {
+        let rootReason = "Find the \"quoted\" detail\non the next line"
+        let delegatedReason = "Verify the \"source\"\nwithout changing it"
+        let service = MessageService(networkClient: AgentEventNetworkStub())
+
+        [
+            AgentEvent.started(agent: "Research", parent: nil, task: rootReason),
+            .agentTransfer(from: "Research", to: "Verifier", reason: delegatedReason),
+            .started(agent: "Verifier", parent: "Research", task: delegatedReason),
+            .completed(agent: "Verifier", result: "verified"),
+            .completed(agent: "Research", result: "done")
+        ].forEach(service.handleAgentEvent)
+        service.drainAgentEvents()
+
+        let message = try XCTUnwrap(service.messages.first)
+        let rootCall = try XCTUnwrap(message.toolCalls.first)
+        XCTAssertEqual(try replayReason(in: rootCall.arguments), rootReason)
+        XCTAssertEqual(rootCall.children.count, 1, "Delegation and started events must share one child card")
+        XCTAssertEqual(try replayReason(in: rootCall.children[0].arguments), delegatedReason)
+
+        let openAIMessages = [message].toOpenAIMessages()
+        XCTAssertEqual(
+            try replayReason(in: openAIMessages.first?.tool_calls?.first?.function.arguments),
+            rootReason
+        )
+
+        let anthropicMessages = [message].toAnthropicMessages()
+        guard case .array(let anthropicBlocks) = anthropicMessages.first?.content,
+              case .toolUse(let anthropicToolUse) = anthropicBlocks.first
+        else {
+            return XCTFail("Expected Anthropic agent tool use")
+        }
+        XCTAssertEqual(try replayReason(in: anthropicToolUse.input), rootReason)
+
+        let ollamaMessages = [message].toOllamaMessages()
+        XCTAssertEqual(
+            ollamaMessages.first?.tool_calls?.first?.function.arguments["reason"],
+            rootReason
+        )
+    }
+
+    func testStructuredAgentResultIsHiddenFromCardAndRetainedForReplay() throws {
+        let previousKeepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
+        ToolSettings.shared.keepsToolCallsInHistory = true
+        defer { ToolSettings.shared.keepsToolCallsInHistory = previousKeepsToolCallsInHistory }
+
+        let rawResult = #"{"items":[{"title":"Result"}]}"#
+        let service = MessageService(networkClient: AgentEventNetworkStub())
+        service.agentResultParser = { _, _ in Message(text: "Rendered cards", role: .assistant) }
+
+        service.handleAgentEvent(.started(agent: "Research", parent: nil, task: "find data"))
+        service.handleAgentEvent(.completed(agent: "Research", result: rawResult))
+        service.drainAgentEvents()
+
+        XCTAssertEqual(service.messages.count, 2)
+        let eventMessage = service.messages[0]
+        let call = try XCTUnwrap(eventMessage.toolCalls.first)
+        XCTAssertNil(call.result)
+        XCTAssertEqual(eventMessage.providerToolResults[call.id], rawResult)
+        XCTAssertEqual(service.messages[1].text, "Rendered cards")
+    }
+
+    func testEveryHistoryDisabledPersistenceCallbackSanitizesRawAgentResults() throws {
+        let previousKeepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
+        ToolSettings.shared.keepsToolCallsInHistory = false
+        defer { ToolSettings.shared.keepsToolCallsInHistory = previousKeepsToolCallsInHistory }
+
+        let emptyCardResult = #"{"private":"EMPTY_CARD_SENTINEL"}"#
+        let parserNilResult = #"{"private":"PARSER_NIL_SENTINEL"}"#
+        let errorResult = #"{"private":"ERROR_RESULT_SENTINEL"}"#
+        let service = MessageService(networkClient: AgentEventNetworkStub())
+        service.messages = [Message(text: "Visible preamble", role: .assistant)]
+        service.agentResultParser = { result, _ in
+            guard result == emptyCardResult else { return nil }
+            return .contentCards(
+                ContentCardsContent(
+                    cardType: "empty-test-cards",
+                    message: nil,
+                    cardsJSON: "[]",
+                    cardCount: 0
+                )
+            )
+        }
+        var encodedCallbacks: [String] = []
+        service.messageUpdatedCallback = { message in
+            do {
+                let data = try JSONEncoder().encode(message)
+                encodedCallbacks.append(String(decoding: data, as: UTF8.self))
+            } catch {
+                XCTFail("Failed to encode persistence callback: \(error)")
+            }
+        }
+
+        let completions: [(agent: String, result: String, isError: Bool)] = [
+            ("EmptyCardAgent", emptyCardResult, false),
+            ("ParserNilAgent", parserNilResult, false),
+            ("ErrorAgent", errorResult, true)
+        ]
+        for completion in completions {
+            service.handleAgentEvent(.started(agent: completion.agent, parent: nil, task: "private task"))
+            service.handleAgentEvent(
+                .completed(
+                    agent: completion.agent,
+                    result: completion.result,
+                    is_error: completion.isError
+                )
+            )
+            service.drainAgentEvents()
+        }
+
+        XCTAssertEqual(
+            encodedCallbacks.count,
+            completions.count + 1,
+            "The empty content-card append and all three anchor updates must be captured"
+        )
+        for encoded in encodedCallbacks {
+            let persisted = try JSONDecoder().decode(Message.self, from: Data(encoded.utf8))
+            XCTAssertTrue(persisted.toolCalls.isEmpty)
+            XCTAssertTrue(persisted.providerToolResults.isEmpty)
+            XCTAssertFalse(encoded.contains("EMPTY_CARD_SENTINEL"))
+            XCTAssertFalse(encoded.contains("PARSER_NIL_SENTINEL"))
+            XCTAssertFalse(encoded.contains("ERROR_RESULT_SENTINEL"))
+        }
+
+        let liveCalls = service.messages.flatMap(\.toolCalls)
+        XCTAssertEqual(liveCalls.map(\.name), completions.map(\.agent))
+        XCTAssertEqual(liveCalls.map(\.result), [nil, parserNilResult, errorResult])
+        XCTAssertTrue(service.messages.allSatisfy(\.providerToolResults.isEmpty))
+        guard case .contentCards(let content) = service.messages[1].contentType else {
+            return XCTFail("Expected the empty-card parser branch to append its content-card message")
+        }
+        XCTAssertEqual(content.cardCount, 0)
+    }
+
+    func testMixedToolAndAgentEventsPreserveFIFOOrder() throws {
+        let service = MessageService(networkClient: AgentEventNetworkStub())
+        service.enqueueToolEvent(.toolCalled(TestSelection(id: "tool-1", name: "calculate", arguments: "{}")))
+        service.handleAgentEvent(.started(agent: "Research", parent: nil, task: "find weather"))
+        service.enqueueToolEvent(.toolCompleted(TestResult(tool_selection_id: "tool-1", result: "42")))
+
+        service.drainAgentEvents()
+
+        let calls = try XCTUnwrap(service.messages.first).toolCalls
+        XCTAssertEqual(calls.map(\.name), ["calculate", "Research"])
+        XCTAssertEqual(calls[0].status, .success)
+        XCTAssertEqual(calls[0].result, "42")
+        XCTAssertEqual(calls[1].status, .pending)
     }
 
     func testNilResultToolCompletionStillCompletesChild() {
@@ -147,6 +314,12 @@ final class AgentToolCallMappingTests: XCTestCase {
         try assertCalendarReadRetry(calls, expectedRetryStatus: .failure)
     }
 
+    private func replayReason(in arguments: String?) throws -> String {
+        let arguments = try XCTUnwrap(arguments)
+        let decoded = try JSONDecoder().decode([String: String].self, from: Data(arguments.utf8))
+        return try XCTUnwrap(decoded["reason"])
+    }
+
     private func runCalendarReadRetry(secondAttemptFails: Bool) -> [ChatToolCall] {
         let service = MessageService(networkClient: AgentEventNetworkStub())
         service.messages = [Message(role: .assistant, contentType: .null)]
@@ -187,10 +360,34 @@ final class AgentToolCallMappingTests: XCTestCase {
         XCTAssertEqual(reads.count, 2, file: file, line: line)
         XCTAssertEqual(reads[0].status, .failure, file: file, line: line)
         XCTAssertEqual(reads[0].result, "first attempt failed", file: file, line: line)
+        XCTAssertEqual(try replayReason(in: reads[0].arguments), "read calendar", file: file, line: line)
         XCTAssertEqual(reads[1].status, expectedRetryStatus, file: file, line: line)
         XCTAssertEqual(reads[1].result, expectedRetryStatus == .success ? "event found" : "retry failed", file: file, line: line)
+        XCTAssertEqual(try replayReason(in: reads[1].arguments), "retry calendar read", file: file, line: line)
         XCTAssertFalse(calls.flattened().contains { $0.name == "agent_transfer" }, file: file, line: line)
         XCTAssertFalse(calls.flattened().contains { $0.status == .pending }, file: file, line: line)
+    }
+}
+
+private struct TestSelection: LangToolsToolSelection {
+    let id: String?
+    let name: String?
+    let arguments: String
+}
+
+private struct TestResult: LangToolsToolSelectionResult {
+    let tool_selection_id: String
+    let result: String
+    let is_error: Bool
+
+    init(tool_selection_id: String, result: String, is_error: Bool) {
+        self.tool_selection_id = tool_selection_id
+        self.result = result
+        self.is_error = is_error
+    }
+
+    init(tool_selection_id: String, result: String) {
+        self.init(tool_selection_id: tool_selection_id, result: result, is_error: false)
     }
 }
 
