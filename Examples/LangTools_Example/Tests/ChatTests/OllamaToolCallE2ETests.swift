@@ -7,6 +7,7 @@
 //  Skips automatically if Ollama is not reachable.
 //
 
+import Agents
 import Foundation
 import LangTools
 import OpenAI
@@ -101,5 +102,44 @@ final class OllamaToolCallE2ETests: XCTestCase {
         )
         try render(ToolCallView(toolCall: agent), name: "ollama-agent-collapsed", width: 460)
         try render(ToolCallView(toolCall: agent, isExpanded: true), name: "ollama-agent-expanded", width: 460)
+    }
+
+    func testDelegationRetryScreenshots() throws {
+        // Render cards assembled from the same agent lifecycle events as a real
+        // delegation; only the provider responses are simulated here.
+        try? FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+        try renderRetry(secondAttemptFails: true, name: "calendar-retry-failed")
+        try renderRetry(secondAttemptFails: false, name: "calendar-retry-recovered")
+    }
+
+    private func renderRetry(secondAttemptFails: Bool, name: String) throws {
+        let service = MessageService()
+        service.messages = [Message(role: .assistant, contentType: .null)]
+        let events: [AgentEvent] = [
+            .started(agent: "calendarAgent", parent: nil, task: "check upcoming events"),
+            .agentTransfer(from: "calendarAgent", to: "calendarReadAgent", reason: "read upcoming events"),
+            .started(agent: "calendarReadAgent", parent: "calendarAgent", task: "read upcoming events"),
+            .toolCalled(agent: "calendarReadAgent", tool: "get_upcoming_events", arguments: #"{"limit":10}"#),
+            .error(agent: "calendarReadAgent", message: "JSON parsing failure"),
+            .completed(agent: "calendarReadAgent", result: "JSON parsing failure", is_error: true),
+            .agentTransfer(from: "calendarAgent", to: "calendarReadAgent", reason: "retry with explicit dates"),
+            .started(agent: "calendarReadAgent", parent: "calendarAgent", task: "retry calendar read"),
+            .toolCalled(agent: "calendarReadAgent", tool: "get_events", arguments: #"{"start_date":"2026-09-22"}"#)
+        ] + (secondAttemptFails ? [
+            .error(agent: "calendarReadAgent", message: "JSON parsing failure"),
+            .completed(agent: "calendarReadAgent", result: "JSON parsing failure", is_error: true),
+            .completed(agent: "calendarAgent", result: "Unable to read events", is_error: true)
+        ] : [
+            .toolCompleted(agent: "calendarReadAgent", result: "1 event"),
+            .completed(agent: "calendarReadAgent", result: "1 event"),
+            .completed(agent: "calendarAgent", result: "Found 1 event")
+        ])
+        events.forEach(service.handleAgentEvent)
+        service.drainAgentEvents()
+        let root = try XCTUnwrap(service.messages.first?.toolCalls.first)
+        XCTAssertEqual(root.children.filter { $0.name == "calendarReadAgent" }.count, 2)
+        XCTAssertFalse(root.children.contains { $0.name == "agent_transfer" })
+        XCTAssertFalse(root.children.contains { $0.status == .pending })
+        try render(ToolCallView(toolCall: root, isExpanded: true), name: name, width: 600)
     }
 }
