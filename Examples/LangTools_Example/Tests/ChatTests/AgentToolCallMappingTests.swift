@@ -71,6 +71,15 @@ final class AgentToolCallMappingTests: XCTestCase {
         XCTAssertEqual(calls[1].result, "oops")
     }
 
+    func testNilResultToolCompletionStillCompletesChild() {
+        // toolCompleted may fire with a nil result; the child must still complete.
+        var calls: [ChatToolCall] = [ChatToolCall(id: "a", name: "A", kind: .agent, status: .pending)]
+        MessageService.appendChild(ChatToolCall(id: "t", name: "tool", kind: .tool, status: .pending), toAgent: "A", in: &calls)
+        MessageService.completePendingChild(ofAgent: "A", result: "", in: &calls)
+        XCTAssertEqual(calls[0].children[0].status, .success)
+        XCTAssertEqual(calls[0].children[0].result, "")
+    }
+
     func testConcurrentToolCallsCompleteInCallOrder() {
         // toolCompleted carries no tool name, so completions match in call order (FIFO).
         var calls: [ChatToolCall] = [ChatToolCall(id: "a", name: "A", kind: .agent, status: .pending)]

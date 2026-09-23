@@ -344,9 +344,10 @@ extension MessageService {
             last.toolCalls = calls
 
         case .toolCompleted(let agent, let result):
-            guard let result else { break }
+            // result can be nil when a tool produces no output; still complete the
+            // pending child so it doesn't stay stuck on the spinner.
             var calls = last.toolCalls
-            Self.completePendingChild(ofAgent: agent, result: result, in: &calls)
+            Self.completePendingChild(ofAgent: agent, result: result ?? "", in: &calls)
             last.toolCalls = calls
 
         case .completed(let agent, let result, let is_error):
