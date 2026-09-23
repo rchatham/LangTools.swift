@@ -86,9 +86,6 @@ class MessageService: ObservableObject {
 
     func getChatCompletion(for message: String, stream: Bool, silent: Bool = false) async throws {
         await MainActor.run {
-            if !messages.contains(where: { $0.role == .system }) {
-                messages.append(Self.contextSystemMessage(cwd: FileManager.default.currentDirectoryPath))
-            }
             messages.append(Message(text: message, role: .user))
         }
 
@@ -163,8 +160,13 @@ class MessageService: ObservableObject {
         toolTrace: ToolCallTrace? = nil,
         silent: Bool = false
     ) throws -> AsyncThrowingStream<String, Error> {
+        // The working-directory grounding message is not stored in the visible
+        // history; it is prepended to every outgoing request instead.
+        let outgoing = messages.contains(where: { $0.role == .system })
+            ? messages
+            : [Self.contextSystemMessage(cwd: FileManager.default.currentDirectoryPath)] + messages
         let request = networkClient.request(
-            messages: messages,
+            messages: outgoing,
             model: model,
             stream: stream,
             tools: tools,

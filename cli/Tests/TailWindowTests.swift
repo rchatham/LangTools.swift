@@ -1,4 +1,5 @@
 import XCTest
+import Ollama
 @testable import CLI
 @testable import SwiftTUI
 
@@ -108,5 +109,39 @@ final class TailWindowTests: XCTestCase {
         }
         XCTAssertTrue(text.contains("/Users/me/Developer/langtools-cli"))
         XCTAssertTrue(text.contains("current working directory"))
+    }
+
+    // MARK: - --model argument parsing
+
+    func testModelFromArgumentAcceptsBareIDs() {
+        XCTAssertEqual(CLI.model(fromArgument: "llama3.2:latest"), .ollama(Ollama.Model(rawValue: "llama3.2:latest")!))
+    }
+
+    func testModelFromArgumentAcceptsProviderPrefixes() {
+        XCTAssertEqual(
+            CLI.model(fromArgument: "ollama-cloud/glm-5.2:cloud"),
+            .ollama(Ollama.Model(rawValue: "glm-5.2:cloud")!)
+        )
+        XCTAssertEqual(
+            CLI.model(fromArgument: "ollama/llama3.2:latest"),
+            .ollama(Ollama.Model(rawValue: "llama3.2:latest")!)
+        )
+    }
+
+    func testModelFromArgumentRejectsUnknownProviderPrefixes() {
+        // Ollama model names are user-defined, so bare identifiers are always
+        // valid Ollama candidates; but an explicit unknown provider prefix is
+        // rejected rather than silently treated as a model name.
+        XCTAssertNil(CLI.model(fromArgument: "unknown-provider/some-model"))
+        XCTAssertEqual(
+            CLI.model(fromArgument: "not-a-real-model"),
+            .ollama(Ollama.Model(rawValue: "not-a-real-model")!)
+        )
+    }
+
+    func testRequestedModelArgumentParsesFlagForms() {
+        XCTAssertEqual(CLI.requestedModelArgument(["langtools", "--model", "llama3.2:latest"]), "llama3.2:latest")
+        XCTAssertEqual(CLI.model(fromArgument: CLI.requestedModelArgument(["langtools", "--model=glm-5.2:cloud"]) ?? ""), .ollama(Ollama.Model(rawValue: "glm-5.2:cloud")!))
+        XCTAssertNil(CLI.requestedModelArgument(["langtools", "--tui"]))
     }
 }

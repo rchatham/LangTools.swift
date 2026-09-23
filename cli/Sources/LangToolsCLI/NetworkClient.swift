@@ -80,8 +80,25 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         langToolchain.register(langTool(for: llm, with: apiKey))
     }
 
+    /// Registers the Ollama provider. Local models target the local daemon;
+    /// `:cloud`-suffixed models route to ollama.com with the Ollama API key
+    /// (from `OLLAMA_API_KEY` or a stored key) so they work even when the
+    /// local daemon is not running.
     func registerOllama(baseURL: URL = URL(string: "http://localhost:11434")!) {
-        langToolchain.register(Ollama(baseURL: baseURL))
+        let cloudKey = ProcessInfo.processInfo.environment["OLLAMA_API_KEY"]
+            ?? UserDefaults.getApiKey(for: .ollama)
+        let ollama: Ollama
+        if let cloudKey, !cloudKey.isEmpty {
+            ollama = Ollama(
+                baseURL: baseURL,
+                apiKey: cloudKey,
+                cloudBaseURL: URL(string: "https://ollama.com")!,
+                cloudAPIKey: cloudKey
+            )
+        } else {
+            ollama = Ollama(baseURL: baseURL)
+        }
+        langToolchain.register(ollama)
     }
 
     func fetchOllamaModels() async {

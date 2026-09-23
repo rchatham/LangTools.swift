@@ -79,6 +79,18 @@ struct CLI {
             }
         }
 
+        // --model / -m <model-id> (also --model=<id>): applies before any mode
+        // starts so both the TUI and the interactive loop use the requested
+        // model. Previously the flag was silently ignored.
+        if let requested = Self.requestedModelArgument(args) {
+            if let model = Self.model(fromArgument: requested) {
+                UserDefaults.model = model
+            } else {
+                fputs("Unknown model '\\(requested)'. Use /model to pick interactively.\n", stderr)
+                exit(1)
+            }
+        }
+
         let runMode = CLIRunMode.current
         ansiColorsEnabled = runMode.isInteractive
 
@@ -153,6 +165,56 @@ struct CLI {
     }
 
     // MARK: - Traditional CLI
+
+
+    /// Extracts the value of `--model <value>`, `-m <value>` or `--model=<value>`
+    /// from the argument list, or nil when the flag is absent.
+    static func requestedModelArgument(_ args: [String]) -> String? {
+        var iterator = args.makeIterator()
+        var previous: String? = nil
+        while let arg = iterator.next() {
+            if arg == "--model" || arg == "-m" {
+                return iterator.next()
+            }
+            if arg.hasPrefix("--model=") {
+                return String(arg.dropFirst("--model=".count))
+            }
+            if previous == "--model" || previous == "-m" {
+                return arg
+            }
+            previous = arg
+        }
+        return nil
+    }
+
+    /// Builds a `Model` from a CLI argument, accepting bare model identifiers
+    /// and `provider/model-id` prefixes (e.g. `ollama-cloud/glm-5.2:cloud`).
+    static func model(fromArgument value: String) -> Model? {
+        if !value.contains("/") {
+            if let model = Model(rawValue: value) { return model }
+            // Ollama models accept arbitrary user-defined names.
+            return Ollama.Model(rawValue: value).map { .ollama($0) }
+        }
+
+        let parts = value.split(separator: "/", maxSplits: 1)
+        guard parts.count == 2 else { return nil }
+        let provider = parts[0].lowercased()
+        let id = String(parts[1])
+        switch provider {
+        case "ollama", "ollama-cloud", "ollama_cloud":
+            return Ollama.Model(rawValue: id).map { .ollama($0) }
+        case "openai":
+            return OpenAI.Model(rawValue: id).map { .openAI($0) }
+        case "anthropic", "claude":
+            return Anthropic.Model(rawValue: id).map { .anthropic($0) }
+        case "gemini", "google":
+            return Gemini.Model(rawValue: id).map { .gemini($0) }
+        case "xai", "grok":
+            return XAI.Model(rawValue: id).map { .xAI($0) }
+        default:
+            return nil
+        }
+    }
 
     static func runTraditionalCLI(runMode: CLIRunMode) async throws {
         loadAPIKeysFromEnvironment()
