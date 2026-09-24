@@ -46,6 +46,10 @@ public extension ContentCardsContent {
     /// If `cardsJSON` is not valid JSON, a clearly labeled fallback embeds the
     /// raw payload verbatim instead of throwing, so replay never fails.
     var providerContext: String {
+        Self.cacheLock.lock()
+        defer { Self.cacheLock.unlock() }
+        if let cached = Self.providerContextCache[self] { return cached }
+
         var lines: [String] = []
         if let message, !message.isEmpty {
             lines.append(message)
@@ -58,20 +62,46 @@ public extension ContentCardsContent {
             lines.append("Card details unavailable: the stored cards payload is not valid JSON. Raw payload:")
             lines.append(cardsJSON)
         }
-        return lines.joined(separator: "\n")
+        let rendered = lines.joined(separator: "\n")
+        Self.providerContextCache[self] = rendered
+        return rendered
     }
 
     /// Parses `cardsJSON` with `JSONSerialization` and re-renders it as stable,
     /// pretty-printed JSON with sorted keys. Returns `nil` when the payload is
     /// not valid JSON.
     static func prettyPrintedSortedJSON(from cardsJSON: String) -> String? {
-        guard let data = cardsJSON.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
-              let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .fragmentsAllowed]),
-              let rendered = String(data: pretty, encoding: .utf8)
-        else { return nil }
+        Self.cacheLock.lock()
+        defer { Self.cacheLock.unlock() }
+        if Self.prettyJSONCache.index(forKey: cardsJSON) != nil {
+            return Self.prettyJSONCache[cardsJSON] ?? nil
+        }
+
+        let rendered: String?
+        if let data = cardsJSON.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
+           let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .fragmentsAllowed]),
+           let string = String(data: pretty, encoding: .utf8) {
+            rendered = string
+        } else {
+            rendered = nil
+        }
+        Self.prettyJSONCache[cardsJSON] = rendered
         return rendered
     }
+
+    // MARK: - Rendering caches
+
+    /// Reentrant lock guarding the memoization tables below. `providerContext`
+    /// calls `prettyPrintedSortedJSON` internally, so a single recursive lock
+    /// keeps the nested lookup from deadlocking while still protecting both
+    /// caches from concurrent access.
+    private static let cacheLock = NSRecursiveLock()
+    /// Memoized full provider-context strings keyed by the immutable content.
+    private static var providerContextCache: [ContentCardsContent: String] = [:]
+    /// Memoized pretty-printed JSON keyed by the raw payload. Values are
+    /// `String?` so a previously-rendered `nil` (malformed JSON) is also cached.
+    private static var prettyJSONCache: [String: String?] = [:]
 }
 
 public enum ContentCardsError: Error {
