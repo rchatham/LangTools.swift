@@ -388,11 +388,13 @@ actor CodexAppServerClient {
 
     private func launchProcess() throws {
         let command = try commandResolver()
-        let codexArguments = command.arguments + ["app-server", "--listen", "stdio://"]
+        let codexArguments = command.arguments + [
+            "app-server", "--listen", "stdio://", "-c", "model_provider=openai"
+        ]
         let process = Process()
         if let seatbelt = try makeSeatbeltLaunch(
             executable: command.executable,
-            arguments: codexArguments
+            arguments: command.arguments
         ) {
             process.executableURL = URL(fileURLWithPath: seatbelt.sandboxExec)
             process.arguments = ["-f", seatbelt.profilePath, command.executable] + codexArguments
@@ -503,7 +505,7 @@ actor CodexAppServerClient {
         // filesystem state for this launch is created.
         let inputs = CodexSeatbeltProfile.Inputs(
             codexExecutable: executable,
-            codexExecutableArguments: Array(arguments.dropLast(3)),
+            codexExecutableArguments: arguments,
             codexHome: codexHomeProvider(),
             workspaceRoot: resolvedWorkspace.path,
             codexRuntimeCache: CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: environment),
