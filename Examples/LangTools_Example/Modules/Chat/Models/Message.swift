@@ -23,6 +23,10 @@ public final class Message: Codable, ObservableObject, Identifiable, Equatable, 
     /// Raw results retained for provider history replay when a rendered card
     /// intentionally hides the corresponding `ChatToolCall.result`.
     public var providerToolResults: [String: String] = [:]
+    /// The `APIService` each hidden raw result originated from, used to enforce
+    /// the cross-provider replay setting. Entries without a recorded service
+    /// (legacy history) are treated as same-origin during replay filtering.
+    public var providerToolResultServices: [String: APIService] = [:]
     public var id: UUID { uuid }
 
     public var text: String? {
@@ -49,7 +53,7 @@ public final class Message: Codable, ObservableObject, Identifiable, Equatable, 
         }
     }
 
-    public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil, createdAt: Date = Date(), toolCalls: [ChatToolCall] = [], providerToolResults: [String: String] = [:]) {
+    public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil, createdAt: Date = Date(), toolCalls: [ChatToolCall] = [], providerToolResults: [String: String] = [:], providerToolResultServices: [String: APIService] = [:]) {
         self.uuid = uuid
         self.role = role
         self.contentType = contentType
@@ -57,13 +61,14 @@ public final class Message: Codable, ObservableObject, Identifiable, Equatable, 
         self.createdAt = createdAt
         self.toolCalls = toolCalls
         self.providerToolResults = providerToolResults
+        self.providerToolResultServices = providerToolResultServices
     }
 
     // Helper initializer for regular messages
     public convenience init(text: String, role: Role) { self.init(role: role, contentType: .string(text)) }
 
     // Coding keys for encoding/decoding
-    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail, createdAt, toolCalls, providerToolResults }
+    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail, createdAt, toolCalls, providerToolResults, providerToolResultServices }
 
     public required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -74,6 +79,7 @@ public final class Message: Codable, ObservableObject, Identifiable, Equatable, 
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         toolCalls = try container.decodeIfPresent([ChatToolCall].self, forKey: .toolCalls) ?? []
         providerToolResults = try container.decodeIfPresent([String: String].self, forKey: .providerToolResults) ?? [:]
+        providerToolResultServices = try container.decodeIfPresent([String: APIService].self, forKey: .providerToolResultServices) ?? [:]
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -89,6 +95,9 @@ public final class Message: Codable, ObservableObject, Identifiable, Equatable, 
         if !providerToolResults.isEmpty {
             try container.encode(providerToolResults, forKey: .providerToolResults)
         }
+        if !providerToolResultServices.isEmpty {
+            try container.encode(providerToolResultServices, forKey: .providerToolResultServices)
+        }
     }
 
     public static func == (lhs: Message, rhs: Message) -> Bool {
@@ -98,7 +107,8 @@ public final class Message: Codable, ObservableObject, Identifiable, Equatable, 
         lhs.imageDetail == rhs.imageDetail &&
         lhs.createdAt == rhs.createdAt &&
         lhs.toolCalls == rhs.toolCalls &&
-        lhs.providerToolResults == rhs.providerToolResults
+        lhs.providerToolResults == rhs.providerToolResults &&
+        lhs.providerToolResultServices == rhs.providerToolResultServices
     }
 
     public func hash(into hasher: inout Hasher) {
@@ -109,6 +119,32 @@ public final class Message: Codable, ObservableObject, Identifiable, Equatable, 
         hasher.combine(createdAt)
         hasher.combine(toolCalls)
         hasher.combine(providerToolResults)
+        hasher.combine(providerToolResultServices)
+    }
+
+    /// Returns this message when cross-provider replay is allowed. Otherwise
+    /// returns a copy whose hidden raw results recorded from a *different*
+    /// originating service are removed, so replay falls back to the visible
+    /// `ChatToolCall.result`. Entries without a recorded origin (legacy history)
+    /// are kept and treated as same-origin.
+    public func replayFiltered(targetService: APIService, allowCrossProvider: Bool) -> Message {
+        guard !allowCrossProvider, !providerToolResultServices.isEmpty else { return self }
+        let keptResults = providerToolResults.filter { callID, _ in
+            guard let origin = providerToolResultServices[callID] else { return true }
+            return origin == targetService
+        }
+        guard keptResults.count != providerToolResults.count else { return self }
+        let keptServices = providerToolResultServices.filter { keptResults[$0.key] != nil }
+        return Message(
+            uuid: uuid,
+            role: role,
+            contentType: contentType,
+            imageDetail: imageDetail,
+            createdAt: createdAt,
+            toolCalls: toolCalls,
+            providerToolResults: keptResults,
+            providerToolResultServices: keptServices
+        )
     }
 }
 
@@ -143,6 +179,14 @@ extension Message {
 //enum Role: String, Codable {
 //    case system, assistant, user
 //}
+
+public extension Array where Element == Message {
+    /// Applies per-message cross-provider replay filtering (see
+    /// `Message.replayFiltered(targetService:allowCrossProvider:)`).
+    func replayFiltered(targetService: APIService, allowCrossProvider: Bool) -> [Message] {
+        map { $0.replayFiltered(targetService: targetService, allowCrossProvider: allowCrossProvider) }
+    }
+}
 
 public extension Array<Message> {
     /// Retained tool calls (kept in history) are replayed to the API as proper

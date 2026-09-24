@@ -284,6 +284,10 @@ public struct ChatSettingsView: View {
                 Text("Show tool-call cards after the tool completes. Turn off to hide them once the response continues.")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                Toggle("Share Tool Results Across Providers", isOn: $viewModel.toolSettings.crossProviderToolReplay)
+                Text("Let hidden structured agent results be sent to whichever provider you switch to. Turn off to send them only to the provider that produced them.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
 
             // Custom sections from app (e.g., Backend)
