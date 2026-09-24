@@ -13,10 +13,13 @@ import Agents
 
 /// The structured JSON response that CalendarAgent asks the LLM to produce.
 /// Contains an array of event cards plus an optional human-readable summary.
+/// The strict schema requires every key; unavailable optionals are sent as null.
 public struct CalendarAgentResponse: Codable {
     /// List of calendar events
     public let events: [CalendarEventData]
-    /// Optional summary message to display to the user
+    /// Summary message to display to the user. Swift-optional, but the strict
+    /// response schema requires the key — providers must send null when there
+    /// is no summary.
     public let message: String?
 
     public init(events: [CalendarEventData], message: String? = nil) {
@@ -29,10 +32,18 @@ extension CalendarAgentResponse: StructuredOutput {
     public static var jsonSchema: JSONSchema {
         .object(
             properties: [
-                "events": .array(items: CalendarEventData.jsonSchema, description: "List of calendar events"),
-                "message": .string(description: "Optional summary message to display to the user")
+                "events": .array(
+                    items: CalendarEventData.jsonSchema,
+                    description: "List of calendar events"
+                ),
+                "message": .anyOf([
+                    .string(description: "Summary message; null when there is no summary"),
+                    .null()
+                ])
             ],
-            required: ["events"]
+            required: ["events", "message"],
+            additionalProperties: .bool(false),
+            title: "CalendarAgentResponse"
         )
     }
 }
@@ -46,15 +57,15 @@ public struct CalendarEventData: Codable, Equatable {
     public let startDate: String
     /// Event end in ISO 8601 format
     public let endDate: String
-    /// Event location (optional)
+    /// Event location (null when unavailable; required key in the strict schema)
     public let location: String?
-    /// Event notes (optional)
+    /// Event notes (null when unavailable; required key in the strict schema)
     public let notes: String?
     /// True when the event spans the full day
     public let isAllDay: Bool
-    /// Calendar name (optional)
+    /// Calendar name (null when unavailable; required key in the strict schema)
     public let calendarName: String?
-    /// System identifier for edits/deletes (optional)
+    /// System identifier for edits/deletes (null when unavailable; required key in the strict schema)
     public let eventIdentifier: String?
 
     public init(
@@ -85,13 +96,36 @@ extension CalendarEventData: StructuredOutput {
                 "title": .string(description: "Event title"),
                 "startDate": .string(description: "Event start in ISO 8601 format"),
                 "endDate": .string(description: "Event end in ISO 8601 format"),
-                "location": .string(description: "Event location"),
-                "notes": .string(description: "Event notes"),
+                "location": .anyOf([
+                    .string(description: "Event location"),
+                    .null()
+                ]),
+                "notes": .anyOf([
+                    .string(description: "Event notes"),
+                    .null()
+                ]),
                 "isAllDay": .boolean(description: "True when the event spans the full day"),
-                "calendarName": .string(description: "Calendar name"),
-                "eventIdentifier": .string(description: "System identifier for edits/deletes")
+                "calendarName": .anyOf([
+                    .string(description: "Calendar name"),
+                    .null()
+                ]),
+                "eventIdentifier": .anyOf([
+                    .string(description: "System identifier for edits/deletes"),
+                    .null()
+                ])
             ],
-            required: ["title", "startDate", "endDate", "isAllDay"]
+            required: [
+                "title",
+                "startDate",
+                "endDate",
+                "location",
+                "notes",
+                "isAllDay",
+                "calendarName",
+                "eventIdentifier"
+            ],
+            additionalProperties: .bool(false),
+            title: "CalendarEventData"
         )
     }
 }

@@ -145,15 +145,9 @@ extension Agent {
         if let extraTools = context.tools, !extraTools.isEmpty {
             tools = (tools ?? []) + extraTools
         }
-        let toolEventHandler: (LangToolsToolEvent) -> Void = { [name] event in
-            switch event {
-            case .toolCalled(let toolCall):
-                context.eventHandler(.toolCalled(agent: name, tool: toolCall.name ?? "no_tool_name", arguments: toolCall.arguments))
-
-            case .toolCompleted(let toolResult):
-                if toolResult?.is_error ?? false { context.eventHandler(.error(agent: name, message: toolResult?.result ?? "No tool result returned.")) }
-                else { context.eventHandler(.toolCompleted(agent: name, result: toolResult?.result)) }
-            }
+        let toolEventForwarder = AgentToolEventForwarder(agentName: name, eventHandler: context.eventHandler)
+        let toolEventHandler: (LangToolsToolEvent) -> Void = { event in
+            toolEventForwarder.handle(event)
         }
         do {
 //            print("AGENT \(name) SENDING: \([systemMessage] + context.messages)")
@@ -205,6 +199,47 @@ extension Agent {
 
         prompt += "\n\nCurrent time: \(Date().description(with: .current))"
         return prompt
+    }
+}
+
+final class AgentToolEventForwarder {
+    private let agentName: String
+    private let eventHandler: (AgentEvent) -> Void
+    private let lock = NSLock()
+    private var pendingTransferSelectionIDs: [String?] = []
+
+    init(agentName: String, eventHandler: @escaping (AgentEvent) -> Void) {
+        self.agentName = agentName
+        self.eventHandler = eventHandler
+    }
+
+    func handle(_ event: LangToolsToolEvent) {
+        switch event {
+        case .toolCalled(let toolCall):
+            guard toolCall.name != "agent_transfer" else {
+                lock.lock()
+                pendingTransferSelectionIDs.append(toolCall.id)
+                lock.unlock()
+                return
+            }
+            eventHandler(.toolCalled(agent: agentName, tool: toolCall.name ?? "no_tool_name", arguments: toolCall.arguments))
+
+        case .toolCompleted(let toolResult):
+            let selectionID = toolResult?.tool_selection_id
+            lock.lock()
+            let transferIndex = pendingTransferSelectionIDs.firstIndex { $0 == selectionID }
+            if let transferIndex {
+                pendingTransferSelectionIDs.remove(at: transferIndex)
+            }
+            lock.unlock()
+            guard transferIndex == nil else { return }
+
+            if toolResult?.is_error ?? false {
+                eventHandler(.error(agent: agentName, message: toolResult?.result ?? "No tool result returned."))
+            } else {
+                eventHandler(.toolCompleted(agent: agentName, result: toolResult?.result))
+            }
+        }
     }
 }
 

@@ -239,7 +239,7 @@ private struct AccountChatMessage: Codable {
 
     init(_ message: Message) {
         self.role = message.role.rawValue
-        self.content = message.text ?? ""
+        self.content = message.providerContext ?? ""
     }
 }
 
