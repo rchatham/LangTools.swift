@@ -14,6 +14,7 @@ public struct ChatSettingsView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var selectedTab: SettingsTab = .general
     @State private var selectedCustomTab: String? = nil
+    @ObservedObject private var pairingCoordinator = CodexHelperPairingCoordinator.shared
 
     public enum SettingsTab: String, CaseIterable, Identifiable {
         case general = "General"
@@ -40,11 +41,45 @@ public struct ChatSettingsView: View {
     }
 
     public var body: some View {
-        #if os(macOS)
-        macOSLayout
-        #else
-        mobileLayout
-        #endif
+        Group {
+            #if os(macOS)
+            macOSLayout
+            #else
+            mobileLayout
+            #endif
+        }
+        .onReceive(pairingCoordinator.$pairedHelper.compactMap { $0 }) { helper in
+            // Keep an already-open Settings form from saving its stale token
+            // over a freshly confirmed pairing when the form disappears.
+            viewModel.codexHelperToken = helper.token
+            viewModel.codexHelperBaseURLString = "http://127.0.0.1:\(helper.port)"
+        }
+    }
+
+    /// Pairing status row for the Codex helper sections, driven by the pairing coordinator.
+    private var pairingStatusRow: some View {
+        HStack(spacing: 6) {
+            switch pairingCoordinator.pairingStatus {
+            case .verified(let port):
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+                Text("Paired with helper on port \(port) ✓")
+            case .paired(let port):
+                Image(systemName: "checkmark.circle")
+                    .foregroundColor(.secondary)
+                Text("Paired with helper on port \(port)")
+            case .verificationFailed(let port, let message):
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                Text("Pairing with helper on port \(port) failed: \(message)")
+            case .notPaired:
+                Image(systemName: "link")
+                    .foregroundColor(.secondary)
+                Text("Not paired")
+            }
+        }
+        .font(.caption)
+        .foregroundColor(.secondary)
     }
 
     // macOS-specific layout
@@ -206,9 +241,10 @@ public struct ChatSettingsView: View {
                         }
                     }
 
-                    Text("For OpenAI account-backed Codex models, start the external helper and paste its URL/token below.")
+                    Text("For OpenAI account-backed Codex models, start the external helper, then pair with one click from its menu or paste its URL/token below.")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                    pairingStatusRow
                     TextField("Codex Helper URL", text: $viewModel.codexHelperBaseURLString)
                     SecureField("Codex Helper Token", text: $viewModel.codexHelperToken)
                     if let tokenError = viewModel.codexHelperTokenSaveError {
@@ -457,12 +493,13 @@ public struct ChatSettingsView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Codex Helper")
                                     .font(.headline)
-                                Text("Run this in Terminal before using OpenAI account-backed Codex models:")
+                                Text("Run one of these in Terminal before using OpenAI account-backed Codex models, or pair with one click from the helper app's menu:")
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
                                 Text(viewModel.codexHelperCommand)
                                     .font(.system(.caption, design: .monospaced))
                                     .textSelection(.enabled)
+                                pairingStatusRow
                                 TextField("Codex Helper URL", text: $viewModel.codexHelperBaseURLString)
                                     .textFieldStyle(.roundedBorder)
                                 SecureField("Codex Helper Token", text: $viewModel.codexHelperToken)
@@ -1174,7 +1211,7 @@ extension ChatSettingsView {
         }
 
         var codexHelperCommand: String {
-            "swift run LangToolsCLI serve"
+            "make helper-app-open  # menu-bar app with one-click pairing\nmake codex-helper    # CLI alternative"
         }
 
         func modelPickerTitle(for model: Model) -> String {

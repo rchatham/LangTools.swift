@@ -39,6 +39,28 @@ final class CodexHelperClientTests: XCTestCase {
         XCTAssertEqual(status.accessibleModelIDs, ["gpt-5.5", "gpt-5.3-codex-spark"])
     }
 
+    func testReadsUpdatedHelperConfigurationForEachRequest() async throws {
+        var port = 9999
+        var token = "first-token"
+        let session = makeURLSession { request in
+            XCTAssertEqual(request.url?.port, port)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(token)")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(#"{"status":"ok","version":1}"#.utf8))
+        }
+        let client = CodexHelperClient(configurationProvider: {
+            AccountBackendConfiguration(
+                codexHelperBaseURL: URL(string: "http://127.0.0.1:\(port)")!,
+                codexHelperToken: token
+            )
+        }, urlSession: session)
+
+        _ = try await client.healthCheck()
+        port = 8765
+        token = "paired-token"
+        _ = try await client.healthCheck()
+    }
+
     func testLoginDecodesAccountSession() async throws {
         let session = makeURLSession { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!

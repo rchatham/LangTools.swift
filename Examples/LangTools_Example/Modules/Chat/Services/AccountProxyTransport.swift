@@ -14,16 +14,23 @@ public protocol ConversationAwareAccountProxyTransportProtocol: AccountProxyTran
 }
 
 public final class AccountProxyTransport: ConversationAwareAccountProxyTransportProtocol {
-    private let configuration: AccountBackendConfiguration
+    private let configurationProvider: () -> AccountBackendConfiguration
+    private var configuration: AccountBackendConfiguration { configurationProvider() }
     private let urlSession: URLSession
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
     public init(
-        configuration: AccountBackendConfiguration = AccountBackendConfiguration(),
+        configuration: AccountBackendConfiguration? = nil,
         urlSession: URLSession = LoopbackURLSession.shared
     ) {
-        self.configuration = configuration
+        self.configurationProvider = { configuration ?? AccountBackendConfiguration() }
+        self.urlSession = urlSession
+    }
+
+    /// Allows tests to simulate a helper URL/token changing after construction.
+    init(configurationProvider: @escaping () -> AccountBackendConfiguration, urlSession: URLSession) {
+        self.configurationProvider = configurationProvider
         self.urlSession = urlSession
     }
 
