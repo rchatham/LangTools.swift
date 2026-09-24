@@ -20,6 +20,9 @@ public final class Message: Codable, ObservableObject, Identifiable, Equatable, 
     /// Tool invocations made while producing this message. Rendered by ChatUI
     /// as expandable tool-call cards alongside the message bubble.
     @Published public var toolCalls: [ChatToolCall] = []
+    /// Raw results retained for provider history replay when a rendered card
+    /// intentionally hides the corresponding `ChatToolCall.result`.
+    public var providerToolResults: [String: String] = [:]
     public var id: UUID { uuid }
 
     public var text: String? {
@@ -32,20 +35,21 @@ public final class Message: Codable, ObservableObject, Identifiable, Equatable, 
         }
     }
 
-    public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil, createdAt: Date = Date(), toolCalls: [ChatToolCall] = []) {
+    public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil, createdAt: Date = Date(), toolCalls: [ChatToolCall] = [], providerToolResults: [String: String] = [:]) {
         self.uuid = uuid
         self.role = role
         self.contentType = contentType
         self.imageDetail = imageDetail
         self.createdAt = createdAt
         self.toolCalls = toolCalls
+        self.providerToolResults = providerToolResults
     }
 
     // Helper initializer for regular messages
     public convenience init(text: String, role: Role) { self.init(role: role, contentType: .string(text)) }
 
     // Coding keys for encoding/decoding
-    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail, createdAt, toolCalls }
+    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail, createdAt, toolCalls, providerToolResults }
 
     public required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -55,6 +59,7 @@ public final class Message: Codable, ObservableObject, Identifiable, Equatable, 
         imageDetail = try container.decodeIfPresent(ImageDetail.self, forKey: .imageDetail)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         toolCalls = try container.decodeIfPresent([ChatToolCall].self, forKey: .toolCalls) ?? []
+        providerToolResults = try container.decodeIfPresent([String: String].self, forKey: .providerToolResults) ?? [:]
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -67,6 +72,9 @@ public final class Message: Codable, ObservableObject, Identifiable, Equatable, 
         if !toolCalls.isEmpty {
             try container.encode(toolCalls, forKey: .toolCalls)
         }
+        if !providerToolResults.isEmpty {
+            try container.encode(providerToolResults, forKey: .providerToolResults)
+        }
     }
 
     public static func == (lhs: Message, rhs: Message) -> Bool {
@@ -75,7 +83,8 @@ public final class Message: Codable, ObservableObject, Identifiable, Equatable, 
         lhs.contentType == rhs.contentType &&
         lhs.imageDetail == rhs.imageDetail &&
         lhs.createdAt == rhs.createdAt &&
-        lhs.toolCalls == rhs.toolCalls
+        lhs.toolCalls == rhs.toolCalls &&
+        lhs.providerToolResults == rhs.providerToolResults
     }
 
     public func hash(into hasher: inout Hasher) {
@@ -85,6 +94,7 @@ public final class Message: Codable, ObservableObject, Identifiable, Equatable, 
         hasher.combine(imageDetail)
         hasher.combine(createdAt)
         hasher.combine(toolCalls)
+        hasher.combine(providerToolResults)
     }
 }
 
@@ -129,7 +139,7 @@ public extension Array<Message> {
             let calls = m.toolCalls.filter { $0.status != .pending }
             guard !calls.isEmpty else { return [OpenAI.Message(role: m.role, content: m.text ?? "")] }
             let toolCalls = calls.enumerated().map { idx, call in OpenAI.Message.ToolCall(index: idx, id: call.id, type: .function, function: .init(name: call.name, arguments: call.arguments ?? "{}")) }
-            return [OpenAI.Message(tool_selection: toolCalls)] + calls.map { OpenAI.Message(tool_selection_id: $0.id, result: $0.result ?? "") }
+            return [OpenAI.Message(tool_selection: toolCalls)] + calls.map { OpenAI.Message(tool_selection_id: $0.id, result: m.providerToolResults[$0.id] ?? $0.result ?? "") }
         }
     }
 
@@ -139,7 +149,7 @@ public extension Array<Message> {
             let calls = m.toolCalls.filter { $0.status != .pending }
             guard !calls.isEmpty else { return [Anthropic.Message(role: .init(m.role), content: m.text ?? "")] }
             let use = calls.map { Anthropic.Message.Content.ContentType.toolUse(.init(id: $0.id, name: $0.name, input: $0.arguments ?? "{}")) }
-            let results = calls.map { Anthropic.Message.Content.ContentType.toolResult(.init(tool_selection_id: $0.id, result: $0.result ?? "", is_error: $0.status == .failure)) }
+            let results = calls.map { Anthropic.Message.Content.ContentType.toolResult(.init(tool_selection_id: $0.id, result: m.providerToolResults[$0.id] ?? $0.result ?? "", is_error: $0.status == .failure)) }
             return [Anthropic.Message(role: .assistant, content: .array(use)), Anthropic.Message(role: .user, content: .array(results))]
         }
     }
@@ -151,7 +161,7 @@ public extension Array<Message> {
             let calls = m.toolCalls.filter { $0.status != .pending }
             guard !calls.isEmpty else { return [Ollama.Message(role: .init(m.role), content: m.text ?? "")] }
             let toolCalls = calls.map { Ollama.ChatToolCall(function: .init(name: $0.name, arguments: Self.parseArguments($0.arguments))) }
-            let results = calls.map { Ollama.ChatToolResult(tool_selection_id: $0.id, result: $0.result ?? "", is_error: $0.status == .failure) }
+            let results = calls.map { Ollama.ChatToolResult(tool_selection_id: $0.id, result: m.providerToolResults[$0.id] ?? $0.result ?? "", is_error: $0.status == .failure) }
             return [Ollama.Message(role: .assistant, content: m.text ?? "", tool_calls: toolCalls)] + Ollama.Message.messages(for: results)
         }
     }
@@ -342,6 +352,7 @@ extension Message {
                 ChatToolCall(
                     id: UUID().uuidString,
                     name: selection.name ?? "tool",
+                    kind: .tool,
                     arguments: arguments,
                     status: .pending,
                     result: nil
@@ -352,14 +363,17 @@ extension Message {
             let status: ChatToolCall.Status = result.is_error ? .failure : .success
             // Tool events arrive as strict (.toolCalled, .toolCompleted) pairs
             // in arrival order, so complete the most recent pending card.
-            if let index = toolCalls.lastIndex(where: { $0.status == .pending }) {
+            if let index = toolCalls.lastIndex(where: { $0.kind == .tool && $0.status == .pending }) {
                 let existing = toolCalls[index]
                 toolCalls[index] = ChatToolCall(
                     id: existing.id,
                     name: existing.name,
+                    kind: existing.kind,
                     arguments: existing.arguments,
                     status: status,
-                    result: result.result
+                    result: result.result,
+                    details: existing.details,
+                    children: existing.children
                 )
             } else {
                 toolCalls.append(
