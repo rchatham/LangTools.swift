@@ -10,6 +10,7 @@ import XCTest
     #expect(Bundle.main.bundleIdentifier == "com.reidchatham.LangTools-Example")
     #expect(Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String == "LangTools")
     #expect(Bundle.main.object(forInfoDictionaryKey: "CFBundleExecutable") as? String == "LangTools")
+    #expect(KeychainService.shared.keychain.service == "com.reidchatham.LangTools_Example")
 }
 
 #if os(macOS)
