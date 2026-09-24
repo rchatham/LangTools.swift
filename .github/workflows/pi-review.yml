@@ -54,7 +54,21 @@ jobs:
             --directory "$package_dir" --strip-components=1
 
       - name: Fetch pull request diff
-        run: gh pr diff "$PR_NUMBER" --repo "$REPOSITORY" > "$RUNNER_TEMP/pr.diff"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # GitHub's PR diff API rejects changes over 20,000 lines. Fetch the
+          # event's commits as data; never check out or execute the PR head.
+          if [[ "$(git rev-parse --is-shallow-repository)" == true ]]; then
+            git fetch --no-tags --unshallow origin "$BASE_SHA" "$HEAD_SHA"
+          else
+            git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA"
+          fi
+          merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+          git diff --no-ext-diff --no-textconv "$merge_base" "$HEAD_SHA" > "$RUNNER_TEMP/pr.diff"
 
       - name: Run Pi review
         env:

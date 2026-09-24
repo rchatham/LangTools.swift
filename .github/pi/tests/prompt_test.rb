@@ -91,6 +91,33 @@ class PromptTest < Minitest::Test
     end
   end
 
+  def test_review_fetches_large_diff_from_git_without_checking_out_pr_head
+    Dir.mktmpdir('pi-review-diff-test') do |dir|
+      source = File.join(dir, 'source')
+      remote = File.join(dir, 'remote.git')
+      checkout = File.join(dir, 'checkout')
+      assert system('git', 'init', '-q', '-b', 'main', source)
+      File.write(File.join(source, 'base.txt'), "trusted base\n")
+      assert system('git', '-C', source, 'add', '.')
+      assert system('git', '-C', source, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'base')
+      base_sha = `git -C #{source} rev-parse HEAD`.strip
+      assert system('git', '-C', source, 'switch', '-q', '-c', 'feature')
+      File.write(File.join(source, 'large.txt'), (1..20_001).map { |n| "line-#{n}\n" }.join)
+      assert system('git', '-C', source, 'add', '.')
+      assert system('git', '-C', source, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'large PR')
+      head_sha = `git -C #{source} rev-parse HEAD`.strip
+      assert system('git', 'clone', '-q', '--bare', source, remote)
+      assert system('git', 'clone', '-q', '--depth=1', '--branch=main', "file://#{remote}", checkout)
+
+      env = { 'RUNNER_TEMP' => dir, 'BASE_SHA' => base_sha, 'HEAD_SHA' => head_sha }
+      run_step('pi-review.yml', 'Fetch pull request diff', env, checkout)
+      diff = File.read(File.join(dir, 'pr.diff'))
+      assert_includes diff, '+line-20001'
+      assert_operator diff.lines.count, :>, 20_000
+      assert_equal base_sha, `git -C #{checkout} rev-parse HEAD`.strip
+    end
+  end
+
   def test_fork_pull_request_is_rejected
     Dir.mktmpdir('pi-fork-test') do |dir|
       File.write(File.join(dir, 'gh'), "#!/bin/bash\nprintf 'fork-owner/repo\\n'\n")
