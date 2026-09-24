@@ -101,7 +101,8 @@ confirmed; tests cover missing executables, failures, spaces, quotes, and concur
 
 - [x] Promote the app and preserve bundle/keychain identities.
 - [x] Build macOS/iOS; run core, app-package, and iOS identity/UI smoke tests.
-- [x] Resolve local macOS hosted-test launch timeouts and verify signed credential access.
+- [x] Run hosted unit/identity tests (including signed credential access); the macOS
+  UI-test runner hang remains a documented local-CLI limitation, not a resolved item.
 - [ ] Complete sandbox/independent-terminal spike and record the decision.
 - [ ] Implement/test project matching and live tmux discovery.
 - [ ] Implement workspace UI without disrupting existing chat.
