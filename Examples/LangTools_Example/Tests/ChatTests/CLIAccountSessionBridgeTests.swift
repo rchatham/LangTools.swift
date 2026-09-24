@@ -252,13 +252,6 @@ final class CLIAccountSessionBridgeTests: XCTestCase {
     }
 }
 
-final class AccountProxyTransportTests: XCTestCase {
-}
-
-private struct AccountProxyTransportRequestProbe: Decodable {
-    let stream: Bool
-}
-
 private final class StubCommandRunner: CommandRunning {
     private let handler: @Sendable (String, [String]) throws -> CommandResult
 
@@ -269,31 +262,6 @@ private final class StubCommandRunner: CommandRunning {
     func run(executable: String, arguments: [String]) async throws -> CommandResult {
         try handler(executable, arguments)
     }
-}
-
-private final class MockURLProtocol: URLProtocol {
-    static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
-
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-        guard let handler = Self.requestHandler else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
-            return
-        }
-
-        do {
-            let (response, data) = try handler(request)
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
-        } catch {
-            client?.urlProtocol(self, didFailWithError: error)
-        }
-    }
-
-    override func stopLoading() {}
 }
 
 private extension Array {
