@@ -661,7 +661,7 @@ actor CodexRuntimeService {
                     method: "turn/start",
                     params: CodexTurnStartParams(
                         threadId: threadID,
-                        input: [.init(text: Self.renderPrompt(messages: messages))],
+                        input: [.init(text: try Self.renderPrompt(messages: messages))],
                         approvalPolicy: CodexContainment.approvalPolicy,
                         sandboxPolicy: CodexContainment.sandboxPolicy(workspace: workspace),
                         model: model
@@ -1195,13 +1195,14 @@ actor CodexRuntimeService {
         }
     }
 
-    private static func renderPrompt(messages: [HelperChatMessage]) -> String {
-        let transcript = messages.map { message in
-            "[\(message.role.capitalized)]\n\(message.content)"
-        }.joined(separator: "\n\n")
+    private static func renderPrompt(messages: [HelperChatMessage]) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let transcript = String(decoding: try encoder.encode(messages), as: UTF8.self)
         return """
         Continue this conversation and reply as the assistant. Return only the assistant's next message with no extra framing.
 
+        Conversation messages (JSON):
         \(transcript)
         """
     }
