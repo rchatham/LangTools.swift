@@ -1,7 +1,7 @@
 import Foundation
 
-struct AuthCLI {
-    static func run(arguments: [String]) async throws {
+public struct AuthCLI {
+    public static func run(arguments: [String]) async throws {
         let command = try AuthSubcommand(arguments: arguments)
         switch command {
         case .login:
@@ -151,15 +151,15 @@ private enum AuthCLIError: LocalizedError {
     }
 }
 
-struct StoredAccountSession: Codable, Sendable {
-    let provider: String
-    let accountIdentifier: String
-    let accessToken: String
-    let refreshToken: String?
-    let idToken: String?
-    let tokenType: String?
-    let expiresAt: Date?
-    let accessibleModelIDs: [String]
-    let createdAt: Date
-    let id: UUID
+public struct StoredAccountSession: Codable, Sendable {
+    public let provider: String
+    public let accountIdentifier: String
+    public let accessToken: String
+    public let refreshToken: String?
+    public let idToken: String?
+    public let tokenType: String?
+    public let expiresAt: Date?
+    public let accessibleModelIDs: [String]
+    public let createdAt: Date
+    public let id: UUID
 }

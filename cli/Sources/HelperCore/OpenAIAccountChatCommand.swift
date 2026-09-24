@@ -5,8 +5,8 @@ struct ResolvedCodexCommand: Sendable {
     let arguments: [String]
 }
 
-struct OpenAIAccountChatCommand {
-    static func run(arguments: [String]) async throws {
+public struct OpenAIAccountChatCommand {
+    public static func run(arguments: [String]) async throws {
         let request = try OpenAIAccountChatRequest(arguments: arguments)
         let content = try await performChat(
             modelID: request.modelID,

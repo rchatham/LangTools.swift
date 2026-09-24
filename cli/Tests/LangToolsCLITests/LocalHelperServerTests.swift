@@ -5,6 +5,7 @@ import Glibc
 #endif
 import Foundation
 import XCTest
+@testable import HelperCore
 @testable import LangToolsCLI
 
 final class LocalHelperServerTests: XCTestCase {
@@ -254,6 +255,34 @@ final class LocalHelperServerTests: XCTestCase {
         XCTAssertEqual(LocalHelperServer.httpStatus(for: CodexRuntimeError.runtime("failed")), .internalServerError)
     }
 
+    func testParserAcceptsOnlyLoopbackHostHeaders() {
+        for host in ["127.0.0.1:8765", "localhost:8765", "[::1]:8765", "127.0.0.1", "[::1]", "LOCALHOST:8765"] {
+            let result = HTTPRequest.parse(from: Data("GET /health HTTP/1.1\r\nHost: \(host)\r\n\r\n".utf8))
+            guard case .request(let request) = result else {
+                return XCTFail("Expected request for Host: \(host), got \(result)")
+            }
+            XCTAssertEqual(request.path, "/health")
+        }
+
+        // A bracketless IPv6 literal is ambiguous with host:port framing and
+        // fails closed: the last `:` outside brackets is treated as the port
+        // separator, leaving `:` as the host part.
+        for host in ["evil.com:8765", "127.0.0.1.evil.com", "localhost.evil.com:8765", "[::2]:8765", "0.0.0.0:8765", "::1"] {
+            assertFailure(
+                HTTPRequest.parse(from: Data("GET /health HTTP/1.1\r\nHost: \(host)\r\n\r\n".utf8)),
+                status: .badRequest,
+                message: "Unexpected Host header."
+            )
+        }
+
+        // A missing Host header keeps its distinct 400 message.
+        assertFailure(
+            HTTPRequest.parse(from: Data("GET /health HTTP/1.1\r\n\r\n".utf8)),
+            status: .badRequest,
+            message: "A Host header is required."
+        )
+    }
+
     private func chunkPayload(_ framed: Data) throws -> Data {
         let firstCRLF = try XCTUnwrap(framed.range(of: Data("\r\n".utf8)))
         let countText = String(decoding: framed[..<firstCRLF.lowerBound], as: UTF8.self)
@@ -281,13 +310,17 @@ final class LocalHelperServerTests: XCTestCase {
     private func assertFailure(
         _ result: HTTPRequestParseResult,
         status: HTTPStatus,
+        message: String? = nil,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        guard case .failure(let actual, _) = result else {
+        guard case .failure(let actual, let actualMessage) = result else {
             return XCTFail("Expected parser failure", file: file, line: line)
         }
         XCTAssertEqual(actual, status, file: file, line: line)
+        if let message {
+            XCTAssertEqual(actualMessage, message, file: file, line: line)
+        }
     }
 
     private enum TestError: Error { case unexpectedResult }

@@ -188,6 +188,35 @@ final class NetworkClientAuthTests: XCTestCase {
         XCTAssertEqual(response.text, "Codex response")
     }
 
+    func testTransportReadsUpdatedHelperConfigurationForEachRequest() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AccountProxyURLProtocol.self]
+        let urlSession = URLSession(configuration: configuration)
+        var port = 9999
+        var token = "first-token"
+        var requestCount = 0
+        AccountProxyURLProtocol.requestHandler = { request in
+            requestCount += 1
+            XCTAssertEqual(request.url?.port, port)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(token)")
+            let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 204, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { AccountProxyURLProtocol.requestHandler = nil }
+        let transport = AccountProxyTransport(configurationProvider: {
+            AccountBackendConfiguration(
+                codexHelperBaseURL: URL(string: "http://127.0.0.1:\(port)")!,
+                codexHelperToken: token
+            )
+        }, urlSession: urlSession)
+
+        await transport.endConversation(id: UUID())
+        port = 8765
+        token = "paired-token"
+        await transport.endConversation(id: UUID())
+        XCTAssertEqual(requestCount, 2)
+    }
+
     func testCodexConversationPayloadAndCleanupUseHelperCredentials() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [AccountProxyURLProtocol.self]

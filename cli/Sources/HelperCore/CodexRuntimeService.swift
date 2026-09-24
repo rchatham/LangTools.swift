@@ -3,13 +3,13 @@ import Foundation
 import AppKit
 #endif
 
-struct CodexAccountStatus: Sendable {
-    let authenticated: Bool
-    let accountIdentifier: String?
-    let planType: String?
+public struct CodexAccountStatus: Sendable {
+    public let authenticated: Bool
+    public let accountIdentifier: String?
+    public let planType: String?
 }
 
-enum CodexChatStreamEvent: Equatable, Sendable {
+public enum CodexChatStreamEvent: Equatable, Sendable {
     case delta(String)
     case complete(String)
 }
@@ -43,8 +43,8 @@ enum CodexContainment {
     }
 }
 
-actor CodexRuntimeService {
-    static let shared: CodexRuntimeService = {
+public actor CodexRuntimeService {
+    public static let shared: CodexRuntimeService = {
         let workspaces = CodexConversationWorkspace()
         let environment = ProcessInfo.processInfo.environment
         let client = CodexAppServerClient(
@@ -167,13 +167,13 @@ actor CodexRuntimeService {
         self.workspaces = workspaces
     }
 
-    func accountStatus(refreshToken: Bool = false) async throws -> CodexAccountStatus {
+    public func accountStatus(refreshToken: Bool = false) async throws -> CodexAccountStatus {
         let operation = try beginServiceOperation()
         defer { finishServiceOperation(operation.id) }
         return try await readAccountStatus(refreshToken: refreshToken, operation: operation)
     }
 
-    func login() async throws -> StoredAccountSession {
+    public func login() async throws -> StoredAccountSession {
         guard loginInProgress == false else {
             throw CodexRuntimeError.accountConflict("A ChatGPT login is already in progress.")
         }
@@ -256,7 +256,7 @@ actor CodexRuntimeService {
         }
     }
 
-    func logout() async throws {
+    public func logout() async throws {
         let drain = try beginServiceDrain()
         do {
             try await cleanupServiceOperations(
@@ -301,7 +301,7 @@ actor CodexRuntimeService {
         }
     }
 
-    func modelSlugs() async throws -> [String] {
+    public func modelSlugs() async throws -> [String] {
         let operation = try beginServiceOperation()
         defer { finishServiceOperation(operation.id) }
         return try await loadModelSlugs(operation: operation)
@@ -320,7 +320,7 @@ actor CodexRuntimeService {
         )
     }
 
-    func chatStream(
+    public func chatStream(
         model: String,
         messages: [HelperChatMessage],
         conversationID: UUID? = nil
@@ -466,12 +466,12 @@ actor CodexRuntimeService {
         }
     }
 
-    func endConversation(id: UUID) async {
+    public func endConversation(id: UUID) async {
         guard let lifecycleID = markConversationTerminating(id: id) else { return }
         await cleanupTerminatingConversation(id: id, lifecycleID: lifecycleID)
     }
 
-    func shutdown() async {
+    public func shutdown() async {
         guard servicePhase != .shutdown else { return }
         serviceGeneration = UUID()
         let operationIDs = Set(serviceOperations.keys)

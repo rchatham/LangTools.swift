@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import LangToolsCLI
+@testable import HelperCore
 
 final class CodexAppServerClientTests: XCTestCase {
     private struct RequestParams: Codable { let value: String }
@@ -607,7 +607,7 @@ import json
 import os
 import sys
 
-assert sys.argv[1:] == ["app-server", "--listen", "stdio://"]
+assert sys.argv[1:] == ["app-server", "--listen", "stdio://", "-c", "model_provider=openai"]
 assert os.environ.get("CODEX_HOME") == "/tmp/langtools-test-codex-home"
 assert os.environ.get("CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED") == "1"
 

@@ -26,16 +26,24 @@ public struct CodexHelperModelsResponse: Codable, Equatable {
 }
 
 public final class CodexHelperClient: CodexHelperClientProtocol {
-    private let configuration: AccountBackendConfiguration
+    private let configurationProvider: () -> AccountBackendConfiguration
+    private var configuration: AccountBackendConfiguration { configurationProvider() }
     private let urlSession: URLSession
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
     public init(
-        configuration: AccountBackendConfiguration = AccountBackendConfiguration(),
+        configuration: AccountBackendConfiguration? = nil,
         urlSession: URLSession = LoopbackURLSession.shared
     ) {
-        self.configuration = configuration
+        self.configurationProvider = { configuration ?? AccountBackendConfiguration() }
+        self.urlSession = urlSession
+        self.decoder.dateDecodingStrategy = .iso8601
+    }
+
+    /// Allows tests to simulate a helper URL/token changing after construction.
+    init(configurationProvider: @escaping () -> AccountBackendConfiguration, urlSession: URLSession) {
+        self.configurationProvider = configurationProvider
         self.urlSession = urlSession
         self.decoder.dateDecodingStrategy = .iso8601
     }
@@ -117,7 +125,9 @@ public final class CodexHelperClient: CodexHelperClientProtocol {
                 case 400:
                     message = helperMessage ?? "Codex helper rejected the request as invalid."
                 case 401:
-                    message = "Codex helper rejected the request. Check the helper token in Settings."
+                    message = helperMessage == "Unauthorized."
+                        ? "Codex helper rejected the request. Check the helper token in Settings."
+                        : helperMessage ?? "Codex helper returned status 401."
                 case 409:
                     message = helperMessage ?? "A Codex sign-in is already in progress."
                 case 504:

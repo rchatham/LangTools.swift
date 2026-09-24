@@ -5,7 +5,7 @@ import Glibc
 #endif
 import Foundation
 import XCTest
-@testable import LangToolsCLI
+@testable import HelperCore
 
 final class CodexRuntimeServiceFocusedTests: XCTestCase {
     func testLoginFiltersCompletionByExactIDAndRejectsConcurrentLogin() async throws {
