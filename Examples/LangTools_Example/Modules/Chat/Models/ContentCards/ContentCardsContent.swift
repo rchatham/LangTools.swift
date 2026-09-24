@@ -46,10 +46,6 @@ public extension ContentCardsContent {
     /// If `cardsJSON` is not valid JSON, a clearly labeled fallback embeds the
     /// raw payload verbatim instead of throwing, so replay never fails.
     var providerContext: String {
-        Self.cacheLock.lock()
-        defer { Self.cacheLock.unlock() }
-        if let cached = Self.providerContextCache[self] { return cached }
-
         var lines: [String] = []
         if let message, !message.isEmpty {
             lines.append(message)
@@ -62,46 +58,101 @@ public extension ContentCardsContent {
             lines.append("Card details unavailable: the stored cards payload is not valid JSON. Raw payload:")
             lines.append(cardsJSON)
         }
-        let rendered = lines.joined(separator: "\n")
-        Self.providerContextCache[self] = rendered
-        return rendered
+        return lines.joined(separator: "\n")
     }
 
     /// Parses `cardsJSON` with `JSONSerialization` and re-renders it as stable,
     /// pretty-printed JSON with sorted keys. Returns `nil` when the payload is
     /// not valid JSON.
     static func prettyPrintedSortedJSON(from cardsJSON: String) -> String? {
-        Self.cacheLock.lock()
-        defer { Self.cacheLock.unlock() }
-        if Self.prettyJSONCache.index(forKey: cardsJSON) != nil {
-            return Self.prettyJSONCache[cardsJSON] ?? nil
-        }
+        if let cached = Self.prettyJSONCache.value(forKey: cardsJSON) { return cached }
 
-        let rendered: String?
-        if let data = cardsJSON.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
-           let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .fragmentsAllowed]),
-           let string = String(data: pretty, encoding: .utf8) {
-            rendered = string
-        } else {
-            rendered = nil
+        guard let data = cardsJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
+              let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .fragmentsAllowed]),
+              let rendered = String(data: pretty, encoding: .utf8) else {
+            return nil
         }
-        Self.prettyJSONCache[cardsJSON] = rendered
+        Self.prettyJSONCache.insert(rendered, forKey: cardsJSON)
         return rendered
     }
 
-    // MARK: - Rendering caches
+    // Keep expensive JSON formatting bounded by the combined UTF-8 size of
+    // each raw payload and rendered value. Full provider contexts and malformed
+    // raw payloads are never retained by a process-global cache.
+    private static let prettyJSONCache = ContentCardsJSONCache(costLimit: 1_048_576)
+}
 
-    /// Reentrant lock guarding the memoization tables below. `providerContext`
-    /// calls `prettyPrintedSortedJSON` internally, so a single recursive lock
-    /// keeps the nested lookup from deadlocking while still protecting both
-    /// caches from concurrent access.
-    private static let cacheLock = NSRecursiveLock()
-    /// Memoized full provider-context strings keyed by the immutable content.
-    private static var providerContextCache: [ContentCardsContent: String] = [:]
-    /// Memoized pretty-printed JSON keyed by the raw payload. Values are
-    /// `String?` so a previously-rendered `nil` (malformed JSON) is also cached.
-    private static var prettyJSONCache: [String: String?] = [:]
+/// A strict, lock-protected least-recently-used cache for rendered card JSON.
+/// Its internal visibility supports deterministic capacity and concurrency tests.
+final class ContentCardsJSONCache: @unchecked Sendable {
+    struct Snapshot: Equatable, Sendable {
+        let entryCount: Int
+        let totalCost: Int
+        let costLimit: Int
+    }
+
+    private struct Entry {
+        let value: String
+        let cost: Int
+        var accessOrder: UInt64
+    }
+
+    private let lock = NSLock()
+    private let costLimit: Int
+    private var entries: [String: Entry] = [:]
+    private var totalCost = 0
+    private var accessOrder: UInt64 = 0
+
+    init(costLimit: Int) {
+        self.costLimit = max(0, costLimit)
+    }
+
+    func value(forKey key: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard var entry = entries[key] else { return nil }
+        entry.accessOrder = nextAccessOrder()
+        entries[key] = entry
+        return entry.value
+    }
+
+    func insert(_ value: String, forKey key: String) {
+        let cost = key.utf8.count + value.utf8.count
+        guard costLimit > 0, cost <= costLimit else { return }
+
+        lock.lock()
+        defer { lock.unlock() }
+        if let replaced = entries.removeValue(forKey: key) {
+            totalCost -= replaced.cost
+        }
+        while totalCost + cost > costLimit,
+              let leastRecentlyUsedKey = entries.min(by: {
+                  $0.value.accessOrder < $1.value.accessOrder
+              })?.key,
+              let evicted = entries.removeValue(forKey: leastRecentlyUsedKey) {
+            totalCost -= evicted.cost
+        }
+        entries[key] = Entry(value: value, cost: cost, accessOrder: nextAccessOrder())
+        totalCost += cost
+    }
+
+    func contains(_ key: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries[key] != nil
+    }
+
+    var snapshot: Snapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        return Snapshot(entryCount: entries.count, totalCost: totalCost, costLimit: costLimit)
+    }
+
+    private func nextAccessOrder() -> UInt64 {
+        accessOrder &+= 1
+        return accessOrder
+    }
 }
 
 public enum ContentCardsError: Error {
