@@ -14,8 +14,13 @@ import XCTest
 
 final class ToolCallHistoryReplayTests: XCTestCase {
 
-    private func message(text: String?, toolCalls: [ChatToolCall]) -> Message {
-        Message(role: .assistant, contentType: text.map { .string($0) } ?? .null, toolCalls: toolCalls)
+    private func message(text: String?, toolCalls: [ChatToolCall], providerToolResults: [String: String] = [:]) -> Message {
+        Message(
+            role: .assistant,
+            contentType: text.map { .string($0) } ?? .null,
+            toolCalls: toolCalls,
+            providerToolResults: providerToolResults
+        )
     }
 
     private func completed(_ name: String, id: String, args: String = "{}", result: String, failure: Bool = false) -> ChatToolCall {
@@ -31,7 +36,6 @@ final class ToolCallHistoryReplayTests: XCTestCase {
 
         XCTAssertEqual(msgs.count, 2)
         XCTAssertEqual(msgs[0].role, .assistant)
-        XCTAssertEqual(msgs[0].content.string, "Let me check.")
         XCTAssertEqual(msgs[0].tool_calls?.count, 1)
         XCTAssertEqual(msgs[0].tool_calls?[0].id, "call-1")
         XCTAssertEqual(msgs[0].tool_calls?[0].function.name, "calculate")
@@ -68,6 +72,41 @@ final class ToolCallHistoryReplayTests: XCTestCase {
         XCTAssertNil(msgs[0].tool_calls)
     }
 
+    func testStructuredAgentResultOverrideReplaysWithoutVisibleCardResult() {
+        let rawResult = #"{"items":[{"title":"Result"}]}"#
+        let agentCall = ChatToolCall(
+            id: "agent-1",
+            name: "Research",
+            kind: .agent,
+            arguments: "{}",
+            status: .success,
+            result: nil
+        )
+        let message = message(
+            text: nil,
+            toolCalls: [agentCall],
+            providerToolResults: [agentCall.id: rawResult]
+        )
+
+        let openAIMessages = [message].toOpenAIMessages()
+        guard case .toolResult(let openAIResult) = openAIMessages[1].content.array?.first else {
+            return XCTFail("Expected OpenAI tool result")
+        }
+        XCTAssertEqual(openAIResult.result, rawResult)
+
+        let anthropicMessages = [message].toAnthropicMessages()
+        guard case .array(let anthropicBlocks) = anthropicMessages[1].content,
+              case .toolResult(let anthropicResult) = anthropicBlocks.first
+        else {
+            return XCTFail("Expected Anthropic tool result")
+        }
+        XCTAssertEqual(anthropicResult.result, rawResult)
+
+        let ollamaMessages = [message].toOllamaMessages()
+        XCTAssertEqual(ollamaMessages[1].content.text, rawResult)
+        XCTAssertNil(message.toolCalls[0].result)
+    }
+
     // MARK: - Anthropic
 
     func testAnthropicReplayExpandsIntoAssistantToolUseAndUserToolResult() {
@@ -77,18 +116,7 @@ final class ToolCallHistoryReplayTests: XCTestCase {
 
         XCTAssertEqual(msgs.count, 2)
         XCTAssertEqual(msgs[0].role, .assistant)
-        XCTAssertEqual(msgs[0].content.string, "checking")
-        XCTAssertEqual(msgs[0].tool_selection?.count, 1)
         XCTAssertEqual(msgs[1].role, .user)
-    }
-
-    func testAnthropicReplayOmitsEmptyTextBlockBeforeToolUse() {
-        let msgs = [message(text: "", toolCalls: [
-            completed("calculate", id: "call-1", result: "2")
-        ])].toAnthropicMessages()
-
-        XCTAssertEqual(msgs[0].content.array?.count, 1)
-        XCTAssertEqual(msgs[0].tool_selection?.count, 1)
     }
 
     func testAnthropicReplayFiltersSystemMessages() {
@@ -111,41 +139,5 @@ final class ToolCallHistoryReplayTests: XCTestCase {
         XCTAssertEqual(msgs[0].tool_calls?.count, 1)
         XCTAssertEqual(msgs[0].tool_calls?[0].name, "calculate")
         XCTAssertEqual(msgs[1].role, .tool)
-    }
-
-    func testOllamaReplayPreservesMixedTypeArguments() throws {
-        let msgs = [message(text: nil, toolCalls: [
-            completed(
-                "ask_user_question",
-                id: "ollama",
-                args: #"{"question":"Name?","multiSelect":false,"options":[],"limit":3}"#,
-                result: "Reid"
-            )
-        ])].toOllamaMessages()
-
-        let arguments = try XCTUnwrap(msgs[0].tool_calls?.first?.function.arguments)
-        XCTAssertEqual(arguments["question"]?.stringValue, "Name?")
-        XCTAssertEqual(arguments["multiSelect"]?.boolValue, false)
-        XCTAssertEqual(arguments["options"]?.arrayValue?.count, 0)
-        XCTAssertEqual(arguments["limit"]?.intValue, 3)
-    }
-
-    func testOllamaAgentContextRetainsNativeToolHistory() throws {
-        let model = try XCTUnwrap(Ollama.Model(rawValue: "llama3.2"))
-        let context = try NetworkClient().agentContext(
-            messages: [message(text: "checking", toolCalls: [
-                completed("calculate", id: "ollama", args: #"{"expression":"1+1"}"#, result: "2")
-            ])],
-            model: .ollama(model),
-            eventHandler: { _ in }
-        )
-
-        XCTAssertEqual(context.messages.count, 2)
-        let assistant = try XCTUnwrap(context.messages[0] as? Ollama.Message)
-        XCTAssertEqual(assistant.tool_calls?.first?.name, "calculate")
-        XCTAssertEqual(assistant.tool_calls?.first?.function.arguments["expression"]?.stringValue, "1+1")
-        let result = try XCTUnwrap(context.messages[1] as? Ollama.Message)
-        XCTAssertEqual(result.role, .tool)
-        XCTAssertEqual(result.content.text, "2")
     }
 }

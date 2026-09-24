@@ -142,7 +142,8 @@ final class ToolCallEventTests: XCTestCase {
             toolCalls: [
                 ChatToolCall(id: "call-1", name: "calculate", arguments: "{}", status: .success, result: "2"),
                 ChatToolCall(id: "call-2", name: "current_date_time", arguments: nil, status: .failure, result: "oops")
-            ]
+            ],
+            providerToolResults: ["call-1": #"{"value":2}"#]
         )
 
         let data = try JSONEncoder().encode(message)
@@ -155,6 +156,7 @@ final class ToolCallEventTests: XCTestCase {
         XCTAssertEqual(decoded.toolCalls[1].name, "current_date_time")
         XCTAssertEqual(decoded.toolCalls[1].status, .failure)
         XCTAssertEqual(decoded.toolCalls[1].result, "oops")
+        XCTAssertEqual(decoded.providerToolResults, ["call-1": #"{"value":2}"#])
     }
 
     func testMessageDecodedWithoutToolCallsKeyDefaultsToEmpty() throws {
@@ -165,6 +167,7 @@ final class ToolCallEventTests: XCTestCase {
         let message = try JSONDecoder().decode(Message.self, from: legacyJSON.data(using: .utf8)!)
 
         XCTAssertEqual(message.toolCalls, [])
+        XCTAssertEqual(message.providerToolResults, [:])
         XCTAssertEqual(message.text, "hi")
     }
 }

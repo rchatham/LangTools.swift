@@ -149,6 +149,25 @@ final class AgentsTests: XCTestCase {
         }
     }
 
+    func testInternalAgentTransferToolEventsAreNotForwarded() {
+        var events: [AgentEvent] = []
+        let forwarder = AgentToolEventForwarder(agentName: "Coordinator") { events.append($0) }
+
+        forwarder.handle(.toolCalled(MockToolSelection(id: "transfer-1", name: "agent_transfer", arguments: "{}")))
+        forwarder.handle(.toolCalled(MockToolSelection(id: "tool-1", name: "calendar", arguments: "{}")))
+        forwarder.handle(.toolCalled(MockToolSelection(id: nil, name: "agent_transfer", arguments: "{}")))
+        forwarder.handle(.toolCompleted(MockToolResult(tool_selection_id: "transfer-1", result: "delegated")))
+        forwarder.handle(.toolCompleted(MockToolResult(tool_selection_id: "tool-1", result: "event")))
+        forwarder.handle(.toolCompleted(nil))
+        forwarder.handle(.toolCompleted(nil))
+
+        XCTAssertEqual(events, [
+            .toolCalled(agent: "Coordinator", tool: "calendar", arguments: "{}"),
+            .toolCompleted(agent: "Coordinator", result: "event"),
+            .toolCompleted(agent: "Coordinator", result: nil)
+        ])
+    }
+
     // MARK: - Agent Event Description
 
     func testAgentEventDescriptions() {

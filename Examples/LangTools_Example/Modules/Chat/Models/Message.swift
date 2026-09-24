@@ -20,6 +20,9 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
     /// Tool invocations made while producing this message. Rendered by ChatUI
     /// as expandable tool-call cards alongside the message bubble.
     @Published public var toolCalls: [ChatToolCall] = []
+    /// Raw results retained for provider history replay when a rendered card
+    /// intentionally hides the corresponding `ChatToolCall.result`.
+    public var providerToolResults: [String: String] = [:]
     public var id: UUID { uuid }
 
     public var text: String? {
@@ -32,20 +35,35 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         }
     }
 
-    public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil, createdAt: Date = Date(), toolCalls: [ChatToolCall] = []) {
+    /// Context sent to AI providers when this message is replayed in history.
+    ///
+    /// For content-card messages this is the card summary plus deterministic
+    /// card details and metadata (see `ContentCardsContent.providerContext`);
+    /// `text` stays the terse optional visible summary. For every other content
+    /// type this is exactly `text`, so non-card provider semantics are
+    /// unchanged.
+    public var providerContext: String? {
+        switch contentType {
+        case .contentCards(let cards): return cards.providerContext
+        default: return text
+        }
+    }
+
+    public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil, createdAt: Date = Date(), toolCalls: [ChatToolCall] = [], providerToolResults: [String: String] = [:]) {
         self.uuid = uuid
         self.role = role
         self.contentType = contentType
         self.imageDetail = imageDetail
         self.createdAt = createdAt
         self.toolCalls = toolCalls
+        self.providerToolResults = providerToolResults
     }
 
     // Helper initializer for regular messages
     public convenience init(text: String, role: Role) { self.init(role: role, contentType: .string(text)) }
 
     // Coding keys for encoding/decoding
-    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail, createdAt, toolCalls }
+    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail, createdAt, toolCalls, providerToolResults }
 
     public required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -55,6 +73,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         imageDetail = try container.decodeIfPresent(ImageDetail.self, forKey: .imageDetail)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         toolCalls = try container.decodeIfPresent([ChatToolCall].self, forKey: .toolCalls) ?? []
+        providerToolResults = try container.decodeIfPresent([String: String].self, forKey: .providerToolResults) ?? [:]
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -67,6 +86,9 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         if !toolCalls.isEmpty {
             try container.encode(toolCalls, forKey: .toolCalls)
         }
+        if !providerToolResults.isEmpty {
+            try container.encode(providerToolResults, forKey: .providerToolResults)
+        }
     }
 
     public static func == (lhs: Message, rhs: Message) -> Bool {
@@ -75,7 +97,8 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         lhs.contentType == rhs.contentType &&
         lhs.imageDetail == rhs.imageDetail &&
         lhs.createdAt == rhs.createdAt &&
-        lhs.toolCalls == rhs.toolCalls
+        lhs.toolCalls == rhs.toolCalls &&
+        lhs.providerToolResults == rhs.providerToolResults
     }
 
     public func hash(into hasher: inout Hasher) {
@@ -85,6 +108,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         hasher.combine(imageDetail)
         hasher.combine(createdAt)
         hasher.combine(toolCalls)
+        hasher.combine(providerToolResults)
     }
 }
 
@@ -127,14 +151,24 @@ public extension Array<Message> {
     func toOpenAIMessages() -> [OpenAI.Message] {
         flatMap { m -> [OpenAI.Message] in
             let calls = m.toolCalls.filter { $0.status != .pending }
-            guard !calls.isEmpty else { return [OpenAI.Message(role: m.role, content: m.text ?? "")] }
+            guard !calls.isEmpty else { return [OpenAI.Message(role: m.role, content: m.providerContext ?? "")] }
             let toolCalls = calls.enumerated().map { idx, call in OpenAI.Message.ToolCall(index: idx, id: call.id, type: .function, function: .init(name: call.name, arguments: call.arguments ?? "{}")) }
-            let assistant = try! OpenAI.Message(
-                role: .assistant,
-                content: m.text.map(OpenAI.Message.Content.string) ?? .null,
-                tool_calls: toolCalls
-            )
-            return [assistant] + calls.map { OpenAI.Message(tool_selection_id: $0.id, result: $0.result ?? "") }
+            let assistantMessage: OpenAI.Message
+            if case .contentCards = m.contentType {
+                do {
+                    // Prefer carrying the card context alongside the retained
+                    // tool calls; if the provider initializer ever rejects this
+                    // role/content/tool_calls combination, fall back to the
+                    // tool-only message instead of crashing history replay.
+                    assistantMessage = try OpenAI.Message(role: .assistant, content: .string(m.providerContext ?? ""), tool_calls: toolCalls)
+                } catch {
+                    print("⚠️ Chat.toOpenAIMessages: provider rejected assistant content+tool_calls (\(error)); replaying tool-only message (card context dropped)")
+                    assistantMessage = OpenAI.Message(tool_selection: toolCalls)
+                }
+            } else {
+                assistantMessage = OpenAI.Message(tool_selection: toolCalls)
+            }
+            return [assistantMessage] + calls.map { OpenAI.Message(tool_selection_id: $0.id, result: m.providerToolResults[$0.id] ?? $0.result ?? "") }
         }
     }
 
@@ -142,28 +176,28 @@ public extension Array<Message> {
         flatMap { m -> [Anthropic.Message] in
             guard m.role != .system else { return [] }
             let calls = m.toolCalls.filter { $0.status != .pending }
-            guard !calls.isEmpty else { return [Anthropic.Message(role: .init(m.role), content: m.text ?? "")] }
-            let text: [Anthropic.Message.Content.ContentType]
-            if let messageText = m.text, !messageText.isEmpty {
-                text = [.text(.init(text: messageText))]
-            } else {
-                text = []
-            }
+            guard !calls.isEmpty else { return [Anthropic.Message(role: .init(m.role), content: m.providerContext ?? "")] }
             let use = calls.map { Anthropic.Message.Content.ContentType.toolUse(.init(id: $0.id, name: $0.name, input: $0.arguments ?? "{}")) }
-            let results = calls.map { Anthropic.Message.Content.ContentType.toolResult(.init(tool_selection_id: $0.id, result: $0.result ?? "", is_error: $0.status == .failure)) }
-            return [Anthropic.Message(role: .assistant, content: .array(text + use)), Anthropic.Message(role: .user, content: .array(results))]
+            let assistantContent: [Anthropic.Message.Content.ContentType]
+            if case .contentCards = m.contentType {
+                assistantContent = [.text(.init(text: m.providerContext ?? ""))] + use
+            } else {
+                assistantContent = use
+            }
+            let results = calls.map { Anthropic.Message.Content.ContentType.toolResult(.init(tool_selection_id: $0.id, result: m.providerToolResults[$0.id] ?? $0.result ?? "", is_error: $0.status == .failure)) }
+            return [Anthropic.Message(role: .assistant, content: .array(assistantContent)), Anthropic.Message(role: .user, content: .array(results))]
         }
     }
 
-    func createAnthropicSystemMessage() -> String? { filter { $0.isSystem }.reduce("") { (!$0.isEmpty ? $0 + "\n---\n" : "") + ($1.text ?? "") } }
+    func createAnthropicSystemMessage() -> String? { filter { $0.isSystem }.reduce("") { (!$0.isEmpty ? $0 + "\n---\n" : "") + ($1.providerContext ?? "") } }
 
     func toOllamaMessages() -> [Ollama.Message] {
         flatMap { m -> [Ollama.Message] in
             let calls = m.toolCalls.filter { $0.status != .pending }
-            guard !calls.isEmpty else { return [Ollama.Message(role: .init(m.role), content: m.text ?? "")] }
+            guard !calls.isEmpty else { return [Ollama.Message(role: .init(m.role), content: m.providerContext ?? "")] }
             let toolCalls = calls.map { Ollama.ChatToolCall(function: .init(name: $0.name, arguments: Self.parseArguments($0.arguments))) }
-            let results = calls.map { Ollama.ChatToolResult(tool_selection_id: $0.id, result: $0.result ?? "", is_error: $0.status == .failure) }
-            return [Ollama.Message(role: .assistant, content: m.text ?? "", tool_calls: toolCalls)] + Ollama.Message.messages(for: results)
+            let results = calls.map { Ollama.ChatToolResult(tool_selection_id: $0.id, result: m.providerToolResults[$0.id] ?? $0.result ?? "", is_error: $0.status == .failure) }
+            return [Ollama.Message(role: .assistant, content: m.providerContext ?? "", tool_calls: toolCalls)] + Ollama.Message.messages(for: results)
         }
     }
 
@@ -353,6 +387,7 @@ extension Message {
                 ChatToolCall(
                     id: UUID().uuidString,
                     name: selection.name ?? "tool",
+                    kind: .tool,
                     arguments: arguments,
                     status: .pending,
                     result: nil
@@ -363,14 +398,17 @@ extension Message {
             let status: ChatToolCall.Status = result.is_error ? .failure : .success
             // Tool events arrive as strict (.toolCalled, .toolCompleted) pairs
             // in arrival order, so complete the most recent pending card.
-            if let index = toolCalls.lastIndex(where: { $0.status == .pending }) {
+            if let index = toolCalls.lastIndex(where: { $0.kind == .tool && $0.status == .pending }) {
                 let existing = toolCalls[index]
                 toolCalls[index] = ChatToolCall(
                     id: existing.id,
                     name: existing.name,
+                    kind: existing.kind,
                     arguments: existing.arguments,
                     status: status,
-                    result: result.result
+                    result: result.result,
+                    details: existing.details,
+                    children: existing.children
                 )
             } else {
                 toolCalls.append(
