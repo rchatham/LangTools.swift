@@ -78,9 +78,9 @@ private struct HelperCodingKey: CodingKey {
     init?(intValue: Int) { return nil }
 }
 
-struct HelperChatMessage: Codable, Equatable, Sendable {
-    let role: String
-    let content: String
+public struct HelperChatMessage: Codable, Equatable, Sendable {
+    public let role: String
+    public let content: String
 }
 
 struct HelperChatResponse: Codable {

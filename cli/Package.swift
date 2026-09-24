@@ -10,14 +10,19 @@ let package = Package(
     ],
     products: [
         .executable(name: "LangToolsCLI", targets: ["LangToolsCLI"]),
+        .executable(name: "LangToolsHelper", targets: ["LangToolsHelper"]),
     ],
     dependencies: [
         .package(name: "langtools.swift", path: ".."),
     ],
     targets: [
+        .target(
+            name: "HelperCore"
+        ),
         .executableTarget(
             name: "LangToolsCLI",
             dependencies: [
+                "HelperCore",
                 .product(name: "LangTools", package: "langtools.swift"),
                 .product(name: "OpenAI", package: "langtools.swift"),
                 .product(name: "Anthropic", package: "langtools.swift"),
@@ -26,6 +31,13 @@ let package = Package(
                 .product(name: "Ollama", package: "langtools.swift"),
             ]
         ),
-        .testTarget(name: "LangToolsCLITests", dependencies: ["LangToolsCLI"])
+        .executableTarget(
+            name: "LangToolsHelper",
+            dependencies: ["HelperCore"]
+        ),
+        .testTarget(
+            name: "LangToolsCLITests",
+            dependencies: ["LangToolsCLI", "HelperCore", "LangToolsHelper"]
+        )
     ]
 )

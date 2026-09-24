@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import LangToolsCLI
+@testable import HelperCore
 
 final class CodexAppServerClientTests: XCTestCase {
     private struct RequestParams: Codable { let value: String }

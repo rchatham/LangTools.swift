@@ -1,7 +1,7 @@
 import Foundation
 import Network
 
-struct LocalHelperServer {
+public struct LocalHelperServer {
     let host: String
     let port: UInt16
     let bearerToken: String
@@ -13,14 +13,14 @@ struct LocalHelperServer {
     static let maximumConcurrentConnections = 32
     static let requestReadTimeout: Duration = .seconds(10)
 
-    init(host: String, port: UInt16, bearerToken: String) {
+    public init(host: String, port: UInt16, bearerToken: String) {
         self.host = host
         self.port = port
         self.bearerToken = bearerToken
         self.connectionLimiter = HelperConnectionLimiter(limit: Self.maximumConcurrentConnections)
     }
 
-    func run() async throws {
+    public func run() async throws {
         guard Self.loopbackHosts.contains(host.lowercased()) else {
             throw HelperServerError.nonLoopbackHost(host)
         }
@@ -49,13 +49,23 @@ struct LocalHelperServer {
         }
         listener.start(queue: queue)
 
-        try await startup.waitUntilReady()
-        while true {
-            try await Task.sleep(nanoseconds: 86_400_000_000_000)
+        do {
+            try await startup.waitUntilReady()
+            while true {
+                try await Task.sleep(nanoseconds: 86_400_000_000_000)
+            }
+        } catch is CancellationError {
+            // Stop means the surrounding Task was cancelled (menu-bar Stop or
+            // Ctrl+C): cancel the listener and return cleanly so the server
+            // can be started again.
+            listener.cancel()
+        } catch {
+            listener.cancel()
+            throw error
         }
     }
 
-    private static let loopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
+    static let loopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
 
     private func handle(connection: NWConnection) {
         guard let lease = connectionLimiter.acquire() else {
@@ -335,7 +345,7 @@ struct LocalHelperServer {
     }
 }
 
-enum HTTPStatus: String, Equatable, Sendable {
+public enum HTTPStatus: String, Equatable, Sendable {
     case ok = "200 OK"
     case noContent = "204 No Content"
     case badRequest = "400 Bad Request"
@@ -353,26 +363,26 @@ enum HTTPStatus: String, Equatable, Sendable {
     case gatewayTimeout = "504 Gateway Timeout"
 }
 
-enum HTTPRequestParseResult {
+public enum HTTPRequestParseResult {
     case incomplete
     case request(HTTPRequest)
     case failure(HTTPStatus, String)
 }
 
-struct HTTPRequest {
-    let method: String
-    let path: String
-    let headers: [String: String]
-    let body: Data
+public struct HTTPRequest {
+    public let method: String
+    public let path: String
+    public let headers: [String: String]
+    public let body: Data
 
-    var authorizationBearerToken: String? {
+    public var authorizationBearerToken: String? {
         guard let authorization = headers["authorization"] else { return nil }
         let parts = authorization.split(separator: " ", omittingEmptySubsequences: false)
         guard parts.count == 2, parts[0].lowercased() == "bearer", parts[1].isEmpty == false else { return nil }
         return String(parts[1])
     }
 
-    static func parse(from data: Data) -> HTTPRequestParseResult {
+    public static func parse(from data: Data) -> HTTPRequestParseResult {
         let separator = Data("\r\n\r\n".utf8)
         guard let separatorRange = data.range(of: separator) else {
             return data.count > LocalHelperServer.maximumHeaderBytes
@@ -422,6 +432,9 @@ struct HTTPRequest {
         guard let host = headers["host"], host.isEmpty == false else {
             return .failure(.badRequest, "A Host header is required.")
         }
+        guard allowedHostHeaderNames.contains(hostName(fromHostHeader: host)) else {
+            return .failure(.badRequest, "Unexpected Host header.")
+        }
         guard headers["transfer-encoding"] == nil else {
             return .failure(.badRequest, "Inbound transfer encoding is not supported.")
         }
@@ -459,6 +472,33 @@ struct HTTPRequest {
         ))
     }
 
+    /// Host names accepted in the Host header. The server only ever binds a
+    /// loopback address, so any other host name is rejected to block
+    /// cross-origin probes and DNS-rebinding style requests.
+    static let allowedHostHeaderNames: Set<String> = LocalHelperServer.loopbackHosts
+
+    /// Normalizes a Host header value: strips an optional trailing port (the
+    /// last `:` outside IPv6 brackets), removes IPv6 literal brackets, and
+    /// lowercases the host name. The port itself is not validated; the host
+    /// part is the gate.
+    static func hostName(fromHostHeader header: String) -> String {
+        var bracketDepth = 0
+        var portSeparator: String.Index?
+        for index in header.indices {
+            switch header[index] {
+            case "[": bracketDepth += 1
+            case "]": bracketDepth = max(0, bracketDepth - 1)
+            case ":" where bracketDepth == 0: portSeparator = index
+            default: break
+            }
+        }
+        var host = portSeparator.map { header[..<$0] } ?? header[...]
+        if host.hasPrefix("["), host.hasSuffix("]"), host.count >= 2 {
+            host = host.dropFirst().dropLast()
+        }
+        return host.lowercased()
+    }
+
     private static func isToken(_ value: String) -> Bool {
         let allowed = "!#$%&'*+-.^_`|~"
         return value.isEmpty == false && value.unicodeScalars.allSatisfy { scalar in
@@ -470,33 +510,33 @@ struct HTTPRequest {
     }
 }
 
-enum HTTPResponseEncoder {
-    static func makeJSONEncoder() -> JSONEncoder {
+public enum HTTPResponseEncoder {
+    public static func makeJSONEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         return encoder
     }
 
-    static let terminalChunk = Data("0\r\n\r\n".utf8)
+    public static let terminalChunk = Data("0\r\n\r\n".utf8)
 
-    static func fixed(status: HTTPStatus, body: String) -> Data {
+    public static func fixed(status: HTTPStatus, body: String) -> Data {
         let bodyData = Data(body.utf8)
         let header = "HTTP/1.1 \(status.rawValue)\r\nContent-Type: application/json; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: \(bodyData.count)\r\nConnection: close\r\n\r\n"
         return Data(header.utf8) + bodyData
     }
 
-    static func chunkedHeader(status: HTTPStatus) -> Data {
+    public static func chunkedHeader(status: HTTPStatus) -> Data {
         Data("HTTP/1.1 \(status.rawValue)\r\nContent-Type: application/x-ndjson; charset=utf-8\r\nCache-Control: no-store\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n".utf8)
     }
 
-    static func ndjsonChunk<T: Encodable>(_ value: T) throws -> Data {
+    public static func ndjsonChunk<T: Encodable>(_ value: T) throws -> Data {
         var payload = try makeJSONEncoder().encode(value)
         payload.append(UInt8(ascii: "\n"))
         return chunk(payload)
     }
 
-    static func chunk(_ payload: Data) -> Data {
+    public static func chunk(_ payload: Data) -> Data {
         var framed = Data(String(payload.count, radix: 16).utf8)
         framed.append(Data("\r\n".utf8))
         framed.append(payload)
@@ -606,8 +646,8 @@ final class HelperRequestDeadline: @unchecked Sendable {
     deinit { cancel() }
 }
 
-enum SecureTokenComparison {
-    static func matches(expected: String, provided: String?, maximumBytes: Int = HelperTokenLoader.maximumTokenBytes) -> Bool {
+public enum SecureTokenComparison {
+    public static func matches(expected: String, provided: String?, maximumBytes: Int = HelperTokenLoader.maximumTokenBytes) -> Bool {
         guard let provided, maximumBytes >= 0 else { return false }
         let expectedBytes = Array(expected.utf8)
         let providedBytes = Array(provided.utf8)
@@ -690,12 +730,12 @@ private actor HelperConnectionSession {
     }
 }
 
-enum HelperServerError: LocalizedError {
+public enum HelperServerError: LocalizedError {
     case nonLoopbackHost(String)
     case emptyBearerToken
     case invalidPort(UInt16)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .nonLoopbackHost(let host): return "Refusing to bind helper to non-loopback host: \(host)"
         case .emptyBearerToken: return "Helper bearer token must not be empty."
