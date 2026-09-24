@@ -215,6 +215,56 @@ final class ContentCardsProviderContextTests: XCTestCase {
         XCTAssertEqual(cardsMsgs[0].tool_selection?[0].name, "calculate")
     }
 
+    // MARK: - Malformed payload + tool-call replay
+
+    func testMalformedCardsJSONDoesNotBreakToolCallReplay() {
+        // A card message whose stored payload is not valid JSON must still
+        // replay through every provider path: the labeled fallback text is
+        // carried alongside retained tool calls without breaking message
+        // construction.
+        let malformed = cardsContent(cardsJSON: "{not valid json")
+        let message = Message(
+            role: .assistant,
+            contentType: .contentCards(malformed),
+            toolCalls: [completedToolCall()]
+        )
+
+        let openAIMessages = [message].toOpenAIMessages()
+        XCTAssertEqual(openAIMessages.count, 2)
+        XCTAssertEqual(openAIMessages[0].role, .assistant)
+        XCTAssertEqual(openAIMessages[0].content.string, message.providerContext)
+        XCTAssertTrue(openAIMessages[0].content.string?.contains("Card details unavailable") ?? false)
+        XCTAssertEqual(openAIMessages[0].tool_calls?.count, 1)
+        XCTAssertEqual(openAIMessages[1].role, .tool)
+
+        let anthropicMessages = [message].toAnthropicMessages()
+        XCTAssertEqual(anthropicMessages.count, 2)
+        XCTAssertEqual(anthropicMessages[0].role, .assistant)
+        guard let blocks = anthropicMessages[0].content.array else {
+            return XCTFail("Expected assistant array content for malformed card + tool calls")
+        }
+        XCTAssertEqual(blocks.count, 2)
+        switch blocks[0] {
+        case .text(let textBlock):
+            XCTAssertEqual(textBlock.text, message.providerContext ?? "")
+            XCTAssertTrue(textBlock.text.contains("Card details unavailable"))
+        default:
+            XCTFail("Expected fallback text block first, got \(blocks[0])")
+        }
+        switch blocks[1] {
+        case .toolUse(let toolUse):
+            XCTAssertEqual(toolUse.id, "call-1")
+        default:
+            XCTFail("Expected trailing toolUse block, got \(blocks[1])")
+        }
+        XCTAssertEqual(anthropicMessages[1].role, .user)
+
+        let ollamaMessages = [message].toOllamaMessages()
+        XCTAssertEqual(ollamaMessages.count, 2)
+        XCTAssertEqual(ollamaMessages[0].content.text, message.providerContext ?? "")
+        XCTAssertEqual(ollamaMessages[0].tool_calls?.count, 1)
+    }
+
     // MARK: - Codable reload
 
     func testCodableRoundTripPreservesProviderContext() throws {

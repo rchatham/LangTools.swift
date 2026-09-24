@@ -91,6 +91,8 @@ let package = Package(
                 "Chat",
                 .product(name: "OpenAI", package: "langtools.swift"),
                 .product(name: "Anthropic", package: "langtools.swift"),
+                .product(name: "Ollama", package: "langtools.swift"),
+                .product(name: "ChatUI", package: "ChatUI"),
                 "KeychainAccess",
             ],
             path: "Tests/ChatTests"),
