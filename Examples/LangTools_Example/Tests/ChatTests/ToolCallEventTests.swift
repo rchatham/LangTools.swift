@@ -145,6 +145,31 @@ final class ToolCallEventTests: XCTestCase {
         XCTAssertEqual(decoded.providerToolResults, ["call-1": #"{"value":2}"#])
     }
 
+    func testMessageCodableRoundTripPreservesProviderResultOrigins() throws {
+        let message = Message(
+            role: .assistant,
+            contentType: .null,
+            toolCalls: [ChatToolCall(id: "agent-1", name: "calendarAgent", status: .success, result: "")],
+            providerToolResults: ["agent-1": #"{"events":[]}"#],
+            providerToolResultServices: ["agent-1": .ollama]
+        )
+
+        let data = try JSONEncoder().encode(message)
+        let decoded = try JSONDecoder().decode(Message.self, from: data)
+
+        XCTAssertEqual(decoded.providerToolResultServices, ["agent-1": .ollama])
+    }
+
+    func testMessageDecodedWithoutProviderResultOriginsDefaultsToEmpty() throws {
+        let legacyJSON = """
+        {"uuid":"\(UUID().uuidString)","role":"assistant","contentType":{"type":"string","content":"hi"},"createdAt":0,"providerToolResults":{"a":"raw"}}
+        """
+        let message = try JSONDecoder().decode(Message.self, from: legacyJSON.data(using: .utf8)!)
+
+        XCTAssertEqual(message.providerToolResults, ["a": "raw"])
+        XCTAssertEqual(message.providerToolResultServices, [:])
+    }
+
     func testMessageDecodedWithoutToolCallsKeyDefaultsToEmpty() throws {
         // Legacy payloads encoded before toolCalls existed must still decode.
         let legacyJSON = """

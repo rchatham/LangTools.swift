@@ -121,6 +121,14 @@ public class ToolSettings: ObservableObject {
         didSet { saveSettings() }
     }
 
+    /// Allow hidden raw structured agent results to be replayed as tool history
+    /// to whichever provider is selected next. When disabled, a raw result only
+    /// replays to the provider that produced it; other providers fall back to
+    /// the visible card result.
+    @Published public var crossProviderToolReplay: Bool {
+        didSet { saveSettings() }
+    }
+
     // MARK: - Voice Input (STT) Settings
 
     /// Enable/disable voice input
@@ -178,6 +186,7 @@ public class ToolSettings: ObservableObject {
     private init() {
         self.richContentEnabled = UserDefaults.standard.object(forKey: "richContentEnabled") as? Bool ?? true
         self.keepsToolCallsInHistory = UserDefaults.standard.object(forKey: "keepsToolCallsInHistory") as? Bool ?? true
+        self.crossProviderToolReplay = UserDefaults.standard.object(forKey: "crossProviderToolReplay") as? Bool ?? true
         self.voiceInputEnabled = UserDefaults.standard.object(forKey: "voiceInputEnabled") as? Bool ?? true
 
         if let rawValue = UserDefaults.standard.string(forKey: "sttProviderRawValue"),
@@ -226,6 +235,7 @@ public class ToolSettings: ObservableObject {
     func saveSettings() {
         UserDefaults.standard.set(richContentEnabled, forKey: "richContentEnabled")
         UserDefaults.standard.set(keepsToolCallsInHistory, forKey: "keepsToolCallsInHistory")
+        UserDefaults.standard.set(crossProviderToolReplay, forKey: "crossProviderToolReplay")
         UserDefaults.standard.set(voiceInputEnabled, forKey: "voiceInputEnabled")
         UserDefaults.standard.set(sttProvider.rawValue, forKey: "sttProviderRawValue")
         UserDefaults.standard.set(voiceButtonReplaceSend, forKey: "voiceButtonReplaceSend")
@@ -241,6 +251,7 @@ public class ToolSettings: ObservableObject {
     func resetToDefaults() {
         richContentEnabled = true
         keepsToolCallsInHistory = true
+        crossProviderToolReplay = true
         voiceInputEnabled = true
         sttProvider = .appleSpeech
         voiceButtonReplaceSend = false

@@ -140,4 +140,68 @@ final class ToolCallHistoryReplayTests: XCTestCase {
         XCTAssertEqual(msgs[0].tool_calls?[0].name, "calculate")
         XCTAssertEqual(msgs[1].role, .tool)
     }
+
+    // MARK: - Cross-provider replay policy
+
+    private func structuredAgentMessage() -> Message {
+        let msg = Message(
+            role: .assistant,
+            contentType: .null,
+            toolCalls: [completed("calendarAgent", id: "agent-1", result: "")],
+            providerToolResults: ["agent-1": #"{"events":[{"id":"evt-9","time":"10:00"}]}"#]
+        )
+        msg.providerToolResultServices = ["agent-1": .ollama]
+        return msg
+    }
+
+    func testReplayFilterKeepsRawResultOnSameOriginService() {
+        let filtered = structuredAgentMessage().replayFiltered(targetService: .ollama, allowCrossProvider: false)
+        XCTAssertEqual(filtered.providerToolResults["agent-1"], #"{"events":[{"id":"evt-9","time":"10:00"}]}"#)
+    }
+
+    func testReplayFilterDropsRawResultForDifferentServiceWhenDisabled() {
+        let filtered = structuredAgentMessage().replayFiltered(targetService: .openAI, allowCrossProvider: false)
+        XCTAssertNil(filtered.providerToolResults["agent-1"])
+        XCTAssertNil(filtered.providerToolResultServices["agent-1"])
+    }
+
+    func testReplayFilterKeepsRawResultForDifferentServiceWhenEnabled() {
+        let filtered = structuredAgentMessage().replayFiltered(targetService: .openAI, allowCrossProvider: true)
+        XCTAssertEqual(filtered.providerToolResults, structuredAgentMessage().providerToolResults)
+        XCTAssertEqual(filtered.providerToolResultServices, ["agent-1": .ollama])
+    }
+
+    func testReplayFilterKeepsLegacyResultsWithoutRecordedOrigin() {
+        let legacy = Message(
+            role: .assistant,
+            contentType: .null,
+            toolCalls: [completed("calendarAgent", id: "legacy-1", result: "")],
+            providerToolResults: ["legacy-1": #"{"legacy":true}"#]
+        )
+        let filtered = legacy.replayFiltered(targetService: .openAI, allowCrossProvider: false)
+        XCTAssertEqual(filtered.providerToolResults["legacy-1"], #"{"legacy":true}"#)
+    }
+
+    func testReplayFilterKeepsMixedOriginResultsForMatchingServiceOnly() {
+        let openAICall = completed("researchAgent", id: "openai-agent", result: "")
+        let msg = Message(
+            role: .assistant,
+            contentType: .null,
+            toolCalls: [openAICall, completed("calendarAgent", id: "ollama-agent", result: "")],
+            providerToolResults: [
+                "openai-agent": #"{"origin":"openai"}"#,
+                "ollama-agent": #"{"origin":"ollama"}"#
+            ]
+        )
+        msg.providerToolResultServices = ["openai-agent": .openAI, "ollama-agent": .ollama]
+
+        let filtered = [msg].replayFiltered(targetService: .openAI, allowCrossProvider: false)
+        XCTAssertEqual(filtered[0].providerToolResults, ["openai-agent": #"{"origin":"openai"}"#])
+    }
+
+    func testCrossProviderReplayFilteringIsIdentityWhenAllowed() {
+        let original = structuredAgentMessage()
+        let filtered = original.replayFiltered(targetService: .anthropic, allowCrossProvider: true)
+        XCTAssertTrue(filtered === original)
+    }
 }

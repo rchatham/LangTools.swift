@@ -206,6 +206,7 @@ public class MessageService {
             }
 
             let selectedModel = UserDefaults.model
+            let replayService = selectedModel.apiService
             let responseStream: AsyncThrowingStream<String, Error>
             if let conversationClient = networkClient as? any ConversationAwareNetworkClientProtocol {
                 responseStream = try conversationClient.streamChatCompletionRequest(
@@ -235,7 +236,8 @@ public class MessageService {
                     for: sendID,
                     anchorMessageID: &anchorMessageID,
                     toolBreakOccurred: &toolBreakOccurred,
-                    keepsToolCallsInHistory: keepsToolCallsInHistory
+                    keepsToolCallsInHistory: keepsToolCallsInHistory,
+                    replayService: replayService
                 )
 
                 content += chunk
@@ -271,7 +273,8 @@ public class MessageService {
                 for: sendID,
                 anchorMessageID: &anchorMessageID,
                 toolBreakOccurred: &toolBreakOccurred,
-                keepsToolCallsInHistory: keepsToolCallsInHistory
+                keepsToolCallsInHistory: keepsToolCallsInHistory,
+                replayService: replayService
             )
             clearToolHistoryIfNeeded(
                 for: anchorMessageID,
@@ -363,7 +366,8 @@ extension MessageService {
             for: compatibilitySendID,
             anchorMessageID: &anchorMessageID,
             toolBreakOccurred: &toolBreakOccurred,
-            keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory
+            keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory,
+            replayService: UserDefaults.model.apiService
         )
     }
 
@@ -371,7 +375,8 @@ extension MessageService {
         for sendID: UUID,
         anchorMessageID: inout UUID?,
         toolBreakOccurred: inout Bool,
-        keepsToolCallsInHistory: Bool
+        keepsToolCallsInHistory: Bool,
+        replayService: APIService
     ) {
         let events = eventBuffer.takeEvents(for: sendID)
         guard !events.isEmpty else { return }
@@ -397,12 +402,14 @@ extension MessageService {
                     agentEvent,
                     to: anchor,
                     toolBreakOccurred: &toolBreakOccurred,
-                    keepsToolCallsInHistory: keepsToolCallsInHistory
+                    keepsToolCallsInHistory: keepsToolCallsInHistory,
+                    replayService: replayService
                 )
             }
         }
         if !keepsToolCallsInHistory {
             anchor.providerToolResults = [:]
+            anchor.providerToolResultServices = [:]
         }
         notifyMessageUpdated(anchor, keepsToolCallsInHistory: keepsToolCallsInHistory)
     }
@@ -422,6 +429,7 @@ extension MessageService {
         let hadToolHistory = !anchor.toolCalls.isEmpty || !anchor.providerToolResults.isEmpty
         anchor.toolCalls = []
         anchor.providerToolResults = [:]
+        anchor.providerToolResultServices = [:]
         if isSemanticallyEmptyAssistantAnchor(anchor) {
             messages.removeAll { $0.uuid == anchor.uuid }
         } else if hadToolHistory {
@@ -481,7 +489,8 @@ extension MessageService {
         _ event: AgentEvent,
         to last: Message,
         toolBreakOccurred: inout Bool,
-        keepsToolCallsInHistory: Bool
+        keepsToolCallsInHistory: Bool,
+        replayService: APIService
     ) {
         switch event {
         case .started(let agent, let parent, let task):
@@ -559,6 +568,7 @@ extension MessageService {
                 if let callID = Self.setAgentStatus(agent, status: .success, result: nil, in: &calls),
                    keepsToolCallsInHistory {
                     last.providerToolResults[callID] = result
+                    last.providerToolResultServices[callID] = replayService
                 }
                 last.toolCalls = calls
                 toolBreakOccurred = true
