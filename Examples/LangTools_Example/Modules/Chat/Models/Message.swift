@@ -145,16 +145,19 @@ public extension Array<Message> {
             let toolCalls = calls.enumerated().map { idx, call in OpenAI.Message.ToolCall(index: idx, id: call.id, type: .function, function: .init(name: call.name, arguments: call.arguments ?? "{}")) }
             let assistantMessage: OpenAI.Message
             if case .contentCards = m.contentType {
-                // Prefer carrying the card context alongside the retained tool
-                // calls; if the provider initializer ever rejects this role/
-                // content/tool_calls combination, fall back to the tool-only
-                // message instead of crashing history replay.
-                if let withContent = try? OpenAI.Message(role: .assistant, content: .string(m.providerContext ?? ""), tool_calls: toolCalls) {
-                    assistantMessage = withContent
-                } else {
-                    print("⚠️ Chat.toOpenAIMessages: provider rejected assistant content+tool_calls; replaying tool-only message (card context dropped)")
+                do {
+                    // Prefer carrying the card context alongside the retained
+                    // tool calls; if the provider initializer ever rejects this
+                    // role/content/tool_calls combination, fall back to the
+                    // tool-only message instead of crashing history replay.
+                    assistantMessage = try OpenAI.Message(role: .assistant, content: .string(m.providerContext ?? ""), tool_calls: toolCalls)
+                } catch {
+                    print("⚠️ Chat.toOpenAIMessages: provider rejected assistant content+tool_calls (\(error)); replaying tool-only message (card context dropped)")
                     assistantMessage = OpenAI.Message(tool_selection: toolCalls)
                 }
+            } else {
+                assistantMessage = OpenAI.Message(tool_selection: toolCalls)
+            }
             } else {
                 assistantMessage = OpenAI.Message(tool_selection: toolCalls)
             }
