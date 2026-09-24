@@ -33,6 +33,9 @@ public class MessageService {
     /// so parallel tool calls all attach to the same message in order.
     @ObservationIgnored nonisolated(unsafe) private var pendingToolEvents: [LangToolsToolEvent] = []
     @ObservationIgnored nonisolated(unsafe) private let toolEventLock = NSLock()
+    /// ids of tool calls made by agent-wrapped tools this send, so their lifecycle
+    /// events can be skipped (agents surface their own UI via `handleAgentEvent`).
+    @ObservationIgnored nonisolated(unsafe) private var agentCallIDs: Set<String> = []
 
     /// Callback fired when a message is added or modified (for persistence)
     public var messageUpdatedCallback: ((Message) -> Void)?
@@ -102,11 +105,23 @@ public class MessageService {
 
             let activeTools = filteredTools
 
-            // Buffer tool events fired by LangTools; they are drained in order on
-            // the main actor before each chunk below so parallel tool calls all
-            // attach to the same assistant message.
+            // Agent tools surface their own UI via `handleAgentEvent`; skip their
+            // tool-call events so they don't also render as ChatToolCall cards.
+            let agentToolNames = Set(ToolManager.shared.allToolConfigurations().filter { $0.isAgent }.map { $0.id })
             let toolEventHandler: (LangToolsToolEvent) -> Void = { [weak self] event in
-                self?.enqueueToolEvent(event)
+                guard let self else { return }
+                switch event {
+                case .toolCalled(let sel):
+                    let id = sel.id ?? sel.name ?? ""
+                    if agentToolNames.contains(sel.name ?? "") {
+                        self.rememberAgentCall(id)
+                        return
+                    }
+                    self.enqueueToolEvent(event)
+                case .toolCompleted(let res):
+                    if self.forgetAgentCall(res?.tool_selection_id ?? "") { return }
+                    self.enqueueToolEvent(event)
+                }
             }
 
             let selectedModel = UserDefaults.model
@@ -232,7 +247,24 @@ extension MessageService {
     nonisolated func clearPendingToolEvents() {
         toolEventLock.lock()
         pendingToolEvents.removeAll()
+        agentCallIDs.removeAll()
         toolEventLock.unlock()
+    }
+
+    /// Records a tool-call id as belonging to an agent tool so its events are skipped.
+    nonisolated func rememberAgentCall(_ id: String) {
+        guard !id.isEmpty else { return }
+        toolEventLock.lock()
+        agentCallIDs.insert(id)
+        toolEventLock.unlock()
+    }
+
+    /// Returns true (and removes the id) if the tool-call id belongs to an agent tool.
+    nonisolated func forgetAgentCall(_ id: String) -> Bool {
+        guard !id.isEmpty else { return false }
+        toolEventLock.lock()
+        defer { toolEventLock.unlock() }
+        return agentCallIDs.remove(id) != nil
     }
 
     /// Applies all buffered tool events (in order) to the current assistant
