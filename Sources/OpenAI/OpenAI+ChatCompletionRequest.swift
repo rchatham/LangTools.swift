@@ -107,7 +107,7 @@ extension OpenAI {
                     // of any other role are reused verbatim so retained tool
                     // calls survive history replay.
                     guard message.role == .system else { return message }
-                    return (try? Message(role: .developer, content: message.content, name: message.name, tool_calls: message.tool_calls, audio: message.audio, refusal: message.refusal)) ?? message
+                    return Message(copying: message, role: .developer)
                 }
             } else { messages }
             self.temperature = temperature

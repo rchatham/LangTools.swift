@@ -55,6 +55,15 @@ public extension OpenAI {
             refusal = nil
         }
 
+        internal init(copying message: Self, role: Role) {
+            self.role = role
+            content = message.content
+            name = message.name
+            tool_calls = message.tool_calls
+            audio = message.audio
+            refusal = message.refusal
+        }
+
         public init(tool_selection_id: String, result: String) {
             role = .tool
             content = Content.array([.toolResult(.init(tool_selection_id: tool_selection_id, result: result))])
