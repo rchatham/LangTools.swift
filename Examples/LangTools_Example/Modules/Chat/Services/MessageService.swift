@@ -30,7 +30,6 @@ public class MessageService {
     /// discard one another's tool history.
     @ObservationIgnored nonisolated(unsafe) private var pendingToolEventsBySendID: [UUID: [LangToolsToolEvent]] = [:]
     @ObservationIgnored nonisolated(unsafe) private let toolEventLock = NSLock()
-
     /// Callback fired when a message is added or modified (for persistence)
     public var messageUpdatedCallback: ((Message) -> Void)?
 
@@ -102,11 +101,27 @@ public class MessageService {
 
             let activeTools = filteredTools
 
-            // Buffer tool events fired by LangTools; they are drained in order on
-            // the main actor before each chunk below so parallel tool calls all
-            // attach to this send's assistant message.
+            // Agent tools surface their own UI via `handleAgentEvent`; skip their
+            // tool-call events so they don't also render as ChatToolCall cards.
+            // Remaining tool events are buffered per send; they are drained in
+            // order on the main actor before each chunk below so parallel tool
+            // calls all attach to this send's assistant message.
+            let agentToolNames = Set(ToolManager.shared.allToolConfigurations().filter { $0.isAgent }.map { $0.id })
+            var rememberedAgentCallIDs: Set<String> = []
             let toolEventHandler: (LangToolsToolEvent) -> Void = { [weak self] event in
-                self?.enqueueToolEvent(event, for: sendID)
+                guard let self else { return }
+                switch event {
+                case .toolCalled(let sel):
+                    let id = sel.id ?? sel.name ?? ""
+                    if agentToolNames.contains(sel.name ?? "") {
+                        if !id.isEmpty { rememberedAgentCallIDs.insert(id) }
+                        return
+                    }
+                    self.enqueueToolEvent(event, for: sendID)
+                case .toolCompleted(let res):
+                    if let id = res?.tool_selection_id, rememberedAgentCallIDs.remove(id) != nil { return }
+                    self.enqueueToolEvent(event, for: sendID)
+                }
             }
 
             let selectedModel = UserDefaults.model
