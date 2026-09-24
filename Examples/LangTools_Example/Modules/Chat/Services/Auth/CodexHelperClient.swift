@@ -125,7 +125,9 @@ public final class CodexHelperClient: CodexHelperClientProtocol {
                 case 400:
                     message = helperMessage ?? "Codex helper rejected the request as invalid."
                 case 401:
-                    message = "Codex helper rejected the request. Check the helper token in Settings."
+                    message = helperMessage == "Unauthorized."
+                        ? "Codex helper rejected the request. Check the helper token in Settings."
+                        : helperMessage ?? "Codex helper returned status 401."
                 case 409:
                     message = helperMessage ?? "A Codex sign-in is already in progress."
                 case 504:
