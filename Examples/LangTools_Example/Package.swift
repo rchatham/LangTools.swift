@@ -92,8 +92,16 @@ let package = Package(
                 .product(name: "ChatUI", package: "ChatUI"),
                 .product(name: "OpenAI", package: "langtools.swift"),
                 .product(name: "Anthropic", package: "langtools.swift"),
+                .product(name: "Ollama", package: "langtools.swift"),
                 "KeychainAccess",
             ],
             path: "Tests/ChatTests"),
+        .testTarget(
+            name: "ExampleAgentsTests",
+            dependencies: [
+                "ExampleAgents",
+                .product(name: "LangTools", package: "langtools.swift"),
+            ],
+            path: "Tests/ExampleAgentsTests"),
     ]
 )

@@ -35,6 +35,20 @@ public final class Message: Codable, ObservableObject, Identifiable, Equatable, 
         }
     }
 
+    /// Context sent to AI providers when this message is replayed in history.
+    ///
+    /// For content-card messages this is the card summary plus deterministic
+    /// card details and metadata (see `ContentCardsContent.providerContext`);
+    /// `text` stays the terse optional visible summary. For every other content
+    /// type this is exactly `text`, so non-card provider semantics are
+    /// unchanged.
+    public var providerContext: String? {
+        switch contentType {
+        case .contentCards(let cards): return cards.providerContext
+        default: return text
+        }
+    }
+
     public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil, createdAt: Date = Date(), toolCalls: [ChatToolCall] = [], providerToolResults: [String: String] = [:]) {
         self.uuid = uuid
         self.role = role
@@ -137,9 +151,24 @@ public extension Array<Message> {
     func toOpenAIMessages() -> [OpenAI.Message] {
         flatMap { m -> [OpenAI.Message] in
             let calls = m.toolCalls.filter { $0.status != .pending }
-            guard !calls.isEmpty else { return [OpenAI.Message(role: m.role, content: m.text ?? "")] }
+            guard !calls.isEmpty else { return [OpenAI.Message(role: m.role, content: m.providerContext ?? "")] }
             let toolCalls = calls.enumerated().map { idx, call in OpenAI.Message.ToolCall(index: idx, id: call.id, type: .function, function: .init(name: call.name, arguments: call.arguments ?? "{}")) }
-            return [OpenAI.Message(tool_selection: toolCalls)] + calls.map { OpenAI.Message(tool_selection_id: $0.id, result: m.providerToolResults[$0.id] ?? $0.result ?? "") }
+            let assistantMessage: OpenAI.Message
+            if case .contentCards = m.contentType {
+                do {
+                    // Prefer carrying the card context alongside the retained
+                    // tool calls; if the provider initializer ever rejects this
+                    // role/content/tool_calls combination, fall back to the
+                    // tool-only message instead of crashing history replay.
+                    assistantMessage = try OpenAI.Message(role: .assistant, content: .string(m.providerContext ?? ""), tool_calls: toolCalls)
+                } catch {
+                    print("⚠️ Chat.toOpenAIMessages: provider rejected assistant content+tool_calls (\(error)); replaying tool-only message (card context dropped)")
+                    assistantMessage = OpenAI.Message(tool_selection: toolCalls)
+                }
+            } else {
+                assistantMessage = OpenAI.Message(tool_selection: toolCalls)
+            }
+            return [assistantMessage] + calls.map { OpenAI.Message(tool_selection_id: $0.id, result: m.providerToolResults[$0.id] ?? $0.result ?? "") }
         }
     }
 
@@ -147,22 +176,28 @@ public extension Array<Message> {
         flatMap { m -> [Anthropic.Message] in
             guard m.role != .system else { return [] }
             let calls = m.toolCalls.filter { $0.status != .pending }
-            guard !calls.isEmpty else { return [Anthropic.Message(role: .init(m.role), content: m.text ?? "")] }
+            guard !calls.isEmpty else { return [Anthropic.Message(role: .init(m.role), content: m.providerContext ?? "")] }
             let use = calls.map { Anthropic.Message.Content.ContentType.toolUse(.init(id: $0.id, name: $0.name, input: $0.arguments ?? "{}")) }
+            let assistantContent: [Anthropic.Message.Content.ContentType]
+            if case .contentCards = m.contentType {
+                assistantContent = [.text(.init(text: m.providerContext ?? ""))] + use
+            } else {
+                assistantContent = use
+            }
             let results = calls.map { Anthropic.Message.Content.ContentType.toolResult(.init(tool_selection_id: $0.id, result: m.providerToolResults[$0.id] ?? $0.result ?? "", is_error: $0.status == .failure)) }
-            return [Anthropic.Message(role: .assistant, content: .array(use)), Anthropic.Message(role: .user, content: .array(results))]
+            return [Anthropic.Message(role: .assistant, content: .array(assistantContent)), Anthropic.Message(role: .user, content: .array(results))]
         }
     }
 
-    func createAnthropicSystemMessage() -> String? { filter { $0.isSystem }.reduce("") { (!$0.isEmpty ? $0 + "\n---\n" : "") + ($1.text ?? "") } }
+    func createAnthropicSystemMessage() -> String? { filter { $0.isSystem }.reduce("") { (!$0.isEmpty ? $0 + "\n---\n" : "") + ($1.providerContext ?? "") } }
 
     func toOllamaMessages() -> [Ollama.Message] {
         flatMap { m -> [Ollama.Message] in
             let calls = m.toolCalls.filter { $0.status != .pending }
-            guard !calls.isEmpty else { return [Ollama.Message(role: .init(m.role), content: m.text ?? "")] }
+            guard !calls.isEmpty else { return [Ollama.Message(role: .init(m.role), content: m.providerContext ?? "")] }
             let toolCalls = calls.map { Ollama.ChatToolCall(function: .init(name: $0.name, arguments: Self.parseArguments($0.arguments))) }
             let results = calls.map { Ollama.ChatToolResult(tool_selection_id: $0.id, result: m.providerToolResults[$0.id] ?? $0.result ?? "", is_error: $0.status == .failure) }
-            return [Ollama.Message(role: .assistant, content: m.text ?? "", tool_calls: toolCalls)] + Ollama.Message.messages(for: results)
+            return [Ollama.Message(role: .assistant, content: m.providerContext ?? "", tool_calls: toolCalls)] + Ollama.Message.messages(for: results)
         }
     }
 
