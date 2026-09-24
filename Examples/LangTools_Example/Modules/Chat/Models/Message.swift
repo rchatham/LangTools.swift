@@ -158,9 +158,6 @@ public extension Array<Message> {
             } else {
                 assistantMessage = OpenAI.Message(tool_selection: toolCalls)
             }
-            } else {
-                assistantMessage = OpenAI.Message(tool_selection: toolCalls)
-            }
             return [assistantMessage] + calls.map { OpenAI.Message(tool_selection_id: $0.id, result: $0.result ?? "") }
         }
     }
