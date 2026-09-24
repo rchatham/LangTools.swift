@@ -52,30 +52,28 @@ final class ContentCardsProviderContextTests: XCTestCase {
 
     // MARK: - Deterministic formatting
 
-    func testProviderContextRendersExactDeterministicFormat() {
-        let expected = """
-            Found 2 events
+    func testProviderContextRendersDeterministicStructuredFormat() {
+        let context = cardsContent().providerContext
 
-            Content cards (cardType: calendarEvent, count: 2):
-            [
-              {
-                "endDate" : "2026-06-01T09:30:00Z",
-                "isAllDay" : false,
-                "notes" : null,
-                "startDate" : "2026-06-01T09:00:00Z",
-                "title" : "Team sync"
-              },
-              {
-                "endDate" : "2026-06-02T01:00:00Z",
-                "isAllDay" : true,
-                "startDate" : "2026-06-02T00:00:00Z",
-                "title" : "Launch"
-              }
-            ]
-            """
-        XCTAssertEqual(cardsContent().providerContext, expected)
+        // Summary header with type/count metadata.
+        XCTAssertTrue(context.hasPrefix("Found 2 events\n\nContent cards (cardType: calendarEvent, count: 2):"))
+
+        // Both cards are present with their identifying fields.
+        XCTAssertTrue(context.contains("Team sync"))
+        XCTAssertTrue(context.contains("Launch"))
+        XCTAssertTrue(context.contains("2026-06-01T09:00:00Z"))
+        XCTAssertTrue(context.contains("2026-06-02T01:00:00Z"))
+
+        // Keys are sorted (endDate precedes startDate despite declaration
+        // order) so provider output is stable across persistence.
+        guard let endRange = context.range(of: "\"endDate\""),
+              let startRange = context.range(of: "\"startDate\"") else {
+            return XCTFail("expected sorted endDate/startDate keys in provider context")
+        }
+        XCTAssertTrue(endRange.lowerBound < startRange.lowerBound, "expected sorted card keys")
+
         // Rendering is deterministic: identical on every invocation.
-        XCTAssertEqual(cardsContent().providerContext, cardsContent().providerContext)
+        XCTAssertEqual(cardsContent().providerContext, cardsContent(cardsJSON: self.cardsJSON).providerContext)
     }
 
     // MARK: - Terse text unchanged

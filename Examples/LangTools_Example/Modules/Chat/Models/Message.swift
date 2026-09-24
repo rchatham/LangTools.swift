@@ -152,6 +152,7 @@ public extension Array<Message> {
                 if let withContent = try? OpenAI.Message(role: .assistant, content: .string(m.providerContext ?? ""), tool_calls: toolCalls) {
                     assistantMessage = withContent
                 } else {
+                    print("⚠️ Chat.toOpenAIMessages: provider rejected assistant content+tool_calls; replaying tool-only message (card context dropped)")
                     assistantMessage = OpenAI.Message(tool_selection: toolCalls)
                 }
             } else {
