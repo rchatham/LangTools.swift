@@ -68,7 +68,7 @@ jobs:
             git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA"
           fi
           merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
-          git diff --no-ext-diff --no-textconv "$merge_base" "$HEAD_SHA" > "$RUNNER_TEMP/pr.diff"
+          git diff --no-ext-diff --no-textconv --color=never --no-renames -M0 "$merge_base" "$HEAD_SHA" > "$RUNNER_TEMP/pr.diff"
 
       - name: Run Pi review
         env:
