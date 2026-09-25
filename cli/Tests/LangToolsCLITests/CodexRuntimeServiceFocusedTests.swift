@@ -645,6 +645,14 @@ final class CodexRuntimeServiceFocusedTests: XCTestCase {
         await runtime.shutdown()
     }
 
+    func testNonStreamingWireToolReplayReachesFinalTurnInput() async throws {
+        try await assertWireToolReplayReachesFinalTurnInput(stream: false)
+    }
+
+    func testStreamingWireToolReplayReachesFinalTurnInput() async throws {
+        try await assertWireToolReplayReachesFinalTurnInput(stream: true)
+    }
+
     func testConversationReuseSuffixIsolationOneShotAndCleanup() async throws {
         let logURL = temporaryURL(suffix: ".jsonl")
         let scriptURL = try makePythonScript(Self.conversationServer)
@@ -1089,6 +1097,66 @@ final class CodexRuntimeServiceFocusedTests: XCTestCase {
         XCTAssertFalse(CodexRuntimeService.isAllowedAuthURL(URL(string: "http://example.com/login")!))
         XCTAssertFalse(CodexRuntimeService.isAllowedAuthURL(URL(string: "ftp://localhost/login")!))
         XCTAssertFalse(CodexRuntimeService.isAllowedAuthURL(URL(string: "https:///missing-host")!))
+    }
+
+    private func assertWireToolReplayReachesFinalTurnInput(stream: Bool) async throws {
+        let logURL = temporaryURL(suffix: ".jsonl")
+        let scriptURL = try makePythonScript(Self.conversationServer)
+        let cacheRoot = temporaryURL(suffix: ".cache")
+        defer {
+            try? FileManager.default.removeItem(at: logURL)
+            try? FileManager.default.removeItem(at: scriptURL)
+            try? FileManager.default.removeItem(at: cacheRoot)
+        }
+        let body = #"""
+        {
+          "provider":"openAI",
+          "model":"codex-test",
+          "messages":[
+            {"role":"user","content":"Calculate 1+1"},
+            {"role":"assistant","content":"","tool_calls":[{"id":"call-1","type":"function","function":{"name":"calculate","arguments":"{\"expression\":\"1+1\"}"}}]},
+            {"role":"tool","content":"2","tool_call_id":"call-1"}
+          ],
+          "stream":\#(stream)
+        }
+        """#
+        let request = try JSONDecoder().decode(HelperChatRequest.self, from: Data(body.utf8))
+        XCTAssertEqual(request.stream, stream)
+        XCTAssertEqual(request.messages[1].tool_calls?.first?.id, "call-1")
+        XCTAssertEqual(request.messages[1].tool_calls?.first?.function.name, "calculate")
+        XCTAssertEqual(request.messages[1].tool_calls?.first?.function.arguments, #"{"expression":"1+1"}"#)
+        XCTAssertEqual(request.messages[2].tool_call_id, "call-1")
+
+        let client = makeClient(scriptURL: scriptURL, environment: ["LOG": logURL.path])
+        let runtime = CodexRuntimeService(
+            client: client,
+            browserOpener: { _ in },
+            workspaces: CodexConversationWorkspace(cacheRoot: cacheRoot)
+        )
+        if stream {
+            var completion: String?
+            for try await event in await runtime.chatStream(model: request.model, messages: request.messages) {
+                if case .complete(let response) = event { completion = response }
+            }
+            XCTAssertEqual(completion, "response-1")
+        } else {
+            let response = try await runtime.chat(model: request.model, messages: request.messages)
+            XCTAssertEqual(response, "response-1")
+        }
+
+        let records = try readJSONLines(logURL)
+        let turn = try XCTUnwrap(records.first { $0["method"] as? String == "turn/start" })
+        let params = try XCTUnwrap(turn["params"] as? [String: Any])
+        let input = try XCTUnwrap(params["input"] as? [[String: Any]])
+        let prompt = try XCTUnwrap(input.first?["text"] as? String)
+        let marker = "Conversation messages (JSON):\n"
+        let markerRange = try XCTUnwrap(prompt.range(of: marker))
+        let transcript = prompt[markerRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(
+            try JSONDecoder().decode([HelperChatMessage].self, from: Data(transcript.utf8)),
+            request.messages
+        )
+        await runtime.shutdown()
     }
 
     private func makeClient(

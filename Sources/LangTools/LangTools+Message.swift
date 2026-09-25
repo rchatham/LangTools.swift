@@ -20,6 +20,16 @@ public protocol LangToolsMessage: Codable {
 
 extension LangToolsMessage {
     public init(_ message: any LangToolsMessage) {
+        // Preserve already-native provider messages verbatim. The role/content
+        // fallback below rebuilds a message from its role and content only,
+        // which drops provider-specific fields — retained tool_calls,
+        // tool-result ids, name, audio, and refusal — and breaks tool-call
+        // history replay. When the message is already the destination type,
+        // reuse it directly so nothing is lost.
+        if let native = message as? Self {
+            self = native
+            return
+        }
         self.init(role: Role(message.role), content: Content(message.content))
     }
 }

@@ -221,7 +221,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .gemini(let model): return AgentContext(langTool: try requiredLangTool(Gemini.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
         case .openAI(let model), .codex(let model): return AgentContext(langTool: try requiredLangTool(OpenAI.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
         case .xAI(let model): return AgentContext(langTool: try requiredLangTool(XAI.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
-        case .ollama(let model): return AgentContext(langTool: try requiredLangTool(Ollama.self), model: model, messages: messages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .ollama(let model): return AgentContext(langTool: try requiredLangTool(Ollama.self), model: model, messages: messages.toOllamaMessages(), eventHandler: eventHandler)
         }
     }
 
