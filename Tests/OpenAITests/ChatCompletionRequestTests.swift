@@ -73,6 +73,31 @@ final class ChatCompletionRequestTests: XCTestCase {
         XCTAssert(data.dictionary == testData.dictionary, "failed to correctly encode the data")
     }
 
+    func testReasoningModelsEncodeArraySystemContentWithDeveloperRole() throws {
+        let content = OpenAI.Message.Content.array([
+            .text(.init(text: "Preserve this structured instruction."))
+        ])
+
+        for model in [OpenAI.Model.o3, .o4_mini] {
+            let request = OpenAI.ChatCompletionRequest(
+                model: model,
+                messages: [.init(role: .system, content: content)]
+            )
+
+            XCTAssertEqual(request.messages.first?.role, .developer)
+            guard case .array = request.messages.first?.content else {
+                return XCTFail("Expected array content for \(model.rawValue)")
+            }
+
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: request.data()) as? [String: Any])
+            let messages = try XCTUnwrap(object["messages"] as? [[String: Any]])
+            XCTAssertEqual(messages.first?["role"] as? String, "developer")
+            let parts = try XCTUnwrap(messages.first?["content"] as? [[String: Any]])
+            XCTAssertEqual(parts.first?["type"] as? String, "text")
+            XCTAssertEqual(parts.first?["text"] as? String, "Preserve this structured instruction.")
+        }
+    }
+
     func testChatCompletionRequestWithFunctionsEncodable() throws {
         let request = OpenAI.ChatCompletionRequest(
             model: .gpt35Turbo,

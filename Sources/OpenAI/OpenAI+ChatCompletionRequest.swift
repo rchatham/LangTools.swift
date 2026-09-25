@@ -102,13 +102,15 @@ extension OpenAI {
             self.model = model
             self.messages = if Model.reasoning.contains(model) {
                 messages.map { message in
-                    message.role == .system
-                        ? Message(role: .developer, content: message.content)
-                        : message
+                    // Reasoning models require the developer role instead of
+                    // system. Only the role changes; name, tool_calls, audio,
+                    // refusal, and tool-result identity are preserved. Messages
+                    // of any other role are reused verbatim so retained tool
+                    // calls survive history replay.
+                    guard message.role == .system else { return message }
+                    return Message(copying: message, role: .developer)
                 }
-            } else {
-                messages
-            }
+            } else { messages }
             self.temperature = temperature
             self.top_p = top_p
             self.n = n

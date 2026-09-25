@@ -64,7 +64,7 @@ public final class AccountProxyTransport: ConversationAwareAccountProxyTransport
         let payload = AccountChatRequest(
             provider: session.provider,
             model: model.slug,
-            messages: messages.map(AccountChatMessage.init),
+            messages: messages.toAccountChatMessages(),
             stream: stream,
             conversationID: isCodex ? conversationID : nil,
             toolChoice: isCodex ? nil : toolChoice.map(AccountToolChoice.init),
@@ -111,7 +111,7 @@ public final class AccountProxyTransport: ConversationAwareAccountProxyTransport
         let payload = AccountChatRequest(
             provider: session.provider,
             model: model.slug,
-            messages: messages.map(AccountChatMessage.init),
+            messages: messages.toAccountChatMessages(),
             stream: true,
             conversationID: isCodex ? conversationID : nil,
             toolChoice: isCodex ? nil : toolChoice.map(AccountToolChoice.init),
@@ -236,10 +236,66 @@ private struct AccountChatRequest: Encodable {
 private struct AccountChatMessage: Codable {
     let role: String
     let content: String
+    // Additive, backward-compatible fields for tool-call history replay. Both
+    // are omitted from the wire payload when nil, so older backends that do not
+    // understand tool calls are unaffected.
+    let tool_calls: [AccountToolCall]?
+    let tool_call_id: String?
 
     init(_ message: Message) {
         self.role = message.role.rawValue
         self.content = message.providerContext ?? ""
+        self.tool_calls = nil
+        self.tool_call_id = nil
+    }
+
+    init(role: String, content: String, tool_calls: [AccountToolCall]? = nil, tool_call_id: String? = nil) {
+        self.role = role
+        self.content = content
+        self.tool_calls = tool_calls
+        self.tool_call_id = tool_call_id
+    }
+}
+
+private struct AccountToolCall: Codable {
+    let id: String
+    let type: String
+    let function: Function
+
+    struct Function: Codable {
+        let name: String
+        let arguments: String
+    }
+}
+
+private extension Array where Element == Message {
+    /// Replays retained tool calls as an assistant tool-call message followed by
+    /// tool-result messages, mirroring `toOpenAIMessages()` for the account proxy
+    /// wire schema. Messages without completed tool calls pass through unchanged.
+    func toAccountChatMessages() -> [AccountChatMessage] {
+        flatMap { message -> [AccountChatMessage] in
+            let calls = message.toolCalls.filter { $0.status != .pending }
+            guard !calls.isEmpty else { return [AccountChatMessage(message)] }
+            let assistant = AccountChatMessage(
+                role: "assistant",
+                content: message.providerContext ?? "",
+                tool_calls: calls.map { call in
+                    AccountToolCall(
+                        id: call.id,
+                        type: "function",
+                        function: .init(name: call.name, arguments: call.arguments ?? "{}")
+                    )
+                }
+            )
+            let results = calls.map { call in
+                AccountChatMessage(
+                    role: "tool",
+                    content: message.providerToolResults[call.id] ?? call.result ?? "",
+                    tool_call_id: call.id
+                )
+            }
+            return [assistant] + results
+        }
     }
 }
 
