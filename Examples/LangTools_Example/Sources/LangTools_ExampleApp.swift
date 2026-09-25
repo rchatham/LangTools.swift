@@ -378,16 +378,22 @@ private struct CodexHelperPairingAlert: ViewModifier {
     @ObservedObject private var coordinator = CodexHelperPairingCoordinator.shared
 
     func body(content: Content) -> some View {
-        content.alert(
-            "Pair with Codex helper?",
-            isPresented: alertPresentation,
-            presenting: coordinator.pendingPairing
-        ) { pairing in
-            Button("Pair") { coordinator.confirm(pairing) }
-            Button("Cancel", role: .cancel) { coordinator.cancel() }
-        } message: { pairing in
-            Text("The Codex helper at 127.0.0.1:\(pairing.port) wants to pair with LangTools Example. Pairing saves its URL and token for OpenAI account-backed sign-in.")
-        }
+        content
+            .alert(
+                "Pair with Codex helper?",
+                isPresented: alertPresentation,
+                presenting: coordinator.pendingPairing
+            ) { pairing in
+                Button("Pair") { coordinator.confirm(pairing) }
+                Button("Cancel", role: .cancel) { coordinator.cancel() }
+            } message: { pairing in
+                Text("The Codex helper at 127.0.0.1:\(pairing.port) wants to pair with LangTools Example. Pairing saves its URL and token for OpenAI account-backed sign-in.")
+            }
+            .alert("Codex Helper Pairing Failed", isPresented: failurePresentation) {
+                Button("OK", role: .cancel) { coordinator.dismissResult() }
+            } message: {
+                Text(failureMessage)
+            }
     }
 
     /// Presents while a pairing is pending; dismissing cancels it. Buttons
@@ -401,6 +407,27 @@ private struct CodexHelperPairingAlert: ViewModifier {
                 }
             }
         )
+    }
+
+    private var failurePresentation: Binding<Bool> {
+        Binding(
+            get: {
+                if case .verificationFailed = coordinator.lastPairingResult { return true }
+                return false
+            },
+            set: { presented in
+                if presented == false {
+                    coordinator.dismissResult()
+                }
+            }
+        )
+    }
+
+    private var failureMessage: String {
+        if case .verificationFailed(_, let message) = coordinator.lastPairingResult {
+            return message
+        }
+        return ""
     }
 }
 

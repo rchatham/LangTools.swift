@@ -51,7 +51,7 @@ public struct ChatSettingsView: View {
         .onReceive(pairingCoordinator.$pairedHelper.compactMap { $0 }) { helper in
             // Keep an already-open Settings form from saving its stale token
             // over a freshly confirmed pairing when the form disappears.
-            viewModel.codexHelperToken = helper.token
+            viewModel.codexHelperToken = UserDefaults.codexHelperToken
             viewModel.codexHelperBaseURLString = "http://127.0.0.1:\(helper.port)"
         }
     }

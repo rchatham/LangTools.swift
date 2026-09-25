@@ -151,7 +151,7 @@ public final class CodexHelperClient: CodexHelperClientProtocol {
     }
 }
 
-private struct HelperErrorPayload: Decodable {
+struct HelperErrorPayload: Decodable {
     let error: String
 }
 
