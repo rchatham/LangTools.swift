@@ -54,9 +54,10 @@ helper-app:
 	codesign --force --deep -s - "$(HELPER_APP)"
 	@echo "Built helper app: $(HELPER_APP)"
 
-# One-command launch; use `make helper-app` explicitly to rebuild an existing app.
-helper-app-open:
-	@if [ ! -d "$(HELPER_APP)" ]; then $(MAKE) helper-app; fi
+# One-command build, quit any running instance, and launch.
+helper-app-open: helper-app
+	@pkill -f 'LangTools Helper.app/Contents/MacOS/LangToolsHelper' 2>/dev/null || true
+	@sleep 0.5
 	open "$(HELPER_APP)"
 
 # Build Docker image

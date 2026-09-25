@@ -25,6 +25,15 @@ struct HelperModelsResponse: Codable {
     let models: [String]
 }
 
+struct HelperPairingExchangeRequest: Decodable {
+    let code: String
+}
+
+struct HelperPairingExchangeResponse: Codable {
+    let port: Int
+    let token: String
+}
+
 struct HelperChatRequest: Decodable {
     let provider: String
     let model: String

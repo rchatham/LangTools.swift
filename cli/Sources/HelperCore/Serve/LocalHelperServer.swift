@@ -7,17 +7,28 @@ public struct LocalHelperServer {
     let bearerToken: String
     let queue = DispatchQueue(label: "LangToolsCLI.LocalHelperServer")
     private let connectionLimiter: HelperConnectionLimiter
+    private let sessionRegistry = HelperSessionRegistry()
+    private let onReady: (@Sendable () -> Void)?
+    private let pairingCodeConsumer: (@Sendable (String) async -> Bool)?
 
     static let maximumHeaderBytes = 32 * 1_024
     static let maximumBodyBytes = 4 * 1_048_576
     static let maximumConcurrentConnections = 32
     static let requestReadTimeout: Duration = .seconds(10)
 
-    public init(host: String, port: UInt16, bearerToken: String) {
+    public init(
+        host: String,
+        port: UInt16,
+        bearerToken: String,
+        onReady: (@Sendable () -> Void)? = nil,
+        pairingCodeConsumer: (@Sendable (String) async -> Bool)? = nil
+    ) {
         self.host = host
         self.port = port
         self.bearerToken = bearerToken
         self.connectionLimiter = HelperConnectionLimiter(limit: Self.maximumConcurrentConnections)
+        self.onReady = onReady
+        self.pairingCodeConsumer = pairingCodeConsumer
     }
 
     public func run() async throws {
@@ -41,6 +52,7 @@ public struct LocalHelperServer {
             switch state {
             case .ready:
                 startup.succeed(host: self.host, port: self.port)
+                self.onReady?()
             case .failed(let error):
                 startup.fail(error)
             default:
@@ -56,11 +68,15 @@ public struct LocalHelperServer {
             }
         } catch is CancellationError {
             // Stop means the surrounding Task was cancelled (menu-bar Stop or
-            // Ctrl+C): cancel the listener and return cleanly so the server
-            // can be started again.
+            // Ctrl+C): cancel the listener and drain any accepted connections
+            // so in-flight requests are interrupted before returning.
             listener.cancel()
+            await sessionRegistry.cancelAll()
+            await sessionRegistry.waitUntilDrained()
         } catch {
             listener.cancel()
+            await sessionRegistry.cancelAll()
+            await sessionRegistry.waitUntilDrained()
             throw error
         }
     }
@@ -72,7 +88,15 @@ public struct LocalHelperServer {
             connection.cancel()
             return
         }
-        let session = HelperConnectionSession(connection: connection, lease: lease)
+        let registry = sessionRegistry
+        let sessionID = UUID()
+        let session = HelperConnectionSession(
+            id: sessionID,
+            connection: connection,
+            lease: lease,
+            onEnd: { registry.unregister(sessionID) }
+        )
+        registry.register(sessionID, session)
         connection.stateUpdateHandler = { state in
             switch state {
             case .failed, .cancelled:
@@ -101,12 +125,15 @@ public struct LocalHelperServer {
 
             switch HTTPRequest.parse(from: requestData) {
             case .request(let request):
-                guard SecureTokenComparison.matches(
-                    expected: self.bearerToken,
-                    provided: request.authorizationBearerToken
-                ) else {
-                    self.scheduleResponse(session: session, status: .unauthorized, body: Self.errorBody("Unauthorized."))
-                    return
+                let isPairingExchange = request.path == "/v1/pairing/exchange"
+                if isPairingExchange == false {
+                    guard SecureTokenComparison.matches(
+                        expected: self.bearerToken,
+                        provided: request.authorizationBearerToken
+                    ) else {
+                        self.scheduleResponse(session: session, status: .unauthorized, body: Self.errorBody("Unauthorized."))
+                        return
+                    }
                 }
                 Task {
                     await session.beginRoute {
@@ -161,6 +188,22 @@ public struct LocalHelperServer {
                     throw CodexRuntimeError.badRequest("Only openAI is currently supported.")
                 }
                 let body = try Self.jsonBody(try await AuthCLI.loginOpenAI())
+                await respond(session: session, status: .ok, body: body)
+            case "/v1/pairing/exchange":
+                guard let consumer = pairingCodeConsumer else {
+                    await respond(session: session, status: .notFound, body: Self.errorBody("Not found."))
+                    return
+                }
+                let payload = try JSONDecoder().decode(HelperPairingExchangeRequest.self, from: request.body)
+                guard await consumer(payload.code) else {
+                    await respond(
+                        session: session,
+                        status: .unauthorized,
+                        body: Self.errorBody("Invalid or expired pairing code.")
+                    )
+                    return
+                }
+                let body = try Self.jsonBody(HelperPairingExchangeResponse(port: Int(port), token: bearerToken))
                 await respond(session: session, status: .ok, body: body)
             case "/v1/auth/logout":
                 let payload = try JSONDecoder().decode(HelperAuthRequest.self, from: request.body)
@@ -298,7 +341,7 @@ public struct LocalHelperServer {
     private static func allowedMethod(for path: String) -> String? {
         switch path {
         case "/health", "/v1/auth/status", "/v1/models/codex": return "GET"
-        case "/v1/auth/login", "/v1/auth/logout", "/v1/account/chat/completions": return "POST"
+        case "/v1/auth/login", "/v1/auth/logout", "/v1/account/chat/completions", "/v1/pairing/exchange": return "POST"
         default: return nil
         }
     }
@@ -663,16 +706,55 @@ public enum SecureTokenComparison {
     }
 }
 
+private final class HelperSessionRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sessions: [UUID: HelperConnectionSession] = [:]
+
+    func register(_ id: UUID, _ session: HelperConnectionSession) {
+        lock.withLock { sessions[id] = session }
+    }
+
+    func unregister(_ id: UUID) {
+        _ = lock.withLock { sessions.removeValue(forKey: id) }
+    }
+
+    func cancelAll() async {
+        let snapshot: [HelperConnectionSession] = lock.withLock { Array(sessions.values) }
+        for session in snapshot {
+            await session.cancelRoute()
+        }
+    }
+
+    func waitUntilDrained(timeout: Duration = .seconds(5)) async {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while true {
+            let empty = lock.withLock { sessions.isEmpty }
+            if empty { return }
+            if ContinuousClock.now >= deadline { return }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+    }
+}
+
 private actor HelperConnectionSession {
     nonisolated let connection: NWConnection
+    nonisolated let id: UUID
     private let lease: HelperConnectionLease
+    private let onEnd: @Sendable () -> Void
     private var routeTask: Task<Void, Never>?
     private var readDeadline: HelperRequestDeadline?
     private var ended = false
 
-    init(connection: NWConnection, lease: HelperConnectionLease) {
+    init(
+        id: UUID,
+        connection: NWConnection,
+        lease: HelperConnectionLease,
+        onEnd: @escaping @Sendable () -> Void
+    ) {
+        self.id = id
         self.connection = connection
         self.lease = lease
+        self.onEnd = onEnd
     }
 
     func startReadDeadline(
@@ -717,6 +799,7 @@ private actor HelperConnectionSession {
         routeTask?.cancel()
         connection.cancel()
         lease.release()
+        onEnd()
     }
 
     func finish() {
@@ -727,6 +810,7 @@ private actor HelperConnectionSession {
         connection.cancel()
         routeTask = nil
         lease.release()
+        onEnd()
     }
 }
 

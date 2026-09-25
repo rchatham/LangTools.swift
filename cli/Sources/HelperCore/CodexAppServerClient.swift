@@ -410,7 +410,7 @@ actor CodexAppServerClient {
             process.arguments = codexArguments
         }
 
-        var childEnvironment = environment
+        var childEnvironment = Self.sanitizedChildEnvironment(from: environment)
         if let override = childEnvironment["LANGTOOLS_CODEX_HOME"], override.isEmpty == false {
             childEnvironment["CODEX_HOME"] = override
         }
@@ -474,6 +474,29 @@ actor CodexAppServerClient {
         self.stdoutPump = stdoutPump
         self.stderrPump = stderrPump
         stdinHandle = stdin.fileHandleForWriting
+    }
+
+    /// Builds the child environment by stripping credential variables and
+    /// agent sockets so unrelated inherited secrets (API keys, tokens, SSH
+    /// agent sockets, cloud credentials, etc.) are not exposed to the
+    /// prompt-driven Codex child process. Non-sensitive variables (including
+    /// the `LANGTOOLS_CODEX_*`/`CODEX_*` overrides and the fixture-path
+    /// variables injected by tests) pass through unchanged.
+    static func sanitizedChildEnvironment(from environment: [String: String]) -> [String: String] {
+        environment.filter { !Self.isSensitiveEnvironmentKey($0.key) }
+    }
+
+    static func isSensitiveEnvironmentKey(_ key: String) -> Bool {
+        let upper = key.uppercased()
+        let deniedExact: Set<String> = [
+            "SSH_AUTH_SOCK", "SSH_AGENT_PID", "SSH_ASKPASS",
+            "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN",
+            "GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN",
+            "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "CODEX_API_KEY"
+        ]
+        if deniedExact.contains(upper) { return true }
+        let needles = ["TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "PRIVATE_KEY", "API_KEY"]
+        return needles.contains { upper.contains($0) }
     }
 
     private struct SeatbeltLaunch {

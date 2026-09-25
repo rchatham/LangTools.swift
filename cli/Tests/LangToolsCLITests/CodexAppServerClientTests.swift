@@ -16,7 +16,10 @@ final class CodexAppServerClientTests: XCTestCase {
             commandResolver: {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
-            environment: ["LANGTOOLS_CODEX_HOME": "/tmp/langtools-test-codex-home"],
+            environment: [
+                "LANGTOOLS_CODEX_HOME": "/tmp/langtools-test-codex-home",
+                "SECRET_API_KEY": "should-not-leak"
+            ],
             defaultTimeout: .seconds(5)
         )
 
@@ -610,6 +613,8 @@ import sys
 assert sys.argv[1:] == ["app-server", "--listen", "stdio://", "-c", "model_provider=openai"]
 assert os.environ.get("CODEX_HOME") == "/tmp/langtools-test-codex-home"
 assert os.environ.get("CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED") == "1"
+assert os.environ.get("SECRET_API_KEY") is None
+assert os.environ.get("LANGTOOLS_CODEX_HOME") == "/tmp/langtools-test-codex-home"
 
 def read():
     return json.loads(sys.stdin.readline())

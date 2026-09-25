@@ -30,6 +30,7 @@ enum HelperAppDefaults {
 final class HelperAppDelegate: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let tokenController: TokenFileController
+    private let pairingRegistry = PairingCodeRegistry()
     private let host: String
     private let port: UInt16
     private var bearerToken: String?
@@ -38,7 +39,14 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate {
     /// not reported as an unexpected failure.
     private var isUserStop = false
 
-    private var isRunning: Bool { serverTask != nil }
+    private enum ServerState {
+        case stopped
+        case starting
+        case running
+        case stopping
+    }
+
+    private var serverState: ServerState = .stopped
 
     init(tokenFileURL: URL = TokenFileController.defaultTokenFileURL, port: UInt16 = HelperAppDefaults.port) {
         self.tokenController = TokenFileController(tokenFileURL: tokenFileURL)
@@ -75,8 +83,15 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate {
     private func rebuildMenu() {
         let menu = NSMenu()
 
+        let statusText: String
+        switch serverState {
+        case .running: statusText = "Running at http://\(host):\(port)"
+        case .starting: statusText = "Starting…"
+        case .stopping: statusText = "Stopping…"
+        case .stopped: statusText = "Stopped"
+        }
         let statusMenuItem = NSMenuItem(
-            title: isRunning ? "Running at http://\(host):\(port)" : "Stopped",
+            title: statusText,
             action: nil,
             keyEquivalent: ""
         )
@@ -84,12 +99,15 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(statusMenuItem)
         menu.addItem(.separator())
 
+        let isRunning = serverState == .running
+        let canToggle = serverState == .running || serverState == .stopped
         let toggleItem = NSMenuItem(
             title: isRunning ? "Stop Helper" : "Start Helper",
             action: #selector(toggleServer),
             keyEquivalent: ""
         )
         toggleItem.target = self
+        toggleItem.isEnabled = canToggle
         menu.addItem(toggleItem)
 
         let pairItem = NSMenuItem(
@@ -131,13 +149,27 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate {
             token = try tokenController.ensureToken()
         } catch {
             bearerToken = nil
+            serverState = .stopped
             presentError(error, title: "LangTools Helper could not read its token file.")
             rebuildMenu()
             return
         }
         bearerToken = token
-        let server = LocalHelperServer(host: host, port: port, bearerToken: token)
+        serverState = .starting
         isUserStop = false
+        let server = LocalHelperServer(
+            host: host,
+            port: port,
+            bearerToken: token,
+            onReady: { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.serverDidBecomeReady()
+                }
+            },
+            pairingCodeConsumer: { [pairingRegistry] code in
+                await pairingRegistry.consume(code)
+            }
+        )
         serverTask = Task.detached { [weak self] in
             do {
                 try await server.run()
@@ -154,31 +186,45 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
+    private func serverDidBecomeReady() {
+        serverState = .running
+        rebuildMenu()
+    }
+
     private func stopServer() {
         guard serverTask != nil else { return }
+        serverState = .stopping
         isUserStop = true
         serverTask?.cancel()
+        rebuildMenu()
     }
 
     private func serverDidStop() {
         serverTask = nil
+        serverState = .stopped
         rebuildMenu()
     }
 
     // MARK: Actions
 
     @objc private func toggleServer() {
-        if isRunning {
-            stopServer()
-        } else {
-            startServer()
+        switch serverState {
+        case .running: stopServer()
+        case .stopped: startServer()
+        case .starting, .stopping: break
         }
     }
 
     @objc private func pairWithExample() {
-        guard let token = bearerToken else { return }
+        Task { @MainActor [weak self] in
+            await self?.performPairing()
+        }
+    }
+
+    private func performPairing() async {
         do {
-            let url = try PairingURL.make(port: port, token: token)
+            let code = try await pairingRegistry.generate()
+            let url = try PairingURL.make(port: port, code: code)
             guard NSWorkspace.shared.open(url) else {
                 throw PairingURLOpenError.noAppForURL
             }

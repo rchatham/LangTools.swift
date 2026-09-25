@@ -47,11 +47,21 @@ struct TokenFileController {
     }
 
     /// Returns a valid helper token: an existing token file is validated with
-    /// the `HelperTokenLoader` rules and reused; a missing file is generated
-    /// and written.
+    /// the `HelperTokenLoader` rules and, if it matches the 64-hex pairing
+    /// contract, reused; a legacy or malformed token is rotated. A missing
+    /// file is generated and written.
     func ensureToken() throws -> String {
         if FileManager.default.fileExists(atPath: tokenFileURL.path) {
-            return try HelperTokenLoader.load(from: tokenFileURL.path)
+            let existing = try HelperTokenLoader.load(from: tokenFileURL.path)
+            if Self.isPairingCompatible(existing) {
+                return existing
+            }
+            // A legacy token that the loader accepts but one-click pairing
+            // rejects (pairing requires exactly 64 hex). Rotate it so the
+            // stored token always satisfies the pairing contract.
+            FileHandle.standardError.write(Data("langtools: rotating legacy helper token to 64-hex format\n".utf8))
+            try FileManager.default.removeItem(at: tokenFileURL)
+            return try ensureToken()
         }
         let token = try Self.generateToken()
         do {
@@ -62,6 +72,12 @@ struct TokenFileController {
             return try HelperTokenLoader.load(from: tokenFileURL.path)
         }
         return try HelperTokenLoader.load(from: tokenFileURL.path)
+    }
+
+    /// Whether a token matches the 64-hex shape required by one-click pairing.
+    static func isPairingCompatible(_ token: String) -> Bool {
+        let hexDigits = Set("0123456789abcdefABCDEF")
+        return token.count == 64 && token.allSatisfy(hexDigits.contains)
     }
 
     /// Generates a fresh 64-hex token from secure random bytes.

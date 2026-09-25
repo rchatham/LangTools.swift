@@ -27,7 +27,7 @@ final class TokenFileControllerTests: XCTestCase {
         XCTAssertEqual(try HelperTokenLoader.load(from: tokenURL.path), token)
     }
 
-    func testReusesValidExistingTokenFile() throws {
+    func testRotatesLegacyNonHexTokenFile() throws {
         let tokenURL = try makeTokenURL()
         try Data("0123456789abcdef".utf8).write(to: tokenURL)
         XCTAssertEqual(chmod(tokenURL.path, 0o600), 0)
@@ -35,8 +35,24 @@ final class TokenFileControllerTests: XCTestCase {
 
         let token = try controller.ensureToken()
 
-        XCTAssertEqual(token, "0123456789abcdef")
-        XCTAssertEqual(String(data: try Data(contentsOf: tokenURL), encoding: .utf8), "0123456789abcdef")
+        // A loader-valid but pairing-incompatible token is rotated to 64 hex.
+        XCTAssertNotEqual(token, "0123456789abcdef")
+        XCTAssertEqual(token.count, 64)
+        XCTAssertTrue(token.allSatisfy { $0.isASCII && $0.isHexDigit })
+        XCTAssertEqual(String(data: try Data(contentsOf: tokenURL), encoding: .utf8), token)
+    }
+
+    func testReusesValid64HexExistingTokenFile() throws {
+        let tokenURL = try makeTokenURL()
+        let existing = String(repeating: "ab", count: 32)
+        try Data(existing.utf8).write(to: tokenURL)
+        XCTAssertEqual(chmod(tokenURL.path, 0o600), 0)
+        let controller = TokenFileController(tokenFileURL: tokenURL)
+
+        let token = try controller.ensureToken()
+
+        XCTAssertEqual(token, existing)
+        XCTAssertEqual(String(data: try Data(contentsOf: tokenURL), encoding: .utf8), existing)
     }
 
     func testSurfacesErrorForInsecureExistingTokenFile() throws {

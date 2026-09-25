@@ -238,6 +238,8 @@ final class LocalHelperServerTests: XCTestCase {
             LocalHelperServer.routeErrorStatus(method: "POST", path: "/v1/account/conversations/id"),
             .methodNotAllowed
         )
+        XCTAssertNil(LocalHelperServer.routeErrorStatus(method: "POST", path: "/v1/pairing/exchange"))
+        XCTAssertEqual(LocalHelperServer.routeErrorStatus(method: "GET", path: "/v1/pairing/exchange"), .methodNotAllowed)
     }
 
     func testCleanupPathRequiresOneUUIDAndHTTPErrorMappingsAreTyped() {
@@ -283,6 +285,126 @@ final class LocalHelperServerTests: XCTestCase {
         )
     }
 
+    func testPairingExchangeValidatesConsumesAndServerRestarts() async throws {
+        let port = try Self.findFreePort()
+        let bearer = String(repeating: "ab", count: 32)
+        let code = String(repeating: "cd", count: 32)
+
+        func makeServer(consumer: SingleUsePairingConsumer) -> LocalHelperServer {
+            LocalHelperServer(
+                host: "127.0.0.1",
+                port: port,
+                bearerToken: bearer,
+                pairingCodeConsumer: { c in await consumer.consume(c) }
+            )
+        }
+
+        var serverTask: Task<Void, Never>? = Task { try? await makeServer(consumer: SingleUsePairingConsumer(validCode: code)).run() }
+        try await Self.waitUntilHealthy(port: port, bearer: bearer)
+
+        // Valid code returns the bearer token exactly once.
+        let (firstStatus, firstData) = try await Self.performRequest(
+            port: port, path: "/v1/pairing/exchange", method: "POST", body: "{\"code\":\"\(code)\"}"
+        )
+        XCTAssertEqual(firstStatus, 200)
+        let exchange = try JSONDecoder().decode(HelperPairingExchangeResponse.self, from: firstData)
+        XCTAssertEqual(exchange.token, bearer)
+        XCTAssertEqual(exchange.port, Int(port))
+
+        // Single-use: a replay is rejected.
+        let (replayStatus, _) = try await Self.performRequest(
+            port: port, path: "/v1/pairing/exchange", method: "POST", body: "{\"code\":\"\(code)\"}"
+        )
+        XCTAssertEqual(replayStatus, 401)
+
+        // Wrong method is a 405.
+        let (methodStatus, _) = try await Self.performRequest(
+            port: port, path: "/v1/pairing/exchange", method: "GET"
+        )
+        XCTAssertEqual(methodStatus, 405)
+
+        // Stop drains and returns; a restart on the same port succeeds.
+        serverTask?.cancel()
+        await serverTask?.value
+
+        serverTask = Task { try? await makeServer(consumer: SingleUsePairingConsumer(validCode: code)).run() }
+        try await Self.waitUntilHealthy(port: port, bearer: bearer)
+        let (restartStatus, _) = try await Self.performRequest(
+            port: port, path: "/v1/pairing/exchange", method: "POST", body: "{\"code\":\"\(code)\"}"
+        )
+        XCTAssertEqual(restartStatus, 200)
+        serverTask?.cancel()
+        await serverTask?.value
+    }
+
+    private static func findFreePort() throws -> UInt16 {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { throw TestError.unexpectedResult }
+        defer { close(fd) }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = 0
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let bindResult = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bindResult == 0 else { throw TestError.unexpectedResult }
+        var bound = sockaddr_in()
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &bound) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(fd, $0, &len)
+            }
+        }
+        return UInt16(bigEndian: bound.sin_port)
+    }
+
+    private static func performRequest(
+        port: UInt16,
+        path: String,
+        method: String,
+        headers: [String: String] = [:],
+        body: String? = nil
+    ) async throws -> (Int, Data) {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        let session = URLSession(configuration: configuration)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)\(path)")!)
+        request.httpMethod = method
+        request.timeoutInterval = 5
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        if let body {
+            request.httpBody = Data(body.utf8)
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        return (status, data)
+    }
+
+    private static func waitUntilHealthy(port: UInt16, bearer: String, timeout: TimeInterval = 10) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            do {
+                let (status, _) = try await performRequest(
+                    port: port,
+                    path: "/health",
+                    method: "GET",
+                    headers: ["Authorization": "Bearer \(bearer)"]
+                )
+                if status == 200 { return }
+            } catch {
+                // The server is not ready yet; retry.
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTFail("Server did not become healthy within \(timeout) seconds")
+    }
+
     private func chunkPayload(_ framed: Data) throws -> Data {
         let firstCRLF = try XCTUnwrap(framed.range(of: Data("\r\n".utf8)))
         let countText = String(decoding: framed[..<firstCRLF.lowerBound], as: UTF8.self)
@@ -324,6 +446,19 @@ final class LocalHelperServerTests: XCTestCase {
     }
 
     private enum TestError: Error { case unexpectedResult }
+}
+
+private actor SingleUsePairingConsumer {
+    private let validCode: String
+    private var consumed = false
+
+    init(validCode: String) { self.validCode = validCode }
+
+    func consume(_ code: String) -> Bool {
+        guard code == validCode, consumed == false else { return false }
+        consumed = true
+        return true
+    }
 }
 
 private final class LockedCounter: @unchecked Sendable {
