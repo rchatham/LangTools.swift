@@ -213,5 +213,5 @@ swift test --filter LangToolsTests      # Specific test target
 
 - Main README: `/README.md`
 - Module READMEs: `Sources/[ModuleName]/README.md`
-- Examples: `Examples/LangTools_Example/`
+- Official macOS/iOS app: `Apps/LangTools/` (Xcode scheme: `LangToolsApp`)
 - Docker setup: `DOCKER.md`
