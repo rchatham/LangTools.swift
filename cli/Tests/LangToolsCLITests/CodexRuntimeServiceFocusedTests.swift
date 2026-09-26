@@ -5,7 +5,7 @@ import Glibc
 #endif
 import Foundation
 import XCTest
-@testable import LangToolsCLI
+@testable import CLI
 
 final class CodexRuntimeServiceFocusedTests: XCTestCase {
     func testLoginFiltersCompletionByExactIDAndRejectsConcurrentLogin() async throws {
@@ -1172,7 +1172,8 @@ final class CodexRuntimeServiceFocusedTests: XCTestCase {
             },
             environment: ProcessInfo.processInfo.environment.merging(environment) { _, override in override },
             defaultTimeout: .seconds(1),
-            requestTimeoutSleeper: requestTimeoutSleeper
+            requestTimeoutSleeper: requestTimeoutSleeper,
+            containmentMode: .disabledForTesting
         )
     }
 

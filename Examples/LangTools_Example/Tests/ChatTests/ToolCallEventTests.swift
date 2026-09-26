@@ -119,6 +119,20 @@ final class ToolCallEventTests: XCTestCase {
         XCTAssertEqual(message.toolCalls[1].result, "2")
     }
 
+    func testFailPendingToolCallsPreservesCompletedCalls() {
+        let message = Message(role: .assistant, contentType: .null)
+        message.applyToolEvent(called(name: "completed"))
+        message.applyToolEvent(completed(result: "done"))
+        message.applyToolEvent(called(name: "incomplete"))
+
+        message.failPendingToolCalls(reason: "follow-up failed")
+
+        XCTAssertEqual(message.toolCalls[0].status, .success)
+        XCTAssertEqual(message.toolCalls[0].result, "done")
+        XCTAssertEqual(message.toolCalls[1].status, .failure)
+        XCTAssertEqual(message.toolCalls[1].result, "follow-up failed")
+    }
+
     // MARK: - Codable round-trip
 
     func testMessageCodableRoundTripPreservesToolCalls() throws {

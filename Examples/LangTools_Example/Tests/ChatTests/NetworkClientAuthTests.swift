@@ -1,11 +1,15 @@
 import Anthropic
 import Foundation
+import Gemini
 import KeychainAccess
 import LangTools
+import Ollama
 import OpenAI
+import XAI
 import XCTest
 @testable import Chat
 
+@MainActor
 final class NetworkClientAuthTests: XCTestCase {
     private var keychain: Keychain!
     private var keychainService: KeychainService!
@@ -25,35 +29,6 @@ final class NetworkClientAuthTests: XCTestCase {
         super.tearDown()
     }
 
-    func testOpenAIAccountSessionUsesProxyTransport() async throws {
-        let session = AccountSession(
-            provider: .openAI,
-            accountIdentifier: "openai-user",
-            accessToken: "access-token",
-            accessibleModelIDs: ["gpt-5.5"]
-        )
-        try sessionStore.save(session)
-        accessManager.refresh()
-
-        let proxyTransport = TestAccountProxyTransport()
-        let client = NetworkClient(
-            keychainService: keychainService,
-            accountLoginService: StubAccountLoginService(),
-            accountProxyTransport: proxyTransport,
-            providerAccessManager: accessManager
-        )
-
-        let message = try await client.performChatCompletionRequest(
-            messages: [Message(text: "Hello", role: .user)],
-            model: .codex(.gpt5_5),
-            tools: nil,
-            toolChoice: nil
-        )
-
-        XCTAssertEqual(message.text, "proxied response")
-        XCTAssertEqual(proxyTransport.lastModel, .codex(.gpt5_5))
-        XCTAssertEqual(proxyTransport.lastSession?.accountIdentifier, "openai-user")
-    }
 
     func testClaudeCodeAccountSessionStillUsesProxyTransport() async throws {
         let anthropicModel = try XCTUnwrap(Anthropic.Model.allCases.first)
@@ -128,6 +103,80 @@ final class NetworkClientAuthTests: XCTestCase {
         XCTAssertFalse(accessManager.statesForAccessUI().first { $0.accessDestination == .codex }?.hasAccountSession ?? true)
     }
 
+    func testRequestForwardsToolEventHandlerToEveryProvider() throws {
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager
+        )
+        let anthropicModel = try XCTUnwrap(Anthropic.Model.allCases.first)
+        let xAIModel = try XCTUnwrap(XAI.Model.allCases.first)
+        let geminiModel = try XCTUnwrap(Gemini.Model.allCases.first)
+        let ollamaModel = try XCTUnwrap(Ollama.Model(rawValue: "llama3.2"))
+        let models: [Model] = [
+            .anthropic(anthropicModel),
+            .claudeCode(anthropicModel),
+            .openAI(.gpt4o_mini),
+            .codex(.gpt5_5),
+            .xAI(xAIModel),
+            .gemini(geminiModel),
+            .ollama(ollamaModel),
+        ]
+        let event = LangToolsToolEvent.toolCalled(TestToolSelection())
+        var receivedEventCount = 0
+
+        for model in models {
+            let request = client.request(
+                messages: [Message(text: "Hello", role: .user)],
+                model: model,
+                toolEventHandler: { _ in receivedEventCount += 1 }
+            )
+            switch request {
+            case let request as Anthropic.MessageRequest:
+                request.toolEventHandler?(event)
+            case let request as OpenAI.ChatCompletionRequest:
+                request.toolEventHandler?(event)
+            case let request as Ollama.ChatRequest:
+                request.toolEventHandler?(event)
+            default:
+                XCTFail("Unexpected request type for \(model)")
+            }
+        }
+
+        XCTAssertEqual(receivedEventCount, models.count)
+    }
+
+    func testGeminiRequestEncodesToolsAndToolChoiceAndWiresHandler() throws {
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager
+        )
+        let geminiModel = try XCTUnwrap(Gemini.Model.allCases.first)
+        let tool = Tool(name: "lookup_weather", description: "Look up weather", tool_schema: ToolSchema())
+        let event = LangToolsToolEvent.toolCalled(TestToolSelection(name: "lookup_weather"))
+        var receivedEventCount = 0
+
+        let request = try XCTUnwrap(client.request(
+            messages: [Message(text: "What is the weather?", role: .user)],
+            model: .gemini(geminiModel),
+            tools: [tool],
+            toolChoice: .required,
+            toolEventHandler: { _ in receivedEventCount += 1 }
+        ) as? OpenAI.ChatCompletionRequest)
+        let encoded = try JSONEncoder().encode(request)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let encodedTools = try XCTUnwrap(object["tools"] as? [[String: Any]])
+        let encodedFunction = try XCTUnwrap(encodedTools.first?["function"] as? [String: Any])
+
+        XCTAssertEqual(encodedFunction["name"] as? String, "lookup_weather")
+        XCTAssertEqual(object["tool_choice"] as? String, "required")
+        request.toolEventHandler?(event)
+        XCTAssertEqual(receivedEventCount, 1)
+    }
+
     func testMissingAuthThrowsMissingApiKey() async throws {
         let client = NetworkClient(
             keychainService: keychainService,
@@ -147,6 +196,118 @@ final class NetworkClientAuthTests: XCTestCase {
         } catch let error as NetworkClient.NetworkError {
             XCTAssertEqual(error, .missingApiKey)
         }
+    }
+
+    func testCodexAccountRouteUsesAccountSessionEvenWhenOpenAIAPIKeyExists() async throws {
+        keychainService.saveApiKey(apiKey: "sk-platform", for: .openAI)
+        try sessionStore.save(AccountSession(
+            provider: .openAI,
+            accountIdentifier: "openai-user",
+            accessToken: "account-access-token",
+            accessibleModelIDs: ["gpt-5.5"]
+        ))
+        accessManager.refresh()
+
+        let proxyTransport = TestAccountProxyTransport()
+        let bridge = TestOpenAIAccountChatBridge()
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: proxyTransport,
+            openAIAccountChatBridge: bridge,
+            providerAccessManager: accessManager
+        )
+
+        let message = try await client.performChatCompletionRequest(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .codex(.gpt5_5),
+            tools: nil,
+            toolChoice: nil
+        )
+
+        XCTAssertEqual(message.text, "cli response")
+        XCTAssertEqual(bridge.lastModel, .codex(.gpt5_5))
+        XCTAssertNil(proxyTransport.lastSession)
+    }
+
+    func testEmptyAuthoritativeAccountModelListFailsClosed() async throws {
+        try sessionStore.save(AccountSession(
+            provider: .openAI,
+            accountIdentifier: "openai-user",
+            accessToken: "account-access-token",
+            accessibleModelIDs: []
+        ))
+        accessManager.refresh()
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            openAIAccountChatBridge: TestOpenAIAccountChatBridge(),
+            providerAccessManager: accessManager
+        )
+
+        do {
+            _ = try await client.performChatCompletionRequest(
+                messages: [Message(text: "Hello", role: .user)],
+                model: .codex(.gpt5_5),
+                tools: nil,
+                toolChoice: nil
+            )
+            XCTFail("Expected empty model access list to deny the request")
+        } catch let error as NetworkClient.NetworkError {
+            XCTAssertEqual(error, .modelAccessUnavailable("codex/gpt-5.5"))
+        }
+    }
+
+    func testCodexHelperConnectAndDisconnectPersistOnlyMarkerSession() async throws {
+        let loginService = TestHelperAccountLoginService()
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: loginService,
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager
+        )
+
+        try await client.connectCodexHelper()
+        let stored = try XCTUnwrap(accessManager.session(for: .openAI))
+        XCTAssertEqual(stored.accessToken, CodexSessionMarker.value)
+        XCTAssertEqual(stored.accessibleModelIDs, ["gpt-5.5"])
+
+        try await client.disconnectCodexHelper()
+        XCTAssertTrue(loginService.didLogoutHelper)
+        XCTAssertNil(accessManager.session(for: .openAI))
+    }
+
+    func testDisconnectDoesNotRemoveSessionConnectedWhileLogoutIsInFlight() async throws {
+        let original = AccountSession(
+            provider: .openAI,
+            accountIdentifier: "original",
+            accessToken: "original-token",
+            accessibleModelIDs: ["gpt-5.5"]
+        )
+        try sessionStore.save(original)
+        accessManager.refresh()
+        let loginService = BlockingLogoutAccountLoginService()
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: loginService,
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager
+        )
+
+        let disconnect = Task { try await client.disconnectAccount(.openAI) }
+        await loginService.waitUntilLogoutStarted()
+        let replacement = AccountSession(
+            provider: .openAI,
+            accountIdentifier: "replacement",
+            accessToken: CodexSessionMarker.value,
+            accessibleModelIDs: ["gpt-5.5"]
+        )
+        try accessManager.saveAccountSession(replacement)
+        await loginService.finishLogout()
+        try await disconnect.value
+
+        XCTAssertEqual(accessManager.session(for: .openAI)?.id, replacement.id)
     }
 
     func testCodexAccountTransportOmitsUnsupportedTools() async throws {
@@ -378,7 +539,7 @@ final class NetworkClientAuthTests: XCTestCase {
         }
     }
 
-    func testCodexAccountProxyErrorsPropagate() async throws {
+    func testOpenAIAccountSessionUsesCLIChatBridge() async throws {
         let session = AccountSession(
             provider: .openAI,
             accountIdentifier: "openai-user",
@@ -388,11 +549,193 @@ final class NetworkClientAuthTests: XCTestCase {
         try sessionStore.save(session)
         accessManager.refresh()
 
-        let expectedError = NetworkClient.NetworkError.accountProxyTransportFailed("OpenAI helper failed")
+        let proxyTransport = TestAccountProxyTransport()
+        let bridge = TestOpenAIAccountChatBridge()
         let client = NetworkClient(
             keychainService: keychainService,
             accountLoginService: StubAccountLoginService(),
-            accountProxyTransport: TestAccountProxyTransport(error: expectedError),
+            accountProxyTransport: proxyTransport,
+            openAIAccountChatBridge: bridge,
+            providerAccessManager: accessManager
+        )
+
+        let message = try await client.performChatCompletionRequest(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .codex(.gpt5_5),
+            tools: nil,
+            toolChoice: nil
+        )
+
+        XCTAssertEqual(message.text, "cli response")
+        XCTAssertEqual(bridge.lastModel, .codex(.gpt5_5))
+        XCTAssertNil(proxyTransport.lastSession)
+    }
+
+    func testCodexHelperMarkerUsesStatefulProxyAndEndsConversation() async throws {
+        let session = AccountSession(
+            provider: .openAI,
+            accountIdentifier: "codex-helper",
+            accessToken: CodexSessionMarker.value,
+            accessibleModelIDs: ["gpt-5.5"]
+        )
+        try sessionStore.save(session)
+        accessManager.refresh()
+
+        let proxyTransport = TestAccountProxyTransport()
+        let bridge = TestOpenAIAccountChatBridge()
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: proxyTransport,
+            openAIAccountChatBridge: bridge,
+            providerAccessManager: accessManager
+        )
+        let conversationID = UUID()
+
+        let message = try await client.performChatCompletionRequest(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .codex(.gpt5_5),
+            conversationID: conversationID,
+            tools: nil,
+            toolChoice: nil
+        )
+        await client.endConversation(id: conversationID)
+
+        XCTAssertEqual(message.text, "conversation proxied response")
+        XCTAssertEqual(proxyTransport.lastConversationID, conversationID)
+        XCTAssertEqual(proxyTransport.endedConversationIDs, [conversationID])
+        XCTAssertNil(bridge.lastModel)
+    }
+
+    func testRealOpenAIAccountConversationUsesCLIAndDoesNotEndHelperSession() async throws {
+        let session = AccountSession(
+            provider: .openAI,
+            accountIdentifier: "openai-user",
+            accessToken: "access-token",
+            accessibleModelIDs: ["gpt-5.5"]
+        )
+        try sessionStore.save(session)
+        accessManager.refresh()
+
+        let proxyTransport = TestAccountProxyTransport()
+        let bridge = TestOpenAIAccountChatBridge()
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: proxyTransport,
+            openAIAccountChatBridge: bridge,
+            providerAccessManager: accessManager
+        )
+        let conversationID = UUID()
+
+        let message = try await client.performChatCompletionRequest(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .codex(.gpt5_5),
+            conversationID: conversationID,
+            tools: nil,
+            toolChoice: nil
+        )
+        await client.endConversation(id: conversationID)
+
+        XCTAssertEqual(message.text, "cli response")
+        XCTAssertEqual(bridge.lastModel, .codex(.gpt5_5))
+        XCTAssertNil(proxyTransport.lastConversationID)
+        XCTAssertTrue(proxyTransport.endedConversationIDs.isEmpty)
+    }
+
+    func testRealOpenAIAccountStreamingUsesCLIWithoutHelperState() async throws {
+        let session = AccountSession(
+            provider: .openAI,
+            accountIdentifier: "openai-user",
+            accessToken: "access-token",
+            accessibleModelIDs: ["gpt-5.5"]
+        )
+        try sessionStore.save(session)
+        accessManager.refresh()
+
+        let proxyTransport = TestAccountProxyTransport()
+        let bridge = TestOpenAIAccountChatBridge()
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: proxyTransport,
+            openAIAccountChatBridge: bridge,
+            providerAccessManager: accessManager
+        )
+        let conversationID = UUID()
+
+        let stream = try client.streamChatCompletionRequest(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .codex(.gpt5_5),
+            conversationID: conversationID,
+            stream: true,
+            tools: nil,
+            toolChoice: nil
+        )
+        var chunks: [String] = []
+        for try await chunk in stream { chunks.append(chunk) }
+        await client.endConversation(id: conversationID)
+
+        XCTAssertEqual(chunks, ["cli response"])
+        XCTAssertEqual(bridge.lastModel, .codex(.gpt5_5))
+        XCTAssertNil(proxyTransport.lastConversationID)
+        XCTAssertTrue(proxyTransport.endedConversationIDs.isEmpty)
+    }
+
+    func testCodexHelperMarkerStreamingUsesStatefulProxy() async throws {
+        let session = AccountSession(
+            provider: .openAI,
+            accountIdentifier: "codex-helper",
+            accessToken: CodexSessionMarker.value,
+            accessibleModelIDs: ["gpt-5.5"]
+        )
+        try sessionStore.save(session)
+        accessManager.refresh()
+
+        let proxyTransport = TestAccountProxyTransport()
+        let bridge = TestOpenAIAccountChatBridge()
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: proxyTransport,
+            openAIAccountChatBridge: bridge,
+            providerAccessManager: accessManager
+        )
+        let conversationID = UUID()
+
+        let stream = try client.streamChatCompletionRequest(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .codex(.gpt5_5),
+            conversationID: conversationID,
+            stream: true,
+            tools: nil,
+            toolChoice: nil
+        )
+        var chunks: [String] = []
+        for try await chunk in stream { chunks.append(chunk) }
+
+        XCTAssertEqual(chunks, ["conversation proxied response"])
+        XCTAssertEqual(proxyTransport.lastConversationID, conversationID)
+        XCTAssertNil(bridge.lastModel)
+    }
+
+    func testOpenAIAccountChatBridgeErrorsPropagate() async throws {
+        let session = AccountSession(
+            provider: .openAI,
+            accountIdentifier: "openai-user",
+            accessToken: "access-token",
+            accessibleModelIDs: ["gpt-5.5"]
+        )
+        try sessionStore.save(session)
+        accessManager.refresh()
+
+        let expectedError = CLIAccountSessionBridgeError.commandFailed("Error: OpenAI request failed (status 429): You exceeded your current quota")
+        let bridge = TestOpenAIAccountChatBridge(error: expectedError)
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            openAIAccountChatBridge: bridge,
             providerAccessManager: accessManager
         )
 
@@ -403,10 +746,22 @@ final class NetworkClientAuthTests: XCTestCase {
                 tools: nil,
                 toolChoice: nil
             )
-            XCTFail("Expected transport error")
-        } catch let error as NetworkClient.NetworkError {
+            XCTFail("Expected bridge error")
+        } catch let error as CLIAccountSessionBridgeError {
             XCTAssertEqual(error, expectedError)
         }
+    }
+}
+
+private struct TestToolSelection: LangToolsToolSelection {
+    let id: String?
+    let name: String?
+    let arguments: String
+
+    init(id: String? = "test-call", name: String? = "test-tool", arguments: String = "{}") {
+        self.id = id
+        self.name = name
+        self.arguments = arguments
     }
 }
 
@@ -491,9 +846,92 @@ private struct FailingLogoutAccountLoginService: AccountLoginService {
     func fetchAccessibleModels(for provider: AccountLoginProvider) async throws -> [String] { [] }
 }
 
-private final class TestAccountProxyTransport: AccountProxyTransportProtocol {
+private actor TestAsyncSignal {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isSignaled = false
+
+    func wait() async {
+        if isSignaled { return }
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func signal() {
+        isSignaled = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+@MainActor
+private final class BlockingLogoutAccountLoginService: AccountLoginService {
+    private let started = TestAsyncSignal()
+    private let finish = TestAsyncSignal()
+
+    func beginLogin(for provider: AccountLoginProvider) async throws -> AccountSession {
+        throw AccountLoginError.sessionExchangeFailed("Unexpected login")
+    }
+
+    func handleRedirect(_ url: URL) async throws -> AccountSession {
+        throw AccountLoginError.invalidCallbackURL
+    }
+
+    func refreshSession(_ session: AccountSession) async throws -> AccountSession { session }
+
+    func logout(provider: AccountLoginProvider) async throws {
+        await started.signal()
+        await finish.wait()
+    }
+
+    func fetchAccessibleModels(for provider: AccountLoginProvider) async throws -> [String] { [] }
+
+    func waitUntilLogoutStarted() async {
+        await started.wait()
+    }
+
+    func finishLogout() async {
+        await finish.signal()
+    }
+}
+
+@MainActor
+private final class TestHelperAccountLoginService: AccountLoginService {
+    private(set) var didLogoutHelper = false
+
+    func beginLogin(for provider: AccountLoginProvider) async throws -> AccountSession {
+        throw AccountLoginError.sessionExchangeFailed("Unexpected direct login")
+    }
+
+    func beginCodexHelperLogin() async throws -> AccountSession {
+        AccountSession(
+            provider: .openAI,
+            accountIdentifier: "helper-user",
+            accessToken: "must-not-be-persisted",
+            refreshToken: "must-not-be-persisted",
+            accessibleModelIDs: ["gpt-5.5"]
+        )
+    }
+
+    func handleRedirect(_ url: URL) async throws -> AccountSession {
+        throw AccountLoginError.invalidCallbackURL
+    }
+
+    func refreshSession(_ session: AccountSession) async throws -> AccountSession { session }
+    func logout(provider: AccountLoginProvider) async throws {}
+
+    func logoutCodexHelper() async throws {
+        didLogoutHelper = true
+    }
+
+    func fetchAccessibleModels(for provider: AccountLoginProvider) async throws -> [String] { [] }
+}
+
+private final class TestAccountProxyTransport: ConversationAwareAccountProxyTransportProtocol {
     private(set) var lastSession: AccountSession?
     private(set) var lastModel: Model?
+    private(set) var lastConversationID: UUID?
+    private(set) var endedConversationIDs: [UUID] = []
     private let error: Error?
 
     init(error: Error? = nil) {
@@ -528,5 +966,58 @@ private final class TestAccountProxyTransport: AccountProxyTransportProtocol {
             continuation.yield("proxied response")
             continuation.finish()
         }
+    }
+
+    func performChatCompletionRequest(messages: [Message], model: Model, session: AccountSession, conversationID: UUID, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message {
+        _ = messages
+        _ = tools
+        _ = toolChoice
+        lastSession = session
+        lastModel = model
+        lastConversationID = conversationID
+        if let error { throw error }
+        return Message(text: "conversation proxied response", role: .assistant)
+    }
+
+    func streamChatCompletionRequest(messages: [Message], model: Model, session: AccountSession, conversationID: UUID, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error> {
+        _ = messages
+        _ = stream
+        _ = tools
+        _ = toolChoice
+        lastSession = session
+        lastModel = model
+        lastConversationID = conversationID
+        if let error {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: error)
+            }
+        }
+        return AsyncThrowingStream { continuation in
+            continuation.yield("conversation proxied response")
+            continuation.finish()
+        }
+    }
+
+    func endConversation(id: UUID) async {
+        endedConversationIDs.append(id)
+    }
+}
+
+private final class TestOpenAIAccountChatBridge: OpenAIAccountChatBridging {
+    private(set) var lastMessages: [Message] = []
+    private(set) var lastModel: Model?
+    private let error: Error?
+
+    init(error: Error? = nil) {
+        self.error = error
+    }
+
+    func performOpenAIChat(messages: [Message], model: Model) async throws -> Message {
+        lastMessages = messages
+        lastModel = model
+        if let error {
+            throw error
+        }
+        return Message(text: "cli response", role: .assistant)
     }
 }

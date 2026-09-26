@@ -132,7 +132,7 @@ public final class CodexHelperClient: CodexHelperClientProtocol {
             throw error
         } catch let error as URLError {
             if error.code == .cannotConnectToHost || error.code == .networkConnectionLost || error.code == .timedOut {
-                throw AccountLoginError.sessionExchangeFailed("Codex helper is not running. From the cli package, run: swift run LangToolsCLI serve")
+                throw AccountLoginError.sessionExchangeFailed("Codex helper is not running. From the repository root, run: swift run --package-path cli langtools serve")
             }
             throw AccountLoginError.sessionExchangeFailed(error.localizedDescription)
         } catch {

@@ -127,7 +127,7 @@ final class AgentToolCallMappingTests: XCTestCase {
 
         let ollamaMessages = [message].toOllamaMessages()
         XCTAssertEqual(
-            ollamaMessages.first?.tool_calls?.first?.function.arguments["reason"],
+            ollamaMessages.first?.tool_calls?.first?.function.arguments["reason"]?.stringValue,
             rootReason
         )
     }

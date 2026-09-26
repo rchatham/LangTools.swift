@@ -11,7 +11,7 @@ import Anthropic
 import Ollama
 import ChatUI
 
-public final class Message: Codable, ObservableObject, Identifiable, Equatable, Hashable {
+public final class Message: Codable, Sendable, ObservableObject, Identifiable, Equatable, Hashable {
     public let uuid: UUID
     public var role: Role
     @Published public var contentType: ContentType
@@ -201,9 +201,9 @@ public extension Array<Message> {
         }
     }
 
-    private static func parseArguments(_ json: String?) -> [String: String] {
-        guard let json, !json.isEmpty, let dict = json.dictionary else { return [:] }
-        return dict.compactMapValues { $0.stringValue }
+    private static func parseArguments(_ json: String?) -> [String: JSON] {
+        guard let json, !json.isEmpty, let dictionary = json.dictionary else { return [:] }
+        return dictionary
     }
 }
 
@@ -421,6 +421,21 @@ extension Message {
                     )
                 )
             }
+        }
+    }
+
+    /// Marks tool calls that never emitted a completion as failed while leaving
+    /// already completed calls untouched.
+    public func failPendingToolCalls(reason: String) {
+        for index in toolCalls.indices where toolCalls[index].status == .pending {
+            let call = toolCalls[index]
+            toolCalls[index] = ChatToolCall(
+                id: call.id,
+                name: call.name,
+                arguments: call.arguments,
+                status: .failure,
+                result: reason
+            )
         }
     }
 

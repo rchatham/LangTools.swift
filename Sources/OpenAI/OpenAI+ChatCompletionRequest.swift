@@ -16,7 +16,8 @@ public extension OpenAI {
 
     static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
         guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
-        var request = ChatCompletionRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
+        let providerMessages = messages.map { ($0 as? Message) ?? Message($0) }
+        var request = ChatCompletionRequest(model: model, messages: providerMessages, tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
         request.responseSchema = responseSchema
         return request
     }
@@ -124,7 +125,12 @@ extension OpenAI {
             self.logprobs = logprobs
             self.top_logprobs = top_logprobs
             self.user = user
-            self.response_format = response_type.flatMap { ResponseFormat(type: $0) }
+            self.response_format = response_type.map { responseType in
+                switch responseType {
+                case .text: return .text
+                case .json_object: return .json_object
+                }
+            }
             self.seed = seed
             self.tools = tools
             self.tool_choice = tool_choice

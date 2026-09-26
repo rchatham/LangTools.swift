@@ -1,0 +1,718 @@
+//
+//  MainView.swift
+//  CLI
+//
+//  Root SwiftTUI view for the LangTools CLI application
+//
+
+import SwiftTUI
+import Foundation
+
+/// Settings navigation state for state-based menu handling
+enum SettingsMode: Equatable {
+    case none
+    case main           // Main settings menu
+    case apiKeys        // API keys sub-menu
+    case apiKeyInput(APIService)  // Entering API key for specific service
+    case theme          // Theme selection
+    case maxTokens      // Max tokens input
+    case temperature    // Temperature input
+    case model          // Model selection (provider list)
+    case modelProvider  // Provider selection view
+    case modelList(Provider)  // List models for specific provider
+}
+
+/// Main application view containing the entire chat interface
+@MainActor
+struct MainView: @preconcurrency View {
+    @ObservedObject private var toolExecutionState: ToolExecutionState
+    @ObservedObject private var userQuestionManager: UserQuestionManager
+    @State private var messages: [ChatMessage] = []
+    @State private var isStreaming: Bool = false
+    @State private var currentTool: String? = nil
+    @State private var inputHistory: [String] = []
+    @State private var statusMessage: String = "Ready"
+    @State private var errorMessage: String? = nil
+    @State private var settingsMode: SettingsMode = .none
+
+    // Overlay states
+    @State private var showSettingsOverlay: Bool = false
+    @State private var showAutocomplete: Bool = false
+    @State private var autocompleteSuggestions: [CommandType] = []
+    @State private var selectedSuggestionIndex: Int = 0
+    @State private var pendingCommandPrefix: String = ""
+
+    private let environment = AppEnvironment.detect()
+
+    init(toolExecutionState: ToolExecutionState) {
+        _toolExecutionState = ObservedObject(wrappedValue: toolExecutionState)
+        _userQuestionManager = ObservedObject(wrappedValue: UserQuestionManager.shared)
+    }
+
+    var body: some View {
+        ZStack {
+            // Main content layer
+            mainContentView
+
+            // Settings overlay (centered)
+            if showSettingsOverlay {
+                settingsOverlay
+            }
+
+        }
+        .padding(2)
+        .onAppear {
+            // Populate the Ollama model list for the /model picker (the
+            // non-TUI CLI does this in changeModel(); the TUI must do it too).
+            Task { await NetworkClient.shared.fetchOllamaModels() }
+        }
+    }
+
+    // MARK: - Main Content View
+
+    private var mainContentView: some View {
+        VStack(spacing: 1) {
+            // Scrollable chat history - fills available space
+            ChatHistoryView(
+                messages: messages,
+                isStreaming: isStreaming
+            )
+
+            // Separator above info line (fits the current terminal width so
+            // it never wraps and grows the footer)
+            Text(String(repeating: "─", count: max(10, TerminalSize.columns() - 8)))
+                .foregroundColor(.blue)
+
+            // Info line - model, path, git branch (above input)
+            InfoLineView(
+                modelName: UserDefaults.model.rawValue,
+                workingDirectory: environment.workingDirectory,
+                gitBranch: environment.gitBranch,
+                messageCount: messages.count,
+                config: Configuration.load().infoLine
+            )
+
+            if let question = userQuestionManager.currentQuestion {
+                UserQuestionRequestView(question: question) { text in
+                    handleInput(text)
+                }
+            } else if let request = toolExecutionState.pendingApproval {
+                ApprovalRequestView(request: request) { text in
+                    handleInput(text)
+                }
+            } else {
+                // Autocomplete dropdown (above input when active)
+                if showAutocomplete && !autocompleteSuggestions.isEmpty {
+                    AutocompleteDropdown(
+                        suggestions: autocompleteSuggestions,
+                        selectedIndex: selectedSuggestionIndex,
+                        onSelect: applyAutocomplete
+                    )
+                }
+
+                InputView(
+                    hint: inputHint,
+                    isDisabled: showSettingsOverlay || isStreaming
+                ) { text in
+                    handleInput(text)
+                }
+            }
+
+            // Status line - status indicator and errors (bottom)
+            StatusLineView(
+                status: statusMessage,
+                isStreaming: isStreaming,
+                currentTool: currentTool,
+                errorMessage: errorMessage,
+                config: Configuration.load().statusLine
+            )
+        }
+    }
+
+    private var inputHint: String? {
+        showAutocomplete ? "Select command or type to filter" : nil
+    }
+
+    // MARK: - Settings Overlay
+
+    private var settingsOverlay: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                SettingsPanel(
+                    mode: $settingsMode,
+                    statusMessage: $statusMessage,
+                    onClose: closeSettings
+                )
+                Spacer()
+            }
+            Spacer()
+        }
+    }
+
+    private func closeSettings() {
+        showSettingsOverlay = false
+        settingsMode = .none
+        statusMessage = "Ready"
+    }
+
+    // MARK: - Input Handling
+
+    private func handleInput(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Every submitted input produces output below the current viewport;
+        // if the user is scrolled up, jump back to follow the response.
+        ScrollView<EmptyView>.requestFollowBottom()
+
+        if userQuestionManager.currentQuestion != nil {
+            userQuestionManager.provideCustomAnswer(trimmed)
+            statusMessage = "Answer submitted"
+            return
+        }
+
+        if toolExecutionState.pendingApproval != nil {
+            switch ToolApprovalInput(text: trimmed) {
+            case .approve:
+                toolExecutionState.approveRequest()
+                statusMessage = "Running approved tool..."
+            case .deny:
+                toolExecutionState.denyRequest()
+                statusMessage = "Tool denied"
+            case .invalid:
+                statusMessage = "Awaiting tool approval: enter y or n"
+            }
+            return
+        }
+
+        guard !isStreaming else {
+            statusMessage = "Wait for the current reply"
+            return
+        }
+
+        guard !trimmed.isEmpty else { return }
+
+        // Clear any previous errors
+        errorMessage = nil
+
+        // If settings overlay is open, route input there for API key entry, etc.
+        if showSettingsOverlay {
+            handleSettingsOverlayInput(trimmed)
+            return
+        }
+
+        // Commands with arguments must bypass autocomplete so the ID/name
+        // isn't discarded when selecting the command suggestion.
+        let commandParts = trimmed.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+        if commandParts.count > 1, ["/load", "/save"].contains(commandParts[0].lowercased()) {
+            dismissAutocomplete()
+            _ = handleCommand(trimmed)
+            return
+        }
+
+        // If autocomplete is showing, handle selection or filter
+        if showAutocomplete {
+            handleAutocompleteInput(trimmed)
+            return
+        }
+
+        // Check if this should trigger autocomplete
+        if CommandSuggestionEngine.shouldShowAutocomplete(for: trimmed) {
+            // An exact command match executes immediately: showing only the
+            // suggestion dropdown made commands like /model require a second
+            // invocation before doing anything.
+            let suggestions = CommandSuggestionEngine.suggestions(for: trimmed)
+            if suggestions.count == 1,
+               trimmed.lowercased() == CommandSuggestionEngine.displayText(for: suggestions[0]).lowercased() {
+                dismissAutocomplete()
+                _ = handleCommand(trimmed)
+                return
+            }
+            triggerAutocomplete(for: trimmed)
+            return
+        }
+
+        // Handle special commands
+        if handleCommand(trimmed) {
+            return
+        }
+
+        // Add user message
+        messages.append(ChatMessage(role: .user, content: trimmed))
+        inputHistory.append(trimmed)
+
+        // Start streaming
+        isStreaming = true
+        statusMessage = "Thinking..."
+
+        // Add placeholder for assistant response
+        messages.append(ChatMessage(role: .assistant, content: ""))
+
+        // Call LLM via MessageService (silent mode to avoid stdout corruption in TUI)
+        Task {
+            do {
+                let existingMessageCount = messageService.messages.count
+                let existingToolEventCount = messageService.toolDisplayEvents.count
+
+                try await messageService.performMessageCompletionRequest(
+                    message: trimmed,
+                    stream: true,
+                    silent: true
+                )
+
+                if messages.last?.role == .assistant, messages.last?.content.isEmpty == true {
+                    messages.removeLast()
+                }
+
+                let toolMessages = messageService.toolDisplayEvents
+                    .dropFirst(existingToolEventCount)
+                    .map(ChatMessage.init(toolEvent:))
+                let newMessages = messageService.messages.dropFirst(existingMessageCount).compactMap(Self.chatMessage(from:))
+                messages.append(contentsOf: toolMessages)
+                messages.append(contentsOf: newMessages)
+
+                statusMessage = "Ready"
+            } catch {
+                errorMessage = error.localizedDescription
+                statusMessage = "Error"
+                // Remove empty placeholder if error occurred
+                if messages.last?.content.isEmpty == true {
+                    messages.removeLast()
+                }
+            }
+            do {
+                try SessionManager.shared.replaceMessages(messageService.messages)
+            } catch {
+                errorMessage = "Could not save session: \(error.localizedDescription)"
+            }
+            isStreaming = false
+        }
+    }
+
+    // MARK: - Autocomplete Handling
+
+    private func triggerAutocomplete(for prefix: String) {
+        pendingCommandPrefix = prefix
+        autocompleteSuggestions = CommandSuggestionEngine.suggestions(for: prefix)
+        selectedSuggestionIndex = 0
+        showAutocomplete = !autocompleteSuggestions.isEmpty
+        statusMessage = "Select command"
+    }
+
+    private func handleAutocompleteInput(_ text: String) {
+        let trimmed = text.lowercased()
+
+        // Check for numeric selection (1-6)
+        if let index = Int(trimmed), index >= 1, index <= autocompleteSuggestions.count {
+            applyAutocomplete(autocompleteSuggestions[index - 1])
+            return
+        }
+
+        // Check if it's a refined filter (starts with /)
+        if text.hasPrefix("/") {
+            let newSuggestions = CommandSuggestionEngine.suggestions(for: text)
+            if newSuggestions.count == 1 {
+                // Exact match - apply it
+                applyAutocomplete(newSuggestions[0])
+            } else if !newSuggestions.isEmpty {
+                // Update suggestions
+                pendingCommandPrefix = text
+                autocompleteSuggestions = newSuggestions
+                selectedSuggestionIndex = 0
+            } else {
+                // No matches - close autocomplete and try as command
+                dismissAutocomplete()
+                _ = handleCommand(text)
+            }
+            return
+        }
+
+        // Cancel autocomplete and process as regular input
+        dismissAutocomplete()
+        // Re-process the input
+        handleInput(text)
+    }
+
+    private func applyAutocomplete(_ command: CommandType) {
+        dismissAutocomplete()
+        // Execute the selected command
+        _ = handleCommand("/\(command.rawValue)")
+    }
+
+    private func dismissAutocomplete() {
+        showAutocomplete = false
+        autocompleteSuggestions = []
+        selectedSuggestionIndex = 0
+        pendingCommandPrefix = ""
+        statusMessage = "Ready"
+    }
+
+    // MARK: - Settings Overlay Input
+
+    private func handleSettingsOverlayInput(_ text: String) {
+        // Handle input when settings overlay is showing
+        // This is for API key entry, max tokens, temperature, etc.
+        switch settingsMode {
+        case .apiKeyInput(let service):
+            if text.isEmpty {
+                statusMessage = "Cancelled"
+            } else {
+                do {
+                    try NetworkClient.shared.updateApiKey(text, for: service)
+                    statusMessage = "\(service.rawValue) key saved"
+                } catch {
+                    statusMessage = "Failed to save key"
+                }
+            }
+            settingsMode = .apiKeys
+
+        case .maxTokens:
+            if let value = Int(text), value >= 0 {
+                UserDefaults.maxTokens = value
+                statusMessage = "Max tokens set to \(value == 0 ? "default" : String(value))"
+            } else if !text.isEmpty {
+                statusMessage = "Invalid number"
+            }
+            settingsMode = .main
+
+        case .temperature:
+            if let value = Double(text), value >= 0, value <= 2.0 {
+                UserDefaults.temperature = value
+                statusMessage = "Temperature set to \(value == 0 ? "default" : String(format: "%.1f", value))"
+            } else if !text.isEmpty {
+                statusMessage = "Invalid value (0.0-2.0)"
+            }
+            settingsMode = .main
+
+        default:
+            // For other modes, close the overlay
+            closeSettings()
+        }
+    }
+
+    /// Handle special commands
+    /// Returns true if command was handled
+    private func handleCommand(_ text: String) -> Bool {
+        let parts = text.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+        let command = String(parts.first ?? "").lowercased()
+        let argument = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : ""
+
+        // Support both /command and plain command syntax
+        let normalizedCommand = command.hasPrefix("/") ? String(command.dropFirst()) : command
+
+        switch normalizedCommand {
+        case "exit", "quit":
+            exit(0)
+
+        case "clear":
+            guard !isStreaming else {
+                statusMessage = "Wait for the reply before clearing"
+                return true
+            }
+            messages.removeAll()
+            messageService.clearMessages()
+            do {
+                try SessionManager.shared.replaceMessages(messageService.messages)
+                statusMessage = "Cleared"
+            } catch {
+                errorMessage = "Could not save cleared session: \(error.localizedDescription)"
+            }
+            return true
+
+        case "help":
+            showHelp()
+            return true
+
+        case "model":
+            // Open settings overlay directly to model menu
+            Task { await NetworkClient.shared.fetchOllamaModels() }
+            settingsMode = .model
+            showSettingsOverlay = true
+            statusMessage = "Settings"
+            return true
+
+        case "tools":
+            showTools()
+            return true
+
+        case "history":
+            showHistory()
+            return true
+
+        case "settings":
+            // Open settings overlay instead of printing menu
+            Task { await NetworkClient.shared.fetchOllamaModels() }
+            settingsMode = .main
+            showSettingsOverlay = true
+            statusMessage = "Settings"
+            return true
+
+        case "status":
+            showStatus()
+            return true
+
+        case "apikey":
+            // Open API keys submenu directly
+            settingsMode = .apiKeys
+            showSettingsOverlay = true
+            statusMessage = "API Keys"
+            return true
+
+        case "save":
+            guard !isStreaming else {
+                statusMessage = "Wait for the reply before saving"
+                return true
+            }
+            do {
+                let session = try SessionManager.shared.createSession(
+                    name: argument.isEmpty ? nil : argument,
+                    workingDirectory: FileManager.default.currentDirectoryPath,
+                    model: UserDefaults.model.rawValue
+                )
+                try SessionManager.shared.replaceMessages(messageService.messages)
+                messages.append(ChatMessage(role: .system,
+                    content: "Session saved: \(session.name) [\(session.id.uuidString.prefix(8))]"))
+            } catch {
+                errorMessage = "Could not save session: \(error.localizedDescription)"
+            }
+            return true
+
+        case "load":
+            guard !isStreaming else {
+                statusMessage = "Wait for the reply before loading"
+                return true
+            }
+            guard !argument.isEmpty else {
+                messages.append(ChatMessage(role: .system, content: "Usage: /load <session-id>. Use /sessions to find an ID."))
+                return true
+            }
+            do {
+                guard let session = try SessionManager.shared.session(
+                    matching: argument, in: FileManager.default.currentDirectoryPath
+                ) else {
+                    messages.append(ChatMessage(role: .system, content: "Session not found in this directory: \(argument)"))
+                    return true
+                }
+                messageService.messages = SessionManager.shared.restoredMessages(from: session)
+                messages = messageService.messages.map {
+                    ChatMessage(role: $0.role == .user ? .user : .assistant, content: $0.text ?? "")
+                }
+                SessionManager.shared.currentSessionId = session.id
+                if let model = Model(rawValue: session.metadata.model) { UserDefaults.model = model }
+                messages.append(ChatMessage(role: .system,
+                    content: "Loaded session '\(session.name)' (\(session.messages.count) messages)"))
+            } catch {
+                errorMessage = "Could not load session: \(error.localizedDescription)"
+            }
+            return true
+
+        case "sessions":
+            do {
+                let sessions = try SessionManager.shared.listSessions(in: FileManager.default.currentDirectoryPath)
+                if sessions.isEmpty {
+                    messages.append(ChatMessage(role: .system, content: "No saved sessions in this directory."))
+                } else {
+                    let lines = sessions.map { s -> String in
+                        let short = s.id.uuidString.prefix(8)
+                        let date = DateFormatter.localizedString(from: s.updatedAt, dateStyle: .short, timeStyle: .short)
+                        return "  \(short)  \(s.name)  (\(s.metadata.messageCount) msgs, \(date))"
+                    }
+                    messages.append(ChatMessage(role: .system,
+                        content: "Saved sessions:\n\(lines.joined(separator: "\n"))\n\nUse /load <id-prefix> to restore"))
+                }
+            } catch {
+                errorMessage = "Could not list sessions: \(error.localizedDescription)"
+            }
+            return true
+
+        case "compact":
+            let before = messages.count
+            let chatMsgs = messageService.messages.map {
+                ChatMessage(role: $0.role == .user ? .user : .assistant, content: $0.text ?? "")
+            }
+            let usage = ContextManager.shared.contextUsage(for: chatMsgs)
+            if !usage.needsCompaction {
+                messages.append(ChatMessage(role: .system,
+                    content: "Context within limits (\(usage.formattedUsage)). No compaction needed."))
+            } else {
+                let compacted = ContextManager.shared.compactMessages(chatMsgs)
+                messageService.messages = compacted.map {
+                    Message(text: $0.content, role: $0.role == .user ? .user : .assistant)
+                }
+                messages = compacted
+                do {
+                    try SessionManager.shared.replaceMessages(messageService.messages)
+                } catch {
+                    errorMessage = "Could not save compacted session: \(error.localizedDescription)"
+                }
+                messages.append(ChatMessage(role: .system,
+                    content: "Compacted \(before) → \(compacted.count) messages"))
+            }
+            return true
+
+        case "plan":
+            Task {
+                let result = await MainActor.run { PlanModeManager.shared.enterPlanMode() }
+                messages.append(ChatMessage(role: .system, content: result))
+            }
+            return true
+
+        case "tasks":
+            Task {
+                let tasks = await TaskManager.shared.allActiveTasks
+                if tasks.isEmpty {
+                    messages.append(ChatMessage(role: .system, content: "No running background tasks."))
+                } else {
+                    let lines = tasks.map { t -> String in
+                        "  \(String(t.id.prefix(8)))  \(t.agentType.rawValue)  \(t.status.rawValue)"
+                    }
+                    messages.append(ChatMessage(role: .system,
+                        content: "Background tasks:\n\(lines.joined(separator: "\n"))"))
+                }
+            }
+            return true
+
+        default:
+            // Check if it's an unknown command (starts with /)
+            if text.hasPrefix("/") {
+                messages.append(ChatMessage(
+                    role: .system,
+                    content: "Unknown command: \(text). Type /help for available commands."
+                ))
+                return true
+            }
+            return false
+        }
+    }
+
+    // MARK: - Command Implementations
+
+    private func showHelp() {
+        messages.append(ChatMessage(role: .system, content: HelpSystem.fullHelp()))
+    }
+
+    private func showModel() {
+        let model = UserDefaults.model
+        messages.append(ChatMessage(
+            role: .system,
+            content: "Current model: \(model.rawValue)"
+        ))
+    }
+
+    private func showTools() {
+        let registry = ToolRegistry.shared
+        let tools = registry.toolNames.joined(separator: ", ")
+        messages.append(ChatMessage(
+            role: .system,
+            content: "Available tools: \(tools.isEmpty ? "None registered" : tools)"
+        ))
+    }
+
+    private func showHistory() {
+        if inputHistory.isEmpty {
+            messages.append(ChatMessage(role: .system, content: "No input history"))
+        } else {
+            let historyList = inputHistory.suffix(10).enumerated().map { (i, text) in
+                "  \(i + 1). \(text)"
+            }.joined(separator: "\n")
+            messages.append(ChatMessage(
+                role: .system,
+                content: "Recent history:\n\(historyList)"
+            ))
+        }
+    }
+
+    // MARK: - Status Display (still shows in chat)
+
+    private func showStatus() {
+        let config = Configuration.load()
+        var lines = ["── Status ──────────────────────────"]
+        lines.append("Model: \(UserDefaults.model.rawValue)")
+        lines.append("Provider: \(UserDefaults.model.provider.rawValue)")
+        lines.append("Max Tokens: \(UserDefaults.maxTokens == 0 ? "default" : String(UserDefaults.maxTokens))")
+        lines.append("Temperature: \(UserDefaults.temperature == 0 ? "default" : String(format: "%.1f", UserDefaults.temperature))")
+        lines.append("Theme: \(config.theme.rawValue)")
+        lines.append("Streaming: \(config.streamingEnabled ? "enabled" : "disabled")")
+        lines.append("")
+        lines.append("Capabilities:")
+        for capabilityLine in CLI.capabilityStatusLines(for: UserDefaults.model) {
+            if capabilityLine != "Capabilities:" {
+                lines.append(capabilityLine)
+            }
+        }
+        lines.append("")
+        lines.append("API Keys:")
+        for service in APIService.allCases {
+            let status = UserDefaults.getApiKey(for: service) != nil ? "✓ Set" : "✗ Not set"
+            lines.append("  \(service.rawValue): \(status)")
+        }
+        lines.append("────────────────────────────────────")
+        messages.append(ChatMessage(role: .system, content: lines.joined(separator: "\n")))
+    }
+
+    private static func chatMessage(from message: Message) -> ChatMessage? {
+        guard let text = message.text, !text.isEmpty else { return nil }
+
+        switch message.role {
+        case .user:
+            return nil
+        case .assistant:
+            return ChatMessage(role: .assistant, content: text)
+        case .system, .developer:
+            return ChatMessage(role: .system, content: text)
+        case .tool:
+            return ChatMessage(role: .toolResult, content: text)
+        }
+    }
+}
+
+@MainActor
+private struct UserQuestionRequestView: @preconcurrency View {
+    let question: UserQuestion
+    let onSubmit: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("? \(question.header)")
+                    .foregroundColor(.cyan)
+                    .bold()
+                Text(" \(question.question)")
+                    .foregroundColor(.white)
+            }
+
+            ForEach(question.options.indices, id: \.self) { index in
+                let option = question.options[index]
+                Text("  \(index + 1). \(option.label) — \(option.description)")
+                    .foregroundColor(.white)
+            }
+
+            if !question.options.isEmpty {
+                Text(question.multiSelect
+                    ? "  Enter numbers separated by commas, or type a custom answer"
+                    : "  Enter a number, or type a custom answer")
+                    .foregroundColor(.white)
+                    .italic()
+            }
+
+            HStack {
+                Text("  Answer:")
+                    .foregroundColor(.green)
+                    .bold()
+                Text(" ")
+                TextField(placeholder: "Your answer", action: onSubmit)
+            }
+        }
+    }
+}
+
+// MARK: - Preview Helper
+
+#if DEBUG
+extension MainView {
+    static var preview: MainView {
+        MainView(toolExecutionState: ToolExecutionState())
+    }
+}
+#endif
