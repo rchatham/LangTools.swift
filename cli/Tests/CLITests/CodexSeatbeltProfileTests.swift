@@ -455,22 +455,19 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
     }
 
-    func testLaunchedProcessKeepsInheritedWorkingDirectoryWithoutSeatbelt() async throws {
-        // Without a workspace root there is no seatbelt launch, and the prior
-        // behavior is preserved: the child inherits the helper's cwd rather
-        // than being pointed at a workspace.
+    func testLaunchedProcessKeepsInheritedWorkingDirectoryWhenContainmentDisabledForTesting() async throws {
+        // .disabledForTesting permits nil workspace — the child inherits cwd.
         let workspace = makeTempDir(prefix: "ws")
         defer { try? FileManager.default.removeItem(at: workspace) }
         let marker = workspace.appendingPathComponent("cwd-marker-no-seatbelt.txt")
 
-        // Snapshot before the child launches: the test process cwd must not
-        // change while the child inherits it.
         let expectedInherited = Self.physicalPath(FileManager.default.currentDirectoryPath)
         let client = CodexAppServerClient(
             commandResolver: {
                 ResolvedCodexCommand(executable: "/bin/sh", arguments: ["-c", "pwd > '\(marker.path)'"])
             },
-            workspaceRootProvider: { nil }
+            workspaceRootProvider: { nil },
+            containmentMode: .disabledForTesting
         )
         _ = try? await client.initializedProcessGeneration()
 
@@ -507,6 +504,32 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             }
             XCTAssertTrue(message.contains("workspace root is missing"), message)
         }
+        await client.shutdown()
+    }
+
+    func testMissingWorkspaceProviderFailsClosedBeforeLaunching() async throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("unexpected-uncontained-launch-\(UUID().uuidString.lowercased())")
+        defer { try? FileManager.default.removeItem(at: marker) }
+        let client = CodexAppServerClient(
+            commandResolver: {
+                ResolvedCodexCommand(
+                    executable: "/bin/sh",
+                    arguments: ["-c", "touch '\(marker.path)'"]
+                )
+            },
+            workspaceRootProvider: { nil }
+        )
+
+        do {
+            _ = try await client.initializedProcessGeneration()
+            XCTFail("Expected containment to fail closed")
+        } catch let error as CodexAppServerError {
+            guard case .containmentUnavailable = error else {
+                return XCTFail("Expected containmentUnavailable, got \(error)")
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
         await client.shutdown()
     }
 
@@ -663,3 +686,4 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         }
     }
 
+}

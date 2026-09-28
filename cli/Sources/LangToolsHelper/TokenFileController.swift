@@ -69,7 +69,13 @@ struct TokenFileController {
         } catch TokenFileControllerError.createFailed where errno == EEXIST {
             // Another instance may have created the file after our existence
             // check. Read and validate its value rather than using ours.
-            return try HelperTokenLoader.load(from: tokenFileURL.path)
+            let token = try HelperTokenLoader.load(from: tokenFileURL.path)
+            if Self.isPairingCompatible(token) {
+                return token
+            }
+            FileHandle.standardError.write(Data("langtools: rotating legacy helper token from race to 64-hex format\n".utf8))
+            try? FileManager.default.removeItem(at: tokenFileURL)
+            return try ensureToken()
         }
         return try HelperTokenLoader.load(from: tokenFileURL.path)
     }

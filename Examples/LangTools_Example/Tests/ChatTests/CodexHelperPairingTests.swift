@@ -310,6 +310,57 @@ final class CodexHelperPairingTests: XCTestCase {
         XCTAssertEqual(coordinator.lastPairingResult, .verificationFailed(port: 8766, message: "Invalid or expired pairing code."))
     }
 
+    @MainActor
+    func testSecondConfirmSupersedesStaleExchange() async throws {
+        let enteredExchange = AsyncStream.makeStream(of: Void.self)
+        let proceedWithExchange = AsyncStream.makeStream(of: Void.self)
+        let gate = UnsafeLockedCount()
+        let coordinator = CodexHelperPairingCoordinator(
+            makeHelperClient: { _ in HealthyHelperClient() },
+            saveToken: { _ in },
+            exchangeCode: { code, port in
+                let callIndex = gate.increment()
+                if callIndex == 1 {
+                    enteredExchange.continuation.yield(())
+                    await proceedWithExchange.stream.first { _ in true }
+                }
+                return PairingCodeExchangeResponse(port: port, token: Self.validCode)
+            }
+        )
+        // Start the first exchange and wait for it to enter the gated block
+        coordinator.handle(pairingURL(port: "8766", code: Self.validCode))
+        coordinator.confirm(PairedHelper(port: 8766, code: Self.validCode))
+        _ = await enteredExchange.stream.first { _ in true }
+
+        // Cancel (supersede) and start a fresh pairing
+        coordinator.cancel()
+        coordinator.handle(pairingURL(port: "8767", code: Self.validCode))
+        coordinator.confirm(PairedHelper(port: 8767, code: Self.validCode))
+
+        // Let the stale exchange complete
+        proceedWithExchange.continuation.yield(())
+
+        // Wait for the second confirm to finish
+        for _ in 0..<50 {
+            if let result = coordinator.lastPairingResult, result != PairingOutcome.verified(port: 8766) { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        // The stale first exchange must not overwrite the second confirm's result
+        XCTAssertEqual(coordinator.pairedHelper, PairedHelper(port: 8767, code: ""))
+        XCTAssertEqual(coordinator.lastPairingResult, PairingOutcome.verified(port: 8767))
+        XCTAssertEqual(UserDefaults.codexHelperBaseURL, URL(string: "http://127.0.0.1:8767"))
+    }
+
+    // MARK: - Helpers
+
+    private final class UnsafeLockedCount: @unchecked Sendable {
+        private var _value = 0
+        func increment() -> Int {
+            _value += 1
+            return _value
+        }
+    }
+
     // MARK: - Helpers
 
     @MainActor

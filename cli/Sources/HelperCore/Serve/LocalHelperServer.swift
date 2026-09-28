@@ -730,7 +730,10 @@ private final class HelperSessionRegistry: @unchecked Sendable {
         while true {
             let empty = lock.withLock { sessions.isEmpty }
             if empty { return }
-            if ContinuousClock.now >= deadline { return }
+            if ContinuousClock.now >= deadline {
+                FileHandle.standardError.write(Data("langtools: HelperSessionRegistry.waitUntilDrained timed out after \(timeout)\n".utf8))
+                return
+            }
             try? await Task.sleep(for: .milliseconds(50))
         }
     }
