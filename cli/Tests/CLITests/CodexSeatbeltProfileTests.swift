@@ -45,7 +45,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutable: "/usr/bin/python3",
             codexExecutableArguments: [],
             codexHome: codexHome.path,
-            workspaceRoot: workspaceRoot.path,
+                        workspaceRoot: workspaceRoot.path,
+            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-(UUID().uuidString)").path,
             codexRuntimeCache: runtimeCache.path,
             homeDirectory: NSHomeDirectory()
         )
@@ -136,7 +137,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutable: "/opt/codex/bin/codex",
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
-            workspaceRoot: "/tmp/ws root",
+                        workspaceRoot: "/tmp/ws root",
+            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-(UUID().uuidString)").path,
             codexRuntimeCache: "",
             homeDirectory: ""
         )
@@ -178,7 +180,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutable: "/opt/codex/bin/codex",
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
-            workspaceRoot: "/tmp/ws root",
+                        workspaceRoot: "/tmp/ws root",
+            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-(UUID().uuidString)").path,
             codexRuntimeCache: "/tmp/cache dir/codex-runtimes",
             homeDirectory: ""
         )
@@ -204,7 +207,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutable: "/opt/codex/bin/codex",
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
-            workspaceRoot: "/tmp/ws root",
+                        workspaceRoot: "/tmp/ws root",
+            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-(UUID().uuidString)").path,
             codexRuntimeCache: "",
             homeDirectory: ""
         ))
@@ -517,7 +521,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutable: "/opt/codex/bin/codex",
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
-            workspaceRoot: "/tmp/ws root",
+                        workspaceRoot: "/tmp/ws root",
+            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-(UUID().uuidString)").path,
             codexRuntimeCache: "/tmp/cache dir/codex-runtimes",
             homeDirectory: home
         ))
