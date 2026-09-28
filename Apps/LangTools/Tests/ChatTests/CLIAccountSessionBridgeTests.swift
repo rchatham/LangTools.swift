@@ -187,7 +187,7 @@ final class CLIAccountSessionBridgeTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let project = try String(
-            contentsOf: packageRoot.appendingPathComponent("LangTools_Example.xcodeproj/project.pbxproj"),
+            contentsOf: packageRoot.appendingPathComponent("LangTools.xcodeproj/project.pbxproj"),
             encoding: .utf8
         )
         XCTAssertTrue(project.contains("Helpers/langtools"))
