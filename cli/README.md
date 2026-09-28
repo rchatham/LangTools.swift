@@ -36,7 +36,7 @@ Codex state is resolved in this order:
 
 ## Menu-bar helper app
 
-**Development build only:** `make helper-app` ad-hoc signs the bundle; it is not notarized or ready for public downloads. Pairing currently passes the long-lived bearer token through a custom URL scheme, which another installed app could claim. Before distribution, replace this with trusted app-to-helper IPC/pairing and Developer ID signing/notarization. The token file is private from other users and browser tabs, but not from processes running as the same user.
+**Development build only:** `make helper-app` ad-hoc signs the bundle; it is not notarized or ready for public downloads. Pairing uses a short-lived single-use 64-hex code that is exchanged for the bearer token over an authenticated loopback POST (code TTL: 5 minutes, single use; no token in URL). Another installed app could still claim the custom URL scheme and intercept the code, though without the matching loopback the exchange would fail. Before distribution, replace this with trusted app-to-helper IPC/pairing and Developer ID signing/notarization. The token file is private from other users and browser tabs, but not from processes running as the same user.
 
 Instead of the terminal command, build and launch the menu-bar app in one step:
 
@@ -60,10 +60,10 @@ The menu offers:
 **Pair with LangTools Example…** opens the already-registered custom URL scheme:
 
 ```
-langtools-example-auth://codex-helper/pair?port=8765&token=<64 hex chars>
+langtools-example-auth://codex-helper/pair?port=8765&code=<64 hex chars>
 ```
 
-LangTools_Example shows a confirmation alert before saving anything; on confirm it stores the helper token and base URL (`http://127.0.0.1:8765`) and verifies them with a `/health` check, then **Settings → Model Access → Codex Subscription** shows the paired status. Manual URL/token entry remains available as a fallback. The helper server only accepts requests whose `Host` header resolves to `127.0.0.1`, `::1`, or `localhost` — anything else is rejected with `400 Unexpected Host header.`
+LangTools_Example shows a confirmation alert before saving anything; on confirm it exchanges the single-use code for the bearer token over a loopback `POST /v1/pairing/exchange`, stores the token, and verifies the helper with a `/health` check. Then **Settings → Model Access → Codex Subscription** shows the paired status. Manual URL/token entry remains available as a fallback. The helper server only accepts requests whose `Host` header resolves to `127.0.0.1`, `::1`, or `localhost` — anything else is rejected with `400 Unexpected Host header.`
 
 ## Authentication
 

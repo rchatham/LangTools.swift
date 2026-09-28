@@ -8,7 +8,7 @@ final class CodexHelperPairingTests: XCTestCase {
 
     // MARK: - Valid pairing URLs
 
-    func testValidPairingURLExtractsPortAndToken() throws {
+    func testValidPairingURLExtractsPortAndCode() throws {
         let url = pairingURL(port: "8765", code: Self.validCode)
 
         let helper = try CodexHelperPairingCoordinator.parsePairingURL(url).get()
@@ -35,7 +35,7 @@ final class CodexHelperPairingTests: XCTestCase {
         XCTAssertEqual(helper.code, Self.validCode)
     }
 
-    func testUppercaseHexTokenIsAccepted() throws {
+    func testUppercaseHexCodeIsAccepted() throws {
         let uppercaseCode = String(repeating: "AB", count: 32)
         let url = pairingURL(port: "8765", code: uppercaseCode)
 
@@ -108,7 +108,7 @@ final class CodexHelperPairingTests: XCTestCase {
         )
     }
 
-    func testRejectsMissingTokenQueryItem() {
+    func testRejectsMissingCodeQueryItem() {
         assertParseFailure(
             "langtools-example-auth://codex-helper/pair?port=8765",
             expected: .invalidCode
@@ -122,7 +122,7 @@ final class CodexHelperPairingTests: XCTestCase {
         )
     }
 
-    func testRejectsNonHexToken() {
+    func testRejectsNonHexCode() {
         let nonHexCode = String(repeating: "gg", count: 32)
         assertParseFailure(
             "langtools-example-auth://codex-helper/pair?port=8765&code=\(nonHexCode)",
@@ -130,7 +130,7 @@ final class CodexHelperPairingTests: XCTestCase {
         )
     }
 
-    func testRejectsSixtyThreeCharacterToken() {
+    func testRejectsSixtyThreeCharacterCode() {
         let shortCode = String(repeating: "ab", count: 31) + "a"
         assertParseFailure(
             "langtools-example-auth://codex-helper/pair?port=8765&code=\(shortCode)",
@@ -138,7 +138,7 @@ final class CodexHelperPairingTests: XCTestCase {
         )
     }
 
-    func testRejectsSixtyFiveCharacterToken() {
+    func testRejectsSixtyFiveCharacterCode() {
         let longCode = String(repeating: "ab", count: 32) + "c"
         assertParseFailure(
             "langtools-example-auth://codex-helper/pair?port=8765&code=\(longCode)",
@@ -266,6 +266,27 @@ final class CodexHelperPairingTests: XCTestCase {
         coordinator.handle(pairingURL(port: "8766", code: Self.validCode))
 
         XCTAssertEqual(coordinator.pendingPairing?.port, 8765)
+    }
+
+    @MainActor
+    func testConfirmSuccessSetsVerifiedState() async throws {
+        var savedToken: String?
+        let coordinator = CodexHelperPairingCoordinator(
+            makeHelperClient: { _ in HealthyHelperClient() },
+            saveToken: { savedToken = $0 },
+            exchangeCode: { _, port in PairingCodeExchangeResponse(port: port, token: Self.validCode) }
+        )
+        coordinator.handle(pairingURL(port: "8766", code: Self.validCode))
+        coordinator.confirm(PairedHelper(port: 8766, code: Self.validCode))
+        for _ in 0..<50 {
+            if coordinator.lastPairingResult != nil { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertEqual(savedToken, Self.validCode)
+        XCTAssertEqual(coordinator.pairedHelper, PairedHelper(port: 8766, code: ""))
+        XCTAssertEqual(coordinator.lastPairingResult, .verified(port: 8766))
+        XCTAssertEqual(UserDefaults.codexHelperBaseURL, URL(string: "http://127.0.0.1:8766"))
     }
 
     @MainActor

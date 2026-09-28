@@ -118,6 +118,7 @@ public final class CodexHelperPairingCoordinator: ObservableObject {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         let session = URLSession(configuration: configuration)
+        defer { session.finishTasksAndInvalidate() }
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/pairing/exchange")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 30
@@ -214,7 +215,7 @@ public final class CodexHelperPairingCoordinator: ObservableObject {
                 let exchange = try await exchangeCode(pairing.code, pairing.port)
                 guard verificationID == id else { return }
 
-                let baseURL = URL(string: "http://127.0.0.1:\(pairing.port)")!
+                let baseURL = URL(string: "http://127.0.0.1:\(exchange.port)")!
                 let configuration = AccountBackendConfiguration(
                     codexHelperBaseURL: baseURL,
                     codexHelperToken: exchange.token

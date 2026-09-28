@@ -46,7 +46,7 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutableArguments: [],
             codexHome: codexHome.path,
                         workspaceRoot: workspaceRoot.path,
-            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-(UUID().uuidString)").path,
+            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-\(UUID().uuidString)").path,
             codexRuntimeCache: runtimeCache.path,
             homeDirectory: NSHomeDirectory()
         )
@@ -138,7 +138,7 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
                         workspaceRoot: "/tmp/ws root",
-            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-(UUID().uuidString)").path,
+            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-\(UUID().uuidString)").path,
             codexRuntimeCache: "",
             homeDirectory: ""
         )
@@ -181,7 +181,7 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
                         workspaceRoot: "/tmp/ws root",
-            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-(UUID().uuidString)").path,
+            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-\(UUID().uuidString)").path,
             codexRuntimeCache: "/tmp/cache dir/codex-runtimes",
             homeDirectory: ""
         )
@@ -208,7 +208,7 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
                         workspaceRoot: "/tmp/ws root",
-            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-(UUID().uuidString)").path,
+            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-\(UUID().uuidString)").path,
             codexRuntimeCache: "",
             homeDirectory: ""
         ))
@@ -522,7 +522,7 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
                         workspaceRoot: "/tmp/ws root",
-            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-(UUID().uuidString)").path,
+            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-\(UUID().uuidString)").path,
             codexRuntimeCache: "/tmp/cache dir/codex-runtimes",
             homeDirectory: home
         ))
@@ -609,4 +609,57 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         process.waitUntilExit()
         return process.terminationStatus
     }
-}
+    func testChildEnvironmentAllowlistDropsInheritedSecretsAndRedirectsTemp() throws {
+        let codexHome = makeTempDir(prefix: "child-home")
+        let processTemp = try CodexProcessTemporaryDirectory.create(
+            inside: codexHome,
+            prefix: "environment-test"
+        )
+        defer { try? FileManager.default.removeItem(at: codexHome) }
+
+        let child = CodexChildEnvironment.make(
+            parent: [
+                "HOME": "/Users/tester",
+                "PATH": "/usr/bin:/bin",
+                "LANG": "en_US.UTF-8",
+                "OPENAI_API_KEY": "secret-openai",
+                "CODEX_API_KEY": "secret-codex",
+                "HTTP_PROXY": "https://user:secret@example.invalid",
+                "SSH_AUTH_SOCK": "/private/agent.sock",
+                "UNRELATED_SECRET": "secret-value",
+            ],
+            codexHome: codexHome,
+            temporaryDirectory: processTemp,
+            disableAppServerRemoteControl: true
+        )
+
+        XCTAssertEqual(child["HOME"], "/Users/tester")
+        XCTAssertEqual(child["PATH"], "/usr/bin:/bin")
+        XCTAssertEqual(child["LANG"], "en_US.UTF-8")
+        XCTAssertEqual(child["CODEX_HOME"], codexHome.path)
+        XCTAssertEqual(child["TMPDIR"], processTemp.path)
+        XCTAssertEqual(child["TMP"], processTemp.path)
+        XCTAssertEqual(child["TEMP"], processTemp.path)
+        XCTAssertEqual(child["CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED"], "1")
+        for secretKey in ["OPENAI_API_KEY", "CODEX_API_KEY", "HTTP_PROXY", "SSH_AUTH_SOCK", "UNRELATED_SECRET"] {
+            XCTAssertNil(child[secretKey], "\(secretKey) must not reach the Codex child")
+        }
+    }
+
+    func testProcessTemporaryDirectoryIsUniqueAndOwnerOnly() throws {
+        let first = try CodexProcessTemporaryDirectory.create(prefix: "permissions")
+        let second = try CodexProcessTemporaryDirectory.create(prefix: "permissions")
+        defer {
+            try? FileManager.default.removeItem(at: first)
+            try? FileManager.default.removeItem(at: second)
+        }
+
+        XCTAssertNotEqual(first, second)
+        for directory in [first, second] {
+            let permissions = try XCTUnwrap(
+                (try FileManager.default.attributesOfItem(atPath: directory.path)[.posixPermissions] as? NSNumber)?.intValue
+            )
+            XCTAssertEqual(permissions & 0o777, 0o700)
+        }
+    }
+
