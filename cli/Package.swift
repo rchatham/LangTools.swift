@@ -8,7 +8,6 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-    products: [
         .executable(name: "langtools", targets: ["CLI"]),
         .executable(name: "LangToolsHelper", targets: ["LangToolsHelper"]),
     ],
@@ -22,7 +21,10 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "HelperCore"
+            name: "HelperCore",
+            dependencies: [
+                .product(name: "OpenAI", package: "langtools-cli"),
+            ]
         ),
         .executableTarget(
             name: "CLI",
@@ -53,8 +55,7 @@ let package = Package(
                 .product(name: "OpenAI", package: "langtools-cli"),
                 .product(name: "Ollama", package: "langtools-cli"),
                 .product(name: "SwiftTUI", package: "SwiftTUI"),
-            ],
-            path: "Tests/LangToolsCLITests"
+            ]
         ),
     ]
 )

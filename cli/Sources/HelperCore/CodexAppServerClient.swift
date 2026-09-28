@@ -137,7 +137,7 @@ actor CodexAppServerClient {
     static let maximumBufferedProcessChunks = 256
 
     init(
-        commandResolver: @escaping CommandResolver = { try OpenAIAccountChatCommand.resolveCodexCommand() },
+        commandResolver: @escaping CommandResolver = { try OpenAIAccountChatCommand.resolveCodexCommand(fileManager: .default) },
         environment: [String: String] = ProcessInfo.processInfo.environment,
         defaultTimeout: Duration = .seconds(30),
         requestTimeoutSleeper: @escaping RequestTimeoutSleeper = { _, duration in
