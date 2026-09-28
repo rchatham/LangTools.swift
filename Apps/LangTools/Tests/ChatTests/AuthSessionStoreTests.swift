@@ -34,10 +34,13 @@ final class AuthSessionStoreTests: XCTestCase {
         XCTAssertEqual(loaded?.id, session.id)
         XCTAssertEqual(loaded?.accountIdentifier, session.accountIdentifier)
         XCTAssertEqual(loaded?.accessibleModelIDs, session.accessibleModelIDs)
-        XCTAssertEqual(loaded?.accessToken, CodexSessionMarker.value)
-        XCTAssertNil(loaded?.refreshToken)
-        XCTAssertNil(loaded?.idToken)
-        XCTAssertNil(loaded?.tokenType)
+        // OpenAI sessions keep real tokens in the keychain: the CLI bridge and
+        // backend exchange rely on them. Only helper-managed marker sessions
+        // scrub credentials.
+        XCTAssertEqual(loaded?.accessToken, session.accessToken)
+        XCTAssertEqual(loaded?.refreshToken, session.refreshToken)
+        XCTAssertEqual(loaded?.idToken, session.idToken)
+        XCTAssertEqual(loaded?.tokenType, session.tokenType)
         XCTAssertNil(loaded?.expiresAt)
     }
 
@@ -59,14 +62,16 @@ final class AuthSessionStoreTests: XCTestCase {
         let loaded = try store.session(for: .openAI)
 
         XCTAssertEqual(loaded?.accountIdentifier, "user@example.com")
-        XCTAssertEqual(loaded?.accessToken, CodexSessionMarker.value)
-        XCTAssertNil(loaded?.refreshToken)
+        XCTAssertEqual(loaded?.accessToken, "token")
+        XCTAssertEqual(loaded?.refreshToken, "refresh-token")
         XCTAssertNil(loaded?.idToken)
         XCTAssertNil(loaded?.tokenType)
 
+        // OpenAI credentials are preserved for the CLI bridge and backend
+        // exchange; the payload is only normalized, not scrubbed.
         let rewritten = try XCTUnwrap(keychain.getString("openAI:accountSession"))
-        XCTAssertFalse(rewritten.contains("refresh-token"))
-        XCTAssertFalse(rewritten.contains("\"accessToken\":\"token\""))
+        XCTAssertTrue(rewritten.contains("refresh-token"))
+        XCTAssertTrue(rewritten.contains("token"))
     }
 
     func testClaudeCodeCredentialsArePreserved() throws {

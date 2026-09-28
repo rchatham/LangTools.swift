@@ -56,6 +56,13 @@ final class ProcessChunkPump: @unchecked Sendable {
     }
 }
 
+enum CodexAppServerContainmentMode: Sendable {
+    case required
+    /// Explicit opt-out for protocol tests that launch fake app servers.
+    /// Production callers must use the default `.required` mode.
+    case disabledForTesting
+}
+
 actor CodexAppServerClient {
     typealias CommandResolver = @Sendable () throws -> ResolvedCodexCommand
     typealias RequestTimeoutSleeper = @Sendable (String, Duration) async throws -> Void
@@ -103,8 +110,10 @@ actor CodexAppServerClient {
     private let requestTimeoutSleeper: RequestTimeoutSleeper
     private let workspaceRootProvider: WorkspaceRootProvider
     private let codexHomeProvider: CodexHomeProvider
+    private let containmentMode: CodexAppServerContainmentMode
     private var process: Process?
     private var seatbeltProfileURL: URL?
+    private var processTemporaryDirectoryURL: URL?
     private var stdinHandle: FileHandle?
     private var stdoutBuffer = Data()
     private var pending: [Int: PendingRequest] = [:]
@@ -135,13 +144,15 @@ actor CodexAppServerClient {
             try await Task.sleep(for: duration)
         },
         workspaceRootProvider: @escaping WorkspaceRootProvider = { nil },
-        codexHomeProvider: CodexHomeProvider? = nil
+        codexHomeProvider: CodexHomeProvider? = nil,
+        containmentMode: CodexAppServerContainmentMode = .required
     ) {
         self.commandResolver = commandResolver
         self.environment = environment
         self.defaultTimeout = defaultTimeout
         self.requestTimeoutSleeper = requestTimeoutSleeper
         self.workspaceRootProvider = workspaceRootProvider
+        self.containmentMode = containmentMode
         // Resolve from the injected environment (not ProcessInfo) so callers
         // that pass an `environment` override get a consistent codex home,
         // matching the runtime-cache resolution below.
@@ -390,30 +401,41 @@ actor CodexAppServerClient {
         let command = try commandResolver()
         let codexArguments = command.arguments + ["app-server", "--listen", "stdio://"]
         let process = Process()
-        if let seatbelt = try makeSeatbeltLaunch(
-            executable: command.executable,
-            arguments: codexArguments
-        ) {
-            process.executableURL = URL(fileURLWithPath: seatbelt.sandboxExec)
-            process.arguments = ["-f", seatbelt.profilePath, command.executable] + codexArguments
-            // Run the Codex app-server with its working directory in the
-            // resolved Codex home: it is allowlisted for read and write, it is
-            // Codex's own trusted configuration surface, and discovery walking
-            // up from it cannot read anything outside the allowlist. The
-            // directory is user data — the helper never removes it.
-            process.currentDirectoryURL = seatbelt.cwdURL
-            seatbeltProfileURL = seatbelt.profileURL
-        } else {
-            process.executableURL = URL(fileURLWithPath: command.executable)
-            process.arguments = codexArguments
+        let seatbelt: SeatbeltLaunch?
+        switch containmentMode {
+        case .required:
+            seatbelt = try makeSeatbeltLaunch(
+                executable: command.executable,
+                arguments: codexArguments
+            )
+        case .disabledForTesting:
+            seatbelt = nil
         }
 
-        var childEnvironment = environment
-        if let override = childEnvironment["LANGTOOLS_CODEX_HOME"], override.isEmpty == false {
-            childEnvironment["CODEX_HOME"] = override
+        if let seatbelt {
+            process.executableURL = URL(fileURLWithPath: seatbelt.sandboxExec)
+            process.arguments = ["-f", seatbelt.profilePath, command.executable] + codexArguments
+            process.currentDirectoryURL = seatbelt.temporaryDirectoryURL
+            process.environment = CodexChildEnvironment.make(
+                parent: environment,
+                codexHome: seatbelt.codexHomeURL,
+                temporaryDirectory: seatbelt.temporaryDirectoryURL,
+                disableAppServerRemoteControl: true
+            )
+            seatbeltProfileURL = seatbelt.profileURL
+            processTemporaryDirectoryURL = seatbelt.temporaryDirectoryURL
+        } else {
+            // Fake app-server protocol tests must opt in to this path through
+            // `.disabledForTesting`; production can never silently fall back.
+            process.executableURL = URL(fileURLWithPath: command.executable)
+            process.arguments = codexArguments
+            var testingEnvironment = environment
+            if let override = testingEnvironment["LANGTOOLS_CODEX_HOME"], override.isEmpty == false {
+                testingEnvironment["CODEX_HOME"] = override
+            }
+            testingEnvironment["CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED"] = "1"
+            process.environment = testingEnvironment
         }
-        childEnvironment["CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED"] = "1"
-        process.environment = childEnvironment
 
         let stdin = Pipe()
         let stdout = Pipe()
@@ -465,6 +487,7 @@ actor CodexAppServerClient {
         } catch {
             stdout.fileHandleForReading.readabilityHandler = nil
             stderr.fileHandleForReading.readabilityHandler = nil
+            cleanupSeatbeltArtifacts()
             throw CodexAppServerError.unavailable
         }
         self.process = process
@@ -478,15 +501,19 @@ actor CodexAppServerClient {
         let sandboxExec: String
         let profilePath: String
         let profileURL: URL
-        /// Dedicated per-launch working directory (outside the workspace
-        /// root), removed on shutdown and on relaunch.
-        let cwdURL: URL
+        let codexHomeURL: URL
+        /// Owner-only per-process temp directory used for cwd and all standard
+        /// temp environment variables. Removed on shutdown or relaunch.
+        let temporaryDirectoryURL: URL
     }
 
-    private func makeSeatbeltLaunch(executable: String, arguments: [String]) throws -> SeatbeltLaunch? {
-        guard let sandboxExec = CodexSeatbeltProfile.sandboxExecPath(),
-              let workspaceRoot = workspaceRootProvider()
-        else { return nil }
+    private func makeSeatbeltLaunch(executable: String, arguments: [String]) throws -> SeatbeltLaunch {
+        guard let sandboxExec = CodexSeatbeltProfile.sandboxExecPath() else {
+            throw CodexAppServerError.containmentUnavailable
+        }
+        guard let workspaceRoot = workspaceRootProvider() else {
+            throw CodexAppServerError.containmentUnavailable
+        }
         let resolvedWorkspace = workspaceRoot.resolvingSymlinksInPath()
         // The child cwd is set to this directory; it must exist or the launch
         // fails, so fail closed with a clear error rather than a confusing
@@ -499,25 +526,6 @@ actor CodexAppServerClient {
                 "Codex workspace root is missing: \(resolvedWorkspace.path)"
             )
         }
-        // Write the seatbelt profile first: a failure here throws before any
-        // filesystem state for this launch is created.
-        let inputs = CodexSeatbeltProfile.Inputs(
-            codexExecutable: executable,
-            codexExecutableArguments: Array(arguments.dropLast(3)),
-            codexHome: codexHomeProvider(),
-            workspaceRoot: resolvedWorkspace.path,
-            codexRuntimeCache: CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: environment),
-            homeDirectory: environment["HOME"] ?? ""
-        )
-        let profileURL = try CodexSeatbeltProfile().writeProfile(inputs: inputs)
-        // Run the app-server with its working directory in the resolved Codex
-        // home: it is allowlisted for read and write, it is Codex's own trusted
-        // configuration surface (a sibling conversation can already write
-        // there through the codexHome grant, so no new exposure is added), and
-        // project-config discovery walking up from it cannot read anything
-        // outside the allowlist (the home tree above it is content-denied).
-        // This also means the helper never creates or deletes anything in the
-        // user home as a launch side effect.
         let codexHomeURL = URL(
             fileURLWithPath: codexHomeProvider()
         ).standardizedFileURL.resolvingSymlinksInPath()
@@ -531,12 +539,30 @@ actor CodexAppServerClient {
                 "Codex home directory is missing: \(codexHomeURL.path)"
             )
         }
-        return SeatbeltLaunch(
-            sandboxExec: sandboxExec,
-            profilePath: profileURL.path,
-            profileURL: profileURL,
-            cwdURL: codexHomeURL
-        )
+
+        let temporaryDirectoryURL = try CodexProcessTemporaryDirectory.create(prefix: "app-server")
+        do {
+            let inputs = CodexSeatbeltProfile.Inputs(
+                codexExecutable: executable,
+                codexExecutableArguments: Array(arguments.dropLast(3)),
+                codexHome: codexHomeURL.path,
+                workspaceRoot: resolvedWorkspace.path,
+                processTemporaryDirectory: temporaryDirectoryURL.path,
+                codexRuntimeCache: CodexSeatbeltProfile.resolvedCodexRuntimeCache(environment: environment),
+                homeDirectory: environment["HOME"] ?? ""
+            )
+            let profileURL = try CodexSeatbeltProfile().writeProfile(inputs: inputs)
+            return SeatbeltLaunch(
+                sandboxExec: sandboxExec,
+                profilePath: profileURL.path,
+                profileURL: profileURL,
+                codexHomeURL: codexHomeURL,
+                temporaryDirectoryURL: temporaryDirectoryURL
+            )
+        } catch {
+            try? FileManager.default.removeItem(at: temporaryDirectoryURL)
+            throw error
+        }
     }
 
     private func sendRequest(
@@ -828,14 +854,7 @@ actor CodexAppServerClient {
         oldProcess?.standardOutput.flatMap { $0 as? Pipe }?.fileHandleForReading.readabilityHandler = nil
         oldProcess?.standardError.flatMap { $0 as? Pipe }?.fileHandleForReading.readabilityHandler = nil
         if oldProcess?.isRunning == true { oldProcess?.terminate() }
-        // Only the seatbelt profile (helper-generated) is cleaned up on
-        // shutdown. The child cwd is the user's Codex home — user data that
-        // must never be removed by the helper.
-        if let profileURL = seatbeltProfileURL {
-            seatbeltProfileURL = nil
-            try? FileManager.default.removeItem(at: profileURL)
-        }
-
+        cleanupSeatbeltArtifacts()
 
         let requests = pending.values
         pending.removeAll()
@@ -848,6 +867,17 @@ actor CodexAppServerClient {
         subscriptions.compactMap(\.waiter).forEach {
             $0.timeoutTask.cancel()
             $0.continuation.resume(throwing: error)
+        }
+    }
+
+    private func cleanupSeatbeltArtifacts() {
+        if let profileURL = seatbeltProfileURL {
+            seatbeltProfileURL = nil
+            try? FileManager.default.removeItem(at: profileURL)
+        }
+        if let temporaryDirectoryURL = processTemporaryDirectoryURL {
+            processTemporaryDirectoryURL = nil
+            try? FileManager.default.removeItem(at: temporaryDirectoryURL)
         }
     }
 
@@ -864,6 +894,7 @@ struct CodexNotificationSubscription: Sendable {
 
 enum CodexAppServerError: LocalizedError, Sendable {
     case unavailable
+    case containmentUnavailable
     case unsupportedContainmentPlatform(String)
     case transport(String)
     case invalidResponse(String)
@@ -924,6 +955,8 @@ enum CodexAppServerError: LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .unavailable: return "Codex CLI is not available. Install it, put `codex` on PATH, or set LANGTOOLS_CODEX_PATH."
+        case .containmentUnavailable:
+            return "Codex read containment is unavailable. Refusing to launch Codex without sandbox-exec and an isolated workspace."
         case .unsupportedContainmentPlatform(let platform):
             return "Codex account chat containment is unsupported on app-server platform: \(platform)."
         case .transport(let message): return "Codex app-server transport failed: \(message)"

@@ -3,6 +3,7 @@
 //  ChatTests
 //
 
+import Dispatch
 import Foundation
 import OpenAI
 import Anthropic
@@ -74,6 +75,45 @@ final class ContentCardsProviderContextTests: XCTestCase {
 
         // Rendering is deterministic: identical on every invocation.
         XCTAssertEqual(cardsContent().providerContext, cardsContent(cardsJSON: self.cardsJSON).providerContext)
+    }
+
+    func testPrettyJSONCacheEnforcesCostLimitWithLRUEviction() {
+        let entryCost = "key-1".utf8.count + "value-1".utf8.count
+        let cache = ContentCardsJSONCache(costLimit: entryCost * 2)
+        cache.insert("value-1", forKey: "key-1")
+        cache.insert("value-2", forKey: "key-2")
+
+        XCTAssertEqual(cache.value(forKey: "key-1"), "value-1")
+        cache.insert("value-3", forKey: "key-3")
+
+        XCTAssertTrue(cache.contains("key-1"))
+        XCTAssertFalse(cache.contains("key-2"))
+        XCTAssertTrue(cache.contains("key-3"))
+        XCTAssertEqual(
+            cache.snapshot,
+            .init(entryCount: 2, totalCost: entryCost * 2, costLimit: entryCost * 2)
+        )
+
+        let oversized = ContentCardsJSONCache(costLimit: entryCost - 1)
+        oversized.insert("value-1", forKey: "key-1")
+        XCTAssertEqual(oversized.snapshot.entryCount, 0)
+        XCTAssertEqual(oversized.snapshot.totalCost, 0)
+    }
+
+    func testPrettyJSONCacheSupportsConcurrentReadsAndWritesWithinLimit() {
+        let cache = ContentCardsJSONCache(costLimit: 1_024)
+        DispatchQueue.concurrentPerform(iterations: 1_000) { index in
+            let key = "key-\(index % 32)"
+            cache.insert("value-\(index % 32)", forKey: key)
+            _ = cache.value(forKey: key)
+        }
+
+        let snapshot = cache.snapshot
+        XCTAssertEqual(snapshot.entryCount, 32)
+        XCTAssertLessThanOrEqual(snapshot.totalCost, snapshot.costLimit)
+        for index in 0..<32 {
+            XCTAssertEqual(cache.value(forKey: "key-\(index)"), "value-\(index)")
+        }
     }
 
     // MARK: - Terse text unchanged

@@ -1,0 +1,146 @@
+import Foundation
+
+/// Automatically scrolls to the currently active control and supports keyboard
+/// scrolling (PageUp/PageDown/Home/End, routed by `Application.handleInput`).
+/// New content auto-follows (stays pinned to the bottom) until the user scrolls
+/// up; paging back to the bottom resumes following.
+public struct ScrollView<Content: View>: View, PrimitiveView {
+    let content: VStack<Content>
+
+    public init(@ViewBuilder _ content: () -> Content) {
+        self.content = VStack(content: content())
+    }
+
+    static var size: Int? { 1 }
+
+    func buildNode(_ node: Node) {
+        node.addNode(at: 0, Node(view: content.view))
+        let control = ScrollControl()
+        control.contentControl = node.children[0].control(at: 0)
+        control.addSubview(control.contentControl, at: 0)
+        node.control = control
+    }
+
+    func updateNode(_ node: Node) {
+        node.view = self
+        node.children[0].update(using: content.view)
+    }
+}
+
+public extension ScrollView {
+    /// Requests that every scroll view re-follow the bottom on its next layout
+    /// pass (e.g. when the user submits a new message from a scrolled-up
+    /// position: they intend to see the response).
+    static func requestFollowBottom() {
+        ScrollControl.requestFollowBottom()
+    }
+}
+
+/// Scroll math shared with tests: the clamped content offset for a given
+/// content height and viewport.
+enum ScrollMath {
+    static func clampOffset(_ offset: Extended, contentHeight: Extended, viewport: Extended) -> Extended {
+        let maxOffset = max(0, contentHeight - viewport)
+        return min(max(0, offset), maxOffset)
+    }
+
+    static func maxOffset(contentHeight: Extended, viewport: Extended) -> Extended {
+        max(0, contentHeight - viewport)
+    }
+}
+
+/// Top-level (not nested in the generic `ScrollView`) so every instantiation
+/// shares one runtime type and the window can find it for keyboard scrolling.
+class ScrollControl: Control {
+    var contentControl: Control!
+    var contentOffset: Extended = 0
+
+    /// Whether the view should follow new content (stay at the bottom).
+    /// Cleared when the user scrolls up; restored when they scroll back
+    /// to the bottom (or jump there with End).
+    var pinnedToBottom: Bool = true
+
+    private static let followLock = NSLock()
+    private static var pendingFollowRequests = 0
+
+    /// Requests that every scroll view re-follow the bottom on its next
+    /// layout pass (e.g. when the user submits a new message from a scrolled-up
+    /// position: they intend to see the response).
+    static func requestFollowBottom() {
+        followLock.lock()
+        pendingFollowRequests += 1
+        followLock.unlock()
+    }
+
+    private static func consumeFollowRequest() -> Bool {
+        followLock.lock()
+        defer { followLock.unlock() }
+        guard pendingFollowRequests > 0 else { return false }
+        pendingFollowRequests -= 1
+        return true
+    }
+
+    override func layout(size: Size) {
+        super.layout(size: size)
+        // Propose the available width so wrapped content measures the same
+        // height it will render at; height stays unconstrained so the content
+        // control reports its full (scrollable) height.
+        let contentSize = contentControl.size(proposedSize: Size(width: size.width, height: .infinity))
+        contentControl.layout(size: contentSize)
+        // Drain one pending follow request per layout pass regardless of the
+        // pinned state: requests queued while already pinned must not linger
+        // and hijack the user's next explicit scroll (Home/PageUp).
+        let followRequested = ScrollControl.consumeFollowRequest()
+        if pinnedToBottom || followRequested {
+            pinnedToBottom = true
+            contentOffset = ScrollMath.maxOffset(contentHeight: contentSize.height, viewport: size.height)
+        } else {
+            contentOffset = ScrollMath.clampOffset(contentOffset, contentHeight: contentSize.height, viewport: size.height)
+        }
+        contentControl.layer.frame.position.line = -contentOffset
+    }
+
+    override func scroll(to position: Position) {
+        let destination = position.line - contentControl.layer.frame.position.line
+        guard layer.frame.size.height > 0 else { return }
+        if contentOffset > destination {
+            contentOffset = destination
+        } else if contentOffset < destination - layer.frame.size.height + 1 {
+            contentOffset = destination - layer.frame.size.height + 1
+        }
+        applyOffsetToLayer()
+    }
+
+    /// Scroll `lines` rows (positive = towards older content at the top).
+    func scrollBy(lines: Extended) {
+        guard lines != 0 else { return }
+        let proposed = contentOffset - lines
+        let maxOffset = ScrollMath.maxOffset(contentHeight: contentControl.layer.frame.size.height, viewport: layer.frame.size.height)
+        contentOffset = ScrollMath.clampOffset(proposed, contentHeight: contentControl.layer.frame.size.height, viewport: layer.frame.size.height)
+        pinnedToBottom = proposed >= maxOffset
+        applyOffsetToLayer()
+    }
+
+    func scrollToBottom() {
+        contentOffset = ScrollMath.maxOffset(
+            contentHeight: contentControl.layer.frame.size.height,
+            viewport: layer.frame.size.height
+        )
+        pinnedToBottom = true
+        applyOffsetToLayer()
+    }
+
+    func scrollToTop() {
+        contentOffset = 0
+        pinnedToBottom = false
+        applyOffsetToLayer()
+    }
+
+    /// Scroll keys run outside `layout(size:)`, so the child layer position
+    /// must be re-applied here: invalidation re-renders with the live frame
+    /// but does not re-run layout.
+    private func applyOffsetToLayer() {
+        contentControl.layer.frame.position.line = -contentOffset
+        layer.invalidate()
+    }
+}

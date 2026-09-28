@@ -73,6 +73,31 @@ final class ChatCompletionRequestTests: XCTestCase {
         XCTAssert(data.dictionary == testData.dictionary, "failed to correctly encode the data")
     }
 
+    func testReasoningModelsEncodeArraySystemContentWithDeveloperRole() throws {
+        let content = OpenAI.Message.Content.array([
+            .text(.init(text: "Preserve this structured instruction."))
+        ])
+
+        for model in [OpenAI.Model.o3, .o4_mini] {
+            let request = OpenAI.ChatCompletionRequest(
+                model: model,
+                messages: [.init(role: .system, content: content)]
+            )
+
+            XCTAssertEqual(request.messages.first?.role, .developer)
+            guard case .array = request.messages.first?.content else {
+                return XCTFail("Expected array content for \(model.rawValue)")
+            }
+
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: request.data()) as? [String: Any])
+            let messages = try XCTUnwrap(object["messages"] as? [[String: Any]])
+            XCTAssertEqual(messages.first?["role"] as? String, "developer")
+            let parts = try XCTUnwrap(messages.first?["content"] as? [[String: Any]])
+            XCTAssertEqual(parts.first?["type"] as? String, "text")
+            XCTAssertEqual(parts.first?["text"] as? String, "Preserve this structured instruction.")
+        }
+    }
+
     func testChatCompletionRequestWithFunctionsEncodable() throws {
         let request = OpenAI.ChatCompletionRequest(
             model: .gpt35Turbo,
@@ -119,5 +144,57 @@ final class ChatCompletionRequestTests: XCTestCase {
         let data = try request.data()
         let testData = try getData(filename: "chat_completion_request_with_functions")!
         XCTAssert(data.dictionary == testData.dictionary, "failed to correctly encode the data")
+    }
+
+    func testChatRequestFactoryPreservesNativeToolCallHistory() throws {
+        let toolCall = OpenAI.Message.ToolCall(
+            index: 0,
+            id: "call-1",
+            type: .function,
+            function: .init(name: "calculate", arguments: #"{"expression":"1+1"}"#)
+        )
+        let messages = [
+            OpenAI.Message(tool_selection: [toolCall]),
+            OpenAI.Message(tool_selection_id: "call-1", result: "2")
+        ]
+
+        let genericRequest = try OpenAI.chatRequest(
+            model: OpenAI.Model.gpt4o_mini,
+            messages: messages,
+            tools: nil,
+            responseSchema: nil,
+            toolEventHandler: { _ in }
+        )
+        let request = try XCTUnwrap(genericRequest as? OpenAI.ChatCompletionRequest)
+
+        XCTAssertEqual(request.messages.count, 2)
+        XCTAssertEqual(request.messages[0].tool_calls?.first?.id, "call-1")
+        XCTAssertEqual(request.messages[0].tool_calls?.first?.function.name, "calculate")
+        XCTAssertEqual(request.messages[1].tool_call_id, "call-1")
+    }
+
+    func testReasoningModelConversionPreservesToolHistory() {
+        let toolCall = OpenAI.Message.ToolCall(
+            index: 0,
+            id: "call-1",
+            type: .function,
+            function: .init(name: "calculate", arguments: #"{"expression":"1+1"}"#)
+        )
+        let request = OpenAI.ChatCompletionRequest(
+            model: .o3,
+            messages: [
+                .init(role: .system, content: "Be concise."),
+                .init(tool_selection: [toolCall]),
+                .init(tool_selection_id: "call-1", result: "2")
+            ]
+        )
+
+        XCTAssertEqual(request.messages[0].role, .developer)
+        XCTAssertEqual(request.messages[0].content.string, "Be concise.")
+        XCTAssertEqual(request.messages[1].role, .assistant)
+        XCTAssertEqual(request.messages[1].tool_calls?.first?.id, "call-1")
+        XCTAssertEqual(request.messages[2].role, .tool)
+        XCTAssertEqual(request.messages[2].toolResult?.tool_selection_id, "call-1")
+        XCTAssertEqual(request.messages[2].toolResult?.result, "2")
     }
 }

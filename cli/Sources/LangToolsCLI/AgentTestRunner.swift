@@ -1,6 +1,6 @@
 //
 //  AgentTestRunner.swift
-//  ChatCLI
+//  CLI
 //
 //  Agent testing automation
 //

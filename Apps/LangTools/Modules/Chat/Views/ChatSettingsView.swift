@@ -206,7 +206,7 @@ public struct ChatSettingsView: View {
                         }
                     }
 
-                    Text("For OpenAI account-backed Codex models, start the external helper and paste its URL/token below.")
+                    Text("Codex supports either the bundled CLI bridge or the external helper. Configure the helper URL/token below if you want marker-based helper routing.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     TextField("Codex Helper URL", text: $viewModel.codexHelperBaseURLString)
@@ -282,6 +282,10 @@ public struct ChatSettingsView: View {
                     .foregroundColor(.secondary)
                 Toggle("Keep Tool Calls in History", isOn: $viewModel.toolSettings.keepsToolCallsInHistory)
                 Text("Show tool-call cards after the tool completes. Turn off to hide them once the response continues.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Toggle("Share Tool Results Across Providers", isOn: $viewModel.toolSettings.crossProviderToolReplay)
+                Text("Let hidden structured agent results be sent to whichever provider you switch to. Turn off to send them only to the provider that produced them.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -467,7 +471,7 @@ public struct ChatSettingsView: View {
                                     .textFieldStyle(.roundedBorder)
                                 SecureField("Codex Helper Token", text: $viewModel.codexHelperToken)
                                     .textFieldStyle(.roundedBorder)
-                                Text("OpenAI account-backed models use the external Codex helper. API-key-backed OpenAI Platform models continue to use the regular API path.")
+                                Text("Codex account models can use either the bundled CLI bridge or this external helper. OpenAI Platform models use the regular API-key path.")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -1174,7 +1178,7 @@ extension ChatSettingsView {
         }
 
         var codexHelperCommand: String {
-            "swift run LangToolsCLI serve"
+            "swift run --package-path cli langtools serve"
         }
 
         func modelPickerTitle(for model: Model) -> String {

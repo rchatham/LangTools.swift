@@ -119,6 +119,20 @@ final class ToolCallEventTests: XCTestCase {
         XCTAssertEqual(message.toolCalls[1].result, "2")
     }
 
+    func testFailPendingToolCallsPreservesCompletedCalls() {
+        let message = Message(role: .assistant, contentType: .null)
+        message.applyToolEvent(called(name: "completed"))
+        message.applyToolEvent(completed(result: "done"))
+        message.applyToolEvent(called(name: "incomplete"))
+
+        message.failPendingToolCalls(reason: "follow-up failed")
+
+        XCTAssertEqual(message.toolCalls[0].status, .success)
+        XCTAssertEqual(message.toolCalls[0].result, "done")
+        XCTAssertEqual(message.toolCalls[1].status, .failure)
+        XCTAssertEqual(message.toolCalls[1].result, "follow-up failed")
+    }
+
     // MARK: - Codable round-trip
 
     func testMessageCodableRoundTripPreservesToolCalls() throws {
@@ -143,6 +157,31 @@ final class ToolCallEventTests: XCTestCase {
         XCTAssertEqual(decoded.toolCalls[1].status, .failure)
         XCTAssertEqual(decoded.toolCalls[1].result, "oops")
         XCTAssertEqual(decoded.providerToolResults, ["call-1": #"{"value":2}"#])
+    }
+
+    func testMessageCodableRoundTripPreservesProviderResultOrigins() throws {
+        let message = Message(
+            role: .assistant,
+            contentType: .null,
+            toolCalls: [ChatToolCall(id: "agent-1", name: "calendarAgent", status: .success, result: "")],
+            providerToolResults: ["agent-1": #"{"events":[]}"#],
+            providerToolResultServices: ["agent-1": .ollama]
+        )
+
+        let data = try JSONEncoder().encode(message)
+        let decoded = try JSONDecoder().decode(Message.self, from: data)
+
+        XCTAssertEqual(decoded.providerToolResultServices, ["agent-1": .ollama])
+    }
+
+    func testMessageDecodedWithoutProviderResultOriginsDefaultsToEmpty() throws {
+        let legacyJSON = """
+        {"uuid":"\(UUID().uuidString)","role":"assistant","contentType":{"type":"string","content":"hi"},"createdAt":0,"providerToolResults":{"a":"raw"}}
+        """
+        let message = try JSONDecoder().decode(Message.self, from: legacyJSON.data(using: .utf8)!)
+
+        XCTAssertEqual(message.providerToolResults, ["a": "raw"])
+        XCTAssertEqual(message.providerToolResultServices, [:])
     }
 
     func testMessageDecodedWithoutToolCallsKeyDefaultsToEmpty() throws {

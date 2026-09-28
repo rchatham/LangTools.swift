@@ -192,8 +192,11 @@ public class MessageService {
         let userMessageID = userMessage.uuid
         messages.append(userMessage)
         var anchorMessageID: UUID?
+        var assistantMessageIDs: Set<UUID> = []
         var toolBreakOccurred = false
         let keepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
+        let selectedModel = UserDefaults.model
+        let replayService = selectedModel.apiService
 
         do {
             var currentMessages = requestMessages(keepsToolCallsInHistory: keepsToolCallsInHistory)
@@ -205,7 +208,6 @@ public class MessageService {
                 self?.enqueueToolEvent(event, for: sendID, agentToolNames: agentToolNames)
             }
 
-            let selectedModel = UserDefaults.model
             let responseStream: AsyncThrowingStream<String, Error>
             if let conversationClient = networkClient as? any ConversationAwareNetworkClientProtocol {
                 responseStream = try conversationClient.streamChatCompletionRequest(
@@ -235,8 +237,10 @@ public class MessageService {
                     for: sendID,
                     anchorMessageID: &anchorMessageID,
                     toolBreakOccurred: &toolBreakOccurred,
-                    keepsToolCallsInHistory: keepsToolCallsInHistory
+                    keepsToolCallsInHistory: keepsToolCallsInHistory,
+                    replayService: replayService
                 )
+                if let anchorMessageID { assistantMessageIDs.insert(anchorMessageID) }
 
                 content += chunk
                 let anchor = assistantMessage(withID: anchorMessageID)
@@ -262,6 +266,7 @@ public class MessageService {
                     }
                     let responseMessage = Message(role: .assistant, contentType: .string(trimmed))
                     anchorMessageID = responseMessage.uuid
+                    assistantMessageIDs.insert(responseMessage.uuid)
                     messages.append(responseMessage)
                 }
             }
@@ -271,14 +276,30 @@ public class MessageService {
                 for: sendID,
                 anchorMessageID: &anchorMessageID,
                 toolBreakOccurred: &toolBreakOccurred,
-                keepsToolCallsInHistory: keepsToolCallsInHistory
+                keepsToolCallsInHistory: keepsToolCallsInHistory,
+                replayService: replayService
             )
+            if let anchorMessageID { assistantMessageIDs.insert(anchorMessageID) }
             clearToolHistoryIfNeeded(
                 for: anchorMessageID,
                 keepsToolCallsInHistory: keepsToolCallsInHistory
             )
+            failPendingToolCalls(
+                in: assistantMessageIDs,
+                reason: "Tool call ended without a completion result."
+            )
         } catch {
             guard conversationID == requestConversationID else { throw CancellationError() }
+            // Preserve lifecycle events that fired before the failure, then run
+            // the same terminal cleanup as a successful stream.
+            drainEvents(
+                for: sendID,
+                anchorMessageID: &anchorMessageID,
+                toolBreakOccurred: &toolBreakOccurred,
+                keepsToolCallsInHistory: keepsToolCallsInHistory,
+                replayService: replayService
+            )
+            if let anchorMessageID { assistantMessageIDs.insert(anchorMessageID) }
             clearToolHistoryIfNeeded(
                 for: anchorMessageID,
                 keepsToolCallsInHistory: keepsToolCallsInHistory
@@ -286,6 +307,10 @@ public class MessageService {
             if anchorMessageID == nil {
                 messages.removeAll { $0.uuid == userMessageID }
             }
+            failPendingToolCalls(
+                in: assistantMessageIDs,
+                reason: error.localizedDescription
+            )
             throw error
         }
     }
@@ -363,7 +388,8 @@ extension MessageService {
             for: compatibilitySendID,
             anchorMessageID: &anchorMessageID,
             toolBreakOccurred: &toolBreakOccurred,
-            keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory
+            keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory,
+            replayService: UserDefaults.model.apiService
         )
     }
 
@@ -371,7 +397,8 @@ extension MessageService {
         for sendID: UUID,
         anchorMessageID: inout UUID?,
         toolBreakOccurred: inout Bool,
-        keepsToolCallsInHistory: Bool
+        keepsToolCallsInHistory: Bool,
+        replayService: APIService
     ) {
         let events = eventBuffer.takeEvents(for: sendID)
         guard !events.isEmpty else { return }
@@ -397,12 +424,14 @@ extension MessageService {
                     agentEvent,
                     to: anchor,
                     toolBreakOccurred: &toolBreakOccurred,
-                    keepsToolCallsInHistory: keepsToolCallsInHistory
+                    keepsToolCallsInHistory: keepsToolCallsInHistory,
+                    replayService: replayService
                 )
             }
         }
         if !keepsToolCallsInHistory {
             anchor.providerToolResults = [:]
+            anchor.providerToolResultServices = [:]
         }
         notifyMessageUpdated(anchor, keepsToolCallsInHistory: keepsToolCallsInHistory)
     }
@@ -422,6 +451,7 @@ extension MessageService {
         let hadToolHistory = !anchor.toolCalls.isEmpty || !anchor.providerToolResults.isEmpty
         anchor.toolCalls = []
         anchor.providerToolResults = [:]
+        anchor.providerToolResultServices = [:]
         if isSemanticallyEmptyAssistantAnchor(anchor) {
             messages.removeAll { $0.uuid == anchor.uuid }
         } else if hadToolHistory {
@@ -476,12 +506,21 @@ extension MessageService {
         return messages.first { $0.uuid == id && $0.isAssistant }
     }
 
+    /// Marks every pending tool call owned by this send as failed so cards do
+    /// not spin forever when the stream fails or ends without a completion
+    /// result. Completed calls are left untouched.
+    private func failPendingToolCalls(in assistantMessageIDs: Set<UUID>, reason: String) {
+        for message in messages where assistantMessageIDs.contains(message.uuid) {
+            message.failPendingToolCalls(reason: reason)
+        }
+    }
     @MainActor
     private func applyAgentEvent(
         _ event: AgentEvent,
         to last: Message,
         toolBreakOccurred: inout Bool,
-        keepsToolCallsInHistory: Bool
+        keepsToolCallsInHistory: Bool,
+        replayService: APIService
     ) {
         switch event {
         case .started(let agent, let parent, let task):
@@ -559,6 +598,7 @@ extension MessageService {
                 if let callID = Self.setAgentStatus(agent, status: .success, result: nil, in: &calls),
                    keepsToolCallsInHistory {
                     last.providerToolResults[callID] = result
+                    last.providerToolResultServices[callID] = replayService
                 }
                 last.toolCalls = calls
                 toolBreakOccurred = true

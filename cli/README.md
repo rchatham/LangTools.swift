@@ -13,7 +13,7 @@ TOKEN_FILE="$(mktemp -t langtools-helper-token)"
 (umask 077; printf '%s' "$TOKEN" > "$TOKEN_FILE")
 # Display the token once to copy into Settings; it is not printed again.
 printf 'Helper token: %s\n' "$TOKEN"
-swift run LangToolsCLI serve --host 127.0.0.1 --port 8765 --token-file "$TOKEN_FILE"
+swift run langtools serve --host 127.0.0.1 --port 8765 --token-file "$TOKEN_FILE"
 ```
 
 `--token` (argv) is rejected; use `--token-file`. Configure `http://127.0.0.1:8765` and the token under **Settings → Model Access → Codex Subscription**. Numeric loopback hosts (`127.0.0.1` or `::1`) are required; `localhost` is not accepted.
@@ -42,7 +42,9 @@ Then retry **Sign in to Codex**. Never pass browser OAuth access or ID tokens to
 
 The helper does not forward app-provided tools, legacy `tools`/`toolChoice` fields, or helper-defined dynamic tools to Codex. It starts turns with Codex's supported workspace-write sandbox policy and `networkAccess: false`; that setting constrains network access for commands executed inside the local sandbox only. It is **not** total network isolation: the user's native Codex account configuration can still include hosted capabilities or MCP servers managed by Codex.
 
-On macOS the helper launches `codex app-server` (and every command it spawns) under an OS-level seatbelt (`sandbox-exec`) profile that is deny-by-default for file access. Reads are allowed only for system runtime paths, the resolved Codex home, the helper-owned conversation workspace, and process temporary directories; reads of the user's home tree (`~/.ssh`, `~/Documents`, …) and any other path are denied by the kernel. Codex-native tools keep working (process exec/fork and network remain allowed, and spawned commands inherit the same seatbelt), while persistent per-conversation workspace state stays readable and writable.
+On macOS both `codex app-server` and the one-shot `openai-chat` bridge launch Codex (and every command it spawns) under an OS-level seatbelt (`sandbox-exec`) profile that is deny-by-default for file access. Reads are allowed only for system runtime paths, the resolved Codex home, the helper-owned conversation workspace, and one owner-only temporary directory dedicated to that Codex process. Broad `/private/var`, `/tmp`, `/private/tmp`, and `/private/var/folders` grants are not used. Each child receives an allowlisted environment with `TMPDIR`, `TMP`, and `TEMP` redirected to its private directory; API keys, proxy credentials, agent sockets, and unrelated parent configuration are not inherited.
+
+Codex launches fail closed if `sandbox-exec` or the required workspace is unavailable. Codex-native tools keep working (process exec/fork and network remain allowed, and spawned commands inherit the same seatbelt), while persistent per-conversation workspace state stays readable and writable. The example bridge also stages each chat request in a dedicated mode-0700 directory with a mode-0600 JSON file and removes the directory after the command completes.
 
 ## Verification
 
