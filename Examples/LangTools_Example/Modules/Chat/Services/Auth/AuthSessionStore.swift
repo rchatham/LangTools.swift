@@ -13,7 +13,7 @@ public final class AuthSessionStore {
     }
 
     public func save(_ session: AccountSession) throws {
-        let data = try encoder.encode(session.canonicalized)
+        let data = try encoder.encode(session)
         guard let json = String(data: data, encoding: .utf8) else {
             throw AuthSessionStoreError.encodingFailed
         }
@@ -27,12 +27,7 @@ public final class AuthSessionStore {
         guard let data = json.data(using: .utf8) else {
             throw AuthSessionStoreError.decodingFailed
         }
-        let decoded = try decoder.decode(AccountSession.self, from: data)
-        let canonical = decoded.canonicalized
-        if canonical != decoded {
-            try save(canonical)
-        }
-        return canonical
+        return try decoder.decode(AccountSession.self, from: data)
     }
 
     public func removeSession(for provider: AccountLoginProvider) throws {

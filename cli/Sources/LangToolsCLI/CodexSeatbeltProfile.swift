@@ -9,7 +9,7 @@ import Darwin
 /// The profile is deny-by-default for file access and re-allows only the
 /// roots Codex needs to function: system runtime paths, the Codex home
 /// directory (auth/config/cache), the helper-owned conversation workspace
-/// root, and process temporary directories. Reads of the user's home tree
+/// root, and one private temporary directory per process. Reads of the user's home tree
 /// (`~/.ssh`, `~/Documents`, `~/.aws`, …) and any other non-allowlisted path
 /// are denied by the kernel, so a prompt or prompt injection cannot exfiltrate
 /// user files through the model. Native Codex tools keep working because
@@ -30,6 +30,8 @@ struct CodexSeatbeltProfile: Sendable {
         /// Helper-owned workspace root containing all conversation workspaces
         /// for this helper process lifetime.
         let workspaceRoot: String
+        /// Owner-only temporary directory dedicated to this Codex process.
+        let processTemporaryDirectory: String
         /// Codex runtime/plugin cache (e.g. `~/.cache/codex-runtimes`). Empty
         /// when it does not exist.
         let codexRuntimeCache: String
@@ -287,16 +289,11 @@ struct CodexSeatbeltProfile: Sendable {
     }
 
     private static func standardizedResolving(_ path: String) -> String {
-        URL(fileURLWithPath: path)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-            .path
+        physicalPath(URL(fileURLWithPath: path).standardizedFileURL.path)
     }
 
     /// Renders the seatbelt profile source for the given inputs.
     func render(inputs: Inputs) -> String {
-        let codexHome = Self.quoted(inputs.codexHome)
-        let workspaceRoot = Self.quoted(inputs.workspaceRoot)
         // Apple's canonical shared seatbelt profile (shipped at
         // /System/Library/Sandbox/Profiles/system.sb and imported by Apple's
         // own /usr/share/sandbox profiles). It supplies the boilerplate allows
@@ -361,7 +358,7 @@ struct CodexSeatbeltProfile: Sendable {
             // seatbelt matches resolved paths, so a home reached through a
             // symlink (e.g. /Users/me -> /Volumes/Data/me) would otherwise
             // bypass the lexical deny and fall through to the global allow.
-            var blocklistHomes = Set([blocklistHome,
+            let blocklistHomes = Set([blocklistHome,
                                       URL(fileURLWithPath: blocklistHome).resolvingSymlinksInPath().path])
             // Each blocklist entry is denied under both its lexical and its
             // symlink-resolved location: seatbelt matches resolved paths, and
@@ -390,31 +387,37 @@ struct CodexSeatbeltProfile: Sendable {
         for root in executableReadRoots {
             lines.append("(allow file-read* (subpath \(Self.quoted(root))))")
         }
-        // Codex owns its credential/config/cache directory.
-        lines.append("(allow file-read* (subpath \(codexHome)))")
-        lines.append("(allow file-write* (subpath \(codexHome)))")
+        // Codex owns its credential/config/cache directory. Grant both lexical
+        // and physical forms because macOS temporary paths commonly use the
+        // `/var` -> `/private/var` symlink.
+        for path in Self.pathVariants(inputs.codexHome) {
+            lines.append("(allow file-read* (subpath \(Self.quoted(path))))")
+            lines.append("(allow file-write* (subpath \(Self.quoted(path))))")
+        }
         // Codex runtime/plugin cache (models cache, primary runtime plugins).
         // Granted for both the lexical and the symlink-resolved location: a
         // symlinked HOME would otherwise leave the cache silently unusable.
         if inputs.codexRuntimeCache.isEmpty == false {
-            let lexicalRuntimeCache = Self.quoted(inputs.codexRuntimeCache)
-            lines.append("(allow file-read* (subpath \(lexicalRuntimeCache)))")
-            lines.append("(allow file-write* (subpath \(lexicalRuntimeCache)))")
-            let resolvedRuntimeCache = Self.quoted(
-                URL(fileURLWithPath: inputs.codexRuntimeCache).resolvingSymlinksInPath().path
-            )
-            if resolvedRuntimeCache != lexicalRuntimeCache {
-                lines.append("(allow file-read* (subpath \(resolvedRuntimeCache)))")
-                lines.append("(allow file-write* (subpath \(resolvedRuntimeCache)))")
+            for path in Self.pathVariants(inputs.codexRuntimeCache) {
+                lines.append("(allow file-read* (subpath \(Self.quoted(path))))")
+                lines.append("(allow file-write* (subpath \(Self.quoted(path))))")
             }
         }
         // Helper-owned conversation workspaces.
-        lines.append("(allow file-read* (subpath \(workspaceRoot)))")
-        lines.append("(allow file-write* (subpath \(workspaceRoot)))")
-        // Process temporary directories.
-        for root in Self.tempWriteRoots {
-            lines.append("(allow file-read* (subpath \(Self.quoted(root))))")
-            lines.append("(allow file-write* (subpath \(Self.quoted(root))))")
+        for path in Self.pathVariants(inputs.workspaceRoot) {
+            lines.append("(allow file-read* (subpath \(Self.quoted(path))))")
+            lines.append("(allow file-write* (subpath \(Self.quoted(path))))")
+        }
+        // Exactly one owner-only temporary directory is granted to this
+        // process. Traversing its physical path requires directory-read access
+        // on each exact ancestor; literal rules permit traversal without
+        // granting any ancestor subtree. Global temporary roots remain denied.
+        for ancestor in Self.directoryAncestors(of: inputs.processTemporaryDirectory) {
+            lines.append("(allow file-read-data (literal \(Self.quoted(ancestor))))")
+        }
+        for path in Self.pathVariants(inputs.processTemporaryDirectory) {
+            lines.append("(allow file-read* (subpath \(Self.quoted(path))))")
+            lines.append("(allow file-write* (subpath \(Self.quoted(path))))")
         }
         lines.append("(allow file-write* (literal \"/dev/null\"))")
         return lines.joined(separator: "\n") + "\n"
@@ -450,16 +453,36 @@ struct CodexSeatbeltProfile: Sendable {
         "/Library",
         "/etc",
         "/private/etc",
-        "/private/var",
         "/dev",
         "/opt"
     ]
 
-    private static let tempWriteRoots: [String] = [
-        "/tmp",
-        "/private/tmp",
-        "/private/var/folders"
-    ]
+    private static func pathVariants(_ path: String) -> [String] {
+        let lexical = URL(fileURLWithPath: path).standardizedFileURL.path
+        let resolved = physicalPath(lexical)
+        return lexical == resolved ? [lexical] : [lexical, resolved]
+    }
+
+    private static func physicalPath(_ path: String) -> String {
+        #if canImport(Darwin)
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        if realpath(path, &buffer) != nil {
+            return String(cString: buffer)
+        }
+        #endif
+        return URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    }
+
+    private static func directoryAncestors(of path: String) -> [String] {
+        var ancestors: [String] = []
+        var candidate = URL(fileURLWithPath: physicalPath(path))
+            .deletingLastPathComponent()
+        while candidate.path != "/" && candidate.path.isEmpty == false {
+            ancestors.append(candidate.path)
+            candidate.deleteLastPathComponent()
+        }
+        return ancestors.reversed()
+    }
 
     private static func executableReadRoots(executable: String, arguments: [String]) -> [String] {
         var roots = Set<String>()

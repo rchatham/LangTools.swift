@@ -26,11 +26,7 @@ enum CodexContainment {
     static let excludeSlashTmp = true
 
     static var isSupported: Bool {
-        #if os(macOS)
-        true
-        #else
-        false
-        #endif
+        CodexSeatbeltProfile.isAvailable()
     }
 
     static func sandboxPolicy(workspace: URL) -> CodexSandboxPolicy {
@@ -609,7 +605,7 @@ actor CodexRuntimeService {
         lifecycle: (conversationID: UUID, lifecycleID: UUID)? = nil
     ) async throws -> (id: String, generation: UUID) {
         guard CodexContainment.isSupported else {
-            throw CodexRuntimeError.runtime("Codex account chat containment is supported only on macOS.")
+            throw CodexRuntimeError.runtime("Codex account chat requires macOS sandbox-exec containment, which is unavailable.")
         }
         let thread: CodexThreadStartResponse = try await client.request(
             method: "thread/start",
@@ -661,7 +657,7 @@ actor CodexRuntimeService {
                     method: "turn/start",
                     params: CodexTurnStartParams(
                         threadId: threadID,
-                        input: [.init(text: Self.renderPrompt(messages: messages))],
+                        input: [.init(text: try Self.renderPrompt(messages: messages))],
                         approvalPolicy: CodexContainment.approvalPolicy,
                         sandboxPolicy: CodexContainment.sandboxPolicy(workspace: workspace),
                         model: model
@@ -1195,13 +1191,14 @@ actor CodexRuntimeService {
         }
     }
 
-    private static func renderPrompt(messages: [HelperChatMessage]) -> String {
-        let transcript = messages.map { message in
-            "[\(message.role.capitalized)]\n\(message.content)"
-        }.joined(separator: "\n\n")
+    private static func renderPrompt(messages: [HelperChatMessage]) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let transcript = String(decoding: try encoder.encode(messages), as: UTF8.self)
         return """
         Continue this conversation and reply as the assistant. Return only the assistant's next message with no extra framing.
 
+        Conversation messages (JSON):
         \(transcript)
         """
     }

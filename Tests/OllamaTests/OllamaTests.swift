@@ -385,6 +385,32 @@ class OllamaTests: XCTestCase {
         XCTAssertEqual(response.status, "success")
     }
 
+    func testChatRequestFactoryPreservesNativeToolCallHistory() throws {
+        let toolCall = Ollama.ChatToolCall(function: .init(
+            name: "calculate",
+            arguments: ["expression": .string("1+1")]
+        ))
+        let messages = [
+            Ollama.Message(role: .assistant, content: "Let me check.", tool_calls: [toolCall]),
+            Ollama.Message(role: .tool, content: "2")
+        ]
+
+        let genericRequest = try Ollama.chatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: messages,
+            tools: nil,
+            responseSchema: nil,
+            toolEventHandler: { _ in }
+        )
+        let request = try XCTUnwrap(genericRequest as? Ollama.ChatRequest)
+
+        XCTAssertEqual(request.messages.count, 2)
+        XCTAssertEqual(request.messages[0].tool_calls?.first?.name, "calculate")
+        XCTAssertEqual(request.messages[0].tool_calls?.first?.function.arguments["expression"]?.stringValue, "1+1")
+        XCTAssertEqual(request.messages[1].role, .tool)
+        XCTAssertEqual(request.messages[1].content.text, "2")
+    }
+
     func testChat() async throws {
         MockURLProtocol.setHandler(for: Ollama.ChatRequest.endpoint) { request in
             XCTAssertEqual(request.httpMethod, "POST")
@@ -488,6 +514,31 @@ class OllamaTests: XCTestCase {
         XCTAssertTrue(response.done)
         XCTAssertNotNil(response.message?.tool_calls)
         XCTAssertEqual(response.message?.tool_calls?.first?.function.name, "get_current_weather")
+    }
+
+    func testChatDecodesMixedTypeToolArguments() async throws {
+        MockURLProtocol.mockNetworkHandlers[Ollama.ChatRequest.endpoint] = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            return (.success(try self.getData(filename: "chat_response_with_mixed_tool_args-ollama")!), 200)
+        }
+
+        let response = try await api.chat(
+            model: OllamaModel(rawValue: "llama3.2:latest")!,
+            messages: [.init(role: .user, content: "hi")],
+            options: nil,
+            tools: nil
+        )
+
+        let toolCall = try XCTUnwrap(response.message?.tool_calls?.first)
+        XCTAssertEqual(toolCall.function.name, "ask_user_question")
+        XCTAssertEqual(toolCall.function.arguments["question"]?.stringValue, "What is your name?")
+        XCTAssertEqual(toolCall.function.arguments["multiSelect"]?.boolValue, false)
+        XCTAssertEqual(toolCall.function.arguments["options"]?.arrayValue?.count, 0)
+
+        let serializedArguments = try XCTUnwrap(toolCall.arguments.data(using: .utf8))
+        let decodedArguments = try JSONSerialization.jsonObject(with: serializedArguments) as? [String: Any]
+        XCTAssertEqual(decodedArguments?["multiSelect"] as? Bool, false)
+        XCTAssertEqual((decodedArguments?["options"] as? [Any])?.count, 0)
     }
 
     func testVersion() async throws {

@@ -223,6 +223,7 @@ extension MessageService: @retroactive ChatMessageService {
             }
 
         case is LangToolchainError:
+
             let model = UserDefaults.model
             let service = model.apiService
             return ChatAlertInfo(
@@ -231,21 +232,74 @@ extension MessageService: @retroactive ChatMessageService {
                     AuthPresentationCoordinator.shared.present(preferredDestination: AccessDestination.destination(for: model))
                 }),
                 message: "Configure \(service.displayName) access to use this model. You can add an API key or connect an account from Manage Access."
+
             )
+
 
         case let error as NetworkClient.NetworkError:
             let model = UserDefaults.model
+
             return ChatAlertInfo(
+
                 title: "Access Configuration",
                 button: ButtonInfo(text: "Manage Access", action: { _ in
                     AuthPresentationCoordinator.shared.present(preferredDestination: AccessDestination.destination(for: model))
                 }),
                 message: error.errorDescription ?? "Update provider access settings."
+
             )
+
+        case let error as CLIAccountSessionBridgeError:
+            return handleCLIAccountError(error)
 
         default:
             return nil
         }
+    }
+
+    private func handleCLIAccountError(_ error: CLIAccountSessionBridgeError) -> ChatAlertInfo {
+        let message = normalizedCLIErrorMessage(error)
+        let lowercasedMessage = message.lowercased()
+
+        if lowercasedMessage.contains("status 429") || lowercasedMessage.contains("quota") || lowercasedMessage.contains("billing") {
+            return ChatAlertInfo(
+                title: "OpenAI Account Quota Exceeded",
+                button: ButtonInfo(
+                    text: "Manage Access",
+                    action: { _ in
+                        AuthPresentationCoordinator.shared.present(preferredDestination: .openAI)
+                    }
+                ),
+                message: "Your OpenAI account-backed session could not complete this request because its quota is exhausted. Add an OpenAI API key, switch to another provider, or update your OpenAI billing/quota settings.\n\n\(message)"
+            )
+        }
+
+        if lowercasedMessage.contains("rate limit") {
+            return ChatAlertInfo(
+                title: "OpenAI Rate Limited",
+                button: ButtonInfo(
+                    text: "OK",
+                    role: .cancel
+                ),
+                message: message
+            )
+        }
+
+        return ChatAlertInfo(
+            title: "OpenAI Account Error",
+            button: ButtonInfo(
+                text: "OK",
+                role: .cancel
+            ),
+            message: message
+        )
+    }
+
+    private func normalizedCLIErrorMessage(_ error: CLIAccountSessionBridgeError) -> String {
+        let rawMessage = error.errorDescription ?? "LangToolsCLI request failed."
+        let withoutPrefix = rawMessage.replacingOccurrences(of: "Error: ", with: "")
+        let components = withoutPrefix.components(separatedBy: "\n\nSee ")
+        return components.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? withoutPrefix
     }
 
     func handleApiError(_ error: Error) -> ChatAlertInfo? {
@@ -288,7 +342,7 @@ private struct UITestNetworkClient: NetworkClientProtocol {
 
     let mode: UITestMode
 
-    func performChatCompletionRequest(messages: [Message], model: Model, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) async throws -> Message {
+    func performChatCompletionRequest(messages: [Message], model: Model, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) async throws -> Message {
         switch mode {
         case .codexSuccess:
             return Message(text: "OK", role: .assistant)
@@ -299,7 +353,7 @@ private struct UITestNetworkClient: NetworkClientProtocol {
         }
     }
 
-    func streamChatCompletionRequest(messages: [Message], model: Model, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?) throws -> AsyncThrowingStream<String, Error> {
+    func streamChatCompletionRequest(messages: [Message], model: Model, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             switch mode {
             case .codexSuccess:
