@@ -10,6 +10,24 @@ LangTools is a Swift framework for working with Large Language Models (LLMs) and
 - 📝 **Streaming Support**: Handle streaming responses from AI models
 - 🛠️ **Tool Integration**: Add custom capabilities to your AI interactions
 
+## LangTools app
+
+The official **LangTools** macOS/iOS app lives in [`Apps/LangTools`](Apps/LangTools/README.md).
+It builds on the library with multi-provider chat, agents, and voice input.
+
+```bash
+git submodule update --init --recursive
+open LangTools.xcworkspace
+```
+
+Select the **LangToolsApp** scheme and a Mac or iOS destination. The app requires
+macOS 14.6+ or iOS 18+. Swift package consumers continue to use the library products
+below; they do not depend on the app or its UI dependencies.
+
+The [macOS agent workspace plan](docs/plans/macos-agent-workspace.md) describes the
+next phase: project groups, tmux navigation, and interactive agent terminals.
+These features are planned, not implemented yet.
+
 ## Installation
 
 ### Swift Package Manager
