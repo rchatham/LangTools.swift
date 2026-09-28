@@ -86,9 +86,9 @@ xcodebuild -project Apps/LangTools/LangTools.xcodeproj -scheme LangToolsAppUITes
   -resultBundlePath /tmp/LangToolsLaunch.xcresult test CODE_SIGNING_ALLOWED=NO
 ```
 
-Promotion validation: macOS and iOS Simulator builds passed; 320 core tests (five
+Promotion validation: macOS and iOS Simulator builds passed; 326 core tests (five
 skipped locally: one Ollama Cloud smoke test and four opt-in tool-argument benchmarks),
-180 app package tests, the simulator identity test, and simulator UI smoke test passed.
+223 app package tests, the simulator identity test, and simulator UI smoke test passed.
 The core Swift package suite is covered by repository CI (serial run with a 30-minute
 job timeout; platform-heavy audio suites are skipped on CI); the app-package and hosted
 Xcode checks reported here were run manually on local macOS and simulator destinations. A clean, Apple Development-signed macOS hosted-test run also
