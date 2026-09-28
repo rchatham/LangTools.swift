@@ -20,6 +20,7 @@ final class CodexAppServerClientTests: XCTestCase {
                 "LANGTOOLS_CODEX_HOME": "/tmp/langtools-test-codex-home",
                 "SECRET_API_KEY": "should-not-leak"
             ],
+            containmentMode: .disabledForTesting,
             defaultTimeout: .seconds(5)
         )
 
@@ -43,6 +44,7 @@ final class CodexAppServerClientTests: XCTestCase {
             commandResolver: {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
+            containmentMode: .disabledForTesting,
             defaultTimeout: .seconds(2)
         )
 
@@ -71,6 +73,7 @@ final class CodexAppServerClientTests: XCTestCase {
             commandResolver: {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
+            containmentMode: .disabledForTesting,
             defaultTimeout: .seconds(2)
         )
         do {
@@ -97,6 +100,7 @@ final class CodexAppServerClientTests: XCTestCase {
             commandResolver: {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
+            containmentMode: .disabledForTesting,
             defaultTimeout: .seconds(2)
         )
         let first = await client.subscribeToNotifications(
@@ -206,6 +210,7 @@ final class CodexAppServerClientTests: XCTestCase {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
             environment: ["COUNT_FILE": countURL.path],
+            containmentMode: .disabledForTesting,
             defaultTimeout: .seconds(2)
         )
 
@@ -244,6 +249,7 @@ final class CodexAppServerClientTests: XCTestCase {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
             environment: ["ACCEPTED": acceptedURL.path],
+            containmentMode: .disabledForTesting,
             defaultTimeout: .seconds(30)
         )
         let cancelledScope = UUID()
@@ -322,6 +328,7 @@ final class CodexAppServerClientTests: XCTestCase {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
             environment: ["ACCEPTED": acceptedURL.path],
+            containmentMode: .disabledForTesting,
             defaultTimeout: .seconds(2)
         )
         let cancelledScope = UUID()
@@ -384,6 +391,7 @@ final class CodexAppServerClientTests: XCTestCase {
                 "COUNT_FILE": countURL.path,
                 "LIMIT": String(CodexAppServerClient.maximumStdoutNDJSONLineBytes)
             ],
+            containmentMode: .disabledForTesting,
             defaultTimeout: .seconds(5)
         )
         let subscription = await client.subscribeToNotifications(methods: ["never/event"])

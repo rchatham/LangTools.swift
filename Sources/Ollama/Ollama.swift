@@ -22,6 +22,12 @@ public final class Ollama: LangTools {
     public struct OllamaConfiguration {
         public var baseURL: URL
         public var apiKey: String?
+        /// Cloud routing for `:cloud`-suffixed models: requests for those models
+        /// go to this host with the cloud API key, while local models keep using
+        /// `baseURL` (which may itself proxy cloud models when the daemon is
+        /// signed in).
+        public var cloudBaseURL: URL?
+        public var cloudAPIKey: String?
         public var session: URLSession
 
         public init(
@@ -30,6 +36,8 @@ public final class Ollama: LangTools {
         ) {
             self.baseURL = baseURL
             self.apiKey = nil
+            self.cloudBaseURL = nil
+            self.cloudAPIKey = nil
             self.session = session
         }
 
@@ -40,6 +48,8 @@ public final class Ollama: LangTools {
         ) {
             self.baseURL = baseURL
             self.apiKey = apiKey
+            self.cloudBaseURL = nil
+            self.cloudAPIKey = nil
             self.session = session
         }
     }
@@ -75,12 +85,44 @@ public final class Ollama: LangTools {
         configuration = OllamaConfiguration(baseURL: baseURL, apiKey: apiKey, session: session)
     }
 
+    public init(
+        baseURL: URL = URL(string: "http://localhost:11434")!,
+        apiKey: String,
+        cloudBaseURL: URL,
+        cloudAPIKey: String,
+        session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
+    ) {
+        configuration = OllamaConfiguration(
+            baseURL: baseURL,
+            apiKey: apiKey,
+            session: session
+        )
+        configuration.cloudBaseURL = cloudBaseURL
+        configuration.cloudAPIKey = cloudAPIKey
+    }
+
     public init(configuration: OllamaConfiguration) {
         self.configuration = configuration
     }
 
+    /// Whether the request targets an Ollama-hosted cloud model (":cloud"
+    /// suffix) — those are served by ollama.com instead of the local daemon.
+    private func isCloudTargeted(_ request: any LangToolsRequest) -> Bool {
+        if let chat = request as? ChatRequest {
+            return chat.model.isCloudModel
+        }
+        if let generate = request as? GenerateRequest {
+            return generate.model.hasSuffix(":cloud")
+        }
+        return false
+    }
+
     public func prepare<Request: LangToolsRequest>(request: Request) throws -> URLRequest {
-        var url = configuration.baseURL.appending(path: request.endpoint)
+        let cloudTargeted = isCloudTargeted(request)
+        let baseURL = cloudTargeted
+            ? (configuration.cloudBaseURL ?? configuration.baseURL)
+            : configuration.baseURL
+        var url = baseURL.appending(path: request.endpoint)
         if Request.httpMethod == .get {
             if let id = (request as? any Identifiable)?.id as? String {
                 url = url.appending(path: id)
@@ -95,7 +137,10 @@ public final class Ollama: LangTools {
 
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = Request.httpMethod.rawValue
-        if let apiKey = configuration.apiKey, !apiKey.isEmpty {
+        let apiKey = cloudTargeted
+            ? (configuration.cloudAPIKey ?? configuration.apiKey)
+            : configuration.apiKey
+        if let apiKey, !apiKey.isEmpty {
             urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         }
 
@@ -127,6 +172,11 @@ public struct OllamaModel: RawRepresentable, Codable, Hashable, CaseIterable {
     static public var allCases: [OllamaModel] = []
 
     public let rawValue: String
+
+    /// Ollama-hosted cloud models carry the `:cloud` suffix (e.g.
+    /// "glm-5.2:cloud") and are served by ollama.com rather than the local
+    /// daemon.
+    public var isCloudModel: Bool { rawValue.hasSuffix(":cloud") }
 
     public init?(rawValue: String) {
         self.rawValue = rawValue

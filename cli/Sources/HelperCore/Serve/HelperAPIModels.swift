@@ -90,6 +90,31 @@ private struct HelperCodingKey: CodingKey {
 public struct HelperChatMessage: Codable, Equatable, Sendable {
     public let role: String
     public let content: String
+    public let tool_calls: [HelperToolCall]?
+    public let tool_call_id: String?
+
+    public init(
+        role: String,
+        content: String,
+        tool_calls: [HelperToolCall]? = nil,
+        tool_call_id: String? = nil
+    ) {
+        self.role = role
+        self.content = content
+        self.tool_calls = tool_calls
+        self.tool_call_id = tool_call_id
+    }
+}
+
+public struct HelperToolCall: Codable, Equatable, Sendable {
+    public let id: String
+    public let type: String
+    public let function: Function
+
+    public struct Function: Codable, Equatable, Sendable {
+        public let name: String
+        public let arguments: String
+    }
 }
 
 struct HelperChatResponse: Codable {

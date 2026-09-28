@@ -55,6 +55,15 @@ public extension OpenAI {
             refusal = nil
         }
 
+        internal init(copying message: Self, role: Role) {
+            self.role = role
+            content = message.content
+            name = message.name
+            tool_calls = message.tool_calls
+            audio = message.audio
+            refusal = message.refusal
+        }
+
         public init(tool_selection_id: String, result: String) {
             role = .tool
             content = Content.array([.toolResult(.init(tool_selection_id: tool_selection_id, result: result))])
@@ -89,12 +98,8 @@ public extension OpenAI {
             case .system, .developer, .assistant: if case .array(_) = content { throw MessageError.invalidContent }
             }
 
-            if role != .assistant, let tool_calls = tool_calls {
-                print("\(role.rawValue.capitalized) is not able to use tool calls: \(tool_calls.description). Please check your configuration, only assistant messages are allowed to contain tool calls")
-            }
-            if role != .tool, case .array(let arr) = content, case .toolResult(let tool) = arr[0] {
-                print("\(role.rawValue.capitalized) can not have tool_call_id: \(tool.tool_selection_id). Please check your configuration, only tool meesages may have a tool_call_id.")
-            }
+            // Note: tool_calls on non-assistant roles and tool_call_id on non-tool roles
+            // are silently ignored per OpenAI API behavior
 
             self.role = role
             self.content = content

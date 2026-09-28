@@ -6,7 +6,6 @@ import Glibc
 import Foundation
 import XCTest
 @testable import HelperCore
-@testable import LangToolsCLI
 
 final class LocalHelperServerTests: XCTestCase {
     func testParserWaitsForCompleteBodyAndAcceptsFragmentedRequest() throws {

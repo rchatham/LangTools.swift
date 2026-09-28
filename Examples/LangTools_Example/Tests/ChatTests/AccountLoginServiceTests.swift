@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import Chat
 
+@MainActor
 final class AccountLoginServiceTests: XCTestCase {
     override func tearDown() {
         MockURLProtocol.requestHandler = nil
@@ -164,22 +165,51 @@ final class AccountLoginServiceTests: XCTestCase {
         XCTAssertEqual(refreshedSession.idToken, "old-id-token")
     }
 
+    func testCLIAccountSessionBridgeExportsOpenAISession() async throws {
+        let runner = TestCommandRunner(results: [
+            CommandResult(status: 0, stdout: """
+            {
+              "provider": "openAI",
+              "accountIdentifier": "chatgpt-account",
+              "accessToken": "access-token",
+              "refreshToken": "refresh-token",
+              "idToken": "id-token",
+              "tokenType": "Bearer",
+              "expiresAt": "2026-04-28T17:00:00Z",
+              "accessibleModelIDs": ["gpt-5.1-codex"],
+              "createdAt": "2026-04-28T16:00:00Z",
+              "id": "00000000-0000-0000-0000-000000000001"
+            }
+            """, stderr: "")
+        ])
+        let bridge = CLIAccountSessionBridge(runner: runner)
+
+        let session = try await bridge.exportOpenAISession()
+
+        XCTAssertEqual(session.provider, .openAI)
+        XCTAssertEqual(session.accountIdentifier, "chatgpt-account")
+        XCTAssertEqual(session.accessToken, "access-token")
+    }
+
     @MainActor
-    func testBeginLoginUsesCodexHelperForOpenAI() async throws {
-        let helperClient = TestCodexHelperClient(
-            loginSession: AccountSession(
-                id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
-                provider: .openAI,
-                accountIdentifier: "chatgpt-account",
-                accessToken: CodexSessionMarker.value,
-                refreshToken: nil,
-                idToken: nil,
-                tokenType: nil,
-                expiresAt: nil,
-                accessibleModelIDs: [],
-                createdAt: Date(timeIntervalSince1970: 0)
-            )
-        )
+    func testBeginLoginUsesCLIBridgeForOpenAI() async throws {
+        let bridge = CLIAccountSessionBridge(runner: TestCommandRunner(results: [
+            CommandResult(status: 0, stdout: "Logged in\n", stderr: ""),
+            CommandResult(status: 0, stdout: """
+            {
+              "provider": "openAI",
+              "accountIdentifier": "chatgpt-account",
+              "accessToken": "access-token",
+              "refreshToken": "refresh-token",
+              "idToken": null,
+              "tokenType": "Bearer",
+              "expiresAt": null,
+              "accessibleModelIDs": [],
+              "createdAt": "2026-04-28T16:00:00Z",
+              "id": "00000000-0000-0000-0000-000000000001"
+            }
+            """, stderr: "")
+        ]))
         let service = BrowserAccountLoginService(
             coordinator: TestAccountLoginCoordinator(),
             backendClient: TestAccountLoginBackendClient(
@@ -187,132 +217,35 @@ final class AccountLoginServiceTests: XCTestCase {
             ),
             sessionStore: AuthSessionStore(keychain: .init(service: "AccountLoginServiceTests.\(UUID().uuidString)")),
             configuration: AccountBackendConfiguration(baseURL: URL(string: "http://localhost:8080")!),
-            codexHelperClient: helperClient
+            cliBridge: bridge
         )
 
         let session = try await service.beginLogin(for: .openAI)
 
         XCTAssertEqual(session.provider, .openAI)
         XCTAssertEqual(session.accountIdentifier, "chatgpt-account")
-        XCTAssertEqual(helperClient.loginCallCount, 1)
     }
 
     @MainActor
-    func testOpenAIReconnectPreservesLocalIdentityAndAdoptsCanonicalHelperData() async throws {
-        let localID = UUID()
-        let localCreatedAt = Date(timeIntervalSince1970: 123)
-        let sessionStore = AuthSessionStore(keychain: .init(service: "AccountLoginServiceTests.\(UUID().uuidString)"))
-        try sessionStore.save(AccountSession(
-            id: localID,
-            provider: .openAI,
-            accountIdentifier: "old-account",
-            accessToken: CodexSessionMarker.value,
-            accessibleModelIDs: ["old-model"],
-            createdAt: localCreatedAt
-        ))
-        let helperClient = TestCodexHelperClient(loginSession: AccountSession(
-            provider: .openAI,
-            accountIdentifier: "new-account",
-            accessToken: "unsafe-access",
-            refreshToken: "unsafe-refresh",
-            idToken: "unsafe-id",
-            tokenType: "Bearer",
-            expiresAt: Date(),
-            accessibleModelIDs: [" gpt-5.5 ", "gpt-5.5"]
-        ))
+    func testCodexHelperLoginCanonicalizesSessionAndLogoutUsesHelper() async throws {
+        let helper = TestCodexHelperClient()
         let service = BrowserAccountLoginService(
             coordinator: TestAccountLoginCoordinator(),
-            sessionStore: sessionStore,
-            codexHelperClient: helperClient
+            backendClient: TestAccountLoginBackendClient(
+                exchangeSession: AccountSession(provider: .claudeCode, accountIdentifier: "unused", accessToken: "unused")
+            ),
+            sessionStore: AuthSessionStore(keychain: .init(service: "AccountLoginServiceTests.\(UUID().uuidString)")),
+            configuration: AccountBackendConfiguration(baseURL: URL(string: "http://localhost:8080")!),
+            codexHelperClient: helper
         )
 
-        let session = try await service.beginLogin(for: .openAI)
+        let session = try await service.beginCodexHelperLogin()
+        try await service.logoutCodexHelper()
 
-        XCTAssertEqual(session.id, localID)
-        XCTAssertEqual(session.createdAt, localCreatedAt)
-        XCTAssertEqual(session.accountIdentifier, "new-account")
-        XCTAssertEqual(session.accessibleModelIDs, ["gpt-5.5"])
         XCTAssertEqual(session.accessToken, CodexSessionMarker.value)
         XCTAssertNil(session.refreshToken)
-        XCTAssertNil(session.idToken)
-        XCTAssertNil(session.tokenType)
-        XCTAssertNil(session.expiresAt)
-    }
-
-    @MainActor
-    func testOpenAIRefreshReconcilesStatusWithoutModelFallback() async throws {
-        let originalID = UUID()
-        let createdAt = Date(timeIntervalSince1970: 123)
-        let helperClient = TestCodexHelperClient(
-            loginSession: AccountSession(
-                provider: .openAI,
-                accountIdentifier: "helper-account",
-                accessToken: "unsafe-helper-token",
-                refreshToken: "unsafe-refresh",
-                idToken: "unsafe-id",
-                tokenType: "Bearer",
-                expiresAt: Date(timeIntervalSince1970: 999),
-                accessibleModelIDs: [" gpt-5.5 ", "gpt-5.5", "codex/future-model"]
-            )
-        )
-        let service = BrowserAccountLoginService(
-            coordinator: TestAccountLoginCoordinator(),
-            sessionStore: AuthSessionStore(keychain: .init(service: "AccountLoginServiceTests.\(UUID().uuidString)")),
-            codexHelperClient: helperClient
-        )
-        let stale = AccountSession(
-            id: originalID,
-            provider: .openAI,
-            accountIdentifier: "stale-account",
-            accessToken: "legacy-access",
-            refreshToken: "legacy-refresh",
-            idToken: "legacy-id",
-            tokenType: "Bearer",
-            expiresAt: Date(),
-            accessibleModelIDs: ["stale-model"],
-            createdAt: createdAt
-        )
-
-        let refreshed = try await service.refreshSession(stale)
-
-        XCTAssertEqual(refreshed.id, originalID)
-        XCTAssertEqual(refreshed.createdAt, createdAt)
-        XCTAssertEqual(refreshed.accountIdentifier, "helper-account")
-        XCTAssertEqual(refreshed.accessToken, CodexSessionMarker.value)
-        XCTAssertNil(refreshed.refreshToken)
-        XCTAssertNil(refreshed.idToken)
-        XCTAssertNil(refreshed.tokenType)
-        XCTAssertNil(refreshed.expiresAt)
-        XCTAssertEqual(refreshed.accessibleModelIDs, ["gpt-5.5", "future-model"])
-        XCTAssertEqual(helperClient.listCallCount, 0)
-    }
-
-    @MainActor
-    func testOpenAIRefreshRejectsUnauthenticatedStatusWithStaleModels() async {
-        let helperClient = TestCodexHelperClient(
-            loginSession: AccountSession(provider: .openAI, accountIdentifier: "acct", accessToken: CodexSessionMarker.value),
-            authenticated: false
-        )
-        let service = BrowserAccountLoginService(
-            coordinator: TestAccountLoginCoordinator(),
-            sessionStore: AuthSessionStore(keychain: .init(service: "AccountLoginServiceTests.\(UUID().uuidString)")),
-            codexHelperClient: helperClient
-        )
-
-        do {
-            _ = try await service.refreshSession(AccountSession(
-                provider: .openAI,
-                accountIdentifier: "stale",
-                accessToken: CodexSessionMarker.value,
-                accessibleModelIDs: ["stale-model"]
-            ))
-            XCTFail("Expected unauthenticated status to be rejected")
-        } catch let error as AccountLoginError {
-            XCTAssertEqual(error, .missingStoredSession(.openAI))
-        } catch {
-            XCTFail("Unexpected error: \(error)")
-        }
-        XCTAssertEqual(helperClient.listCallCount, 0)
+        XCTAssertEqual(session.accessibleModelIDs, ["gpt-5.5"])
+        XCTAssertTrue(helper.didLogout)
     }
 
     @MainActor
@@ -343,12 +276,99 @@ final class AccountLoginServiceTests: XCTestCase {
         XCTAssertNil(backendClient.lastCodeChallenge)
     }
 
+    @MainActor
+    func testHandleRedirectFailsWhenNoLoginIsInProgress() async {
+        let service = BrowserAccountLoginService(
+            coordinator: TestAccountLoginCoordinator(),
+            backendClient: TestAccountLoginBackendClient(
+                exchangeSession: AccountSession(provider: .claudeCode, accountIdentifier: "unused", accessToken: "unused")
+            ),
+            sessionStore: AuthSessionStore(keychain: .init(service: "AccountLoginServiceTests.\(UUID().uuidString)")),
+            configuration: AccountBackendConfiguration(baseURL: URL(string: "http://localhost:8080")!)
+        )
+
+        await XCTAssertThrowsErrorAsync(
+            try await service.handleRedirect(URL(string: "langtools-example-auth://auth/callback/claudeCode?code=test-code&state=test-state")!)
+        ) { error in
+            XCTAssertEqual(error as? AccountLoginError, .noLoginInProgress)
+        }
+    }
+
+    @MainActor
+    func testBeginLoginRejectsConcurrentLoginAttempts() async throws {
+        let coordinator = BlockingAccountLoginCoordinator()
+        let backendClient = TestAccountLoginBackendClient(
+            exchangeSession: AccountSession(provider: .claudeCode, accountIdentifier: "claude-user", accessToken: "access-token")
+        )
+        let service = BrowserAccountLoginService(
+            coordinator: coordinator,
+            backendClient: backendClient,
+            sessionStore: AuthSessionStore(keychain: .init(service: "AccountLoginServiceTests.\(UUID().uuidString)")),
+            configuration: AccountBackendConfiguration(baseURL: URL(string: "http://localhost:8080")!)
+        )
+
+        let firstLogin = Task { @MainActor in
+            try await service.beginLogin(for: .claudeCode)
+        }
+        await coordinator.waitUntilStarted()
+
+        await XCTAssertThrowsErrorAsync(
+            try await service.beginLogin(for: .claudeCode)
+        ) { error in
+            XCTAssertEqual(error as? AccountLoginError, .loginAlreadyInProgress)
+        }
+
+        coordinator.resume()
+        _ = try await firstLogin.value
+    }
+
+    func testLocalhostOAuthCallbackListenerWaitsUntilReady() async throws {
+        let listener = LocalhostOAuthCallbackListener(preferredPorts: [1465])
+        let callbackURL = try await listener.start(timeout: 5)
+        defer { listener.stop() }
+
+        let task = Task {
+            try await URLSession.shared.data(from: callbackURL)
+        }
+
+        let callback = try await listener.waitForCallback()
+        let (_, response) = try await task.value
+
+        XCTAssertEqual(callback.path, "/auth/callback")
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+    }
+
     private func makeURLSession(handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)) -> URLSession {
         MockURLProtocol.requestHandler = handler
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
         return URLSession(configuration: configuration)
     }
+}
+
+private final class TestCodexHelperClient: CodexHelperClientProtocol {
+    private(set) var didLogout = false
+
+    func loginOpenAI() async throws -> AccountSession {
+        AccountSession(
+            provider: .openAI,
+            accountIdentifier: "helper-user",
+            accessToken: "unsafe-access-token",
+            refreshToken: "unsafe-refresh-token",
+            accessibleModelIDs: [" codex/gpt-5.5 "]
+        )
+    }
+
+    func logoutOpenAI() async throws {
+        didLogout = true
+    }
+
+    func statusOpenAI() async throws -> CodexHelperStatus {
+        CodexHelperStatus(provider: "openAI", authenticated: true, accountIdentifier: "helper-user", expiresAt: nil, accessibleModelIDs: ["gpt-5.5"])
+    }
+
+    func listOpenAIModels() async throws -> [String] { ["gpt-5.5"] }
+    func healthCheck() async throws -> HelperHealthStatus { HelperHealthStatus(status: "ok", version: 1) }
 }
 
 private final class TestAccountLoginCoordinator: AccountLoginCoordinating {
@@ -373,6 +393,59 @@ private final class TestAccountLoginCoordinator: AccountLoginCoordinating {
 
     func handleRedirect(_ url: URL) {
         _ = url
+    }
+}
+
+private actor BlockingSignal {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var alreadyResumed = false
+
+    func wait() async {
+        if alreadyResumed {
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func resume() {
+        alreadyResumed = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+@MainActor
+private final class BlockingAccountLoginCoordinator: AccountLoginCoordinating {
+    private let startedSignal = BlockingSignal()
+    private let resumeSignal = BlockingSignal()
+
+    func startLogin(at url: URL, callbackScheme: String, provider: AccountLoginProvider) async throws -> URL {
+        _ = callbackScheme
+        let state = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first(where: { $0.name == "state" })?
+            .value ?? ""
+
+        await startedSignal.resume()
+        await resumeSignal.wait()
+        return URL(string: "langtools-example-auth://auth/callback/\(provider.rawValue)?code=test-code&state=\(state)")!
+    }
+
+    func handleRedirect(_ url: URL) {
+        _ = url
+    }
+
+    func waitUntilStarted() async {
+        await startedSignal.wait()
+    }
+
+    func resume() {
+        Task {
+            await resumeSignal.resume()
+        }
     }
 }
 
@@ -420,6 +493,20 @@ private final class TestAccountLoginBackendClient: AccountLoginBackendClientProt
     }
 }
 
+private func XCTAssertThrowsErrorAsync<T>(
+    _ expression: @autoclosure () async throws -> T,
+    _ errorHandler: (Error) -> Void = { _ in },
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
+    do {
+        _ = try await expression()
+        XCTFail("Expected error to be thrown", file: file, line: line)
+    } catch {
+        errorHandler(error)
+    }
+}
+
 private extension URLRequest {
     var bodyData: Data? {
         if let httpBody {
@@ -448,35 +535,17 @@ private extension URLRequest {
     }
 }
 
-private final class TestCodexHelperClient: CodexHelperClientProtocol {
-    let loginSession: AccountSession
-    let authenticated: Bool
-    private(set) var loginCallCount = 0
-    private(set) var listCallCount = 0
+private final class TestCommandRunner: CommandRunning {
+    private var results: [CommandResult]
 
-    init(loginSession: AccountSession, authenticated: Bool = true) {
-        self.loginSession = loginSession
-        self.authenticated = authenticated
+    init(results: [CommandResult]) {
+        self.results = results
     }
 
-    func loginOpenAI() async throws -> AccountSession {
-        loginCallCount += 1
-        return loginSession
-    }
-
-    func logoutOpenAI() async throws {}
-
-    func statusOpenAI() async throws -> CodexHelperStatus {
-        CodexHelperStatus(provider: "openAI", authenticated: authenticated, accountIdentifier: loginSession.accountIdentifier, expiresAt: nil, accessibleModelIDs: loginSession.accessibleModelIDs)
-    }
-
-    func listOpenAIModels() async throws -> [String] {
-        listCallCount += 1
-        return loginSession.accessibleModelIDs
-    }
-
-    func healthCheck() async throws -> HelperHealthStatus {
-        HelperHealthStatus(status: "ok", version: 1)
+    func run(executable: String, arguments: [String]) async throws -> CommandResult {
+        _ = executable
+        _ = arguments
+        return results.removeFirst()
     }
 }
 
