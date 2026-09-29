@@ -3,39 +3,6 @@ import Foundation
 struct ResolvedCodexCommand: Sendable {
     let executable: String
     let arguments: [String]
-
-    /// Returns `true` if this codex binary supports `app-server --listen stdio://`.
-    /// Codex ≥ 0.142.0 moved to a daemon-only model; older versions and the
-    /// npm `@openai/codex-darwin-arm64` 0.144.x still respond.
-    /// Throws `OpenAIAccountChatCommandError.appServerIncompatible` on mismatch.
-    func validateAppServerSupport() throws -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = ["--version"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        try? process.run()
-        process.waitUntilExit()
-        let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        // Parse version from "codex-cli X.Y.Z" (or "codex-cli X.Y.Z-alpha.N")
-        guard let versionString = output.split(separator: " ").last.map(String.init),
-              let major = versionString.split(separator: ".").first.flatMap({ Int($0) }) else {
-            // Can't parse version — assume compatible (worst case: hang instead of false rejection)
-            return true
-        }
-        // Major version >= 1 or minor version >= 142 blocks app-server stdio.
-        // Exception: npm-managed codex (CODEX_MANAGED_BY_NPM) up to 0.144.x still works.
-        if major >= 1 { throw OpenAIAccountChatCommandError.appServerIncompatible(version: versionString) }
-        let minor = versionString.split(separator: ".").dropFirst().first.flatMap({ Int($0) }) ?? 0
-        if minor >= 142 {
-            let env = ProcessInfo.processInfo.environment
-            if env["CODEX_MANAGED_BY_NPM"] == "1" { return true }
-            throw OpenAIAccountChatCommandError.appServerIncompatible(version: versionString)
-        }
-        return true
-    }
 }
 
 public struct OpenAIAccountChatCommand {
@@ -83,8 +50,7 @@ public struct OpenAIAccountChatCommand {
         fileManager: FileManager = .default
     ) throws -> ResolvedCodexCommand {
         if let explicitPath = environment["LANGTOOLS_CODEX_PATH"], explicitPath.isEmpty == false,
-           let command = codexCommand(for: explicitPath, fileManager: fileManager),
-           try command.validateAppServerSupport() {
+           let command = codexCommand(for: explicitPath, fileManager: fileManager) {
             return command
         }
 
@@ -95,15 +61,11 @@ public struct OpenAIAccountChatCommand {
             "/usr/bin/codex"
         ]
         for candidate in candidates {
-            if let command = codexCommand(for: candidate, fileManager: fileManager),
-               try command.validateAppServerSupport() {
-                return command
-            }
+            if let command = codexCommand(for: candidate, fileManager: fileManager) { return command }
         }
 
         if let resolved = resolveViaPATH("codex", environment: environment, fileManager: fileManager),
-           let command = codexCommand(for: resolved, fileManager: fileManager),
-           try command.validateAppServerSupport() {
+           let command = codexCommand(for: resolved, fileManager: fileManager) {
             return command
         }
         throw OpenAIAccountChatCommandError.codexUnavailable
@@ -241,7 +203,6 @@ private enum OpenAIAccountChatCommandError: LocalizedError {
     case usage
     case codexUnavailable
     case codexHomeMustBeConfiguredInEnvironment
-    case appServerIncompatible(version: String)
 
     var errorDescription: String? {
         switch self {
@@ -249,8 +210,6 @@ private enum OpenAIAccountChatCommandError: LocalizedError {
         case .codexUnavailable: return "Codex CLI is not available. Install it and ensure `codex` is on PATH, or set LANGTOOLS_CODEX_PATH."
         case .codexHomeMustBeConfiguredInEnvironment:
             return "--codex-home must match LANGTOOLS_CODEX_HOME or CODEX_HOME so the shared Codex app-server uses the requested account."
-        case .appServerIncompatible(let version):
-            return "Codex \(version) does not support the app-server stdio protocol required by the helper. Install the managed standalone Codex via `curl -fsSL https://chatgpt.com/codex/install.sh | sh` and restart the helper."
         }
     }
 }

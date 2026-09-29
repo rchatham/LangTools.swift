@@ -139,7 +139,7 @@ actor CodexAppServerClient {
     init(
         commandResolver: @escaping CommandResolver = { try OpenAIAccountChatCommand.resolveCodexCommand(fileManager: .default) },
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        defaultTimeout: Duration = .seconds(30),
+        defaultTimeout: Duration = .seconds(8),
         requestTimeoutSleeper: @escaping RequestTimeoutSleeper = { _, duration in
             try await Task.sleep(for: duration)
         },
