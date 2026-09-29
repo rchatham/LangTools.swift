@@ -88,7 +88,9 @@ public final class CodexHelperPairingCoordinator: ObservableObject {
     private let saveToken: (String) throws -> Void
     private let exchangeCode: (String, Int) async throws -> PairingCodeExchangeResponse
     private var verificationID: UUID?
-    private var verifiedTokenFingerprint: String?
+    /// Raw bearer token from a successful code exchange. Stored only for
+    /// comparison against the persisted token; never logged or serialized.
+    private var verifiedTokenSnapshot: String?
 
     public convenience init(
         makeHelperClient: @escaping (AccountBackendConfiguration) -> CodexHelperClientProtocol = { CodexHelperClient(configuration: $0) },
@@ -115,11 +117,17 @@ public final class CodexHelperPairingCoordinator: ObservableObject {
     /// over loopback HTTP (no bearer authorization). On any non-200 response
     /// the helper's error message is surfaced.
     nonisolated static func performExchange(code: String, port: Int) async throws -> PairingCodeExchangeResponse {
+        guard (1...65535).contains(port) else {
+            throw AccountLoginError.sessionExchangeFailed("Exchange port \(port) is out of range (must be 1-65535).")
+        }
+        guard let exchangeURL = URL(string: "http://127.0.0.1:\(port)/v1/pairing/exchange") else {
+            throw AccountLoginError.sessionExchangeFailed("Could not construct exchange URL from port \(port).")
+        }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         let session = URLSession(configuration: configuration)
         defer { session.finishTasksAndInvalidate() }
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/pairing/exchange")!)
+        var request = URLRequest(url: exchangeURL)
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -231,7 +239,7 @@ public final class CodexHelperPairingCoordinator: ObservableObject {
                 try saveToken(exchange.token)
                 UserDefaults.codexHelperBaseURL = baseURL
                 pairedHelper = PairedHelper(port: exchange.port, code: "")
-                verifiedTokenFingerprint = exchange.token
+                verifiedTokenSnapshot = exchange.token
                 lastPairingResult = .verified(port: exchange.port)
             } catch {
                 guard verificationID == id else { return }
@@ -241,6 +249,9 @@ public final class CodexHelperPairingCoordinator: ObservableObject {
     }
 
     /// Discards the pending pairing without saving anything.
+    /// Dismisses the current pairing dialog without mutating final state.
+    /// Does **not** cancel an in-flight ``confirm(_:)`` exchange; use a
+    /// subsequent ``confirm(_:)`` call to supersede it.
     public func cancel() {
         pendingPairing = nil
     }
@@ -260,7 +271,7 @@ public final class CodexHelperPairingCoordinator: ObservableObject {
             switch result {
             case .verified(let port):
                 let persisted = UserDefaults.codexHelperToken
-                if verifiedTokenFingerprint == persisted, persisted.isEmpty == false {
+                if verifiedTokenSnapshot == persisted, persisted.isEmpty == false {
                     return .verified(port: port)
                 }
                 return .paired(port: port)
