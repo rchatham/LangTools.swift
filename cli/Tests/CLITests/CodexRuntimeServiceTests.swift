@@ -13,7 +13,8 @@ final class CodexRuntimeServiceTests: XCTestCase {
             commandResolver: {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
-            defaultTimeout: .seconds(5)
+            defaultTimeout: .seconds(5),
+            containmentMode: .disabledForTesting
         )
         let runtime = CodexRuntimeService(client: client, browserOpener: { _ in })
 
@@ -59,7 +60,8 @@ final class CodexRuntimeServiceTests: XCTestCase {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
             environment: ["MARKER": markerURL.path],
-            defaultTimeout: .seconds(5)
+            defaultTimeout: .seconds(5),
+            containmentMode: .disabledForTesting
         )
         let runtime = CodexRuntimeService(client: client, browserOpener: { _ in })
         let stream = await runtime.chatStream(
@@ -99,7 +101,8 @@ final class CodexRuntimeServiceTests: XCTestCase {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
             environment: ["MARKER": markerURL.path],
-            defaultTimeout: .seconds(5)
+            defaultTimeout: .seconds(5),
+            containmentMode: .disabledForTesting
         )
         let runtime = CodexRuntimeService(client: client, browserOpener: { _ in })
         do {
@@ -160,7 +163,8 @@ final class CodexRuntimeServiceTests: XCTestCase {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
             environment: ["MARKER": markerURL.path, "MODE": mode],
-            defaultTimeout: .seconds(5)
+            defaultTimeout: .seconds(5),
+            containmentMode: .disabledForTesting
         )
         let runtime = CodexRuntimeService(
             client: client,
