@@ -28,6 +28,12 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         let homeSentinel = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("seatbelt-sentinel-\(UUID().uuidString.lowercased()).txt")
         try "SECRET".write(to: homeSentinel, atomically: true, encoding: .utf8)
+        // A sentinel in the global temp directory — the profile must deny
+        // reads at the global level even though a private process-temp subdir
+        // is granted.
+        let globalTempSentinel = FileManager.default.temporaryDirectory
+            .appendingPathComponent("seatbelt-global-\(UUID().uuidString.lowercased()).txt")
+        try "GLOBAL-SECRET".write(to: globalTempSentinel, atomically: true, encoding: .utf8)
         // A runtime-cache root the helper owns, to prove the grant works at
         // runtime (not just as rendered text).
         let runtimeCache = makeTempDir(prefix: "cache")
@@ -38,6 +44,7 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             try? FileManager.default.removeItem(at: workspaceRoot)
             try? FileManager.default.removeItem(at: codexHome)
             try? FileManager.default.removeItem(at: homeSentinel)
+            try? FileManager.default.removeItem(at: globalTempSentinel)
             try? FileManager.default.removeItem(at: runtimeCache)
         }
 
@@ -91,6 +98,13 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             runSandboxed(sandboxExec: sandboxExec, profile: profileURL, argv: ["/bin/cat", homeSentinel.path]),
             0,
             "Reading user files outside the workspace must be denied by the OS."
+        )
+        // Global temporary directory reads must also be denied — only the
+        // private process-temp subdir is granted.
+        XCTAssertNotEqual(
+            runSandboxed(sandboxExec: sandboxExec, profile: profileURL, argv: ["/bin/cat", globalTempSentinel.path]),
+            0,
+            "Reading global temporary files must be denied by the OS."
         )
         // Metadata of the same denied path must be ALLOWED: this pins the exact
         // (intentional) boundary — global stat, contents denied-by-default.
