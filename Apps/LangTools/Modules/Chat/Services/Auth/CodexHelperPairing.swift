@@ -214,6 +214,9 @@ public final class CodexHelperPairingCoordinator: ObservableObject {
             do {
                 let exchange = try await exchangeCode(pairing.code, pairing.port)
                 guard verificationID == id else { return }
+                guard (1...65535).contains(exchange.port) else {
+                    throw AccountLoginError.sessionExchangeFailed("Codex helper returned an invalid port \(exchange.port).")
+                }
 
                 let baseURL = URL(string: "http://127.0.0.1:\(exchange.port)")!
                 let configuration = AccountBackendConfiguration(

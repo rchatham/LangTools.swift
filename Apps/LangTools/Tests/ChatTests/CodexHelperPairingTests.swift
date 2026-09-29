@@ -314,7 +314,7 @@ final class CodexHelperPairingTests: XCTestCase {
     func testSecondConfirmSupersedesStaleExchange() async throws {
         let enteredExchange = AsyncStream.makeStream(of: Void.self)
         let proceedWithExchange = AsyncStream.makeStream(of: Void.self)
-        let gate = UnsafeLockedCount()
+        let gate = UnsafeCounter()
         let coordinator = CodexHelperPairingCoordinator(
             makeHelperClient: { _ in HealthyHelperClient() },
             saveToken: { _ in },
@@ -351,9 +351,34 @@ final class CodexHelperPairingTests: XCTestCase {
         XCTAssertEqual(UserDefaults.codexHelperBaseURL, URL(string: "http://127.0.0.1:8767"))
     }
 
+    @MainActor
+    func testExchangePortOutOfRangeReportsVerificationFailed() async throws {
+        // confirm() must reject an exchange response whose port is invalid,
+        // even when the health check would otherwise succeed.
+        let coordinator = CodexHelperPairingCoordinator(
+            makeHelperClient: { _ in HealthyHelperClient() },
+            saveToken: { _ in XCTFail("Must not save after a port-range failure") },
+            exchangeCode: { _, _ in PairingCodeExchangeResponse(port: 99999, token: Self.validCode) }
+        )
+        coordinator.handle(pairingURL(port: "8766", code: Self.validCode))
+        coordinator.confirm(PairedHelper(port: 8766, code: Self.validCode))
+        for _ in 0..<50 {
+            if coordinator.lastPairingResult != nil { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertNil(coordinator.pairedHelper)
+        guard case .verificationFailed(let port, let message) = coordinator.lastPairingResult else {
+            return XCTFail("Expected verificationFailed")
+        }
+        XCTAssertEqual(port, 8766)
+        XCTAssertTrue(message.contains("invalid port"), "Expected port-range error, got: \(message)")
+    }
+
     // MARK: - Helpers
 
-    private final class UnsafeLockedCount: @unchecked Sendable {
+    private final class UnsafeCounter: @unchecked Sendable {
+        /// Serial-only: this counter must only be accessed from the
+        /// same serial execution context as the exchange closure.
         private var _value = 0
         func increment() -> Int {
             _value += 1
