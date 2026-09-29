@@ -63,24 +63,32 @@ public struct OpenAIAccountChatCommand {
             if let command = codexCommand(for: candidate, fileManager: fileManager) { return command }
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        process.arguments = ["codex"]
-        process.environment = environment
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = Pipe()
-        do { try process.run() } catch { throw OpenAIAccountChatCommandError.codexUnavailable }
-        process.waitUntilExit()
-        let resolved = String(
-            decoding: output.fileHandleForReading.readDataToEndOfFile(),
-            as: UTF8.self
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
-        if process.terminationStatus == 0, resolved.isEmpty == false,
+        if let resolved = resolveViaPATH("codex", environment: environment, fileManager: fileManager),
            let command = codexCommand(for: resolved, fileManager: fileManager) {
             return command
         }
         throw OpenAIAccountChatCommandError.codexUnavailable
+    }
+
+    /// Pure PATH search — mirrors `ProcessService.executablePath(for:)` without
+    /// spawning a helper process.
+    private static func resolveViaPATH(
+        _ command: String,
+        environment: [String: String],
+        fileManager: FileManager
+    ) -> String? {
+        guard command.isEmpty == false, command.contains("\0") == false else { return nil }
+        if command.contains("/") {
+            return fileManager.isExecutableFile(atPath: command) ? command : nil
+        }
+        guard let path = environment["PATH"] else { return nil }
+        for component in path.split(separator: ":", omittingEmptySubsequences: false) {
+            let dir = component.isEmpty ? fileManager.currentDirectoryPath : String(component)
+            let candidate = URL(fileURLWithPath: dir, isDirectory: true)
+                .appendingPathComponent(command).path
+            if fileManager.isExecutableFile(atPath: candidate) { return candidate }
+        }
+        return nil
     }
 
     private static func bundledCodexCandidates() -> [String] {
