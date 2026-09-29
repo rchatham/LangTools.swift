@@ -658,6 +658,46 @@ while len(requests) < 2 or len(declined) < 2:
 for request in reversed(requests):
     write({"id": request["id"], "result": {"value": request["method"]}})
 """#
+
+    // MARK: - Environment scrubbing
+
+    func testSensitiveEnvironmentKeyDeniesExactMatches() {
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("SECRET_API_KEY"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("OPENAI_API_KEY"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("GITHUB_TOKEN"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("SSH_AUTH_SOCK"))
+    }
+
+    func testSensitiveEnvironmentKeyDeniesSubstringMatches() {
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("MY_SECRET"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("DATABASE_PASSWORD"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("CREDENTIAL_DIR"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("GCP_PRIVATE_KEY_FILE"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("VERBOSE_API_KEY_DEBUG"))
+    }
+
+    func testSensitiveEnvironmentKeyAllowsPassthrough() {
+        // Load-bearing: the runtime depends on these through the denylist.
+        XCTAssertFalse(CodexAppServerClient.isSensitiveEnvironmentKey("LANGTOOLS_CODEX_HOME"))
+        XCTAssertFalse(CodexAppServerClient.isSensitiveEnvironmentKey("CODEX_CONFIG_PATH"))
+        XCTAssertFalse(CodexAppServerClient.isSensitiveEnvironmentKey("CODEX_LOG_LEVEL"))
+    }
+
+    func testSensitiveEnvironmentKeyKnownConservativeMatches() {
+        // The substring heuristic is intentionally aggressive. These
+        // variables are harmless but match via substring; documenting
+        // that they are dropped to prevent accidental secret leakage.
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("PASSWORD_MANAGER_VERSION"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("API_KEY_BACKUP_DIR"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("TOKEN_EXPIRY_SECONDS"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("ALL_TOKENS_CACHE"))
+    }
+
+    func testSensitiveEnvironmentKeyIsCaseInsensitive() {
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("secret_api_key"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("My_Token"))
+        XCTAssertFalse(CodexAppServerClient.isSensitiveEnvironmentKey("codex_home"))
+    }
 }
 
 private final class ThreadSafeCounter: @unchecked Sendable {
