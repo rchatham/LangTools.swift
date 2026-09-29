@@ -49,15 +49,7 @@ public struct ChatSettingsView: View {
             #endif
         }
         .onReceive(pairingCoordinator.$pairedHelper.compactMap { $0 }) { helper in
-            // Keep an already-open Settings form from saving its stale token
-            // over a freshly confirmed pairing when the form disappears.
-            // Skip the overwrite when the user has edited the token field
-            // (it no longer matches the previously synced fingerprint).
-            if viewModel.codexHelperToken == viewModel.lastSyncedHelperTokenFingerprint {
-                viewModel.codexHelperToken = UserDefaults.codexHelperToken
-                viewModel.codexHelperBaseURLString = "http://127.0.0.1:\(helper.port)"
-                viewModel.lastSyncedHelperTokenFingerprint = UserDefaults.codexHelperToken
-            }
+            viewModel.applyHydratedHelperConfigurationIfTokenUnedited(port: helper.port)
         }
     }
 
@@ -1123,7 +1115,9 @@ extension ChatSettingsView {
         @Published var systemMessage = UserDefaults.systemMessage
         @Published var codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
         @Published var codexHelperToken = UserDefaults.codexHelperToken
-        var lastSyncedHelperTokenFingerprint: String = UserDefaults.codexHelperToken
+        /// Raw helper token as last synced from a successful pairing.
+        /// Compared against the form token to avoid overwriting in-progress edits.
+        var lastSyncedHelperTokenSnapshot: String = UserDefaults.codexHelperToken
         @Published var codexHelperTokenSaveError: String?
         @Published var toolSettings = ToolSettings.shared
         @Published public var toolManager = ToolManager.shared
@@ -1214,6 +1208,17 @@ extension ChatSettingsView {
         func presentManageAccess(for destination: AccessDestination? = nil) {
             let targetDestination = destination ?? AccessDestination.destination(for: model)
             AuthPresentationCoordinator.shared.present(preferredDestination: targetDestination)
+        }
+
+        /// Refreshes the persisted helper token and URL from UserDefaults only when
+        /// the in-progress form token has not been manually edited. This prevents
+        /// a freshly confirmed pairing from clobbering a token the user typed before
+        /// the confirmation completed.
+        func applyHydratedHelperConfigurationIfTokenUnedited(port: Int) {
+            guard codexHelperToken == lastSyncedHelperTokenSnapshot else { return }
+            codexHelperToken = UserDefaults.codexHelperToken
+            codexHelperBaseURLString = "http://127.0.0.1:\(port)"
+            lastSyncedHelperTokenSnapshot = UserDefaults.codexHelperToken
         }
 
         func saveToolSettings() {

@@ -374,6 +374,39 @@ final class CodexHelperPairingTests: XCTestCase {
         XCTAssertTrue(message.contains("invalid port"), "Expected port-range error, got: \(message)")
     }
 
+    // MARK: - applyHydratedHelperConfigurationIfTokenUnedited
+
+    @MainActor
+    func testTokenRefreshPreservesUserEdits() {
+        let viewModel = ChatSettingsView.ViewModel(clearMessages: {})
+        viewModel.codexHelperToken = "user-edited-token"
+        let urlBefore = viewModel.codexHelperBaseURLString
+        viewModel.lastSyncedHelperTokenSnapshot = "different-token"
+
+        viewModel.applyHydratedHelperConfigurationIfTokenUnedited(port: 8766)
+
+        // Must not overwrite — the token differs from the snapshot
+        XCTAssertEqual(viewModel.codexHelperToken, "user-edited-token")
+        XCTAssertEqual(viewModel.lastSyncedHelperTokenSnapshot, "different-token")
+        XCTAssertEqual(viewModel.codexHelperBaseURLString, urlBefore)
+    }
+
+    @MainActor
+    func testTokenRefreshSyncsWhenTokenMatchesSyncedSnapshot() {
+        let viewModel = ChatSettingsView.ViewModel(clearMessages: {})
+        UserDefaults.codexHelperToken = "fresh-token"
+        UserDefaults.codexHelperBaseURL = URL(string: "http://127.0.0.1:8766")!
+        viewModel.codexHelperToken = "stale-token"
+        viewModel.lastSyncedHelperTokenSnapshot = "stale-token"
+        viewModel.codexHelperBaseURLString = "http://127.0.0.1:9999"
+
+        viewModel.applyHydratedHelperConfigurationIfTokenUnedited(port: 8766)
+
+        XCTAssertEqual(viewModel.codexHelperToken, "fresh-token")
+        XCTAssertEqual(viewModel.lastSyncedHelperTokenSnapshot, "fresh-token")
+        XCTAssertEqual(viewModel.codexHelperBaseURLString, "http://127.0.0.1:8766")
+    }
+
     // MARK: - Helpers
 
     private final class UnsafeCounter: @unchecked Sendable {
