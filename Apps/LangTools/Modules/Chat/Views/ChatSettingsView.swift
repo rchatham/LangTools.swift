@@ -51,8 +51,13 @@ public struct ChatSettingsView: View {
         .onReceive(pairingCoordinator.$pairedHelper.compactMap { $0 }) { helper in
             // Keep an already-open Settings form from saving its stale token
             // over a freshly confirmed pairing when the form disappears.
-            viewModel.codexHelperToken = UserDefaults.codexHelperToken
-            viewModel.codexHelperBaseURLString = "http://127.0.0.1:\(helper.port)"
+            // Skip the overwrite when the user has edited the token field
+            // (it no longer matches the previously synced fingerprint).
+            if viewModel.codexHelperToken == viewModel.lastSyncedHelperTokenFingerprint {
+                viewModel.codexHelperToken = UserDefaults.codexHelperToken
+                viewModel.codexHelperBaseURLString = "http://127.0.0.1:\(helper.port)"
+                viewModel.lastSyncedHelperTokenFingerprint = UserDefaults.codexHelperToken
+            }
         }
     }
 
@@ -1118,6 +1123,7 @@ extension ChatSettingsView {
         @Published var systemMessage = UserDefaults.systemMessage
         @Published var codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
         @Published var codexHelperToken = UserDefaults.codexHelperToken
+        var lastSyncedHelperTokenFingerprint: String = UserDefaults.codexHelperToken
         @Published var codexHelperTokenSaveError: String?
         @Published var toolSettings = ToolSettings.shared
         @Published public var toolManager = ToolManager.shared
