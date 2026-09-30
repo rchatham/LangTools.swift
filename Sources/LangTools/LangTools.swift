@@ -46,15 +46,22 @@ extension LangTools {
         }
     }
 
-    public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response {
-        return try await complete(request: request, response: try request.update(response: try await perform(request: try prepare(request: request.updating(stream: false)))) )
+    public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response { return try await perform(request: request, onResponse: { _ in }) }
+
+    /// Performs a request and observes each successfully decoded response in a
+    /// recursive tool-calling chain before returning the final response.
+    public func perform<Request: LangToolsRequest>(
+        request: Request,
+        onResponse: @escaping (Request.Response) -> Void
+    ) async throws -> Request.Response {
+        let preparedRequest = try prepare(request: request.updating(stream: false))
+        let decodedResponse: Request.Response = try await performPrepared(request: preparedRequest)
+        let response = try request.update(response: decodedResponse)
+        onResponse(response)
+        return try await complete(request: request, response: response, onResponse: onResponse)
     }
 
-    private func perform<Response: Decodable>(request: URLRequest) async -> Result<Response, Error> {
-        do { return .success(try await perform(request: request)) } catch { return .failure(error) }
-    }
-
-    private func perform<Response: Decodable>(request: URLRequest) async throws -> Response {
+    private func performPrepared<Response: Decodable>(request: URLRequest) async throws -> Response {
         let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { throw LangToolsError.requestFailed }
         guard httpResponse.statusCode == 200 else { throw LangToolsError.responseUnsuccessful(statusCode: httpResponse.statusCode, Self.decodeError(data: data)) }
@@ -172,9 +179,7 @@ extension LangTools {
         return AsyncThrowingStream { cont in Task { for try await response in stream(request: request) { cont.yield(response) }; cont.finish() } }
     }
 
-    private func complete<Request: LangToolsRequest>(request: Request, response: Request.Response) async throws -> Request.Response {
-        return try await completionRequest(request: request, response: response).flatMap { try await perform(request: $0) } ?? response
-    }
+    private func complete<Request: LangToolsRequest>(request: Request, response: Request.Response, onResponse: @escaping (Request.Response) -> Void) async throws -> Request.Response { return try await completionRequest(request: request, response: response).flatMap { try await perform(request: $0, onResponse: onResponse) } ?? response }
 
     private func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) async throws -> Request? {
         guard let response = response as? any LangToolsToolCallingResponse else { return nil }
