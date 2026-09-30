@@ -46,13 +46,7 @@ extension LangTools {
         }
     }
 
-    public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response {
-        return try await perform(request: request, onResponse: { _ in })
-    }
-
-    /// Performs a request and observes each successfully decoded response in a
-    /// recursive tool-calling chain before returning the final response.
-    public func perform<Request: LangToolsRequest>(request: Request, onResponse: @escaping (Request.Response) -> Void) async throws -> Request.Response {
+    public func perform<Request: LangToolsRequest>(request: Request, onResponse: @escaping (Request.Response) -> Void =  { _ in }) async throws -> Request.Response {
         return try await complete(request: request, response: try request.update(response: try await perform(request: try prepare(request: request.updating(stream: false))) as Request.Response), onResponse: onResponse)
     }
 
