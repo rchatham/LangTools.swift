@@ -1,26 +1,57 @@
 import Foundation
 import Network
 
-struct LocalHelperServer {
+public struct LocalHelperServer {
     let host: String
     let port: UInt16
     let bearerToken: String
     let queue = DispatchQueue(label: "LangToolsCLI.LocalHelperServer")
     private let connectionLimiter: HelperConnectionLimiter
+    private let sessionRegistry = HelperSessionRegistry()
+    private let onReady: (@Sendable () -> Void)?
+    private let pairingCodeConsumer: (@Sendable (String) async -> Bool)?
+    private let beforeSessionRegistration: (@Sendable () -> Void)?
 
     static let maximumHeaderBytes = 32 * 1_024
     static let maximumBodyBytes = 4 * 1_048_576
     static let maximumConcurrentConnections = 32
     static let requestReadTimeout: Duration = .seconds(10)
 
-    init(host: String, port: UInt16, bearerToken: String) {
+    public init(
+        host: String,
+        port: UInt16,
+        bearerToken: String,
+        onReady: (@Sendable () -> Void)? = nil,
+        pairingCodeConsumer: (@Sendable (String) async -> Bool)? = nil
+    ) {
+        self.init(
+            host: host,
+            port: port,
+            bearerToken: bearerToken,
+            onReady: onReady,
+            pairingCodeConsumer: pairingCodeConsumer,
+            beforeSessionRegistration: nil
+        )
+    }
+
+    init(
+        host: String,
+        port: UInt16,
+        bearerToken: String,
+        onReady: (@Sendable () -> Void)? = nil,
+        pairingCodeConsumer: (@Sendable (String) async -> Bool)? = nil,
+        beforeSessionRegistration: (@Sendable () -> Void)?
+    ) {
         self.host = host
         self.port = port
         self.bearerToken = bearerToken
         self.connectionLimiter = HelperConnectionLimiter(limit: Self.maximumConcurrentConnections)
+        self.onReady = onReady
+        self.pairingCodeConsumer = pairingCodeConsumer
+        self.beforeSessionRegistration = beforeSessionRegistration
     }
 
-    func run() async throws {
+    public func run() async throws {
         guard Self.loopbackHosts.contains(host.lowercased()) else {
             throw HelperServerError.nonLoopbackHost(host)
         }
@@ -41,6 +72,7 @@ struct LocalHelperServer {
             switch state {
             case .ready:
                 startup.succeed(host: self.host, port: self.port)
+                self.onReady?()
             case .failed(let error):
                 startup.fail(error)
             default:
@@ -49,20 +81,47 @@ struct LocalHelperServer {
         }
         listener.start(queue: queue)
 
-        try await startup.waitUntilReady()
-        while true {
-            try await Task.sleep(nanoseconds: 86_400_000_000_000)
+        do {
+            try await startup.waitUntilReady()
+            while true {
+                try await Task.sleep(nanoseconds: 86_400_000_000_000)
+            }
+        } catch is CancellationError {
+            // Stop means the surrounding Task was cancelled (menu-bar Stop or
+            // Ctrl+C): cancel the listener and drain any accepted connections
+            // so in-flight requests are interrupted before returning.
+            listener.cancel()
+            await sessionRegistry.cancelAll()
+            await sessionRegistry.waitUntilDrained()
+        } catch {
+            listener.cancel()
+            await sessionRegistry.cancelAll()
+            await sessionRegistry.waitUntilDrained()
+            throw error
         }
     }
 
-    private static let loopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
+    static let loopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
 
     private func handle(connection: NWConnection) {
         guard let lease = connectionLimiter.acquire() else {
             connection.cancel()
             return
         }
-        let session = HelperConnectionSession(connection: connection, lease: lease)
+        let registry = sessionRegistry
+        let sessionID = UUID()
+        let session = HelperConnectionSession(
+            id: sessionID,
+            connection: connection,
+            lease: lease,
+            onEnd: { registry.unregister(sessionID) }
+        )
+        beforeSessionRegistration?()
+        guard registry.register(sessionID, session) else {
+            connection.cancel()
+            lease.release()
+            return
+        }
         connection.stateUpdateHandler = { state in
             switch state {
             case .failed, .cancelled:
@@ -91,12 +150,15 @@ struct LocalHelperServer {
 
             switch HTTPRequest.parse(from: requestData) {
             case .request(let request):
-                guard SecureTokenComparison.matches(
-                    expected: self.bearerToken,
-                    provided: request.authorizationBearerToken
-                ) else {
-                    self.scheduleResponse(session: session, status: .unauthorized, body: Self.errorBody("Unauthorized."))
-                    return
+                let isPairingExchange = request.path == "/v1/pairing/exchange"
+                if isPairingExchange == false {
+                    guard SecureTokenComparison.matches(
+                        expected: self.bearerToken,
+                        provided: request.authorizationBearerToken
+                    ) else {
+                        self.scheduleResponse(session: session, status: .unauthorized, body: Self.errorBody("Unauthorized."))
+                        return
+                    }
                 }
                 Task {
                     await session.beginRoute {
@@ -151,6 +213,22 @@ struct LocalHelperServer {
                     throw CodexRuntimeError.badRequest("Only openAI is currently supported.")
                 }
                 let body = try Self.jsonBody(try await AuthCLI.loginOpenAI())
+                await respond(session: session, status: .ok, body: body)
+            case "/v1/pairing/exchange":
+                guard let consumer = pairingCodeConsumer else {
+                    await respond(session: session, status: .notFound, body: Self.errorBody("Not found."))
+                    return
+                }
+                let payload = try JSONDecoder().decode(HelperPairingExchangeRequest.self, from: request.body)
+                guard await consumer(payload.code) else {
+                    await respond(
+                        session: session,
+                        status: .unauthorized,
+                        body: Self.errorBody("Invalid or expired pairing code.")
+                    )
+                    return
+                }
+                let body = try Self.jsonBody(HelperPairingExchangeResponse(port: Int(port), token: bearerToken))
                 await respond(session: session, status: .ok, body: body)
             case "/v1/auth/logout":
                 let payload = try JSONDecoder().decode(HelperAuthRequest.self, from: request.body)
@@ -288,7 +366,7 @@ struct LocalHelperServer {
     private static func allowedMethod(for path: String) -> String? {
         switch path {
         case "/health", "/v1/auth/status", "/v1/models/codex": return "GET"
-        case "/v1/auth/login", "/v1/auth/logout", "/v1/account/chat/completions": return "POST"
+        case "/v1/auth/login", "/v1/auth/logout", "/v1/account/chat/completions", "/v1/pairing/exchange": return "POST"
         default: return nil
         }
     }
@@ -335,7 +413,7 @@ struct LocalHelperServer {
     }
 }
 
-enum HTTPStatus: String, Equatable, Sendable {
+public enum HTTPStatus: String, Equatable, Sendable {
     case ok = "200 OK"
     case noContent = "204 No Content"
     case badRequest = "400 Bad Request"
@@ -353,26 +431,26 @@ enum HTTPStatus: String, Equatable, Sendable {
     case gatewayTimeout = "504 Gateway Timeout"
 }
 
-enum HTTPRequestParseResult {
+public enum HTTPRequestParseResult {
     case incomplete
     case request(HTTPRequest)
     case failure(HTTPStatus, String)
 }
 
-struct HTTPRequest {
-    let method: String
-    let path: String
-    let headers: [String: String]
-    let body: Data
+public struct HTTPRequest {
+    public let method: String
+    public let path: String
+    public let headers: [String: String]
+    public let body: Data
 
-    var authorizationBearerToken: String? {
+    public var authorizationBearerToken: String? {
         guard let authorization = headers["authorization"] else { return nil }
         let parts = authorization.split(separator: " ", omittingEmptySubsequences: false)
         guard parts.count == 2, parts[0].lowercased() == "bearer", parts[1].isEmpty == false else { return nil }
         return String(parts[1])
     }
 
-    static func parse(from data: Data) -> HTTPRequestParseResult {
+    public static func parse(from data: Data) -> HTTPRequestParseResult {
         let separator = Data("\r\n\r\n".utf8)
         guard let separatorRange = data.range(of: separator) else {
             return data.count > LocalHelperServer.maximumHeaderBytes
@@ -422,6 +500,9 @@ struct HTTPRequest {
         guard let host = headers["host"], host.isEmpty == false else {
             return .failure(.badRequest, "A Host header is required.")
         }
+        guard allowedHostHeaderNames.contains(hostName(fromHostHeader: host)) else {
+            return .failure(.badRequest, "Unexpected Host header.")
+        }
         guard headers["transfer-encoding"] == nil else {
             return .failure(.badRequest, "Inbound transfer encoding is not supported.")
         }
@@ -459,6 +540,33 @@ struct HTTPRequest {
         ))
     }
 
+    /// Host names accepted in the Host header. The server only ever binds a
+    /// loopback address, so any other host name is rejected to block
+    /// cross-origin probes and DNS-rebinding style requests.
+    static let allowedHostHeaderNames: Set<String> = LocalHelperServer.loopbackHosts
+
+    /// Normalizes a Host header value: strips an optional trailing port (the
+    /// last `:` outside IPv6 brackets), removes IPv6 literal brackets, and
+    /// lowercases the host name. The port itself is not validated; the host
+    /// part is the gate.
+    static func hostName(fromHostHeader header: String) -> String {
+        var bracketDepth = 0
+        var portSeparator: String.Index?
+        for index in header.indices {
+            switch header[index] {
+            case "[": bracketDepth += 1
+            case "]": bracketDepth = max(0, bracketDepth - 1)
+            case ":" where bracketDepth == 0: portSeparator = index
+            default: break
+            }
+        }
+        var host = portSeparator.map { header[..<$0] } ?? header[...]
+        if host.hasPrefix("["), host.hasSuffix("]"), host.count >= 2 {
+            host = host.dropFirst().dropLast()
+        }
+        return host.lowercased()
+    }
+
     private static func isToken(_ value: String) -> Bool {
         let allowed = "!#$%&'*+-.^_`|~"
         return value.isEmpty == false && value.unicodeScalars.allSatisfy { scalar in
@@ -470,33 +578,33 @@ struct HTTPRequest {
     }
 }
 
-enum HTTPResponseEncoder {
-    static func makeJSONEncoder() -> JSONEncoder {
+public enum HTTPResponseEncoder {
+    public static func makeJSONEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         return encoder
     }
 
-    static let terminalChunk = Data("0\r\n\r\n".utf8)
+    public static let terminalChunk = Data("0\r\n\r\n".utf8)
 
-    static func fixed(status: HTTPStatus, body: String) -> Data {
+    public static func fixed(status: HTTPStatus, body: String) -> Data {
         let bodyData = Data(body.utf8)
         let header = "HTTP/1.1 \(status.rawValue)\r\nContent-Type: application/json; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: \(bodyData.count)\r\nConnection: close\r\n\r\n"
         return Data(header.utf8) + bodyData
     }
 
-    static func chunkedHeader(status: HTTPStatus) -> Data {
+    public static func chunkedHeader(status: HTTPStatus) -> Data {
         Data("HTTP/1.1 \(status.rawValue)\r\nContent-Type: application/x-ndjson; charset=utf-8\r\nCache-Control: no-store\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n".utf8)
     }
 
-    static func ndjsonChunk<T: Encodable>(_ value: T) throws -> Data {
+    public static func ndjsonChunk<T: Encodable>(_ value: T) throws -> Data {
         var payload = try makeJSONEncoder().encode(value)
         payload.append(UInt8(ascii: "\n"))
         return chunk(payload)
     }
 
-    static func chunk(_ payload: Data) -> Data {
+    public static func chunk(_ payload: Data) -> Data {
         var framed = Data(String(payload.count, radix: 16).utf8)
         framed.append(Data("\r\n".utf8))
         framed.append(payload)
@@ -606,8 +714,8 @@ final class HelperRequestDeadline: @unchecked Sendable {
     deinit { cancel() }
 }
 
-enum SecureTokenComparison {
-    static func matches(expected: String, provided: String?, maximumBytes: Int = HelperTokenLoader.maximumTokenBytes) -> Bool {
+public enum SecureTokenComparison {
+    public static func matches(expected: String, provided: String?, maximumBytes: Int = HelperTokenLoader.maximumTokenBytes) -> Bool {
         guard let provided, maximumBytes >= 0 else { return false }
         let expectedBytes = Array(expected.utf8)
         let providedBytes = Array(provided.utf8)
@@ -623,16 +731,62 @@ enum SecureTokenComparison {
     }
 }
 
+private final class HelperSessionRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sessions: [UUID: HelperConnectionSession] = [:]
+    private var acceptingSessions = true
+
+    func register(_ id: UUID, _ session: HelperConnectionSession) -> Bool {
+        lock.withLock {
+            guard acceptingSessions else { return false }
+            sessions[id] = session
+            return true
+        }
+    }
+
+    func unregister(_ id: UUID) {
+        _ = lock.withLock { sessions.removeValue(forKey: id) }
+    }
+
+    func cancelAll() async {
+        let snapshot: [HelperConnectionSession] = lock.withLock {
+            acceptingSessions = false
+            return Array(sessions.values)
+        }
+        await withTaskGroup(of: Void.self) { group in
+            for session in snapshot {
+                group.addTask { await session.cancelRouteAndWait() }
+            }
+        }
+    }
+
+    func waitUntilDrained() async {
+        while lock.withLock({ sessions.isEmpty }) == false {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+    }
+}
+
 private actor HelperConnectionSession {
     nonisolated let connection: NWConnection
+    nonisolated let id: UUID
     private let lease: HelperConnectionLease
+    private let onEnd: @Sendable () -> Void
     private var routeTask: Task<Void, Never>?
     private var readDeadline: HelperRequestDeadline?
     private var ended = false
+    private var unregistered = false
 
-    init(connection: NWConnection, lease: HelperConnectionLease) {
+    init(
+        id: UUID,
+        connection: NWConnection,
+        lease: HelperConnectionLease,
+        onEnd: @escaping @Sendable () -> Void
+    ) {
+        self.id = id
         self.connection = connection
         self.lease = lease
+        self.onEnd = onEnd
     }
 
     func startReadDeadline(
@@ -651,7 +805,10 @@ private actor HelperConnectionSession {
         guard ended == false, routeTask == nil else { return }
         readDeadline?.cancel()
         readDeadline = nil
-        routeTask = Task { await operation() }
+        routeTask = Task { [weak self] in
+            await operation()
+            await self?.routeDidComplete()
+        }
     }
 
     func send(_ data: Data) async throws {
@@ -670,32 +827,56 @@ private actor HelperConnectionSession {
     }
 
     func cancelRoute() {
-        guard ended == false else { return }
-        ended = true
-        readDeadline?.cancel()
-        readDeadline = nil
-        routeTask?.cancel()
-        connection.cancel()
-        lease.release()
+        end(cancelRouteTask: true)
+    }
+
+    /// Used by server shutdown. Cancellation closes the connection promptly,
+    /// but the session remains registered until route work actually exits so a
+    /// restart cannot overlap an old request against the shared runtime.
+    func cancelRouteAndWait() async {
+        let task = routeTask
+        end(cancelRouteTask: true)
+        await task?.value
     }
 
     func finish() {
-        guard ended == false else { return }
-        ended = true
-        readDeadline?.cancel()
-        readDeadline = nil
-        connection.cancel()
+        end(cancelRouteTask: false)
+    }
+
+    private func end(cancelRouteTask: Bool) {
+        if ended == false {
+            ended = true
+            readDeadline?.cancel()
+            readDeadline = nil
+            connection.cancel()
+            lease.release()
+        }
+        if cancelRouteTask {
+            routeTask?.cancel()
+        }
+        if routeTask == nil {
+            unregisterOnce()
+        }
+    }
+
+    private func routeDidComplete() {
         routeTask = nil
-        lease.release()
+        unregisterOnce()
+    }
+
+    private func unregisterOnce() {
+        guard unregistered == false else { return }
+        unregistered = true
+        onEnd()
     }
 }
 
-enum HelperServerError: LocalizedError {
+public enum HelperServerError: LocalizedError {
     case nonLoopbackHost(String)
     case emptyBearerToken
     case invalidPort(UInt16)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .nonLoopbackHost(let host): return "Refusing to bind helper to non-loopback host: \(host)"
         case .emptyBearerToken: return "Helper bearer token must not be empty."

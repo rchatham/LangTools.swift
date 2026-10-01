@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import CLI
+@testable import HelperCore
 
 final class CodexAppServerProtocolTests: XCTestCase {
     func testRecursiveJSONValueRoundTrips() throws {

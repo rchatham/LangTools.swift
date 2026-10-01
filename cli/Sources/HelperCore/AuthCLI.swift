@@ -8,8 +8,8 @@ import CryptoKit
 import AppKit
 #endif
 
-struct AuthCLI {
-    static func run(arguments: [String]) async throws {
+public struct AuthCLI {
+    public static func run(arguments: [String]) async throws {
         let command = try AuthSubcommand(arguments: arguments)
         switch command {
         case .login(let provider):
@@ -127,17 +127,17 @@ private enum CLIError: LocalizedError {
     }
 }
 
-struct StoredAccountSession: Codable {
-    let provider: String
-    let accountIdentifier: String
-    let accessToken: String
-    let refreshToken: String?
-    let idToken: String?
-    let tokenType: String?
-    let expiresAt: Date?
-    let accessibleModelIDs: [String]
-    let createdAt: Date
-    let id: UUID
+public struct StoredAccountSession: Codable {
+    public let provider: String
+    public let accountIdentifier: String
+    public let accessToken: String
+    public let refreshToken: String?
+    public let idToken: String?
+    public let tokenType: String?
+    public let expiresAt: Date?
+    public let accessibleModelIDs: [String]
+    public let createdAt: Date
+    public let id: UUID
 }
 
 private struct AuthCommands {
@@ -198,10 +198,10 @@ private struct AuthStatusPayload: Codable {
     let expiresAt: String?
 }
 
-struct SessionStore {
+public struct SessionStore {
     private let fileURL: URL
 
-    init(fileURL: URL? = nil) {
+    public init(fileURL: URL? = nil) {
         let defaultBase = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".langtools", isDirectory: true)
             .appendingPathComponent("auth", isDirectory: true)
@@ -225,7 +225,7 @@ struct SessionStore {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
     }
 
-    func load() throws -> StoredAccountSession {
+    public func load() throws -> StoredAccountSession {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw CLIError.missingSession
         }
