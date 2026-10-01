@@ -1118,6 +1118,8 @@ extension ChatSettingsView {
         /// Raw helper token as last synced from a successful pairing.
         /// Compared against the form token to avoid overwriting in-progress edits.
         var lastSyncedHelperTokenSnapshot: String = UserDefaults.codexHelperToken
+        /// Last URL loaded into the form; pairing must not overwrite an edit.
+        var lastSyncedHelperURLSnapshot: String = UserDefaults.codexHelperBaseURL.absoluteString
         @Published var codexHelperTokenSaveError: String?
         @Published var toolSettings = ToolSettings.shared
         @Published public var toolManager = ToolManager.shared
@@ -1164,6 +1166,8 @@ extension ChatSettingsView {
             systemMessage = UserDefaults.systemMessage
             codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
             codexHelperToken = UserDefaults.codexHelperToken
+            lastSyncedHelperURLSnapshot = codexHelperBaseURLString
+            lastSyncedHelperTokenSnapshot = codexHelperToken
         }
 
         var canManageAccess: Bool {
@@ -1194,6 +1198,7 @@ extension ChatSettingsView {
             UserDefaults.systemMessage = systemMessage
             if let url = URL(string: codexHelperBaseURLString), url.scheme?.isEmpty == false {
                 UserDefaults.codexHelperBaseURL = url
+                lastSyncedHelperURLSnapshot = codexHelperBaseURLString
             }
             do {
                 try CodexHelperTokenStore().setToken(codexHelperToken.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -1210,15 +1215,17 @@ extension ChatSettingsView {
             AuthPresentationCoordinator.shared.present(preferredDestination: targetDestination)
         }
 
-        /// Refreshes the persisted helper token and URL from UserDefaults only when
-        /// the in-progress form token has not been manually edited. This prevents
-        /// a freshly confirmed pairing from clobbering a token the user typed before
-        /// the confirmation completed.
+        /// Refreshes a confirmed pairing without clobbering token or URL edits
+        /// already in progress in the Settings form.
         func applyHydratedHelperConfigurationIfTokenUnedited(port: Int) {
             guard codexHelperToken == lastSyncedHelperTokenSnapshot else { return }
-            codexHelperToken = UserDefaults.codexHelperToken
-            codexHelperBaseURLString = "http://127.0.0.1:\(port)"
-            lastSyncedHelperTokenSnapshot = UserDefaults.codexHelperToken
+            let persistedToken = UserDefaults.codexHelperToken
+            codexHelperToken = persistedToken
+            lastSyncedHelperTokenSnapshot = persistedToken
+            if codexHelperBaseURLString == lastSyncedHelperURLSnapshot {
+                codexHelperBaseURLString = "http://127.0.0.1:\(port)"
+                lastSyncedHelperURLSnapshot = codexHelperBaseURLString
+            }
         }
 
         func saveToolSettings() {

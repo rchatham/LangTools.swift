@@ -471,12 +471,31 @@ final class CodexHelperPairingTests: XCTestCase {
         viewModel.codexHelperToken = "stale-token"
         viewModel.lastSyncedHelperTokenSnapshot = "stale-token"
         viewModel.codexHelperBaseURLString = "http://127.0.0.1:9999"
+        viewModel.lastSyncedHelperURLSnapshot = viewModel.codexHelperBaseURLString
 
         viewModel.applyHydratedHelperConfigurationIfTokenUnedited(port: 8766)
 
         XCTAssertEqual(viewModel.codexHelperToken, "fresh-token")
         XCTAssertEqual(viewModel.lastSyncedHelperTokenSnapshot, "fresh-token")
         XCTAssertEqual(viewModel.codexHelperBaseURLString, "http://127.0.0.1:8766")
+        XCTAssertEqual(viewModel.lastSyncedHelperURLSnapshot, "http://127.0.0.1:8766")
+    }
+
+    @MainActor
+    func testTokenRefreshPreservesURLBeingEdited() {
+        let oldToken = UserDefaults.codexHelperToken
+        defer { UserDefaults.codexHelperToken = oldToken }
+        let viewModel = ChatSettingsView.ViewModel(clearMessages: {})
+        let originalURL = viewModel.codexHelperBaseURLString
+        UserDefaults.codexHelperToken = "newly-paired-token"
+        let draftURL = originalURL + "/draft"
+        viewModel.codexHelperBaseURLString = draftURL
+
+        viewModel.applyHydratedHelperConfigurationIfTokenUnedited(port: 8766)
+
+        XCTAssertEqual(viewModel.codexHelperToken, "newly-paired-token")
+        XCTAssertEqual(viewModel.codexHelperBaseURLString, draftURL)
+        XCTAssertEqual(viewModel.lastSyncedHelperURLSnapshot, originalURL)
     }
 
     // MARK: - Helpers
