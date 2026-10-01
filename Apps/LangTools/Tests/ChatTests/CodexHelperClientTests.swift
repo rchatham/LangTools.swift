@@ -151,13 +151,16 @@ final class CodexHelperClientTests: XCTestCase {
             _ = try await client.loginOpenAI()
             XCTFail("Expected health-check error")
         } catch let error as AccountLoginError {
-            XCTAssertEqual(error, .sessionExchangeFailed("Codex helper rejected the request. Check the helper token in Settings."))
+            XCTAssertEqual(
+                error,
+                .sessionExchangeFailed("Codex helper rejected the request. Check the helper token in Settings. (Unauthorized.)")
+            )
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
     }
 
-    func testLoginPreservesCodexAuthenticationErrorAfterSuccessfulHealthCheck() async {
+    func testLoginIncludesCodexAuthenticationErrorAfterSuccessfulHealthCheck() async {
         let session = makeURLSession { request in
             if request.url?.path == "/health" {
                 let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
@@ -179,7 +182,13 @@ final class CodexHelperClientTests: XCTestCase {
             _ = try await client.loginOpenAI()
             XCTFail("Expected Codex authentication error")
         } catch let error as AccountLoginError {
-            XCTAssertEqual(error, .sessionExchangeFailed("Codex did not report an authenticated ChatGPT account."))
+            XCTAssertEqual(
+                error,
+                .sessionExchangeFailed(
+                    "Codex helper rejected the request. Check the helper token in Settings. "
+                        + "(Codex did not report an authenticated ChatGPT account.)"
+                )
+            )
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
@@ -252,7 +261,10 @@ final class CodexHelperClientTests: XCTestCase {
             _ = try await client.statusOpenAI()
             XCTFail("Expected unauthorized error")
         } catch let error as AccountLoginError {
-            XCTAssertEqual(error, .sessionExchangeFailed("Codex helper rejected the request. Check the helper token in Settings."))
+            XCTAssertEqual(
+                error,
+                .sessionExchangeFailed("Codex helper rejected the request. Check the helper token in Settings. (Unauthorized.)")
+            )
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
