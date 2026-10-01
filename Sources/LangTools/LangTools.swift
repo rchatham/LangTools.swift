@@ -46,8 +46,10 @@ extension LangTools {
         }
     }
 
-    public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response {
-        return try await complete(request: request, response: try request.update(response: try await perform(request: try prepare(request: request.updating(stream: false)))) )
+    public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response { await try perform(request: request, onResponse: { _ in }) }
+
+    public func perform<Request: LangToolsRequest>(request: Request, onResponse: @escaping (Request.Response) -> Void) async throws -> Request.Response {
+        return try await complete(request: request, response: try request.update(response: try await perform(request: try prepare(request: request.updating(stream: false))) as Request.Response), onResponse: onResponse)
     }
 
     private func perform<Response: Decodable>(request: URLRequest) async -> Result<Response, Error> {
@@ -172,8 +174,8 @@ extension LangTools {
         return AsyncThrowingStream { cont in Task { for try await response in stream(request: request) { cont.yield(response) }; cont.finish() } }
     }
 
-    private func complete<Request: LangToolsRequest>(request: Request, response: Request.Response) async throws -> Request.Response {
-        return try await completionRequest(request: request, response: response).flatMap { try await perform(request: $0) } ?? response
+    private func complete<Request: LangToolsRequest>(request: Request, response: Request.Response, onResponse: @escaping (Request.Response) -> Void) async throws -> Request.Response {
+        onResponse(response); return try await completionRequest(request: request, response: response).flatMap { try await perform(request: $0, onResponse: onResponse) } ?? response
     }
 
     private func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) async throws -> Request? {
