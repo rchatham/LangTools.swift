@@ -270,6 +270,8 @@ final class CodexHelperPairingTests: XCTestCase {
 
     @MainActor
     func testConfirmSuccessSetsVerifiedState() async throws {
+        let oldURL = UserDefaults.codexHelperBaseURL
+        defer { UserDefaults.codexHelperBaseURL = oldURL }
         var savedToken: String?
         let coordinator = CodexHelperPairingCoordinator(
             makeHelperClient: { _ in HealthyHelperClient() },
@@ -312,6 +314,8 @@ final class CodexHelperPairingTests: XCTestCase {
 
     @MainActor
     func testSecondConfirmSupersedesStaleExchange() async throws {
+        let oldURL = UserDefaults.codexHelperBaseURL
+        defer { UserDefaults.codexHelperBaseURL = oldURL }
         let enteredExchange = AsyncStream.makeStream(of: Void.self)
         let proceedWithExchange = AsyncStream.makeStream(of: Void.self)
         let gate = UnsafeCounter()
@@ -455,6 +459,12 @@ final class CodexHelperPairingTests: XCTestCase {
 
     @MainActor
     func testTokenRefreshSyncsWhenTokenMatchesSyncedSnapshot() {
+        let oldToken = UserDefaults.codexHelperToken
+        let oldURL = UserDefaults.codexHelperBaseURL
+        defer {
+            UserDefaults.codexHelperToken = oldToken
+            UserDefaults.codexHelperBaseURL = oldURL
+        }
         let viewModel = ChatSettingsView.ViewModel(clearMessages: {})
         UserDefaults.codexHelperToken = "fresh-token"
         UserDefaults.codexHelperBaseURL = URL(string: "http://127.0.0.1:8766")!
