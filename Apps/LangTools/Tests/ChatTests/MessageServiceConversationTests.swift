@@ -1,4 +1,5 @@
 import Agents
+import ChatUI
 import Foundation
 import LangTools
 import OpenAI
@@ -201,6 +202,10 @@ final class MessageServiceConversationTests: XCTestCase {
         try await firstSend.value
         try await secondSend.value
 
+        let firstUserID = try XCTUnwrap(service.messages.first(where: { $0.isUser && $0.text == "first" })?.uuid)
+        let secondUserID = try XCTUnwrap(service.messages.first(where: { $0.isUser && $0.text == "second" })?.uuid)
+        XCTAssertEqual(service.messages.first(where: { $0.text == "first-preamble" })?.responseToMessageID, firstUserID)
+        XCTAssertEqual(service.messages.first(where: { $0.text == "second-preamble" })?.responseToMessageID, secondUserID)
         let cardMessages = service.messages.filter { !$0.toolCalls.isEmpty }
         XCTAssertEqual(cardMessages.count, 2)
         XCTAssertEqual(cardMessages.flatMap(\.toolCalls).map(\.name).sorted(), ["first_tool", "second_tool"])
@@ -210,6 +215,7 @@ final class MessageServiceConversationTests: XCTestCase {
             let isFirstRequest = call.name == "first_tool"
             XCTAssertEqual(call.result, isFirstRequest ? "first-result" : "second-result")
             XCTAssertEqual(message.text, isFirstRequest ? "first-preamble" : "second-preamble")
+            XCTAssertEqual(message.responseToMessageID, isFirstRequest ? firstUserID : secondUserID)
         }
 
         XCTAssertEqual(service.bufferedEventCountForTesting, 0)
@@ -408,6 +414,300 @@ final class MessageServiceConversationTests: XCTestCase {
         try await secondSend.value
         try await firstSend.value
         XCTAssertTrue(liveAnchor.toolCalls.isEmpty)
+    }
+
+    func testOperationAppendsUserSynchronouslyAndEstablishesAtStreamCreation() async throws {
+        let client = OverlappingNetworkStub()
+        let service = MessageService(networkClient: client)
+
+        let operation = service.sendOperation(message: "prompt", stream: true)
+        XCTAssertEqual(service.messages.map(\.text), ["prompt"])
+        XCTAssertEqual(service.messages.first?.uuid, operation.messageID)
+
+        try await operation.waitUntilEstablished()
+        XCTAssertEqual(client.requestCount, 1)
+        client.finish(request: 0)
+        try await operation.waitForCompletion()
+    }
+
+    func testStreamCreationFailureFailsEstablishmentAndRetainsPrompt() async throws {
+        let client = LegacyNetworkStub(failsStreamCreation: true)
+        let service = MessageService(networkClient: client)
+        let operation = service.sendOperation(message: "cannot establish", stream: true)
+
+        do {
+            try await operation.waitUntilEstablished()
+            XCTFail("Expected establishment failure")
+        } catch OverlappingStubError.failed {
+            // Expected.
+        }
+        do {
+            try await operation.waitForCompletion()
+            XCTFail("Expected operation failure")
+        } catch OverlappingStubError.failed {
+            // Expected.
+        }
+
+        XCTAssertEqual(client.streamRequestCount, 1)
+        XCTAssertEqual(service.messages.map(\.text), ["cannot establish"])
+        XCTAssertEqual(
+            service.messages.first?.sendFailure?.message,
+            OverlappingStubError.failed.localizedDescription
+        )
+    }
+
+    func testPreEstablishmentCancellationDoesNotCreateStreamOrFailure() async throws {
+        let client = OverlappingNetworkStub()
+        let service = MessageService(networkClient: client)
+        let operation = service.sendOperation(message: "cancel before establishment", stream: true)
+
+        operation.cancel()
+
+        do {
+            try await operation.waitUntilEstablished()
+            XCTFail("Expected establishment cancellation")
+        } catch is CancellationError {
+            // Expected.
+        }
+        do {
+            try await operation.waitForCompletion()
+            XCTFail("Expected operation cancellation")
+        } catch is CancellationError {
+            // Expected.
+        }
+
+        XCTAssertEqual(client.requestCount, 0)
+        XCTAssertEqual(service.messages.map(\.text), ["cancel before establishment"])
+        XCTAssertNil(service.messages.first?.sendFailure)
+    }
+
+    func testOperationCancellationIsScopedAndPreservesPartialWithoutFailure() async throws {
+        let client = OverlappingNetworkStub()
+        let service = MessageService(networkClient: client)
+        let first = service.sendOperation(message: "first", stream: true)
+        let second = service.sendOperation(message: "second", stream: true)
+
+        try await first.waitUntilEstablished()
+        try await second.waitUntilEstablished()
+        client.yield("first partial", request: 0)
+        for _ in 0..<100 where !service.messages.contains(where: { $0.text == "first partial" }) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        first.cancel()
+        client.yield("second response", request: 1)
+        client.finish(request: 1)
+
+        do {
+            try await first.waitForCompletion()
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {
+            // Expected.
+        }
+        try await second.waitForCompletion()
+
+        let firstUser = try XCTUnwrap(service.messages.first(where: { $0.uuid == first.messageID }))
+        XCTAssertNil(firstUser.sendFailure)
+        XCTAssertFalse(firstUser.wasResponseStopped, "Programmatic cancellation must not be labeled a user stop")
+        XCTAssertTrue(service.messages.contains(where: { $0.text == "first partial" }))
+        XCTAssertTrue(service.messages.contains(where: { $0.text == "second response" }))
+    }
+
+    func testUserStopMarksOriginalPromptAndPreservesPartialResponseWithoutProviderToken() async throws {
+        let client = OverlappingNetworkStub()
+        let service = MessageService(networkClient: client)
+        let operation = service.sendOperation(message: "stop this response", stream: true)
+        let messageID = try XCTUnwrap(operation.messageID)
+
+        try await operation.waitUntilEstablished()
+        client.yield("unfinished answer", request: 0)
+        for _ in 0..<100 where !service.messages.contains(where: { $0.text == "unfinished answer" }) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        service.markResponseStopped(messageID: messageID)
+        operation.cancel()
+        do {
+            try await operation.waitForCompletion()
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {
+            // Expected.
+        }
+
+        let user = try XCTUnwrap(service.messages.first(where: { $0.uuid == messageID }))
+        XCTAssertTrue(user.wasResponseStopped)
+        XCTAssertNil(user.sendFailure)
+        XCTAssertTrue(service.messages.contains(where: { $0.text == "unfinished answer" }))
+        let decoded = try JSONDecoder().decode(Message.self, from: JSONEncoder().encode(user))
+        XCTAssertTrue(decoded.wasResponseStopped)
+        let partial = try XCTUnwrap(service.messages.first(where: { $0.text == "unfinished answer" }))
+        XCTAssertEqual(partial.responseToMessageID, messageID)
+        let decodedPartial = try JSONDecoder().decode(Message.self, from: JSONEncoder().encode(partial))
+        XCTAssertEqual(decodedPartial.responseToMessageID, messageID)
+
+        let next = service.sendOperation(message: "next prompt", stream: true)
+        try await next.waitUntilEstablished()
+        XCTAssertEqual(
+            client.messageTextsSent(request: 1),
+            [service.systemMessage(), "stop this response", "unfinished answer", "next prompt"]
+        )
+        client.finish(request: 1)
+        try await next.waitForCompletion()
+    }
+
+    func testFailureIsRetainedExcludedFromHistoryAndRetryCleansOnlyOwnedMessages() async throws {
+        let client = OverlappingNetworkStub()
+        let service = MessageService(networkClient: client)
+        service.agentResultParser = { _, _ in
+            .contentCards(
+                ContentCardsContent(
+                    cardType: "retry-test-card",
+                    message: "failed card",
+                    cardsJSON: "[]",
+                    cardCount: 0
+                )
+            )
+        }
+        let failedOperation = service.sendOperation(message: "failed prompt", stream: true)
+        let failedMessageID = try XCTUnwrap(failedOperation.messageID)
+
+        try await failedOperation.waitUntilEstablished()
+        service.enqueueAgentEvent(
+            .started(agent: "RetryAgent", parent: nil, task: "produce a card"),
+            for: failedOperation.id
+        )
+        service.enqueueAgentEvent(
+            .completed(agent: "RetryAgent", result: #"{"result":"card"}"#),
+            for: failedOperation.id
+        )
+        client.yield("failed partial", request: 0)
+        for _ in 0..<100 where !service.messages.contains(where: { $0.text == "failed partial" }) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let ownedToolAnchorID = try XCTUnwrap(
+            service.messages.first(where: { !$0.toolCalls.isEmpty })?.uuid
+        )
+        let ownedCardID = try XCTUnwrap(
+            service.messages.first(where: {
+                if case .contentCards = $0.contentType { return true }
+                return false
+            })?.uuid
+        )
+        let ownedPartialID = try XCTUnwrap(
+            service.messages.first(where: { $0.text == "failed partial" })?.uuid
+        )
+        client.fail(request: 0)
+        do {
+            try await failedOperation.waitForCompletion()
+            XCTFail("Expected failure")
+        } catch OverlappingStubError.failed {
+            // Expected.
+        }
+
+        let failedUser = try XCTUnwrap(service.messages.first(where: { $0.uuid == failedMessageID }))
+        XCTAssertEqual(failedUser.sendFailure?.message, OverlappingStubError.failed.localizedDescription)
+        XCTAssertTrue(service.messages.contains(where: { $0.text == "failed partial" }))
+
+        let nextOperation = service.sendOperation(message: "next prompt", stream: true)
+        try await nextOperation.waitUntilEstablished()
+        XCTAssertEqual(
+            Array(client.messageTextsSent(request: 1).compactMap { $0 }.suffix(1)),
+            ["next prompt"],
+            "Failed attempts must remain visible without entering provider history"
+        )
+        XCTAssertFalse(client.messageTextsSent(request: 1).contains("failed prompt"))
+        XCTAssertFalse(client.messageTextsSent(request: 1).contains("failed partial"))
+        client.yield("next response", request: 1)
+        client.finish(request: 1)
+        try await nextOperation.waitForCompletion()
+
+        let retryOperation = try service.retryOperation(messageID: failedMessageID, stream: true)
+        XCTAssertEqual(retryOperation.messageID, failedMessageID)
+        XCTAssertTrue(service.messages.last === failedUser)
+        XCTAssertEqual(service.messages.last?.uuid, failedMessageID)
+        XCTAssertEqual(service.messages.filter { $0.text == "failed prompt" }.count, 1)
+        XCTAssertFalse(service.messages.contains(where: {
+            [ownedToolAnchorID, ownedCardID, ownedPartialID].contains($0.uuid)
+        }))
+        XCTAssertTrue(service.messages.contains(where: { $0.text == "next response" }))
+        XCTAssertNil(failedUser.sendFailure)
+        XCTAssertEqual(service.messages.map(\.role), [.user, .assistant, .user])
+        XCTAssertEqual(service.messages.map(\.text), ["next prompt", "next response", "failed prompt"])
+
+        try await retryOperation.waitUntilEstablished()
+        XCTAssertEqual(
+            client.messageRolesSent(request: 2),
+            [.system, .user, .assistant, .user]
+        )
+        XCTAssertEqual(
+            client.messageTextsSent(request: 2),
+            [service.systemMessage(), "next prompt", "next response", "failed prompt"]
+        )
+        XCTAssertEqual(
+            client.messageTextsSent(request: 2).filter { $0 == "failed prompt" }.count,
+            1
+        )
+        client.yield("retry response", request: 2)
+        client.finish(request: 2)
+        try await retryOperation.waitForCompletion()
+
+        XCTAssertEqual(service.messages.filter { $0.text == "failed prompt" }.count, 1)
+        XCTAssertTrue(service.messages.first(where: { $0.uuid == failedMessageID }) === failedUser)
+        XCTAssertNil(failedUser.sendFailure)
+
+        let finalOperation = service.sendOperation(message: "final prompt", stream: true)
+        try await finalOperation.waitUntilEstablished()
+        XCTAssertEqual(
+            client.messageRolesSent(request: 3),
+            [.system, .user, .assistant, .user, .assistant, .user]
+        )
+        XCTAssertEqual(
+            client.messageTextsSent(request: 3),
+            [
+                service.systemMessage(),
+                "next prompt",
+                "next response",
+                "failed prompt",
+                "retry response",
+                "final prompt"
+            ]
+        )
+        XCTAssertEqual(
+            client.messageTextsSent(request: 3).compactMap { $0 }.reduce(into: [:]) { counts, text in
+                counts[text, default: 0] += 1
+            },
+            [
+                service.systemMessage(): 1,
+                "next prompt": 1,
+                "next response": 1,
+                "failed prompt": 1,
+                "retry response": 1,
+                "final prompt": 1
+            ]
+        )
+        client.yield("final response", request: 3)
+        client.finish(request: 3)
+        try await finalOperation.waitForCompletion()
+
+        XCTAssertEqual(
+            service.messages.map(\.role),
+            [.user, .assistant, .user, .assistant, .user, .assistant]
+        )
+        XCTAssertEqual(
+            service.messages.map(\.text),
+            ["next prompt", "next response", "failed prompt", "retry response", "final prompt", "final response"]
+        )
+        XCTAssertTrue(service.messages[2] === failedUser)
+        XCTAssertEqual(service.messages[2].uuid, failedMessageID)
+    }
+
+    func testSendFailureIsTransientAcrossCoding() throws {
+        let message = Message(text: "prompt", role: .user)
+        message.sendFailure = ChatSendFailure(message: "offline")
+
+        let decoded = try JSONDecoder().decode(Message.self, from: JSONEncoder().encode(message))
+
+        XCTAssertNil(decoded.sendFailure)
+        XCTAssertEqual(decoded.uuid, message.uuid)
     }
 
     func testLegacyNetworkClientUsesCompatibilityPath() async throws {
@@ -744,6 +1044,11 @@ private final class ControlledToolEventNetworkStub: NetworkClientProtocol {
 private final class LegacyNetworkStub: NetworkClientProtocol {
     static let shared: NetworkClientProtocol = LegacyNetworkStub()
     private(set) var streamRequestCount = 0
+    private let failsStreamCreation: Bool
+
+    init(failsStreamCreation: Bool = false) {
+        self.failsStreamCreation = failsStreamCreation
+    }
 
     func performChatCompletionRequest(messages: [Message], model: Model, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) async throws -> Message {
         Message(text: "legacy", role: .assistant)
@@ -751,6 +1056,9 @@ private final class LegacyNetworkStub: NetworkClientProtocol {
 
     func streamChatCompletionRequest(messages: [Message], model: Model, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> AsyncThrowingStream<String, Error> {
         streamRequestCount += 1
+        if failsStreamCreation {
+            throw OverlappingStubError.failed
+        }
         return AsyncThrowingStream { continuation in
             continuation.yield("legacy")
             continuation.finish()
