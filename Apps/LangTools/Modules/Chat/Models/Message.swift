@@ -436,6 +436,21 @@ public enum AgentEventType: String, Codable {
     }
 }
 
+private extension ChatToolCall {
+    mutating func failPending(reason: String) -> Bool {
+        var changed = false
+        for index in children.indices {
+            changed = children[index].failPending(reason: reason) || changed
+        }
+        if status == .pending {
+            status = .failure
+            result = reason
+            changed = true
+        }
+        return changed
+    }
+}
+
 // Factory methods for agent events
 extension Message {
     /// Updates the tool-call lifecycle for this message from a LangTools event.
@@ -491,17 +506,13 @@ extension Message {
 
     /// Marks tool calls that never emitted a completion as failed while leaving
     /// already completed calls untouched.
-    public func failPendingToolCalls(reason: String) {
-        for index in toolCalls.indices where toolCalls[index].status == .pending {
-            let call = toolCalls[index]
-            toolCalls[index] = ChatToolCall(
-                id: call.id,
-                name: call.name,
-                arguments: call.arguments,
-                status: .failure,
-                result: reason
-            )
+    @discardableResult
+    public func failPendingToolCalls(reason: String) -> Bool {
+        var changed = false
+        for index in toolCalls.indices {
+            changed = toolCalls[index].failPending(reason: reason) || changed
         }
+        return changed
     }
 
     public static func agentEvent(type: AgentEventType, agentName: String, details: String, children: [Message] = []) -> Message {
