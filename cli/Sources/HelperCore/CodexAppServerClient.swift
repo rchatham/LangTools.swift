@@ -107,6 +107,7 @@ actor CodexAppServerClient {
     private let commandResolver: CommandResolver
     private let environment: [String: String]
     private let defaultTimeout: Duration
+    private let initializationTimeout: Duration
     private let requestTimeoutSleeper: RequestTimeoutSleeper
     private let workspaceRootProvider: WorkspaceRootProvider
     private let codexHomeProvider: CodexHomeProvider
@@ -137,9 +138,10 @@ actor CodexAppServerClient {
     static let maximumBufferedProcessChunks = 256
 
     init(
-        commandResolver: @escaping CommandResolver = { try OpenAIAccountChatCommand.resolveCodexCommand() },
+        commandResolver: @escaping CommandResolver = { try OpenAIAccountChatCommand.resolveCodexCommand(fileManager: .default) },
         environment: [String: String] = ProcessInfo.processInfo.environment,
         defaultTimeout: Duration = .seconds(30),
+        initializationTimeout: Duration = .seconds(8),
         requestTimeoutSleeper: @escaping RequestTimeoutSleeper = { _, duration in
             try await Task.sleep(for: duration)
         },
@@ -150,6 +152,7 @@ actor CodexAppServerClient {
         self.commandResolver = commandResolver
         self.environment = environment
         self.defaultTimeout = defaultTimeout
+        self.initializationTimeout = initializationTimeout
         self.requestTimeoutSleeper = requestTimeoutSleeper
         self.workspaceRootProvider = workspaceRootProvider
         self.containmentMode = containmentMode
@@ -367,7 +370,7 @@ actor CodexAppServerClient {
             let responseData = try await sendRequest(
                 method: "initialize",
                 params: object,
-                timeout: defaultTimeout,
+                timeout: initializationTimeout,
                 cancelOnTaskCancellation: false
             )
             let initialized = try JSONDecoder().decode(CodexInitializeResponse.self, from: responseData)
@@ -399,7 +402,9 @@ actor CodexAppServerClient {
 
     private func launchProcess() throws {
         let command = try commandResolver()
-        let codexArguments = command.arguments + ["app-server", "--listen", "stdio://"]
+        let codexArguments = command.arguments + [
+            "app-server", "--listen", "stdio://", "-c", "model_provider=openai"
+        ]
         let process = Process()
         let seatbelt: SeatbeltLaunch?
         switch containmentMode {
@@ -429,7 +434,7 @@ actor CodexAppServerClient {
             // `.disabledForTesting`; production can never silently fall back.
             process.executableURL = URL(fileURLWithPath: command.executable)
             process.arguments = codexArguments
-            var testingEnvironment = environment
+            var testingEnvironment = Self.sanitizedChildEnvironment(from: environment)
             if let override = testingEnvironment["LANGTOOLS_CODEX_HOME"], override.isEmpty == false {
                 testingEnvironment["CODEX_HOME"] = override
             }
@@ -495,6 +500,29 @@ actor CodexAppServerClient {
         self.stdoutPump = stdoutPump
         self.stderrPump = stderrPump
         stdinHandle = stdin.fileHandleForWriting
+    }
+
+    /// Sanitizes the inherited environment for the explicit
+    /// `.disabledForTesting` launch path used by fake app-server tests.
+    /// Production launches instead build a minimal environment with
+    /// `CodexChildEnvironment.make(...)` before entering Seatbelt and never
+    /// use this denylist. Non-sensitive test overrides and fixture paths pass
+    /// through unchanged.
+    static func sanitizedChildEnvironment(from environment: [String: String]) -> [String: String] {
+        environment.filter { !Self.isSensitiveEnvironmentKey($0.key) }
+    }
+
+    static func isSensitiveEnvironmentKey(_ key: String) -> Bool {
+        let upper = key.uppercased()
+        let deniedExact: Set<String> = [
+            "SSH_AUTH_SOCK", "SSH_AGENT_PID", "SSH_ASKPASS",
+            "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN",
+            "GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN",
+            "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "CODEX_API_KEY"
+        ]
+        if deniedExact.contains(upper) { return true }
+        let needles = ["TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "PRIVATE_KEY", "API_KEY"]
+        return needles.contains { upper.contains($0) }
     }
 
     private struct SeatbeltLaunch {

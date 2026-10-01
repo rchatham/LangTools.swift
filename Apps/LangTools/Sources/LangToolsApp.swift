@@ -39,17 +39,30 @@ struct LangToolsApp: App {
         Window("LangTools.swift", id: "main") {
             ChatContainerView(voiceInputHandler: voiceInputHandler)
                 .onOpenURL { url in
-                    AccountLoginCoordinator.shared.handleRedirect(url)
+                    handleIncomingURL(url)
                 }
+                .codexHelperPairingAlert()
         }
         #else
         WindowGroup {
             ChatContainerView(voiceInputHandler: voiceInputHandler)
                 .onOpenURL { url in
-                    AccountLoginCoordinator.shared.handleRedirect(url)
+                    handleIncomingURL(url)
                 }
+                .codexHelperPairingAlert()
         }
         #endif
+    }
+
+    /// Routes incoming custom-scheme URLs to their owning flow: Codex helper
+    /// pairing URLs to `CodexHelperPairingCoordinator`, everything else to the
+    /// account login coordinator.
+    private func handleIncomingURL(_ url: URL) {
+        if CodexHelperPairingCoordinator.isPairingURL(url) {
+            CodexHelperPairingCoordinator.shared.handle(url)
+        } else {
+            AccountLoginCoordinator.shared.handleRedirect(url)
+        }
     }
 
     @MainActor
@@ -409,3 +422,71 @@ extension ToolSettings: @retroactive VoiceInputSettingsProviding {
 }
 
 private var apiKeyInput: String = ""
+
+/// Presents the Codex helper pairing confirmation whenever a pairing is pending.
+///
+/// Uses the coordinator's `pendingPairing` as both the presentation source and
+/// the alert's presented data, so the confirmation always matches the pairing
+/// the helper requested.
+private struct CodexHelperPairingAlert: ViewModifier {
+    @ObservedObject private var coordinator = CodexHelperPairingCoordinator.shared
+
+    func body(content: Content) -> some View {
+        content
+            .alert(
+                "Pair with Codex helper?",
+                isPresented: alertPresentation,
+                presenting: coordinator.pendingPairing
+            ) { pairing in
+                Button("Pair") { coordinator.confirm(pairing) }
+                Button("Cancel", role: .cancel) { coordinator.cancel() }
+            } message: { pairing in
+                Text("The Codex helper at 127.0.0.1:\(pairing.port) wants to pair with LangTools Example. Pairing saves its URL and token for OpenAI account-backed sign-in.")
+            }
+            .alert("Codex Helper Pairing Failed", isPresented: failurePresentation) {
+                Button("OK", role: .cancel) { coordinator.dismissResult() }
+            } message: {
+                Text(failureMessage)
+            }
+    }
+
+    /// Presents while a pairing is pending; dismissing cancels it. Buttons
+    /// confirm or cancel explicitly, so this only catches system dismissal.
+    private var alertPresentation: Binding<Bool> {
+        Binding(
+            get: { coordinator.pendingPairing != nil },
+            set: { presented in
+                if presented == false {
+                    coordinator.cancel()
+                }
+            }
+        )
+    }
+
+    private var failurePresentation: Binding<Bool> {
+        Binding(
+            get: {
+                if case .verificationFailed = coordinator.lastPairingResult { return true }
+                return false
+            },
+            set: { presented in
+                if presented == false {
+                    coordinator.dismissResult()
+                }
+            }
+        )
+    }
+
+    private var failureMessage: String {
+        if case .verificationFailed(_, let message) = coordinator.lastPairingResult {
+            return message
+        }
+        return ""
+    }
+}
+
+private extension View {
+    func codexHelperPairingAlert() -> some View {
+        modifier(CodexHelperPairingAlert())
+    }
+}
