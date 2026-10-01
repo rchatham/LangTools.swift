@@ -485,7 +485,8 @@ public class MessageService {
             )
             failPendingToolCalls(
                 in: assistantMessageIDs,
-                reason: "Tool call ended without a completion result."
+                reason: "Tool call ended without a completion result.",
+                keepsToolCallsInHistory: keepsToolCallsInHistory
             )
             failedAttemptGeneratedMessageIDs.removeValue(forKey: userMessageID)
             setSendFailure(nil, on: userMessage)
@@ -511,7 +512,8 @@ public class MessageService {
             )
             failPendingToolCalls(
                 in: assistantMessageIDs,
-                reason: error.localizedDescription
+                reason: error.localizedDescription,
+                keepsToolCallsInHistory: keepsToolCallsInHistory
             )
             if error is CancellationError || Task.isCancelled {
                 setSendFailure(nil, on: userMessage)
@@ -892,9 +894,14 @@ extension MessageService {
     /// Marks every pending tool call owned by this send as failed so cards do
     /// not spin forever when the stream fails or ends without a completion
     /// result. Completed calls are left untouched.
-    private func failPendingToolCalls(in assistantMessageIDs: Set<UUID>, reason: String) {
+    private func failPendingToolCalls(
+        in assistantMessageIDs: Set<UUID>,
+        reason: String,
+        keepsToolCallsInHistory: Bool
+    ) {
         for message in messages where assistantMessageIDs.contains(message.uuid) {
-            message.failPendingToolCalls(reason: reason)
+            guard message.failPendingToolCalls(reason: reason) else { continue }
+            notifyMessageUpdated(message, keepsToolCallsInHistory: keepsToolCallsInHistory)
         }
     }
     @MainActor

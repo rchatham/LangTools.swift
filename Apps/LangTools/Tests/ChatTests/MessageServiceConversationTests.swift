@@ -83,6 +83,11 @@ final class MessageServiceConversationTests: XCTestCase {
     func testFailedFollowupMarksIncompleteToolCallFailed() async {
         let client = ToolEventNetworkStub(completesTool: false)
         let service = MessageService(networkClient: client)
+        var persistedStatusSnapshots: [[ChatToolCall.Status]] = []
+        service.messageUpdatedCallback = { message in
+            let statuses = message.toolCalls.filter { $0.name == "test_tool" }.map(\.status)
+            if !statuses.isEmpty { persistedStatusSnapshots.append(statuses) }
+        }
 
         do {
             try await service.send(message: "use a tool")
@@ -96,17 +101,24 @@ final class MessageServiceConversationTests: XCTestCase {
         let call = service.messages.first(where: { $0.isAssistant })?.toolCalls.first
         XCTAssertEqual(call?.status, .failure)
         XCTAssertEqual(call?.result, "The tool follow-up failed.")
+        XCTAssertEqual(persistedStatusSnapshots, [[.pending], [.failure]])
     }
 
     func testSuccessfulStreamMarksIncompleteToolCallFailed() async throws {
         let client = ToolEventNetworkStub(completesTool: false, finishError: nil)
         let service = MessageService(networkClient: client)
+        var persistedStatusSnapshots: [[ChatToolCall.Status]] = []
+        service.messageUpdatedCallback = { message in
+            let statuses = message.toolCalls.filter { $0.name == "test_tool" }.map(\.status)
+            if !statuses.isEmpty { persistedStatusSnapshots.append(statuses) }
+        }
 
         try await service.send(message: "use a tool")
 
         let call = service.messages.first(where: { $0.isAssistant })?.toolCalls.first
         XCTAssertEqual(call?.status, .failure)
         XCTAssertEqual(call?.result, "Tool call ended without a completion result.")
+        XCTAssertEqual(persistedStatusSnapshots, [[.pending], [.failure]])
     }
 
     func testCompletionWithoutResultPreservesItsImmediateFailureOnEarlierSplitMessage() async {
@@ -1056,6 +1068,38 @@ final class MessageServiceConversationTests: XCTestCase {
         XCTAssertEqual(client.requestCount, 0)
         XCTAssertEqual(service.messages.map(\.text), ["cancel before establishment"])
         XCTAssertNil(service.messages.first?.sendFailure)
+    }
+
+    func testCancellationPersistsPendingToolCallFailureOnce() async throws {
+        let client = ControlledToolEventNetworkStub()
+        let service = MessageService(networkClient: client)
+        var persistedStatusSnapshots: [[ChatToolCall.Status]] = []
+        service.messageUpdatedCallback = { message in
+            let statuses = message.toolCalls.filter { $0.name == "pending_tool" }.map(\.status)
+            if !statuses.isEmpty { persistedStatusSnapshots.append(statuses) }
+        }
+        let operation = service.sendOperation(message: "cancel pending tool", stream: true)
+
+        try await operation.waitUntilEstablished()
+        client.emitToolCalled(
+            for: "cancel pending tool",
+            toolName: "pending_tool",
+            selectionID: "pending"
+        )
+        for _ in 0..<100 where service.messages.flatMap(\.toolCalls).isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        operation.cancel()
+        do {
+            try await operation.waitForCompletion()
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {
+            // Expected.
+        }
+
+        XCTAssertEqual(service.messages.flatMap(\.toolCalls).first?.status, .failure)
+        XCTAssertEqual(persistedStatusSnapshots, [[.pending], [.failure]])
     }
 
     func testOperationCancellationIsScopedAndPreservesPartialWithoutFailure() async throws {
