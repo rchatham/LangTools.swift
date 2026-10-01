@@ -380,6 +380,59 @@ final class LocalHelperServerTests: XCTestCase {
         await restarted.value
     }
 
+    func testShutdownRejectsConnectionQueuedBeforeRegistration() async throws {
+        let port = try Self.findFreePort()
+        let bearer = String(repeating: "12", count: 32)
+        let registrationGate = RegistrationGate()
+        let routeCount = LockedCounter()
+        let stopped = LockedCounter()
+        let server = LocalHelperServer(
+            host: "127.0.0.1",
+            port: port,
+            bearerToken: bearer,
+            pairingCodeConsumer: { _ in
+                routeCount.increment()
+                return false
+            },
+            beforeSessionRegistration: { registrationGate.interceptIfEnabled() }
+        )
+        let serverTask = Task {
+            try? await server.run()
+            stopped.increment()
+        }
+        try await Self.waitUntilHealthy(port: port, bearer: bearer)
+
+        registrationGate.enable()
+        let requestTask = Task {
+            try? await Self.performRequest(
+                port: port,
+                path: "/v1/pairing/exchange",
+                method: "POST",
+                body: #"{"code":"late"}"#
+            )
+        }
+        XCTAssertTrue(registrationGate.waitUntilIntercepted(timeout: 2))
+
+        serverTask.cancel()
+        let stopDeadline = Date().addingTimeInterval(2)
+        while stopped.value == 0, Date() < stopDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(stopped.value, 1, "Shutdown should close registration without waiting for a queued handler.")
+
+        registrationGate.release()
+        _ = await requestTask.result
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(routeCount.value, 0, "A session arriving after shutdown begins must never route work.")
+
+        let restarted = Task {
+            try? await LocalHelperServer(host: "127.0.0.1", port: port, bearerToken: bearer).run()
+        }
+        try await Self.waitUntilHealthy(port: port, bearer: bearer)
+        restarted.cancel()
+        await restarted.value
+    }
+
     private static func findFreePort() throws -> UInt16 {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw TestError.unexpectedResult }
@@ -501,6 +554,37 @@ private actor SingleUsePairingConsumer {
         guard code == validCode, consumed == false else { return false }
         consumed = true
         return true
+    }
+}
+
+private final class RegistrationGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private let intercepted = DispatchSemaphore(value: 0)
+    private let releaseSemaphore = DispatchSemaphore(value: 0)
+    private var enabled = false
+    private var used = false
+
+    func enable() {
+        lock.withLock { enabled = true }
+    }
+
+    func interceptIfEnabled() {
+        let shouldBlock = lock.withLock {
+            guard enabled, used == false else { return false }
+            used = true
+            return true
+        }
+        guard shouldBlock else { return }
+        intercepted.signal()
+        releaseSemaphore.wait()
+    }
+
+    func waitUntilIntercepted(timeout: TimeInterval) -> Bool {
+        intercepted.wait(timeout: .now() + timeout) == .success
+    }
+
+    func release() {
+        releaseSemaphore.signal()
     }
 }
 

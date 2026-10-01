@@ -10,6 +10,7 @@ public struct LocalHelperServer {
     private let sessionRegistry = HelperSessionRegistry()
     private let onReady: (@Sendable () -> Void)?
     private let pairingCodeConsumer: (@Sendable (String) async -> Bool)?
+    private let beforeSessionRegistration: (@Sendable () -> Void)?
 
     static let maximumHeaderBytes = 32 * 1_024
     static let maximumBodyBytes = 4 * 1_048_576
@@ -23,12 +24,31 @@ public struct LocalHelperServer {
         onReady: (@Sendable () -> Void)? = nil,
         pairingCodeConsumer: (@Sendable (String) async -> Bool)? = nil
     ) {
+        self.init(
+            host: host,
+            port: port,
+            bearerToken: bearerToken,
+            onReady: onReady,
+            pairingCodeConsumer: pairingCodeConsumer,
+            beforeSessionRegistration: nil
+        )
+    }
+
+    init(
+        host: String,
+        port: UInt16,
+        bearerToken: String,
+        onReady: (@Sendable () -> Void)? = nil,
+        pairingCodeConsumer: (@Sendable (String) async -> Bool)? = nil,
+        beforeSessionRegistration: (@Sendable () -> Void)?
+    ) {
         self.host = host
         self.port = port
         self.bearerToken = bearerToken
         self.connectionLimiter = HelperConnectionLimiter(limit: Self.maximumConcurrentConnections)
         self.onReady = onReady
         self.pairingCodeConsumer = pairingCodeConsumer
+        self.beforeSessionRegistration = beforeSessionRegistration
     }
 
     public func run() async throws {
@@ -96,7 +116,12 @@ public struct LocalHelperServer {
             lease: lease,
             onEnd: { registry.unregister(sessionID) }
         )
-        registry.register(sessionID, session)
+        beforeSessionRegistration?()
+        guard registry.register(sessionID, session) else {
+            connection.cancel()
+            lease.release()
+            return
+        }
         connection.stateUpdateHandler = { state in
             switch state {
             case .failed, .cancelled:
@@ -709,9 +734,14 @@ public enum SecureTokenComparison {
 private final class HelperSessionRegistry: @unchecked Sendable {
     private let lock = NSLock()
     private var sessions: [UUID: HelperConnectionSession] = [:]
+    private var acceptingSessions = true
 
-    func register(_ id: UUID, _ session: HelperConnectionSession) {
-        lock.withLock { sessions[id] = session }
+    func register(_ id: UUID, _ session: HelperConnectionSession) -> Bool {
+        lock.withLock {
+            guard acceptingSessions else { return false }
+            sessions[id] = session
+            return true
+        }
     }
 
     func unregister(_ id: UUID) {
@@ -719,7 +749,10 @@ private final class HelperSessionRegistry: @unchecked Sendable {
     }
 
     func cancelAll() async {
-        let snapshot: [HelperConnectionSession] = lock.withLock { Array(sessions.values) }
+        let snapshot: [HelperConnectionSession] = lock.withLock {
+            acceptingSessions = false
+            return Array(sessions.values)
+        }
         await withTaskGroup(of: Void.self) { group in
             for session in snapshot {
                 group.addTask { await session.cancelRouteAndWait() }
@@ -727,15 +760,8 @@ private final class HelperSessionRegistry: @unchecked Sendable {
         }
     }
 
-    func waitUntilDrained(timeout: Duration = .seconds(5)) async {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while true {
-            let empty = lock.withLock { sessions.isEmpty }
-            if empty { return }
-            if ContinuousClock.now >= deadline {
-                FileHandle.standardError.write(Data("langtools: HelperSessionRegistry.waitUntilDrained timed out after \(timeout)\n".utf8))
-                return
-            }
+    func waitUntilDrained() async {
+        while lock.withLock({ sessions.isEmpty }) == false {
             try? await Task.sleep(for: .milliseconds(50))
         }
     }
