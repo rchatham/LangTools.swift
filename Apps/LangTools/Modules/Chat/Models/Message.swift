@@ -24,6 +24,8 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
     @Published public var sendFailure: ChatSendFailure?
     /// Presentation metadata; never appended to the provider-facing response text.
     @Published public var wasResponseStopped: Bool = false
+    /// Identifies the user prompt that produced this response, including interleaved sends.
+    public var responseToMessageID: UUID?
     /// Raw results retained for provider history replay when a rendered card
     /// intentionally hides the corresponding `ChatToolCall.result`.
     public var providerToolResults: [String: String] = [:]
@@ -57,7 +59,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         }
     }
 
-    public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil, createdAt: Date = Date(), toolCalls: [ChatToolCall] = [], providerToolResults: [String: String] = [:], providerToolResultServices: [String: APIService] = [:]) {
+    public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil, createdAt: Date = Date(), toolCalls: [ChatToolCall] = [], providerToolResults: [String: String] = [:], providerToolResultServices: [String: APIService] = [:], responseToMessageID: UUID? = nil) {
         self.uuid = uuid
         self.role = role
         self.contentType = contentType
@@ -66,6 +68,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         self.toolCalls = toolCalls
         self.sendFailure = nil
         self.wasResponseStopped = false
+        self.responseToMessageID = responseToMessageID
         self.providerToolResults = providerToolResults
         self.providerToolResultServices = providerToolResultServices
     }
@@ -74,7 +77,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
     public convenience init(text: String, role: Role) { self.init(role: role, contentType: .string(text)) }
 
     // Coding keys for encoding/decoding
-    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail, createdAt, toolCalls, providerToolResults, providerToolResultServices, wasResponseStopped }
+    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail, createdAt, toolCalls, providerToolResults, providerToolResultServices, wasResponseStopped, responseToMessageID }
 
     public required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -86,6 +89,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         toolCalls = try container.decodeIfPresent([ChatToolCall].self, forKey: .toolCalls) ?? []
         sendFailure = nil
         wasResponseStopped = try container.decodeIfPresent(Bool.self, forKey: .wasResponseStopped) ?? false
+        responseToMessageID = try container.decodeIfPresent(UUID.self, forKey: .responseToMessageID)
         providerToolResults = try container.decodeIfPresent([String: String].self, forKey: .providerToolResults) ?? [:]
         providerToolResultServices = try container.decodeIfPresent([String: APIService].self, forKey: .providerToolResultServices) ?? [:]
     }
@@ -100,6 +104,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         if wasResponseStopped {
             try container.encode(true, forKey: .wasResponseStopped)
         }
+        try container.encodeIfPresent(responseToMessageID, forKey: .responseToMessageID)
         if !toolCalls.isEmpty {
             try container.encode(toolCalls, forKey: .toolCalls)
         }
@@ -119,6 +124,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         lhs.createdAt == rhs.createdAt &&
         lhs.toolCalls == rhs.toolCalls &&
         lhs.wasResponseStopped == rhs.wasResponseStopped &&
+        lhs.responseToMessageID == rhs.responseToMessageID &&
         lhs.providerToolResults == rhs.providerToolResults &&
         lhs.providerToolResultServices == rhs.providerToolResultServices
     }
@@ -131,6 +137,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         hasher.combine(createdAt)
         hasher.combine(toolCalls)
         hasher.combine(wasResponseStopped)
+        hasher.combine(responseToMessageID)
         hasher.combine(providerToolResults)
         hasher.combine(providerToolResultServices)
     }
@@ -156,7 +163,8 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
             createdAt: createdAt,
             toolCalls: toolCalls,
             providerToolResults: keptResults,
-            providerToolResultServices: keptServices
+            providerToolResultServices: keptServices,
+            responseToMessageID: responseToMessageID
         )
     }
 }

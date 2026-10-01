@@ -339,6 +339,7 @@ public class MessageService {
                 guard conversationID == requestConversationID else { throw CancellationError() }
                 drainEvents(
                     for: sendID,
+                    responseToMessageID: userMessageID,
                     anchorMessageID: &anchorMessageID,
                     toolBreakOccurred: &toolBreakOccurred,
                     generatedMessageIDs: &generatedMessageIDs,
@@ -369,7 +370,7 @@ public class MessageService {
                         )
                         toolBreakOccurred = false
                     }
-                    let responseMessage = Message(role: .assistant, contentType: .string(trimmed))
+                    let responseMessage = Message(role: .assistant, contentType: .string(trimmed), responseToMessageID: userMessageID)
                     anchorMessageID = responseMessage.uuid
                     assistantMessageIDs.insert(responseMessage.uuid)
                     generatedMessageIDs.insert(responseMessage.uuid)
@@ -380,6 +381,7 @@ public class MessageService {
             guard conversationID == requestConversationID else { throw CancellationError() }
             drainEvents(
                 for: sendID,
+                responseToMessageID: userMessageID,
                 anchorMessageID: &anchorMessageID,
                 toolBreakOccurred: &toolBreakOccurred,
                 generatedMessageIDs: &generatedMessageIDs,
@@ -403,6 +405,7 @@ public class MessageService {
             // the same terminal cleanup as a successful stream.
             drainEvents(
                 for: sendID,
+                responseToMessageID: userMessageID,
                 anchorMessageID: &anchorMessageID,
                 toolBreakOccurred: &toolBreakOccurred,
                 generatedMessageIDs: &generatedMessageIDs,
@@ -509,6 +512,7 @@ extension MessageService {
         var generatedMessageIDs: Set<UUID> = []
         drainEvents(
             for: compatibilitySendID,
+            responseToMessageID: nil,
             anchorMessageID: &anchorMessageID,
             toolBreakOccurred: &toolBreakOccurred,
             generatedMessageIDs: &generatedMessageIDs,
@@ -519,6 +523,7 @@ extension MessageService {
 
     private func drainEvents(
         for sendID: UUID,
+        responseToMessageID: UUID?,
         anchorMessageID: inout UUID?,
         toolBreakOccurred: inout Bool,
         generatedMessageIDs: inout Set<UUID>,
@@ -532,7 +537,7 @@ extension MessageService {
         if let existing = assistantMessage(withID: anchorMessageID) {
             anchor = existing
         } else {
-            anchor = Message(role: .assistant, contentType: .null)
+            anchor = Message(role: .assistant, contentType: .null, responseToMessageID: responseToMessageID)
             anchorMessageID = anchor.uuid
             generatedMessageIDs.insert(anchor.uuid)
             messages.append(anchor)
@@ -610,7 +615,8 @@ extension MessageService {
             role: message.role,
             contentType: message.contentType,
             imageDetail: message.imageDetail,
-            createdAt: message.createdAt
+            createdAt: message.createdAt,
+            responseToMessageID: message.responseToMessageID
         )
         copy.wasResponseStopped = message.wasResponseStopped
         return copy
@@ -738,6 +744,7 @@ extension MessageService {
                 }
                 last.toolCalls = calls
                 toolBreakOccurred = true
+                cardMessage.responseToMessageID = last.responseToMessageID
                 generatedMessageIDs.insert(cardMessage.uuid)
                 messages.append(cardMessage)
             } else {

@@ -202,6 +202,10 @@ final class MessageServiceConversationTests: XCTestCase {
         try await firstSend.value
         try await secondSend.value
 
+        let firstUserID = try XCTUnwrap(service.messages.first(where: { $0.isUser && $0.text == "first" })?.uuid)
+        let secondUserID = try XCTUnwrap(service.messages.first(where: { $0.isUser && $0.text == "second" })?.uuid)
+        XCTAssertEqual(service.messages.first(where: { $0.text == "first-preamble" })?.responseToMessageID, firstUserID)
+        XCTAssertEqual(service.messages.first(where: { $0.text == "second-preamble" })?.responseToMessageID, secondUserID)
         let cardMessages = service.messages.filter { !$0.toolCalls.isEmpty }
         XCTAssertEqual(cardMessages.count, 2)
         XCTAssertEqual(cardMessages.flatMap(\.toolCalls).map(\.name).sorted(), ["first_tool", "second_tool"])
@@ -211,6 +215,7 @@ final class MessageServiceConversationTests: XCTestCase {
             let isFirstRequest = call.name == "first_tool"
             XCTAssertEqual(call.result, isFirstRequest ? "first-result" : "second-result")
             XCTAssertEqual(message.text, isFirstRequest ? "first-preamble" : "second-preamble")
+            XCTAssertEqual(message.responseToMessageID, isFirstRequest ? firstUserID : secondUserID)
         }
 
         XCTAssertEqual(service.bufferedEventCountForTesting, 0)
@@ -534,6 +539,10 @@ final class MessageServiceConversationTests: XCTestCase {
         XCTAssertTrue(service.messages.contains(where: { $0.text == "unfinished answer" }))
         let decoded = try JSONDecoder().decode(Message.self, from: JSONEncoder().encode(user))
         XCTAssertTrue(decoded.wasResponseStopped)
+        let partial = try XCTUnwrap(service.messages.first(where: { $0.text == "unfinished answer" }))
+        XCTAssertEqual(partial.responseToMessageID, messageID)
+        let decodedPartial = try JSONDecoder().decode(Message.self, from: JSONEncoder().encode(partial))
+        XCTAssertEqual(decodedPartial.responseToMessageID, messageID)
 
         let next = service.sendOperation(message: "next prompt", stream: true)
         try await next.waitUntilEstablished()
