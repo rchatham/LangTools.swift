@@ -24,6 +24,8 @@ private struct PendingToolCallIdentity {
     let selectionID: String?
     let anchorMessageID: UUID
     let uiCallID: String
+    let name: String?
+    let arguments: String?
 }
 
 @MainActor
@@ -31,12 +33,20 @@ private final class RequestToolCallTracker {
     private var pendingCalls: [PendingToolCallIdentity] = []
     private var toolAnchorMessageIDs: [UUID] = []
 
-    func append(selectionID: String?, anchorMessageID: UUID, uiCallID: String) {
+    func append(
+        selectionID: String?,
+        anchorMessageID: UUID,
+        uiCallID: String,
+        name: String?,
+        arguments: String?
+    ) {
         pendingCalls.append(
             PendingToolCallIdentity(
                 selectionID: selectionID.flatMap { $0.isEmpty ? nil : $0 },
                 anchorMessageID: anchorMessageID,
-                uiCallID: uiCallID
+                uiCallID: uiCallID,
+                name: name,
+                arguments: arguments
             )
         )
         recordToolAnchor(anchorMessageID)
@@ -671,7 +681,9 @@ extension MessageService {
                     toolCallTracker?.append(
                         selectionID: selection.id,
                         anchorMessageID: anchor.uuid,
-                        uiCallID: uiCallID
+                        uiCallID: uiCallID,
+                        name: selection.name,
+                        arguments: selection.arguments.isEmpty ? nil : selection.arguments
                     )
                 }
                 updatedMessage = anchor
@@ -702,7 +714,7 @@ extension MessageService {
                             responseToMessageID: responseToMessageID,
                             generatedMessageIDs: &generatedMessageIDs
                         )
-                        appendOrphanToolCompletion(result, to: anchor)
+                        appendOrphanToolCompletion(result, identity: identity, to: anchor)
                         toolCallTracker.recordToolAnchor(anchor.uuid)
                         toolBreakOccurred = anchor.uuid == anchorMessageID
                         updatedMessage = anchor
@@ -792,13 +804,14 @@ extension MessageService {
 
     private func appendOrphanToolCompletion(
         _ result: any LangToolsToolSelectionResult,
+        identity: PendingToolCallIdentity?,
         to message: Message
     ) {
         message.toolCalls.append(
             ChatToolCall(
-                id: UUID().uuidString,
-                name: "tool",
-                arguments: nil,
+                id: identity?.uiCallID ?? UUID().uuidString,
+                name: identity?.name ?? "tool",
+                arguments: identity?.arguments,
                 status: result.is_error ? .failure : .success,
                 result: result.result
             )

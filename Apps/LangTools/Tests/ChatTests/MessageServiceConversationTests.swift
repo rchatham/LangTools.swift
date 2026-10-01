@@ -563,7 +563,10 @@ final class MessageServiceConversationTests: XCTestCase {
         calls = service.messages.flatMap(\.toolCalls)
         XCTAssertEqual(calls.first(where: { $0.id == idLessCallID })?.status, .success)
         XCTAssertEqual(calls.first(where: { $0.id == idLessCallID })?.result, "id-less result")
-        XCTAssertEqual(calls.first(where: { $0.id != idLessCallID })?.result, "identified orphan")
+        let unknownCompletion = calls.first(where: { $0.id != idLessCallID })
+        XCTAssertEqual(unknownCompletion?.name, "tool")
+        XCTAssertNil(unknownCompletion?.arguments)
+        XCTAssertEqual(unknownCompletion?.result, "identified orphan")
     }
 
     func testBackToBackToolCallbacksPublishPendingBeforeSuccess() async throws {
@@ -602,7 +605,12 @@ final class MessageServiceConversationTests: XCTestCase {
         for _ in 0..<100 where client.registeredRequestCount < 1 {
             try await Task.sleep(for: .milliseconds(5))
         }
-        client.emitToolCalled(for: "missing tracked call", toolName: "removed_tool", selectionID: "tracked")
+        client.emitToolCalled(
+            for: "missing tracked call",
+            toolName: "removed_tool",
+            arguments: #"{"removed":true}"#,
+            selectionID: "tracked"
+        )
         for _ in 0..<100 where service.messages.flatMap(\.toolCalls).isEmpty {
             try await Task.sleep(for: .milliseconds(5))
         }
@@ -641,8 +649,11 @@ final class MessageServiceConversationTests: XCTestCase {
         XCTAssertEqual(calls.count, 2)
         XCTAssertEqual(calls.first(where: { $0.id == remainingCallID })?.status, .success)
         XCTAssertEqual(calls.first(where: { $0.id == remainingCallID })?.result, "remaining result")
-        XCTAssertEqual(calls.first(where: { $0.id != remainingCallID })?.status, .success)
-        XCTAssertEqual(calls.first(where: { $0.id != remainingCallID })?.result, "orphan result")
+        let orphanCall = calls.first(where: { $0.id != remainingCallID })
+        XCTAssertEqual(orphanCall?.name, "removed_tool")
+        XCTAssertEqual(orphanCall?.arguments, #"{"removed":true}"#)
+        XCTAssertEqual(orphanCall?.status, .success)
+        XCTAssertEqual(orphanCall?.result, "orphan result")
         XCTAssertEqual(service.messages.filter { !$0.toolCalls.isEmpty }.count, 1)
     }
 
@@ -655,7 +666,12 @@ final class MessageServiceConversationTests: XCTestCase {
         for _ in 0..<100 where client.registeredRequestCount < 1 {
             try await Task.sleep(for: .milliseconds(5))
         }
-        client.emitToolCalled(for: request, toolName: "removed_tool", selectionID: "tracked")
+        client.emitToolCalled(
+            for: request,
+            toolName: "removed_tool",
+            arguments: #"{"removed":true}"#,
+            selectionID: "tracked"
+        )
         for _ in 0..<100 where service.messages.flatMap(\.toolCalls).isEmpty {
             try await Task.sleep(for: .milliseconds(5))
         }
@@ -679,6 +695,8 @@ final class MessageServiceConversationTests: XCTestCase {
         let orphanIndex = try XCTUnwrap(service.messages.firstIndex(where: { !$0.toolCalls.isEmpty }))
         let textIndex = try XCTUnwrap(service.messages.firstIndex(where: { $0.uuid == textAnchorID }))
         XCTAssertLessThan(orphanIndex, textIndex)
+        XCTAssertEqual(service.messages[orphanIndex].toolCalls.first?.name, "removed_tool")
+        XCTAssertEqual(service.messages[orphanIndex].toolCalls.first?.arguments, #"{"removed":true}"#)
         XCTAssertEqual(service.messages[orphanIndex].toolCalls.first?.result, "orphan result")
         XCTAssertEqual(service.messages[textIndex].text, "first second")
         XCTAssertTrue(service.messages[textIndex].toolCalls.isEmpty)
@@ -1635,7 +1653,12 @@ private final class ControlledToolEventNetworkStub: NetworkClientProtocol {
         }
     }
 
-    func emitToolCalled(for message: String, toolName: String, selectionID: String? = nil) {
+    func emitToolCalled(
+        for message: String,
+        toolName: String,
+        arguments: String = "{}",
+        selectionID: String? = nil
+    ) {
         guard let request = requests[message] else {
             XCTFail("Missing request for \(message)")
             return
@@ -1645,7 +1668,7 @@ private final class ControlledToolEventNetworkStub: NetworkClientProtocol {
                 TestToolSelection(
                     id: selectionID ?? message,
                     name: toolName,
-                    arguments: "{}"
+                    arguments: arguments
                 )
             )
         )
