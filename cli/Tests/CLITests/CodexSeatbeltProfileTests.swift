@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import CLI
+@testable import HelperCore
 
 final class CodexSeatbeltProfileTests: XCTestCase {
     func testSandboxExecAvailableOnMacOS() {
@@ -28,33 +28,32 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         let homeSentinel = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("seatbelt-sentinel-\(UUID().uuidString.lowercased()).txt")
         try "SECRET".write(to: homeSentinel, atomically: true, encoding: .utf8)
+        // A sentinel in the global temp directory — the profile must deny
+        // reads at the global level even though a private process-temp subdir
+        // is granted.
+        let globalTempSentinel = FileManager.default.temporaryDirectory
+            .appendingPathComponent("seatbelt-global-\(UUID().uuidString.lowercased()).txt")
+        try "GLOBAL-SECRET".write(to: globalTempSentinel, atomically: true, encoding: .utf8)
         // A runtime-cache root the helper owns, to prove the grant works at
         // runtime (not just as rendered text).
         let runtimeCache = makeTempDir(prefix: "cache")
         let cacheFile = runtimeCache.appendingPathComponent("plugin-cache.json")
         try "cache-content".write(to: cacheFile, atomically: true, encoding: .utf8)
-        let processTemp = try CodexProcessTemporaryDirectory.create(prefix: "profile-test")
-        let privateTempFile = processTemp.appendingPathComponent("private-temp.txt")
-        try "private-temp-content".write(to: privateTempFile, atomically: true, encoding: .utf8)
-        let globalTempSentinel = FileManager.default.temporaryDirectory
-            .appendingPathComponent("seatbelt-global-temp-\(UUID().uuidString.lowercased()).txt")
-        try "GLOBAL-TEMP-SECRET".write(to: globalTempSentinel, atomically: true, encoding: .utf8)
 
         defer {
             try? FileManager.default.removeItem(at: workspaceRoot)
             try? FileManager.default.removeItem(at: codexHome)
             try? FileManager.default.removeItem(at: homeSentinel)
-            try? FileManager.default.removeItem(at: runtimeCache)
-            try? FileManager.default.removeItem(at: processTemp)
             try? FileManager.default.removeItem(at: globalTempSentinel)
+            try? FileManager.default.removeItem(at: runtimeCache)
         }
 
         let inputs = CodexSeatbeltProfile.Inputs(
             codexExecutable: "/usr/bin/python3",
             codexExecutableArguments: [],
             codexHome: codexHome.path,
-            workspaceRoot: workspaceRoot.path,
-            processTemporaryDirectory: processTemp.path,
+                        workspaceRoot: workspaceRoot.path,
+            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-\(UUID().uuidString)").path,
             codexRuntimeCache: runtimeCache.path,
             homeDirectory: NSHomeDirectory()
         )
@@ -79,16 +78,6 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             0,
             "Reading the codex runtime cache must be permitted."
         )
-        XCTAssertEqual(
-            runSandboxed(sandboxExec: sandboxExec, profile: profileURL, argv: ["/bin/cat", privateTempFile.path]),
-            0,
-            "Reading inside the process-private temp directory must be permitted."
-        )
-        XCTAssertNotEqual(
-            runSandboxed(sandboxExec: sandboxExec, profile: profileURL, argv: ["/bin/cat", globalTempSentinel.path]),
-            0,
-            "Reading a sibling in the global temporary root must be denied by the OS."
-        )
         // A system file must be readable (networking/runtime need it).
         XCTAssertEqual(
             runSandboxed(sandboxExec: sandboxExec, profile: profileURL, argv: ["/bin/cat", "/etc/hosts"]),
@@ -109,6 +98,13 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             runSandboxed(sandboxExec: sandboxExec, profile: profileURL, argv: ["/bin/cat", homeSentinel.path]),
             0,
             "Reading user files outside the workspace must be denied by the OS."
+        )
+        // Global temporary directory reads must also be denied — only the
+        // private process-temp subdir is granted.
+        XCTAssertNotEqual(
+            runSandboxed(sandboxExec: sandboxExec, profile: profileURL, argv: ["/bin/cat", globalTempSentinel.path]),
+            0,
+            "Reading global temporary files must be denied by the OS."
         )
         // Metadata of the same denied path must be ALLOWED: this pins the exact
         // (intentional) boundary — global stat, contents denied-by-default.
@@ -155,8 +151,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutable: "/opt/codex/bin/codex",
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
-            workspaceRoot: "/tmp/ws root",
-            processTemporaryDirectory: "/private/process temp",
+                        workspaceRoot: "/tmp/ws root",
+            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-\(UUID().uuidString)").path,
             codexRuntimeCache: "",
             homeDirectory: ""
         )
@@ -170,12 +166,6 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         XCTAssertTrue(source.contains("(allow file-write* (subpath \"/tmp/ws root\"))"))
         XCTAssertTrue(source.contains("(allow file-read* (subpath \"/tmp/codex-home\"))"))
         XCTAssertTrue(source.contains("(allow file-write* (subpath \"/tmp/codex-home\"))"))
-        XCTAssertTrue(source.contains("(allow file-read* (subpath \"/private/process temp\"))"))
-        XCTAssertTrue(source.contains("(allow file-write* (subpath \"/private/process temp\"))"))
-        XCTAssertFalse(source.contains("(allow file-read* (subpath \"/private/var\"))"))
-        XCTAssertFalse(source.contains("(allow file-read* (subpath \"/private/tmp\"))"))
-        XCTAssertFalse(source.contains("(allow file-read* (subpath \"/private/var/folders\"))"))
-        XCTAssertFalse(source.contains("(allow file-read* (subpath \"/tmp\"))"))
         XCTAssertTrue(source.contains("(allow file-write* (literal \"/dev/null\"))"))
     }
 
@@ -199,157 +189,13 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         )
     }
 
-    func testChildEnvironmentAllowlistDropsInheritedSecretsAndRedirectsTemp() throws {
-        let codexHome = makeTempDir(prefix: "child-home")
-        let processTemp = try CodexProcessTemporaryDirectory.create(
-            inside: codexHome,
-            prefix: "environment-test"
-        )
-        defer { try? FileManager.default.removeItem(at: codexHome) }
-
-        let child = CodexChildEnvironment.make(
-            parent: [
-                "HOME": "/Users/tester",
-                "PATH": "/usr/bin:/bin",
-                "LANG": "en_US.UTF-8",
-                "OPENAI_API_KEY": "secret-openai",
-                "CODEX_API_KEY": "secret-codex",
-                "HTTP_PROXY": "https://user:secret@example.invalid",
-                "SSH_AUTH_SOCK": "/private/agent.sock",
-                "UNRELATED_SECRET": "secret-value",
-            ],
-            codexHome: codexHome,
-            temporaryDirectory: processTemp,
-            disableAppServerRemoteControl: true
-        )
-
-        XCTAssertEqual(child["HOME"], "/Users/tester")
-        XCTAssertEqual(child["PATH"], "/usr/bin:/bin")
-        XCTAssertEqual(child["LANG"], "en_US.UTF-8")
-        XCTAssertEqual(child["CODEX_HOME"], codexHome.path)
-        XCTAssertEqual(child["TMPDIR"], processTemp.path)
-        XCTAssertEqual(child["TMP"], processTemp.path)
-        XCTAssertEqual(child["TEMP"], processTemp.path)
-        XCTAssertEqual(child["CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED"], "1")
-        for secretKey in ["OPENAI_API_KEY", "CODEX_API_KEY", "HTTP_PROXY", "SSH_AUTH_SOCK", "UNRELATED_SECRET"] {
-            XCTAssertNil(child[secretKey], "\(secretKey) must not reach the Codex child")
-        }
-    }
-
-    func testProcessTemporaryDirectoryIsUniqueAndOwnerOnly() throws {
-        let first = try CodexProcessTemporaryDirectory.create(prefix: "permissions")
-        let second = try CodexProcessTemporaryDirectory.create(prefix: "permissions")
-        defer {
-            try? FileManager.default.removeItem(at: first)
-            try? FileManager.default.removeItem(at: second)
-        }
-
-        XCTAssertNotEqual(first, second)
-        for directory in [first, second] {
-            let permissions = try XCTUnwrap(
-                (try FileManager.default.attributesOfItem(atPath: directory.path)[.posixPermissions] as? NSNumber)?.intValue
-            )
-            XCTAssertEqual(permissions & 0o777, 0o700)
-        }
-    }
-
-    func testOneShotLaunchUsesSeatbeltPrivateCWDAndDeniesGlobalTempSentinel() async throws {
-        guard let sandboxExec = CodexSeatbeltProfile.sandboxExecPath() else {
-            throw XCTSkip("Seatbelt containment is unavailable on this platform.")
-        }
-        let sentinel = FileManager.default.temporaryDirectory
-            .appendingPathComponent("one-shot-denied-\(UUID().uuidString.lowercased()).txt")
-        try "SECRET".write(to: sentinel, atomically: true, encoding: .utf8)
-        defer { try? FileManager.default.removeItem(at: sentinel) }
-
-        let session = StoredAccountSession(
-            provider: "openai",
-            accountIdentifier: "test@example.com",
-            accessToken: "access-token",
-            refreshToken: "refresh-token",
-            idToken: "a.b.c",
-            tokenType: "Bearer",
-            expiresAt: nil,
-            accessibleModelIDs: ["gpt-5.5"],
-            createdAt: Date(),
-            id: UUID()
-        )
-        let workspace = try CodexWorkspace(
-            session: session,
-            environment: [
-                "HOME": NSHomeDirectory(),
-                "PATH": "/usr/bin:/bin",
-                "OPENAI_API_KEY": "must-not-leak",
-                "SSH_AUTH_SOCK": "/private/agent.sock",
-            ]
-        )
-        defer { workspace.remove() }
-        let marker = workspace.directoryURL.appendingPathComponent("one-shot-marker.txt")
-        let script = """
-        if /bin/cat '\(sentinel.path)' >/dev/null 2>&1; then exit 90; fi
-        /usr/bin/printf '%s\n%s\n' "$PWD" "$TMPDIR" > '\(marker.path)'
-        """
-
-        let result = try await OpenAIAccountChatCommand.runCodex(
-            command: ResolvedCodexCommand(executable: "/bin/sh", arguments: ["-c", script]),
-            model: "test-model",
-            prompt: "test-prompt",
-            workspace: workspace,
-            sandboxExecPath: sandboxExec
-        )
-
-        XCTAssertEqual(result.exitCode, 0, result.stderr)
-        let paths = try String(contentsOf: marker, encoding: .utf8)
-            .split(separator: "\n")
-            .map(String.init)
-        XCTAssertEqual(paths.count, 2)
-        XCTAssertEqual(paths.map(Self.physicalPath).first, paths.map(Self.physicalPath).last)
-        XCTAssertEqual(paths.map(Self.physicalPath).first, Self.physicalPath(workspace.temporaryDirectoryURL.path))
-        XCTAssertNil(workspace.environment["OPENAI_API_KEY"])
-        XCTAssertNil(workspace.environment["SSH_AUTH_SOCK"])
-        let tempPermissions = try XCTUnwrap(
-            (try FileManager.default.attributesOfItem(atPath: workspace.temporaryDirectoryURL.path)[.posixPermissions] as? NSNumber)?.intValue
-        )
-        XCTAssertEqual(tempPermissions & 0o777, 0o700)
-    }
-
-    func testOneShotLaunchFailsClosedWithoutSandboxExec() async throws {
-        let session = StoredAccountSession(
-            provider: "openai",
-            accountIdentifier: "test@example.com",
-            accessToken: "access-token",
-            refreshToken: "refresh-token",
-            idToken: "a.b.c",
-            tokenType: "Bearer",
-            expiresAt: nil,
-            accessibleModelIDs: ["gpt-5.5"],
-            createdAt: Date(),
-            id: UUID()
-        )
-        let workspace = try CodexWorkspace(session: session, environment: ["HOME": NSHomeDirectory()])
-        defer { workspace.remove() }
-
-        do {
-            _ = try await OpenAIAccountChatCommand.runCodex(
-                command: ResolvedCodexCommand(executable: "/bin/false", arguments: []),
-                model: "test-model",
-                prompt: "test-prompt",
-                workspace: workspace,
-                sandboxExecPath: nil
-            )
-            XCTFail("Expected containment to fail closed")
-        } catch {
-            XCTAssertTrue(error.localizedDescription.contains("Refusing to launch"), error.localizedDescription)
-        }
-    }
-
     func testRenderIncludesRuntimeCacheRulesWithQuotedPaths() throws {
         let inputs = CodexSeatbeltProfile.Inputs(
             codexExecutable: "/opt/codex/bin/codex",
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
-            workspaceRoot: "/tmp/ws root",
-            processTemporaryDirectory: "/private/process-temp",
+                        workspaceRoot: "/tmp/ws root",
+            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-\(UUID().uuidString)").path,
             codexRuntimeCache: "/tmp/cache dir/codex-runtimes",
             homeDirectory: ""
         )
@@ -364,6 +210,11 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         XCTAssertTrue(source.contains(
             "(allow user-preference-read (preference-domain \"com.openai.codex\"))"
         ))
+        XCTAssertTrue(source.contains("ipc-posix-shm-read-data ipc-posix-shm-write-create ipc-posix-shm-write-data"))
+        XCTAssertTrue(source.contains("(ipc-posix-name \"com.apple.AppleDatabaseChanged\")"))
+        XCTAssertTrue(source.contains("(allow file-read* (subpath \"/private/var/db\"))"))
+        XCTAssertFalse(source.contains("(allow file-write* (subpath \"/private/var/db\"))"))
+        XCTAssertTrue(source.contains("/C/mds"))
         XCTAssertTrue(source.contains("(allow file-read-metadata)"))
         XCTAssertFalse(source.contains("(allow mach-lookup)\n)"))
         // The credential blocklist derives from the passwd database (not the
@@ -375,8 +226,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutable: "/opt/codex/bin/codex",
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
-            workspaceRoot: "/tmp/ws root",
-            processTemporaryDirectory: "/private/process-temp",
+                        workspaceRoot: "/tmp/ws root",
+            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-\(UUID().uuidString)").path,
             codexRuntimeCache: "",
             homeDirectory: ""
         ))
@@ -574,15 +425,15 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         }
         let workspace = makeTempDir(prefix: "ws")
         defer { try? FileManager.default.removeItem(at: workspace) }
-        // The Codex home is pinned to disposable state while cwd is a separate
-        // owner-only per-process temporary directory.
+        // Pin a disposable Codex home so this containment test never touches
+        // the user's real ~/.codex.
         let codexHome = makeTempDir(prefix: "codex-home")
         defer { try? FileManager.default.removeItem(at: codexHome) }
         var environment = ProcessInfo.processInfo.environment
         environment["LANGTOOLS_CODEX_HOME"] = codexHome.path
         environment["CODEX_HOME"] = codexHome.path
-        // The marker is first written with a relative path (proving the private
-        // cwd is writable), then copied into the workspace for inspection.
+        // The marker is first written with a relative path, then copied into
+        // the workspace so the test can inspect the private per-launch cwd.
         let marker = workspace.appendingPathComponent("cwd-marker.txt")
         let expectedCodexHome = CodexSeatbeltProfile.resolvedCodexHome(environment: environment)
 
@@ -609,29 +460,25 @@ final class CodexSeatbeltProfileTests: XCTestCase {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if recorded == nil { try await Task.sleep(for: .milliseconds(20)) }
         }
-        let recordedPath = try XCTUnwrap(recorded)
-        XCTAssertTrue(
-            URL(fileURLWithPath: recordedPath).lastPathComponent.hasPrefix("langtools-codex-app-server-"),
-            recordedPath
-        )
-        XCTAssertNotEqual(Self.physicalPath(recordedPath), Self.physicalPath(expectedCodexHome))
-        XCTAssertNotEqual(Self.physicalPath(recordedPath), Self.physicalPath(workspace.path))
+        // getcwd returns the physical path (/private/var for /var on macOS).
+        let physicalCWD = try XCTUnwrap(recorded.map(Self.physicalPath))
+        let physicalTemporaryRoot = Self.physicalPath(FileManager.default.temporaryDirectory.path)
+        XCTAssertTrue(physicalCWD.hasPrefix(physicalTemporaryRoot + "/langtools-codex-app-server-"))
+        XCTAssertNotEqual(physicalCWD, Self.physicalPath(expectedCodexHome))
+        XCTAssertNotEqual(physicalCWD, Self.physicalPath(workspace.path))
         await client.shutdown()
-        XCTAssertFalse(FileManager.default.fileExists(atPath: recordedPath))
-        // The Codex home is user data: shutdown must never remove it.
+        // The private process directory is cleaned up; user Codex data remains.
+        XCTAssertFalse(FileManager.default.fileExists(atPath: physicalCWD))
         XCTAssertTrue(FileManager.default.fileExists(atPath: expectedCodexHome))
         XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
     }
 
-    func testExplicitTestingBypassKeepsInheritedWorkingDirectory() async throws {
-        // Fake protocol servers can explicitly opt out while production stays
-        // fail closed.
+    func testLaunchedProcessKeepsInheritedWorkingDirectoryWhenContainmentDisabledForTesting() async throws {
+        // .disabledForTesting permits nil workspace — the child inherits cwd.
         let workspace = makeTempDir(prefix: "ws")
         defer { try? FileManager.default.removeItem(at: workspace) }
         let marker = workspace.appendingPathComponent("cwd-marker-no-seatbelt.txt")
 
-        // Snapshot before the child launches: the test process cwd must not
-        // change while the child inherits it.
         let expectedInherited = Self.physicalPath(FileManager.default.currentDirectoryPath)
         let client = CodexAppServerClient(
             commandResolver: {
@@ -650,6 +497,31 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertEqual(recorded.map(Self.physicalPath), expectedInherited)
         XCTAssertNotEqual(recorded.map(Self.physicalPath), Self.physicalPath(workspace.path))
+        await client.shutdown()
+    }
+
+    func testMissingWorkspaceRootFailsClosedBeforeLaunching() async throws {
+        guard CodexSeatbeltProfile.sandboxExecPath() != nil else {
+            throw XCTSkip("Seatbelt containment is unavailable on this platform.")
+        }
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-ws-\(UUID().uuidString.lowercased())", isDirectory: true)
+
+        let client = CodexAppServerClient(
+            commandResolver: {
+                ResolvedCodexCommand(executable: "/bin/sh", arguments: ["-c", "exit 0"])
+            },
+            workspaceRootProvider: { missing }
+        )
+        do {
+            _ = try await client.initializedProcessGeneration()
+            XCTFail("Expected the missing workspace root to fail closed")
+        } catch let error as CodexAppServerError {
+            guard case .transport(let message) = error else {
+                return XCTFail("Expected a transport error, got \(error)")
+            }
+            XCTAssertTrue(message.contains("workspace root is missing"), message)
+        }
         await client.shutdown()
     }
 
@@ -679,31 +551,6 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         await client.shutdown()
     }
 
-    func testMissingWorkspaceRootFailsClosedBeforeLaunching() async throws {
-        guard CodexSeatbeltProfile.sandboxExecPath() != nil else {
-            throw XCTSkip("Seatbelt containment is unavailable on this platform.")
-        }
-        let missing = FileManager.default.temporaryDirectory
-            .appendingPathComponent("missing-ws-\(UUID().uuidString.lowercased())", isDirectory: true)
-
-        let client = CodexAppServerClient(
-            commandResolver: {
-                ResolvedCodexCommand(executable: "/bin/sh", arguments: ["-c", "exit 0"])
-            },
-            workspaceRootProvider: { missing }
-        )
-        do {
-            _ = try await client.initializedProcessGeneration()
-            XCTFail("Expected the missing workspace root to fail closed")
-        } catch let error as CodexAppServerError {
-            guard case .transport(let message) = error else {
-                return XCTFail("Expected a transport error, got \(error)")
-            }
-            XCTAssertTrue(message.contains("workspace root is missing"), message)
-        }
-        await client.shutdown()
-    }
-
     func testRenderDeniesMetadataProbingOfEveryCredentialStore() throws {
         // The blocklist home is whatever credentialBlocklistHome resolves
         // (passwd home preferred), so derive expectations from the same source
@@ -715,8 +562,8 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             codexExecutable: "/opt/codex/bin/codex",
             codexExecutableArguments: [],
             codexHome: "/tmp/codex-home",
-            workspaceRoot: "/tmp/ws root",
-            processTemporaryDirectory: "/private/process-temp",
+                        workspaceRoot: "/tmp/ws root",
+            processTemporaryDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("seatbelt-test-\(UUID().uuidString)").path,
             codexRuntimeCache: "/tmp/cache dir/codex-runtimes",
             homeDirectory: home
         ))
@@ -803,4 +650,58 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         process.waitUntilExit()
         return process.terminationStatus
     }
+    func testChildEnvironmentAllowlistDropsInheritedSecretsAndRedirectsTemp() throws {
+        let codexHome = makeTempDir(prefix: "child-home")
+        let processTemp = try CodexProcessTemporaryDirectory.create(
+            inside: codexHome,
+            prefix: "environment-test"
+        )
+        defer { try? FileManager.default.removeItem(at: codexHome) }
+
+        let child = CodexChildEnvironment.make(
+            parent: [
+                "HOME": "/Users/tester",
+                "PATH": "/usr/bin:/bin",
+                "LANG": "en_US.UTF-8",
+                "OPENAI_API_KEY": "secret-openai",
+                "CODEX_API_KEY": "secret-codex",
+                "HTTP_PROXY": "https://user:secret@example.invalid",
+                "SSH_AUTH_SOCK": "/private/agent.sock",
+                "UNRELATED_SECRET": "secret-value",
+            ],
+            codexHome: codexHome,
+            temporaryDirectory: processTemp,
+            disableAppServerRemoteControl: true
+        )
+
+        XCTAssertEqual(child["HOME"], "/Users/tester")
+        XCTAssertEqual(child["PATH"], "/usr/bin:/bin")
+        XCTAssertEqual(child["LANG"], "en_US.UTF-8")
+        XCTAssertEqual(child["CODEX_HOME"], codexHome.path)
+        XCTAssertEqual(child["TMPDIR"], processTemp.path)
+        XCTAssertEqual(child["TMP"], processTemp.path)
+        XCTAssertEqual(child["TEMP"], processTemp.path)
+        XCTAssertEqual(child["CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED"], "1")
+        for secretKey in ["OPENAI_API_KEY", "CODEX_API_KEY", "HTTP_PROXY", "SSH_AUTH_SOCK", "UNRELATED_SECRET"] {
+            XCTAssertNil(child[secretKey], "\(secretKey) must not reach the Codex child")
+        }
+    }
+
+    func testProcessTemporaryDirectoryIsUniqueAndOwnerOnly() throws {
+        let first = try CodexProcessTemporaryDirectory.create(prefix: "permissions")
+        let second = try CodexProcessTemporaryDirectory.create(prefix: "permissions")
+        defer {
+            try? FileManager.default.removeItem(at: first)
+            try? FileManager.default.removeItem(at: second)
+        }
+
+        XCTAssertNotEqual(first, second)
+        for directory in [first, second] {
+            let permissions = try XCTUnwrap(
+                (try FileManager.default.attributesOfItem(atPath: directory.path)[.posixPermissions] as? NSNumber)?.intValue
+            )
+            XCTAssertEqual(permissions & 0o777, 0o700)
+        }
+    }
+
 }

@@ -25,6 +25,15 @@ struct HelperModelsResponse: Codable {
     let models: [String]
 }
 
+struct HelperPairingExchangeRequest: Decodable {
+    let code: String
+}
+
+struct HelperPairingExchangeResponse: Codable {
+    let port: Int
+    let token: String
+}
+
 struct HelperChatRequest: Decodable {
     let provider: String
     let model: String
@@ -78,13 +87,13 @@ private struct HelperCodingKey: CodingKey {
     init?(intValue: Int) { return nil }
 }
 
-struct HelperChatMessage: Codable, Equatable, Sendable {
-    let role: String
-    let content: String
-    let tool_calls: [HelperToolCall]?
-    let tool_call_id: String?
+public struct HelperChatMessage: Codable, Equatable, Sendable {
+    public let role: String
+    public let content: String
+    public let tool_calls: [HelperToolCall]?
+    public let tool_call_id: String?
 
-    init(
+    public init(
         role: String,
         content: String,
         tool_calls: [HelperToolCall]? = nil,
@@ -97,14 +106,14 @@ struct HelperChatMessage: Codable, Equatable, Sendable {
     }
 }
 
-struct HelperToolCall: Codable, Equatable, Sendable {
-    let id: String
-    let type: String
-    let function: Function
+public struct HelperToolCall: Codable, Equatable, Sendable {
+    public let id: String
+    public let type: String
+    public let function: Function
 
-    struct Function: Codable, Equatable, Sendable {
-        let name: String
-        let arguments: String
+    public struct Function: Codable, Equatable, Sendable {
+        public let name: String
+        public let arguments: String
     }
 }
 
