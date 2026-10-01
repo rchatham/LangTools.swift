@@ -22,7 +22,11 @@ Adding a single-vendor OpenAI-compatible provider with a fixed catalog is theref
 
 Worse, both gateways use the same `creator/model` slug format, so a prefix or "contains a slash" heuristic cannot tell an OpenRouter request from a Vercel request when both are registered. `LangToolchain.perform` picks `langTools.values.first(where:)` on a dictionary, so overlapping validators resolve in an unspecified order.
 
-Recommended fix (core, additive): give `OpenAIModel` an optional, non-encoded provider tag, set through a new `init(customModelID:provider:)`. A gateway validator then checks the tag instead of a model list. `OpenAIModel.==` compares `id` only today; it should also compare the tag, or two gateways' identically named models will collide in sets and comparisons. Also make `LangToolchain` iterate in registration order (an array alongside the dictionary) so overlaps resolve deterministically.
+Recommended fix (core, additive): give `OpenAIModel` an optional, non-encoded provider tag, set through a new `init(customModelID:provider:)`. A gateway validator then checks the tag instead of a model list. `OpenAIModel.==` compares `id` only today, and the type is not `Hashable`. Equality should also compare the tag, or two gateways' identically named models become indistinguishable; any `Hashable` conformance added later must hash the tag as well so that equal values hash equally. This is a behavior change for code that relies on id-only equality, so it belongs in its own commit with tests.
+
+The tag is deliberately not encoded, so it does not survive a round trip through `Codable` or a persisted model string. Routing is decided on the request object built in process, before encoding, so outbound requests are unaffected. Anything reconstructed from a stored ID (the app's `UserDefaults.model`, a replayed conversation) must be re-tagged through the provider's own model type, which is the same step the app already performs when it maps its `Model` enum to a request. Treat this as a documented limitation of the tag.
+
+Also make `LangToolchain` iterate in registration order (an array alongside the dictionary) so overlaps resolve deterministically.
 
 ### 2. `ChatCompletionResponse` decoding is stricter than the gateways' output
 
@@ -45,6 +49,8 @@ Recommended fix (core, additive): give `OpenAIModel` an optional, non-encoded pr
 `OpenAIConfiguration` has no custom header support. OpenRouter's attribution headers (`HTTP-Referer`, `X-Title`) are optional but expected by its dashboard.
 
 Recommended fix (core, additive): an `additionalParameters: [String: JSON]?` on `ChatCompletionRequest` that is merged into the encoded body, and an `additionalHeaders: [String: String]` on `OpenAIConfiguration`. Both benefit every OpenAI-compatible provider.
+
+Precedence must be explicit. Typed properties win on any key collision, and the keys that control routing and tool wiring (`model`, `messages`, `tools`, `tool_choice`, `stream`, `response_format`) are reserved: a value for one of them in `additionalParameters` is rejected at encode time with an `invalidArgument` error rather than silently overriding the typed field. The same applies to `additionalHeaders` and `Authorization`. This keeps the escape hatch from becoming an override path for a caller mistake or untrusted configuration.
 
 ### 5. Model listing is not reusable
 
@@ -93,8 +99,8 @@ The `Model.rawValue` format in the app is `route/slug`, split on the first slash
 
 ## Recommended sequencing
 
-1. **Core hardening, no new provider.** Optional usage-detail fields, `error` finish reason and lenient enum decoding, optional top-level `error` on the chat response, `additionalParameters` on `ChatCompletionRequest`, `additionalHeaders` on `OpenAIConfiguration`, provider tag on `OpenAIModel`, deterministic toolchain order. Cover each with a fixture under `Tests/TestUtils/Resources`. This is the only step that touches shared code and it is source-compatible.
-2. **OpenRouter target.** One key unlocks the most models, and its quirks (integer error codes, mid-stream errors, SSE comments, partial usage details) exercise every change from step 1. Ship with a models-list request, an opt-in live smoke test gated by an environment variable like `OllamaCloudIntegrationTests`, and the app and CLI wiring.
+1. **Core hardening, no new provider.** Optional usage-detail fields, `error` finish reason and lenient enum decoding, optional top-level `error` on the chat response, `additionalParameters` on `ChatCompletionRequest`, `additionalHeaders` on `OpenAIConfiguration`, provider tag on `OpenAIModel`, deterministic toolchain order. Cover each with a fixture under `Tests/TestUtils/Resources`. This is the only step that touches shared code. It compiles against existing callers, but the equality change on `OpenAIModel` is a behavior change and should be called out in the release notes.
+2. **OpenRouter target.** One key unlocks the most models, and its quirks (integer error codes, mid-stream errors, SSE comments, partial usage details) exercise every change from step 1. Ship with a models-list request, an opt-in live smoke test gated by its own environment variable (for example `LANGTOOLS_RUN_OPENROUTER_TESTS`, following the `OllamaCloudIntegrationTests` pattern), and the app and CLI wiring.
 3. **Vercel AI Gateway target.** Nearly identical shape to OpenRouter. If the two share more than the base URL and error type, extract an internal helper inside the OpenAI target rather than a third public module.
 4. **Single-vendor providers** from the table above, one at a time, in whatever order has demand. Each is a day of work once step 1 is in.
 5. **Optional: Anthropic-compatible path through the gateways.** Custom model IDs and header configuration on the `Anthropic` target.
