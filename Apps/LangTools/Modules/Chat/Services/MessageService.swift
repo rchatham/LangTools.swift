@@ -21,40 +21,62 @@ private enum SendUpdate {
 }
 
 private struct PendingToolCallIdentity {
+    let selectionID: String?
     let anchorMessageID: UUID
     let uiCallID: String
 }
 
 @MainActor
 private final class RequestToolCallTracker {
-    private var pendingCallsBySelectionID: [String: [PendingToolCallIdentity]] = [:]
-    private var pendingCallsWithoutSelectionID: [PendingToolCallIdentity] = []
+    private var pendingCalls: [PendingToolCallIdentity] = []
+    private var toolAnchorMessageIDs: [UUID] = []
 
     func append(selectionID: String?, anchorMessageID: UUID, uiCallID: String) {
-        let identity = PendingToolCallIdentity(anchorMessageID: anchorMessageID, uiCallID: uiCallID)
-        guard let selectionID, !selectionID.isEmpty else {
-            pendingCallsWithoutSelectionID.append(identity)
-            return
-        }
-        pendingCallsBySelectionID[selectionID, default: []].append(identity)
+        pendingCalls.append(
+            PendingToolCallIdentity(
+                selectionID: selectionID.flatMap { $0.isEmpty ? nil : $0 },
+                anchorMessageID: anchorMessageID,
+                uiCallID: uiCallID
+            )
+        )
+        recordToolAnchor(anchorMessageID)
     }
 
     func dequeue(selectionID: String) -> PendingToolCallIdentity? {
-        guard !selectionID.isEmpty else {
-            guard !pendingCallsWithoutSelectionID.isEmpty else { return nil }
-            return pendingCallsWithoutSelectionID.removeFirst()
-        }
-        guard var pendingCalls = pendingCallsBySelectionID[selectionID],
-              !pendingCalls.isEmpty
-        else { return nil }
-
-        let identity = pendingCalls.removeFirst()
-        if pendingCalls.isEmpty {
-            pendingCallsBySelectionID.removeValue(forKey: selectionID)
+        let index: Int?
+        if selectionID.isEmpty {
+            index = pendingCalls.firstIndex(where: { $0.selectionID == nil })
+                ?? pendingCalls.indices.first
         } else {
-            pendingCallsBySelectionID[selectionID] = pendingCalls
+            index = pendingCalls.firstIndex(where: { $0.selectionID == selectionID })
         }
-        return identity
+        guard let index else { return nil }
+        return pendingCalls.remove(at: index)
+    }
+
+    func dequeueEarliest() -> PendingToolCallIdentity? {
+        guard !pendingCalls.isEmpty else { return nil }
+        return pendingCalls.removeFirst()
+    }
+
+    func recordToolAnchor(_ messageID: UUID) {
+        guard toolAnchorMessageIDs.last != messageID else { return }
+        toolAnchorMessageIDs.append(messageID)
+    }
+
+    func latestToolAnchor(in messages: [Message]) -> Message? {
+        for messageID in toolAnchorMessageIDs.reversed() {
+            if let message = messages.first(where: {
+                $0.uuid == messageID && $0.isAssistant && !$0.toolCalls.isEmpty
+            }) {
+                return message
+            }
+        }
+        return nil
+    }
+
+    var trackedAnchorMessageIDs: Set<UUID> {
+        Set(toolAnchorMessageIDs)
     }
 }
 
@@ -352,6 +374,7 @@ public class MessageService {
                 toolCallTracker: toolCallTracker
             )
             if let anchorMessageID { assistantMessageIDs.insert(anchorMessageID) }
+            assistantMessageIDs.formUnion(toolCallTracker.trackedAnchorMessageIDs)
             clearToolHistoryIfNeeded(
                 in: assistantMessageIDs,
                 keepsToolCallsInHistory: keepsToolCallsInHistory
@@ -373,6 +396,7 @@ public class MessageService {
                 toolCallTracker: toolCallTracker
             )
             if let anchorMessageID { assistantMessageIDs.insert(anchorMessageID) }
+            assistantMessageIDs.formUnion(toolCallTracker.trackedAnchorMessageIDs)
             clearToolHistoryIfNeeded(
                 in: assistantMessageIDs,
                 keepsToolCallsInHistory: keepsToolCallsInHistory
@@ -507,7 +531,7 @@ extension MessageService {
         guard !events.isEmpty else { return }
 
         for event in events {
-            let updatedMessage: Message
+            let updatedMessage: Message?
             switch event {
             case .tool(.toolCalled(let selection)):
                 let anchor = eventAnchor(for: &anchorMessageID)
@@ -522,23 +546,39 @@ extension MessageService {
                 updatedMessage = anchor
 
             case .tool(.toolCompleted(let result)):
-                if let result,
-                   let identity = toolCallTracker?.dequeue(selectionID: result.tool_selection_id),
-                   let message = assistantMessage(withID: identity.anchorMessageID),
-                   let index = message.toolCalls.firstIndex(where: {
-                       $0.id == identity.uiCallID && $0.kind == .tool && $0.status == .pending
-                   }) {
-                    message.toolCalls[index].status = result.is_error ? .failure : .success
-                    message.toolCalls[index].result = result.result
-                    toolBreakOccurred = identity.anchorMessageID == anchorMessageID
-                    updatedMessage = message
+                if let toolCallTracker {
+                    let identity = result.map {
+                        toolCallTracker.dequeue(selectionID: $0.tool_selection_id)
+                    } ?? toolCallTracker.dequeueEarliest()
+                    if let identity,
+                       let message = assistantMessage(withID: identity.anchorMessageID),
+                       let index = message.toolCalls.firstIndex(where: {
+                           $0.id == identity.uiCallID && $0.kind == .tool && $0.status == .pending
+                       }) {
+                        if let result {
+                            message.toolCalls[index].status = result.is_error ? .failure : .success
+                            message.toolCalls[index].result = result.result
+                        } else {
+                            message.toolCalls[index].status = .failure
+                            message.toolCalls[index].result = "Tool call ended without a completion result."
+                        }
+                        toolBreakOccurred = identity.anchorMessageID == anchorMessageID
+                        updatedMessage = message
+                    } else if let result {
+                        let anchor = orphanToolCompletionAnchor(
+                            for: toolCallTracker,
+                            currentAnchorMessageID: anchorMessageID
+                        )
+                        appendOrphanToolCompletion(result, to: anchor)
+                        toolCallTracker.recordToolAnchor(anchor.uuid)
+                        toolBreakOccurred = anchor.uuid == anchorMessageID
+                        updatedMessage = anchor
+                    } else {
+                        updatedMessage = nil
+                    }
                 } else {
                     let anchor = eventAnchor(for: &anchorMessageID)
-                    if toolCallTracker == nil {
-                        anchor.applyToolEvent(.toolCompleted(result))
-                    } else if let result {
-                        appendOrphanToolCompletion(result, to: anchor)
-                    }
+                    anchor.applyToolEvent(.toolCompleted(result))
                     toolBreakOccurred = true
                     updatedMessage = anchor
                 }
@@ -555,6 +595,7 @@ extension MessageService {
                 updatedMessage = anchor
             }
 
+            guard let updatedMessage else { continue }
             if !keepsToolCallsInHistory {
                 updatedMessage.providerToolResults = [:]
                 updatedMessage.providerToolResultServices = [:]
@@ -570,6 +611,24 @@ extension MessageService {
         let anchor = Message(role: .assistant, contentType: .null)
         anchorMessageID = anchor.uuid
         messages.append(anchor)
+        return anchor
+    }
+
+    private func orphanToolCompletionAnchor(
+        for tracker: RequestToolCallTracker,
+        currentAnchorMessageID: UUID?
+    ) -> Message {
+        if let anchor = tracker.latestToolAnchor(in: messages) {
+            return anchor
+        }
+
+        let anchor = Message(role: .assistant, contentType: .null)
+        if let currentAnchorMessageID,
+           let currentIndex = messages.firstIndex(where: { $0.uuid == currentAnchorMessageID }) {
+            messages.insert(anchor, at: currentIndex)
+        } else {
+            messages.append(anchor)
+        }
         return anchor
     }
 

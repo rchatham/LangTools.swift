@@ -109,7 +109,7 @@ final class MessageServiceConversationTests: XCTestCase {
         XCTAssertEqual(call?.result, "Tool call ended without a completion result.")
     }
 
-    func testFailureMarksIncompleteCallOnEarlierSplitMessage() async {
+    func testCompletionWithoutResultPreservesItsImmediateFailureOnEarlierSplitMessage() async {
         let client = ToolEventNetworkStub(
             completesTool: false,
             emitsCompletionWithoutResult: true,
@@ -128,7 +128,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
         let call = service.messages.flatMap(\.toolCalls).first
         XCTAssertEqual(call?.status, .failure)
-        XCTAssertEqual(call?.result, "The tool follow-up failed.")
+        XCTAssertEqual(call?.result, "Tool call ended without a completion result.")
         XCTAssertTrue(service.messages.contains(where: { $0.text == "partial follow-up" }))
     }
 
@@ -158,6 +158,67 @@ final class MessageServiceConversationTests: XCTestCase {
         XCTAssertEqual(Set(toolMessages.compactMap { $0.toolCalls.first?.result }), ["first result", "second result"])
         assertToolMessage(before: "first response", hasName: "first_tool", result: "first result", in: service.messages)
         assertToolMessage(before: "second response", hasName: "second_tool", result: "second result", in: service.messages)
+    }
+
+    func testOrphanCompletionDoesNotAttachToAnotherConcurrentSendsToolAnchor() async throws {
+        let client = ControlledToolEventNetworkStub()
+        let service = MessageService(networkClient: client)
+        let first = Task { try await service.send(message: "first orphan") }
+        let second = Task { try await service.send(message: "second tool") }
+
+        for _ in 0..<100 where client.registeredRequestCount < 2 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        client.emitToolCalled(for: "first orphan", toolName: "removed_tool", selectionID: "first-id")
+        for _ in 0..<100 where !service.messages.flatMap(\.toolCalls).contains(where: { $0.name == "removed_tool" }) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let removedAnchorID = try XCTUnwrap(
+            service.messages.first(where: { $0.toolCalls.contains(where: { $0.name == "removed_tool" }) })?.uuid
+        )
+        service.messages.removeAll(where: { $0.uuid == removedAnchorID })
+
+        client.yieldResponse("first ", for: "first orphan")
+        for _ in 0..<100 where !service.messages.contains(where: { $0.text == "first " }) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let firstTextID = try XCTUnwrap(service.messages.first(where: { $0.text == "first " })?.uuid)
+
+        client.emitToolCalled(for: "second tool", toolName: "other_tool", selectionID: "second-id")
+        for _ in 0..<100 where !service.messages.flatMap(\.toolCalls).contains(where: { $0.name == "other_tool" }) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let otherAnchorID = try XCTUnwrap(
+            service.messages.first(where: { $0.toolCalls.contains(where: { $0.name == "other_tool" }) })?.uuid
+        )
+
+        client.emitToolCompleted(
+            for: "first orphan",
+            result: "orphan result",
+            selectionID: "first-id"
+        )
+        for _ in 0..<100 where !service.messages.flatMap(\.toolCalls).contains(where: { $0.result == "orphan result" }) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        XCTAssertEqual(
+            service.messages.first(where: { $0.uuid == otherAnchorID })?.toolCalls.map(\.name),
+            ["other_tool"]
+        )
+        let orphanAnchor = try XCTUnwrap(
+            service.messages.first(where: { $0.toolCalls.contains(where: { $0.result == "orphan result" }) })
+        )
+        XCTAssertNotEqual(orphanAnchor.uuid, otherAnchorID)
+        XCTAssertNotEqual(orphanAnchor.uuid, firstTextID)
+
+        client.yieldResponse("continued", for: "first orphan")
+        client.emitToolCompleted(for: "second tool", result: "other result", selectionID: "second-id")
+        client.finishRequest(for: "first orphan")
+        client.finishRequest(for: "second tool")
+        try await first.value
+        try await second.value
+
+        XCTAssertEqual(service.messages.first(where: { $0.uuid == firstTextID })?.text, "first continued")
     }
 
     func testToolStartIsVisibleBeforeAnyResponseChunk() async throws {
@@ -368,6 +429,92 @@ final class MessageServiceConversationTests: XCTestCase {
         )
     }
 
+    func testCompletionWithoutResultImmediatelyFailsEarliestPendingCallWithoutSplittingText() async throws {
+        let client = ControlledToolEventNetworkStub()
+        let service = MessageService(networkClient: client)
+        let request = "missing completion result"
+        let send = Task { try await service.send(message: request) }
+
+        for _ in 0..<100 where client.registeredRequestCount < 1 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        client.emitToolCalled(for: request, toolName: "first_tool", selectionID: "first")
+        client.emitIDLessToolCalled(for: request, toolName: "second_tool")
+        for _ in 0..<100 where service.messages.flatMap(\.toolCalls).count < 2 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        client.yieldResponse("first ", for: request)
+        for _ in 0..<100 where !service.messages.contains(where: { $0.text == "first " }) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let textAnchorID = try XCTUnwrap(service.messages.first(where: { $0.text == "first " })?.uuid)
+
+        client.emitToolCompletedWithoutResult(for: request)
+        for _ in 0..<100 where service.messages.flatMap(\.toolCalls).first?.status != .failure {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        var calls = service.messages.flatMap(\.toolCalls)
+        XCTAssertEqual(calls[0].status, .failure)
+        XCTAssertEqual(calls[0].result, "Tool call ended without a completion result.")
+        XCTAssertEqual(calls[1].status, .pending)
+        XCTAssertNil(calls[1].result)
+
+        client.emitToolCompleted(for: request, result: "second result", selectionID: "")
+        for _ in 0..<100 where service.messages.flatMap(\.toolCalls)[1].status != .success {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        client.yieldResponse("second", for: request)
+        client.finishRequest(for: request)
+        try await send.value
+
+        calls = service.messages.flatMap(\.toolCalls)
+        XCTAssertEqual(calls[1].status, .success)
+        XCTAssertEqual(calls[1].result, "second result")
+        let textMessages = service.messages.filter { $0.isAssistant && $0.isStringContent }
+        XCTAssertEqual(textMessages.count, 1)
+        XCTAssertEqual(textMessages.first?.uuid, textAnchorID)
+        XCTAssertEqual(textMessages.first?.text, "first second")
+    }
+
+    func testEmptyCompletionsPreferIDLessCallsThenMatchIdentifiedCallsInFIFOOrder() async throws {
+        let client = ControlledToolEventNetworkStub()
+        let service = MessageService(networkClient: client)
+        let request = "empty completion mixed queue"
+        let send = Task { try await service.send(message: request) }
+
+        for _ in 0..<100 where client.registeredRequestCount < 1 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        client.emitToolCalled(for: request, toolName: "first_identified", selectionID: "first")
+        client.emitIDLessToolCalled(for: request, toolName: "id_less")
+        client.emitToolCalled(for: request, toolName: "second_identified", selectionID: "second")
+        for _ in 0..<100 where service.messages.flatMap(\.toolCalls).count < 3 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        client.emitToolCompleted(for: request, result: "id-less result", selectionID: "")
+        for _ in 0..<100 where service.messages.flatMap(\.toolCalls)[1].status != .success {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        var calls = service.messages.flatMap(\.toolCalls)
+        XCTAssertEqual(calls.map(\.status), [.pending, .success, .pending])
+        XCTAssertEqual(calls[1].result, "id-less result")
+
+        client.emitToolCompleted(for: request, result: "first result", selectionID: "")
+        for _ in 0..<100 where service.messages.flatMap(\.toolCalls)[0].status != .success {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        client.emitToolCompleted(for: request, result: "second result", selectionID: "")
+        client.finishRequest(for: request)
+        try await send.value
+
+        calls = service.messages.flatMap(\.toolCalls)
+        XCTAssertEqual(calls.map(\.status), [.success, .success, .success])
+        XCTAssertEqual(calls.map(\.result), ["first result", "id-less result", "second result"])
+    }
+
     func testUnmatchedIdentifiedCompletionDoesNotConsumeIDLessPendingCall() async throws {
         let client = ControlledToolEventNetworkStub()
         let service = MessageService(networkClient: client)
@@ -484,6 +631,45 @@ final class MessageServiceConversationTests: XCTestCase {
         XCTAssertEqual(calls.first(where: { $0.id == remainingCallID })?.result, "remaining result")
         XCTAssertEqual(calls.first(where: { $0.id != remainingCallID })?.status, .success)
         XCTAssertEqual(calls.first(where: { $0.id != remainingCallID })?.result, "orphan result")
+        XCTAssertEqual(service.messages.filter { !$0.toolCalls.isEmpty }.count, 1)
+    }
+
+    func testRemovedOnlyToolAnchorPlacesOrphanBeforeLiveTextWithoutSplittingStream() async throws {
+        let client = ControlledToolEventNetworkStub()
+        let service = MessageService(networkClient: client)
+        let request = "removed only anchor"
+        let send = Task { try await service.send(message: request) }
+
+        for _ in 0..<100 where client.registeredRequestCount < 1 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        client.emitToolCalled(for: request, toolName: "removed_tool", selectionID: "tracked")
+        for _ in 0..<100 where service.messages.flatMap(\.toolCalls).isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let removedAnchorID = try XCTUnwrap(service.messages.first(where: { !$0.toolCalls.isEmpty })?.uuid)
+
+        client.yieldResponse("first ", for: request)
+        for _ in 0..<100 where !service.messages.contains(where: { $0.text == "first " }) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let textAnchorID = try XCTUnwrap(service.messages.first(where: { $0.text == "first " })?.uuid)
+        service.messages.removeAll(where: { $0.uuid == removedAnchorID })
+
+        client.emitToolCompleted(for: request, result: "orphan result", selectionID: "tracked")
+        for _ in 0..<100 where service.messages.flatMap(\.toolCalls).isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        client.yieldResponse("second", for: request)
+        client.finishRequest(for: request)
+        try await send.value
+
+        let orphanIndex = try XCTUnwrap(service.messages.firstIndex(where: { !$0.toolCalls.isEmpty }))
+        let textIndex = try XCTUnwrap(service.messages.firstIndex(where: { $0.uuid == textAnchorID }))
+        XCTAssertLessThan(orphanIndex, textIndex)
+        XCTAssertEqual(service.messages[orphanIndex].toolCalls.first?.result, "orphan result")
+        XCTAssertEqual(service.messages[textIndex].text, "first second")
+        XCTAssertTrue(service.messages[textIndex].toolCalls.isEmpty)
     }
 
     func testRepeatedProviderSelectionIDsCompleteCallsInFIFOOrder() async throws {
@@ -1157,6 +1343,14 @@ private final class ControlledToolEventNetworkStub: NetworkClientProtocol {
                 )
             )
         )
+    }
+
+    func emitToolCompletedWithoutResult(for message: String) {
+        guard let request = requests[message] else {
+            XCTFail("Missing request for \(message)")
+            return
+        }
+        request.toolEventHandler(.toolCompleted(nil))
     }
 
     func emitToolEvents(for message: String, toolName: String, result: String) {
