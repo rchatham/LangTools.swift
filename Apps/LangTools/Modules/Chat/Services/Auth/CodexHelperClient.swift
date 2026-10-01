@@ -124,6 +124,11 @@ public final class CodexHelperClient: CodexHelperClientProtocol {
                 switch http.statusCode {
                 case 400:
                     message = helperMessage ?? "Codex helper rejected the request as invalid."
+                case 401 where request.url?.path == "/v1/auth/login":
+                    // The login request follows a successful authenticated
+                    // health check. Prefer the helper's account-auth error over
+                    // a misleading suggestion that the token was already bad.
+                    message = helperMessage ?? "Codex helper rejected sign-in after the health check."
                 case 401:
                     message = "Codex helper rejected the request. Check the helper token in Settings."
                         + (helperMessage.map { " (\($0))" } ?? "")

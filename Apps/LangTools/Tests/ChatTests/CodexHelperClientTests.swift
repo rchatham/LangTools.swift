@@ -184,10 +184,7 @@ final class CodexHelperClientTests: XCTestCase {
         } catch let error as AccountLoginError {
             XCTAssertEqual(
                 error,
-                .sessionExchangeFailed(
-                    "Codex helper rejected the request. Check the helper token in Settings. "
-                        + "(Codex did not report an authenticated ChatGPT account.)"
-                )
+                .sessionExchangeFailed("Codex did not report an authenticated ChatGPT account.")
             )
         } catch {
             XCTFail("Unexpected error: \(error)")
