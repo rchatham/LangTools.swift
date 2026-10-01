@@ -45,8 +45,7 @@ public actor CodexRuntimeService {
         let environment = ProcessInfo.processInfo.environment
         let client = CodexAppServerClient(
             workspaceRootProvider: { workspaces.processRoot },
-            codexHomeProvider: { CodexSeatbeltProfile.resolvedCodexHome(environment: environment) },
-            containmentMode: .disabledForTesting
+            codexHomeProvider: { CodexSeatbeltProfile.resolvedCodexHome(environment: environment) }
         )
         return CodexRuntimeService(client: client, workspaces: workspaces)
     }()

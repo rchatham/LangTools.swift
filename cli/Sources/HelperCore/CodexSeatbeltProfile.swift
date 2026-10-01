@@ -334,7 +334,8 @@ struct CodexSeatbeltProfile: Sendable {
             // domains (some apps store credentials in preferences).
             "(allow user-preference-read (preference-domain \"com.openai.codex\"))",
             // Database change-notification shared memory (CoreTypes).
-            "(allow ipc-posix-shm-write-create (global-name \"com.apple.AppleDatabaseChanged\"))",
+            "(allow ipc-posix-shm-read-data ipc-posix-shm-write-create ipc-posix-shm-write-data\n" +
+                "   (ipc-posix-name \"com.apple.AppleDatabaseChanged\"))",
             // Allow stat/metadata of any path so the sandboxed process can
             // resolve absolute path components (parent directories of the
             // workspace/codex home are otherwise un-stat-able). Accepted risk,
@@ -374,6 +375,21 @@ struct CodexSeatbeltProfile: Sendable {
                 }
             }
         }
+        // Per-user metadata databases used by modern Codex's HTTP stack. This
+        // is the `C/mds` cache beside the process's private `T` directory—not
+        // the global temporary tree.
+        let userTemporaryRoot = URL(fileURLWithPath: inputs.processTemporaryDirectory)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let metadataDirectory = userTemporaryRoot.appendingPathComponent("C/mds", isDirectory: true).path
+        for path in Self.pathVariants(metadataDirectory) {
+            lines.append("(allow file-read* (subpath \(Self.quoted(path))))")
+            lines.append("(allow file-write* (subpath \(Self.quoted(path))))")
+        }
+        // Read-only macOS runtime databases used by Security.framework and
+        // Foundation during HTTP setup. Codex 0.159 ships the same read-only
+        // platform-default grant. Global temporary storage remains denied.
+        lines.append("(allow file-read* (subpath \"/private/var/db\"))")
         // System runtime roots Codex and its native tools need to exec/load.
         for root in Self.systemReadRoots {
             lines.append("(allow file-read* (subpath \(Self.quoted(root))))")

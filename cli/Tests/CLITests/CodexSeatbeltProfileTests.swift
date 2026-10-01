@@ -210,6 +210,11 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         XCTAssertTrue(source.contains(
             "(allow user-preference-read (preference-domain \"com.openai.codex\"))"
         ))
+        XCTAssertTrue(source.contains("ipc-posix-shm-read-data ipc-posix-shm-write-create ipc-posix-shm-write-data"))
+        XCTAssertTrue(source.contains("(ipc-posix-name \"com.apple.AppleDatabaseChanged\")"))
+        XCTAssertTrue(source.contains("(allow file-read* (subpath \"/private/var/db\"))"))
+        XCTAssertFalse(source.contains("(allow file-write* (subpath \"/private/var/db\"))"))
+        XCTAssertTrue(source.contains("/C/mds"))
         XCTAssertTrue(source.contains("(allow file-read-metadata)"))
         XCTAssertFalse(source.contains("(allow mach-lookup)\n)"))
         // The credential blocklist derives from the passwd database (not the
@@ -420,21 +425,17 @@ final class CodexSeatbeltProfileTests: XCTestCase {
         }
         let workspace = makeTempDir(prefix: "ws")
         defer { try? FileManager.default.removeItem(at: workspace) }
-        // The child's cwd is the resolved Codex home and the fake command
-        // writes a RELATIVE marker into it, so the environment must pin a
-        // disposable home. Without this override the resolved home is the
-        // user's real ~/.codex and every test run would pollute it.
+        // Pin a disposable Codex home so this containment test never touches
+        // the user's real ~/.codex.
         let codexHome = makeTempDir(prefix: "codex-home")
         defer { try? FileManager.default.removeItem(at: codexHome) }
         var environment = ProcessInfo.processInfo.environment
         environment["LANGTOOLS_CODEX_HOME"] = codexHome.path
         environment["CODEX_HOME"] = codexHome.path
-        // The marker is first written with a RELATIVE path (proving the child's
-        // cwd — the resolved Codex home — is itself writable under the
-        // seatbelt), then copied into the workspace so the test can read it
-        // after the startup failure.
+        // The marker is first written with a relative path, then copied into
+        // the workspace so the test can inspect the private per-launch cwd.
         let marker = workspace.appendingPathComponent("cwd-marker.txt")
-        let expectedCWD = CodexSeatbeltProfile.resolvedCodexHome(environment: environment)
+        let expectedCodexHome = CodexSeatbeltProfile.resolvedCodexHome(environment: environment)
 
         let client = CodexAppServerClient(
             commandResolver: {
@@ -460,12 +461,15 @@ final class CodexSeatbeltProfileTests: XCTestCase {
             if recorded == nil { try await Task.sleep(for: .milliseconds(20)) }
         }
         // getcwd returns the physical path (/private/var for /var on macOS).
-        // The child runs in the resolved Codex home, not the workspace root or
-        // the helper launch directory.
-        XCTAssertEqual(recorded.map(Self.physicalPath), Self.physicalPath(expectedCWD))
+        let physicalCWD = try XCTUnwrap(recorded.map(Self.physicalPath))
+        let physicalTemporaryRoot = Self.physicalPath(FileManager.default.temporaryDirectory.path)
+        XCTAssertTrue(physicalCWD.hasPrefix(physicalTemporaryRoot + "/langtools-codex-app-server-"))
+        XCTAssertNotEqual(physicalCWD, Self.physicalPath(expectedCodexHome))
+        XCTAssertNotEqual(physicalCWD, Self.physicalPath(workspace.path))
         await client.shutdown()
-        // The Codex home is user data: shutdown must never remove it.
-        XCTAssertTrue(FileManager.default.fileExists(atPath: expectedCWD))
+        // The private process directory is cleaned up; user Codex data remains.
+        XCTAssertFalse(FileManager.default.fileExists(atPath: physicalCWD))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: expectedCodexHome))
         XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
     }
 
