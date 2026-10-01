@@ -502,12 +502,12 @@ actor CodexAppServerClient {
         stdinHandle = stdin.fileHandleForWriting
     }
 
-    /// Builds the child environment by stripping credential variables and
-    /// agent sockets so unrelated inherited secrets (API keys, tokens, SSH
-    /// agent sockets, cloud credentials, etc.) are not exposed to the
-    /// prompt-driven Codex child process. Non-sensitive variables (including
-    /// the `LANGTOOLS_CODEX_*`/`CODEX_*` overrides and the fixture-path
-    /// variables injected by tests) pass through unchanged.
+    /// Sanitizes the inherited environment for the explicit
+    /// `.disabledForTesting` launch path used by fake app-server tests.
+    /// Production launches instead build a minimal environment with
+    /// `CodexChildEnvironment.make(...)` before entering Seatbelt and never
+    /// use this denylist. Non-sensitive test overrides and fixture paths pass
+    /// through unchanged.
     static func sanitizedChildEnvironment(from environment: [String: String]) -> [String: String] {
         environment.filter { !Self.isSensitiveEnvironmentKey($0.key) }
     }
