@@ -720,8 +720,10 @@ private final class HelperSessionRegistry: @unchecked Sendable {
 
     func cancelAll() async {
         let snapshot: [HelperConnectionSession] = lock.withLock { Array(sessions.values) }
-        for session in snapshot {
-            await session.cancelRoute()
+        await withTaskGroup(of: Void.self) { group in
+            for session in snapshot {
+                group.addTask { await session.cancelRouteAndWait() }
+            }
         }
     }
 
@@ -747,6 +749,7 @@ private actor HelperConnectionSession {
     private var routeTask: Task<Void, Never>?
     private var readDeadline: HelperRequestDeadline?
     private var ended = false
+    private var unregistered = false
 
     init(
         id: UUID,
@@ -776,7 +779,10 @@ private actor HelperConnectionSession {
         guard ended == false, routeTask == nil else { return }
         readDeadline?.cancel()
         readDeadline = nil
-        routeTask = Task { await operation() }
+        routeTask = Task { [weak self] in
+            await operation()
+            await self?.routeDidComplete()
+        }
     }
 
     func send(_ data: Data) async throws {
@@ -795,24 +801,46 @@ private actor HelperConnectionSession {
     }
 
     func cancelRoute() {
-        guard ended == false else { return }
-        ended = true
-        readDeadline?.cancel()
-        readDeadline = nil
-        routeTask?.cancel()
-        connection.cancel()
-        lease.release()
-        onEnd()
+        end(cancelRouteTask: true)
+    }
+
+    /// Used by server shutdown. Cancellation closes the connection promptly,
+    /// but the session remains registered until route work actually exits so a
+    /// restart cannot overlap an old request against the shared runtime.
+    func cancelRouteAndWait() async {
+        let task = routeTask
+        end(cancelRouteTask: true)
+        await task?.value
     }
 
     func finish() {
-        guard ended == false else { return }
-        ended = true
-        readDeadline?.cancel()
-        readDeadline = nil
-        connection.cancel()
+        end(cancelRouteTask: false)
+    }
+
+    private func end(cancelRouteTask: Bool) {
+        if ended == false {
+            ended = true
+            readDeadline?.cancel()
+            readDeadline = nil
+            connection.cancel()
+            lease.release()
+        }
+        if cancelRouteTask {
+            routeTask?.cancel()
+        }
+        if routeTask == nil {
+            unregisterOnce()
+        }
+    }
+
+    private func routeDidComplete() {
         routeTask = nil
-        lease.release()
+        unregisterOnce()
+    }
+
+    private func unregisterOnce() {
+        guard unregistered == false else { return }
+        unregistered = true
         onEnd()
     }
 }

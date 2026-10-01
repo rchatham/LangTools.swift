@@ -337,6 +337,49 @@ final class LocalHelperServerTests: XCTestCase {
         await serverTask?.value
     }
 
+    func testShutdownWaitsForCancelledRouteToActuallyExitBeforeRestart() async throws {
+        let port = try Self.findFreePort()
+        let bearer = String(repeating: "ef", count: 32)
+        let blocker = BlockingPairingConsumer()
+        let stopped = LockedCounter()
+        let server = LocalHelperServer(
+            host: "127.0.0.1",
+            port: port,
+            bearerToken: bearer,
+            pairingCodeConsumer: { code in await blocker.consume(code) }
+        )
+        let serverTask = Task {
+            try? await server.run()
+            stopped.increment()
+        }
+        try await Self.waitUntilHealthy(port: port, bearer: bearer)
+
+        let requestTask = Task {
+            try? await Self.performRequest(
+                port: port,
+                path: "/v1/pairing/exchange",
+                method: "POST",
+                body: #"{"code":"blocked"}"#
+            )
+        }
+        await blocker.waitUntilEntered()
+        serverTask.cancel()
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(stopped.value, 0, "Shutdown must wait for cancelled route work to exit.")
+
+        await blocker.release()
+        await serverTask.value
+        XCTAssertEqual(stopped.value, 1)
+        _ = await requestTask.result
+
+        let restarted = Task {
+            try? await LocalHelperServer(host: "127.0.0.1", port: port, bearerToken: bearer).run()
+        }
+        try await Self.waitUntilHealthy(port: port, bearer: bearer)
+        restarted.cancel()
+        await restarted.value
+    }
+
     private static func findFreePort() throws -> UInt16 {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw TestError.unexpectedResult }
@@ -458,6 +501,32 @@ private actor SingleUsePairingConsumer {
         guard code == validCode, consumed == false else { return false }
         consumed = true
         return true
+    }
+}
+
+private actor BlockingPairingConsumer {
+    private var entered = false
+    private var enteredWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func consume(_ code: String) async -> Bool {
+        entered = true
+        let waiters = enteredWaiters
+        enteredWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+        return false
+    }
+
+    func waitUntilEntered() async {
+        if entered { return }
+        await withCheckedContinuation { enteredWaiters.append($0) }
+    }
+
+    func release() {
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        waiters.forEach { $0.resume() }
     }
 }
 
