@@ -175,8 +175,7 @@ extension LangTools {
     }
 
     private func complete<Request: LangToolsRequest>(request: Request, response: Request.Response, onResponse: @escaping (Request.Response) -> Void) async throws -> Request.Response {
-        onResponse(response)
-        return try await completionRequest(request: request, response: response).flatMap { try await perform(request: $0, onResponse: onResponse) } ?? response
+        onResponse(response); return try await completionRequest(request: request, response: response).flatMap { try await perform(request: $0, onResponse: onResponse) } ?? response
     }
 
     private func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) async throws -> Request? {
