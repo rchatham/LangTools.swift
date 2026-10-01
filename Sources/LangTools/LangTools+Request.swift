@@ -193,21 +193,36 @@ extension LangToolsToolCallingRequest {
         guard let tool_selections = response.tool_selection as? [Message.ToolSelection], !tool_selections.isEmpty else { return nil }
         var tool_results: [Message.ToolResult] = []
         for tool_selection in tool_selections {
+            try Task.checkCancellation()
             toolEventHandler?(.toolCalled(tool_selection))
-            guard let tool = tools?.first(where: { $0.name == tool_selection.name }) else { continue }
             do {
+                guard let tool = tools?.first(where: { $0.name == tool_selection.name }) else {
+                    toolEventHandler?(.toolCompleted(nil))
+                    continue
+                }
                 guard let args = tool_selection.arguments.isEmpty ? [:] : try? JSON(string: tool_selection.arguments).objectValue
                     else { throw LangToolsRequestError.failedToDecodeFunctionArguments(tool_selection.arguments) }
                 let missing = tool.tool_schema.required?.filter({ !args.keys.contains($0) })
                 guard missing?.isEmpty ?? true
                 else { throw LangToolsRequestError.missingRequiredFunctionArguments(missing!.joined(separator: ",")) }
                 let info = LangToolsRequestInfo(langTool: langTool, model: model, messages: messages)
-                guard let str = try await tool.callback?(info, args) else { toolEventHandler?(.toolCompleted(nil)); continue }
-                tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: str))
+                guard let str = try await tool.callback?(info, args) else {
+                    try Task.checkCancellation()
+                    toolEventHandler?(.toolCompleted(nil))
+                    continue
+                }
+                try Task.checkCancellation()
+                let result = Message.ToolResult(tool_selection_id: tool_selection.id!, result: str)
+                tool_results.append(result)
+                toolEventHandler?(.toolCompleted(result))
+            } catch let error as CancellationError {
+                toolEventHandler?(.toolCompleted(nil))
+                throw error
             } catch {
-                tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: "\(error.localizedDescription)", is_error: true))
+                let result = Message.ToolResult(tool_selection_id: tool_selection.id!, result: "\(error.localizedDescription)", is_error: true)
+                tool_results.append(result)
+                toolEventHandler?(.toolCompleted(result))
             }
-            toolEventHandler?(.toolCompleted(tool_results.last))
         }
         guard !tool_results.isEmpty else { return nil }
         var results: [Message] = []
