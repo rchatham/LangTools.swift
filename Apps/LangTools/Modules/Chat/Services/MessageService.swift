@@ -16,8 +16,13 @@ private enum BufferedMessageEvent {
 }
 
 private enum SendUpdate {
-    case responseChunk(String)
-    case eventsAvailable
+    case responseChunk(String, eventsUpTo: UInt64)
+    case eventsAvailable(upTo: UInt64)
+}
+
+private struct SequencedBufferedMessageEvent {
+    let sequence: UInt64
+    let event: BufferedMessageEvent
 }
 
 private struct PendingToolCallIdentity {
@@ -136,16 +141,17 @@ private final class SendEstablishment: @unchecked Sendable {
 /// `MessageService`'s main actor.
 private final class SendEventBuffer: @unchecked Sendable {
     private struct State {
-        var events: [BufferedMessageEvent] = []
+        var events: [SequencedBufferedMessageEvent] = []
+        var latestSequence: UInt64 = 0
         var agentCallIDCounts: [String: Int] = [:]
-        var eventContinuation: AsyncStream<Void>.Continuation?
+        var eventContinuation: AsyncStream<UInt64>.Continuation?
     }
 
     private let lock = NSLock()
     private var states: [UUID: State] = [:]
 
-    func register(_ sendID: UUID) -> AsyncStream<Void> {
-        let (stream, continuation) = AsyncStream<Void>.makeStream(
+    func register(_ sendID: UUID) -> AsyncStream<UInt64> {
+        let (stream, continuation) = AsyncStream<UInt64>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )
         lock.withLock {
@@ -170,17 +176,20 @@ private final class SendEventBuffer: @unchecked Sendable {
     }
 
     func enqueueAgent(_ event: AgentEvent, for sendID: UUID) {
-        let continuation: AsyncStream<Void>.Continuation? = lock.withLock {
-            guard states[sendID] != nil else { return nil }
-            states[sendID]?.events.append(.agent(event))
-            return states[sendID]?.eventContinuation
+        lock.withLock {
+            guard var state = states[sendID] else { return }
+            state.latestSequence += 1
+            state.events.append(
+                SequencedBufferedMessageEvent(sequence: state.latestSequence, event: .agent(event))
+            )
+            states[sendID] = state
+            state.eventContinuation?.yield(state.latestSequence)
         }
-        continuation?.yield()
     }
 
     func enqueueTool(_ event: LangToolsToolEvent, for sendID: UUID, agentToolNames: Set<String>) {
-        let continuation: AsyncStream<Void>.Continuation? = lock.withLock {
-            guard var state = states[sendID] else { return nil }
+        lock.withLock {
+            guard var state = states[sendID] else { return }
             switch event {
             case .toolCalled(let selection):
                 let id = selection.id ?? selection.name ?? ""
@@ -189,7 +198,7 @@ private final class SendEventBuffer: @unchecked Sendable {
                         state.agentCallIDCounts[id, default: 0] += 1
                     }
                     states[sendID] = state
-                    return nil
+                    return
                 }
             case .toolCompleted(let result):
                 let id = result?.tool_selection_id ?? ""
@@ -200,21 +209,35 @@ private final class SendEventBuffer: @unchecked Sendable {
                         state.agentCallIDCounts[id] = count - 1
                     }
                     states[sendID] = state
-                    return nil
+                    return
                 }
             }
-            state.events.append(.tool(event))
+            state.latestSequence += 1
+            state.events.append(
+                SequencedBufferedMessageEvent(sequence: state.latestSequence, event: .tool(event))
+            )
             states[sendID] = state
-            return state.eventContinuation
+            state.eventContinuation?.yield(state.latestSequence)
         }
-        continuation?.yield()
     }
 
-    func takeEvents(for sendID: UUID) -> [BufferedMessageEvent] {
+    /// Runs `body` while holding the same lock used to sequence events so the
+    /// watermark and the queued response update form one ordering boundary.
+    func withCurrentWatermark(for sendID: UUID, _ body: (UInt64) -> Void) {
+        lock.withLock {
+            guard let state = states[sendID] else { return }
+            body(state.latestSequence)
+        }
+    }
+
+    func takeEvents(for sendID: UUID, upTo watermark: UInt64? = nil) -> [BufferedMessageEvent] {
         lock.withLock {
             guard var state = states[sendID] else { return [] }
-            let events = state.events
-            state.events.removeAll(keepingCapacity: true)
+            let count = watermark.map { watermark in
+                state.events.prefix { $0.sequence <= watermark }.count
+            } ?? state.events.count
+            let events = state.events.prefix(count).map(\.event)
+            state.events.removeFirst(count)
             states[sendID] = state
             return events
         }
@@ -247,6 +270,8 @@ public class MessageService {
     /// This is intentionally ephemeral and excluded from persisted conversation history.
     private var failedAttemptGeneratedMessageIDs: [UUID: Set<UUID>] = [:]
     @ObservationIgnored private let eventBuffer = SendEventBuffer()
+    /// Test-only gate after a response update is queued but before it is applied.
+    @ObservationIgnored var responseChunkPreApplyHook: (() async -> Void)?
     /// Retains the pre-request test/helper API without sharing production send state.
     @ObservationIgnored private let compatibilitySendID = UUID()
 
@@ -378,7 +403,7 @@ public class MessageService {
         sendID: UUID,
         requestSnapshot: [Message],
         establishment: SendEstablishment,
-        eventNotifications: AsyncStream<Void>
+        eventNotifications: AsyncStream<UInt64>
     ) async throws {
         guard conversationID == requestConversationID else { throw CancellationError() }
         let userMessageID = userMessage.uuid
@@ -429,22 +454,45 @@ public class MessageService {
             var content = ""
             let updates = Self.merge(
                 responseStream: responseStream,
-                eventNotifications: eventNotifications
+                eventNotifications: eventNotifications,
+                eventBuffer: eventBuffer,
+                sendID: sendID
             )
             for try await update in updates {
                 guard conversationID == requestConversationID else { throw CancellationError() }
-                drainEvents(
-                    for: sendID,
-                    responseToMessageID: userMessageID,
-                    anchorMessageID: &anchorMessageID,
-                    toolBreakOccurred: &toolBreakOccurred,
-                    generatedMessageIDs: &generatedMessageIDs,
-                    keepsToolCallsInHistory: keepsToolCallsInHistory,
-                    replayService: replayService,
-                    toolCallTracker: toolCallTracker
-                )
-                if let anchorMessageID { assistantMessageIDs.insert(anchorMessageID) }
-                guard case .responseChunk(let chunk) = update else { continue }
+                let chunk: String
+                switch update {
+                case .eventsAvailable(let watermark):
+                    drainEvents(
+                        for: sendID,
+                        upTo: watermark,
+                        responseToMessageID: userMessageID,
+                        anchorMessageID: &anchorMessageID,
+                        toolBreakOccurred: &toolBreakOccurred,
+                        generatedMessageIDs: &generatedMessageIDs,
+                        keepsToolCallsInHistory: keepsToolCallsInHistory,
+                        replayService: replayService,
+                        toolCallTracker: toolCallTracker
+                    )
+                    if let anchorMessageID { assistantMessageIDs.insert(anchorMessageID) }
+                    continue
+
+                case .responseChunk(let responseChunk, let watermark):
+                    await responseChunkPreApplyHook?()
+                    drainEvents(
+                        for: sendID,
+                        upTo: watermark,
+                        responseToMessageID: userMessageID,
+                        anchorMessageID: &anchorMessageID,
+                        toolBreakOccurred: &toolBreakOccurred,
+                        generatedMessageIDs: &generatedMessageIDs,
+                        keepsToolCallsInHistory: keepsToolCallsInHistory,
+                        replayService: replayService,
+                        toolCallTracker: toolCallTracker
+                    )
+                    if let anchorMessageID { assistantMessageIDs.insert(anchorMessageID) }
+                    chunk = responseChunk
+                }
 
                 content += chunk
                 let anchor = assistantMessage(withID: anchorMessageID)
@@ -537,14 +585,18 @@ public class MessageService {
 
     nonisolated private static func merge(
         responseStream: AsyncThrowingStream<String, Error>,
-        eventNotifications: AsyncStream<Void>
+        eventNotifications: AsyncStream<UInt64>,
+        eventBuffer: SendEventBuffer,
+        sendID: UUID
     ) -> AsyncThrowingStream<SendUpdate, Error> {
         AsyncThrowingStream { continuation in
             let responseTask = Task {
                 do {
                     for try await chunk in responseStream {
                         try Task.checkCancellation()
-                        continuation.yield(.responseChunk(chunk))
+                        eventBuffer.withCurrentWatermark(for: sendID) { watermark in
+                            continuation.yield(.responseChunk(chunk, eventsUpTo: watermark))
+                        }
                     }
                     continuation.finish()
                 } catch {
@@ -552,9 +604,9 @@ public class MessageService {
                 }
             }
             let eventTask = Task {
-                for await _ in eventNotifications {
+                for await watermark in eventNotifications {
                     guard !Task.isCancelled else { return }
-                    continuation.yield(.eventsAvailable)
+                    continuation.yield(.eventsAvailable(upTo: watermark))
                 }
             }
             continuation.onTermination = { @Sendable _ in
@@ -656,6 +708,7 @@ extension MessageService {
 
     private func drainEvents(
         for sendID: UUID,
+        upTo watermark: UInt64? = nil,
         responseToMessageID: UUID?,
         anchorMessageID: inout UUID?,
         toolBreakOccurred: inout Bool,
@@ -664,7 +717,7 @@ extension MessageService {
         replayService: APIService,
         toolCallTracker: RequestToolCallTracker? = nil
     ) {
-        let events = eventBuffer.takeEvents(for: sendID)
+        let events = eventBuffer.takeEvents(for: sendID, upTo: watermark)
         guard !events.isEmpty else { return }
 
         for event in events {

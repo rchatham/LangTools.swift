@@ -739,6 +739,60 @@ final class MessageServiceConversationTests: XCTestCase {
         XCTAssertEqual(completedCalls.map(\.result), ["first result", "second result"])
     }
 
+    func testResponseObservedBeforeToolCallbackIsAppliedFirst() async throws {
+        let client = ControlledToolEventNetworkStub()
+        let service = MessageService(networkClient: client)
+        let requestRegistered = expectation(description: "request registered")
+        let responseUpdateDelivered = expectation(description: "response update delivered")
+        let releaseResponse = AsyncTestGate()
+        var snapshots: [(text: String?, toolCallCount: Int)] = []
+
+        client.requestRegistered = { message in
+            guard message == "response before tool" else { return }
+            requestRegistered.fulfill()
+        }
+        service.messageUpdatedCallback = { message in
+            guard message.isAssistant else { return }
+            snapshots.append((message.text, message.toolCalls.count))
+        }
+        service.responseChunkPreApplyHook = {
+            responseUpdateDelivered.fulfill()
+            await releaseResponse.wait()
+        }
+
+        let send = Task { try await service.send(message: "response before tool") }
+        await fulfillment(of: [requestRegistered], timeout: 1)
+        client.yieldResponse("response text", for: "response before tool")
+        await fulfillment(of: [responseUpdateDelivered], timeout: 1)
+
+        client.emitToolCalled(
+            for: "response before tool",
+            toolName: "later_tool",
+            selectionID: "later-call"
+        )
+        client.emitToolCompleted(
+            for: "response before tool",
+            result: "tool result",
+            selectionID: "later-call"
+        )
+        await releaseResponse.open()
+        service.responseChunkPreApplyHook = nil
+        client.finishRequest(for: "response before tool")
+        try await send.value
+
+        let responseSnapshotIndex = try XCTUnwrap(
+            snapshots.firstIndex(where: { $0.text == "response text" && $0.toolCallCount == 0 })
+        )
+        let toolSnapshotIndex = try XCTUnwrap(
+            snapshots.firstIndex(where: { $0.toolCallCount > 0 })
+        )
+        XCTAssertLessThan(responseSnapshotIndex, toolSnapshotIndex)
+        XCTAssertEqual(service.messages.filter(\.isAssistant).count, 1)
+        XCTAssertEqual(service.messages.first(where: \.isAssistant)?.text, "response text")
+        XCTAssertEqual(service.messages.flatMap(\.toolCalls).first?.status, .success)
+        XCTAssertEqual(service.bufferedEventCountForTesting, 0)
+    }
+
     func testToolActivityPrecedesCombinedStreamedParentOutput() async throws {
         let client = ControlledToolEventNetworkStub()
         let service = MessageService(networkClient: client)
@@ -1635,6 +1689,26 @@ private final class ToolEventNetworkStub: NetworkClientProtocol {
     func disconnectAccount(_ provider: AccountLoginProvider) async throws {}
 }
 
+private actor AsyncTestGate {
+    private var isOpen = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func open() {
+        guard !isOpen else { return }
+        isOpen = true
+        let waiting = continuations
+        continuations.removeAll()
+        waiting.forEach { $0.resume() }
+    }
+}
+
 private final class ControlledToolEventNetworkStub: NetworkClientProtocol {
     static let shared: NetworkClientProtocol = ControlledToolEventNetworkStub()
 
@@ -1645,11 +1719,13 @@ private final class ControlledToolEventNetworkStub: NetworkClientProtocol {
 
     private var requests: [String: Request] = [:]
     var registeredRequestCount: Int { requests.count }
+    var requestRegistered: ((String) -> Void)?
 
     func streamChatCompletionRequest(messages: [Message], model: Model, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> AsyncThrowingStream<String, Error> {
         let message = messages.last(where: { $0.isUser })?.text ?? ""
         return AsyncThrowingStream { continuation in
             requests[message] = Request(continuation: continuation, toolEventHandler: toolEventHandler)
+            requestRegistered?(message)
         }
     }
 
