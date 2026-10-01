@@ -34,6 +34,37 @@ final class CodexAppServerClientTests: XCTestCase {
         await client.shutdown()
     }
 
+    func testInitializationUsesSeparateTimeoutFromOperationalRequests() async throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-app-server-timeouts-\(UUID().uuidString).py")
+        try Data(Self.delayedResponseServer.utf8).write(to: scriptURL)
+        defer { try? FileManager.default.removeItem(at: scriptURL) }
+
+        let recorder = TimeoutRecorder()
+        let client = CodexAppServerClient(
+            commandResolver: {
+                ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
+            },
+            defaultTimeout: .seconds(30),
+            initializationTimeout: .seconds(8),
+            requestTimeoutSleeper: { method, duration in
+                recorder.record(method: method, duration: duration)
+                try await Task.sleep(for: .seconds(60))
+            },
+            containmentMode: .disabledForTesting
+        )
+
+        _ = try await client.initializedProcessGeneration()
+        let response: Response = try await client.request(
+            method: "test/delayed",
+            params: RequestParams(value: "request")
+        )
+        XCTAssertEqual(response.value, "test/delayed")
+        XCTAssertEqual(recorder.duration(for: "initialize"), .seconds(8))
+        XCTAssertEqual(recorder.duration(for: "test/delayed"), .seconds(30))
+        await client.shutdown()
+    }
+
     func testSplitAndCombinedNDJSONChunksPreserveResponseAndNotificationOrder() async throws {
         let scriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("langtools-app-server-chunks-\(UUID().uuidString).py")
@@ -613,6 +644,32 @@ if count == 1:
 write({"id":request["id"], "result":{"value":request["method"]}})
 """#
 
+    private static let delayedResponseServer = #"""
+import json, sys, time
+
+def read():
+    line = sys.stdin.readline()
+    if not line:
+        sys.exit(0)
+    return json.loads(line)
+
+def write(value):
+    print(json.dumps(value), flush=True)
+
+initialize = read()
+time.sleep(0.05)
+write({"id": initialize["id"], "result": {
+    "userAgent": "fake",
+    "codexHome": "/tmp",
+    "platformFamily": "unix",
+    "platformOs": "macos"
+}})
+assert read()["method"] == "initialized"
+request = read()
+time.sleep(0.05)
+write({"id": request["id"], "result": {"value": request["method"]}})
+"""#
+
     private static let fakeServer = #"""
 import json
 import os
@@ -697,6 +754,19 @@ for request in reversed(requests):
         XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("secret_api_key"))
         XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("My_Token"))
         XCTAssertFalse(CodexAppServerClient.isSensitiveEnvironmentKey("codex_home"))
+    }
+}
+
+private final class TimeoutRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var durations: [String: Duration] = [:]
+
+    func record(method: String, duration: Duration) {
+        lock.withLock { durations[method] = duration }
+    }
+
+    func duration(for method: String) -> Duration? {
+        lock.withLock { durations[method] }
     }
 }
 

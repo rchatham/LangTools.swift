@@ -107,6 +107,7 @@ actor CodexAppServerClient {
     private let commandResolver: CommandResolver
     private let environment: [String: String]
     private let defaultTimeout: Duration
+    private let initializationTimeout: Duration
     private let requestTimeoutSleeper: RequestTimeoutSleeper
     private let workspaceRootProvider: WorkspaceRootProvider
     private let codexHomeProvider: CodexHomeProvider
@@ -139,7 +140,8 @@ actor CodexAppServerClient {
     init(
         commandResolver: @escaping CommandResolver = { try OpenAIAccountChatCommand.resolveCodexCommand(fileManager: .default) },
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        defaultTimeout: Duration = .seconds(8),
+        defaultTimeout: Duration = .seconds(30),
+        initializationTimeout: Duration = .seconds(8),
         requestTimeoutSleeper: @escaping RequestTimeoutSleeper = { _, duration in
             try await Task.sleep(for: duration)
         },
@@ -150,6 +152,7 @@ actor CodexAppServerClient {
         self.commandResolver = commandResolver
         self.environment = environment
         self.defaultTimeout = defaultTimeout
+        self.initializationTimeout = initializationTimeout
         self.requestTimeoutSleeper = requestTimeoutSleeper
         self.workspaceRootProvider = workspaceRootProvider
         self.containmentMode = containmentMode
@@ -367,7 +370,7 @@ actor CodexAppServerClient {
             let responseData = try await sendRequest(
                 method: "initialize",
                 params: object,
-                timeout: defaultTimeout,
+                timeout: initializationTimeout,
                 cancelOnTaskCancellation: false
             )
             let initialized = try JSONDecoder().decode(CodexInitializeResponse.self, from: responseData)
