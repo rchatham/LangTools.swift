@@ -87,6 +87,7 @@ public final class CodexHelperPairingCoordinator: ObservableObject {
     private let makeHelperClient: (AccountBackendConfiguration) -> CodexHelperClientProtocol
     private let saveToken: (String) throws -> Void
     private let exchangeCode: (String, Int) async throws -> PairingCodeExchangeResponse
+    private let loadPersistedToken: () -> String
     private var verificationID: UUID?
     /// Raw bearer token from a successful code exchange. Stored only for
     /// comparison against the persisted token; never logged or serialized.
@@ -94,23 +95,27 @@ public final class CodexHelperPairingCoordinator: ObservableObject {
 
     public convenience init(
         makeHelperClient: @escaping (AccountBackendConfiguration) -> CodexHelperClientProtocol = { CodexHelperClient(configuration: $0) },
-        saveToken: @escaping (String) throws -> Void = { try CodexHelperTokenStore().setToken($0) }
+        saveToken: @escaping (String) throws -> Void = { try CodexHelperTokenStore().setToken($0) },
+        loadPersistedToken: @escaping () -> String = { UserDefaults.codexHelperToken }
     ) {
         self.init(
             makeHelperClient: makeHelperClient,
             saveToken: saveToken,
-            exchangeCode: Self.performExchange
+            exchangeCode: Self.performExchange,
+            loadPersistedToken: loadPersistedToken
         )
     }
 
     public init(
         makeHelperClient: @escaping (AccountBackendConfiguration) -> CodexHelperClientProtocol,
         saveToken: @escaping (String) throws -> Void,
-        exchangeCode: @escaping (String, Int) async throws -> PairingCodeExchangeResponse
+        exchangeCode: @escaping (String, Int) async throws -> PairingCodeExchangeResponse,
+        loadPersistedToken: @escaping () -> String = { UserDefaults.codexHelperToken }
     ) {
         self.makeHelperClient = makeHelperClient
         self.saveToken = saveToken
         self.exchangeCode = exchangeCode
+        self.loadPersistedToken = loadPersistedToken
     }
 
     /// Exchanges a short-lived pairing code for the long-lived helper token
@@ -225,6 +230,11 @@ public final class CodexHelperPairingCoordinator: ObservableObject {
                 guard (1...65535).contains(exchange.port) else {
                     throw AccountLoginError.sessionExchangeFailed("Codex helper returned an invalid port \(exchange.port).")
                 }
+                guard exchange.port == pairing.port else {
+                    throw AccountLoginError.sessionExchangeFailed(
+                        "Codex helper returned port \(exchange.port), which does not match the confirmed port \(pairing.port)."
+                    )
+                }
 
                 let baseURL = URL(string: "http://127.0.0.1:\(exchange.port)")!
                 let configuration = AccountBackendConfiguration(
@@ -270,7 +280,7 @@ public final class CodexHelperPairingCoordinator: ObservableObject {
         if let result = lastPairingResult {
             switch result {
             case .verified(let port):
-                let persisted = UserDefaults.codexHelperToken
+                let persisted = loadPersistedToken()
                 if verifiedTokenSnapshot == persisted, persisted.isEmpty == false {
                     return .verified(port: port)
                 }
@@ -280,7 +290,7 @@ public final class CodexHelperPairingCoordinator: ObservableObject {
             }
         }
 
-        guard UserDefaults.codexHelperToken.isEmpty == false else {
+        guard loadPersistedToken().isEmpty == false else {
             return .notPaired
         }
 

@@ -374,6 +374,68 @@ final class CodexHelperPairingTests: XCTestCase {
         XCTAssertTrue(message.contains("invalid port"), "Expected port-range error, got: \(message)")
     }
 
+    @MainActor
+    func testExchangePortMustMatchConfirmedPort() async throws {
+        let oldURL = UserDefaults.codexHelperBaseURL
+        defer { UserDefaults.codexHelperBaseURL = oldURL }
+        var madeHelperClient = false
+        var savedToken: String?
+        let coordinator = CodexHelperPairingCoordinator(
+            makeHelperClient: { _ in
+                madeHelperClient = true
+                return HealthyHelperClient()
+            },
+            saveToken: { savedToken = $0 },
+            exchangeCode: { _, _ in PairingCodeExchangeResponse(port: 9999, token: Self.validCode) }
+        )
+
+        coordinator.confirm(PairedHelper(port: 8766, code: Self.validCode))
+        for _ in 0..<50 {
+            if coordinator.lastPairingResult != nil { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertFalse(madeHelperClient, "A mismatched response port must fail before the health check.")
+        XCTAssertNil(savedToken)
+        XCTAssertNil(coordinator.pairedHelper)
+        XCTAssertEqual(UserDefaults.codexHelperBaseURL, oldURL)
+        guard case .verificationFailed(let port, let message) = coordinator.lastPairingResult else {
+            return XCTFail("Expected verificationFailed")
+        }
+        XCTAssertEqual(port, 8766)
+        XCTAssertTrue(message.contains("does not match the confirmed port"), "Unexpected error: \(message)")
+    }
+
+    @MainActor
+    func testPairingStatusDowngradesAndFallsBackToPersistedState() async throws {
+        let oldURL = UserDefaults.codexHelperBaseURL
+        defer { UserDefaults.codexHelperBaseURL = oldURL }
+        let persistedToken = PersistedTokenBox(Self.validCode)
+        let coordinator = CodexHelperPairingCoordinator(
+            makeHelperClient: { _ in HealthyHelperClient() },
+            saveToken: { persistedToken.value = $0 },
+            exchangeCode: { _, port in PairingCodeExchangeResponse(port: port, token: Self.validCode) },
+            loadPersistedToken: { persistedToken.value }
+        )
+
+        coordinator.confirm(PairedHelper(port: 8766, code: Self.validCode))
+        for _ in 0..<50 {
+            if coordinator.lastPairingResult != nil { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertEqual(coordinator.pairingStatus, .verified(port: 8766))
+
+        persistedToken.value = "manually-edited-token"
+        XCTAssertEqual(coordinator.pairingStatus, .paired(port: 8766))
+
+        coordinator.dismissResult()
+        XCTAssertEqual(coordinator.pairingStatus, .paired(port: 8766))
+
+        persistedToken.value = ""
+        XCTAssertEqual(coordinator.pairingStatus, .notPaired)
+    }
+
     // MARK: - applyHydratedHelperConfigurationIfTokenUnedited
 
     @MainActor
@@ -408,6 +470,14 @@ final class CodexHelperPairingTests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    private final class PersistedTokenBox {
+        var value: String
+
+        init(_ value: String) {
+            self.value = value
+        }
+    }
 
     private final class UnsafeCounter: @unchecked Sendable {
         /// Serial-only: this counter must only be accessed from the
