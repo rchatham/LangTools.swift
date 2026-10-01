@@ -20,6 +20,10 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
     /// Tool invocations made while producing this message. Rendered by ChatUI
     /// as expandable tool-call cards alongside the message bubble.
     @Published public var toolCalls: [ChatToolCall] = []
+    /// UI-only send failure state. Intentionally excluded from Codable history.
+    @Published public var sendFailure: ChatSendFailure?
+    /// Presentation metadata; never appended to the provider-facing response text.
+    @Published public var wasResponseStopped: Bool = false
     /// Raw results retained for provider history replay when a rendered card
     /// intentionally hides the corresponding `ChatToolCall.result`.
     public var providerToolResults: [String: String] = [:]
@@ -60,6 +64,8 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         self.imageDetail = imageDetail
         self.createdAt = createdAt
         self.toolCalls = toolCalls
+        self.sendFailure = nil
+        self.wasResponseStopped = false
         self.providerToolResults = providerToolResults
         self.providerToolResultServices = providerToolResultServices
     }
@@ -68,7 +74,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
     public convenience init(text: String, role: Role) { self.init(role: role, contentType: .string(text)) }
 
     // Coding keys for encoding/decoding
-    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail, createdAt, toolCalls, providerToolResults, providerToolResultServices }
+    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail, createdAt, toolCalls, providerToolResults, providerToolResultServices, wasResponseStopped }
 
     public required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -78,6 +84,8 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         imageDetail = try container.decodeIfPresent(ImageDetail.self, forKey: .imageDetail)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         toolCalls = try container.decodeIfPresent([ChatToolCall].self, forKey: .toolCalls) ?? []
+        sendFailure = nil
+        wasResponseStopped = try container.decodeIfPresent(Bool.self, forKey: .wasResponseStopped) ?? false
         providerToolResults = try container.decodeIfPresent([String: String].self, forKey: .providerToolResults) ?? [:]
         providerToolResultServices = try container.decodeIfPresent([String: APIService].self, forKey: .providerToolResultServices) ?? [:]
     }
@@ -89,6 +97,9 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         try container.encode(contentType, forKey: .contentType)
         try container.encodeIfPresent(imageDetail, forKey: .imageDetail)
         try container.encode(createdAt, forKey: .createdAt)
+        if wasResponseStopped {
+            try container.encode(true, forKey: .wasResponseStopped)
+        }
         if !toolCalls.isEmpty {
             try container.encode(toolCalls, forKey: .toolCalls)
         }
@@ -107,6 +118,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         lhs.imageDetail == rhs.imageDetail &&
         lhs.createdAt == rhs.createdAt &&
         lhs.toolCalls == rhs.toolCalls &&
+        lhs.wasResponseStopped == rhs.wasResponseStopped &&
         lhs.providerToolResults == rhs.providerToolResults &&
         lhs.providerToolResultServices == rhs.providerToolResultServices
     }
@@ -118,6 +130,7 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         hasher.combine(imageDetail)
         hasher.combine(createdAt)
         hasher.combine(toolCalls)
+        hasher.combine(wasResponseStopped)
         hasher.combine(providerToolResults)
         hasher.combine(providerToolResultServices)
     }

@@ -19,6 +19,43 @@ private struct AgentReplayArguments: Encodable {
     let reason: String
 }
 
+private final class SendEstablishment: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<Void, any Error>?
+    private var continuations: [CheckedContinuation<Void, any Error>] = []
+
+    func wait() async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.withLock {
+                if let result {
+                    continuation.resume(with: result)
+                } else {
+                    continuations.append(continuation)
+                }
+            }
+        }
+    }
+
+    func succeed() {
+        resolve(.success(()))
+    }
+
+    func fail(_ error: any Error) {
+        resolve(.failure(error))
+    }
+
+    private func resolve(_ result: Result<Void, any Error>) {
+        let pending = lock.withLock { () -> [CheckedContinuation<Void, any Error>] in
+            guard self.result == nil else { return [] }
+            self.result = result
+            let pending = continuations
+            continuations.removeAll()
+            return pending
+        }
+        pending.forEach { $0.resume(with: result) }
+    }
+}
+
 /// Thread-safe request-scoped event storage. Provider and agent callbacks can
 /// arrive off the main actor, so they only enqueue here; rendering remains on
 /// `MessageService`'s main actor.
@@ -117,6 +154,9 @@ public class MessageService {
     @ObservationIgnored private let agents: [any Agent]
     private(set) var conversationID = UUID()
     private var activeSends: [UUID: [UUID: Task<Void, Error>]] = [:]
+    /// Generated messages owned by failed attempts, keyed by the stable user message id.
+    /// This is intentionally ephemeral and excluded from persisted conversation history.
+    private var failedAttemptGeneratedMessageIDs: [UUID: Set<UUID>] = [:]
     @ObservationIgnored private let eventBuffer = SendEventBuffer()
     /// Retains the pre-request test/helper API without sharing production send state.
     @ObservationIgnored private let compatibilitySendID = UUID()
@@ -162,44 +202,105 @@ public class MessageService {
     }
 
     public func send(message: String, stream: Bool = false) async throws {
-        let requestConversationID = conversationID
-        let sendID = UUID()
-        eventBuffer.register(sendID)
-        let operation = Task { @MainActor in
-            try await performSend(
-                message: message,
-                stream: stream,
-                conversationID: requestConversationID,
-                sendID: sendID
-            )
-        }
-        activeSends[requestConversationID, default: [:]][sendID] = operation
-        defer {
-            eventBuffer.remove(sendID)
-            removeActiveSend(id: sendID, conversationID: requestConversationID)
-        }
-
+        let operation = sendOperation(message: message, stream: stream)
         try await withTaskCancellationHandler {
-            try await operation.value
+            try await operation.waitForCompletion()
         } onCancel: {
             operation.cancel()
         }
     }
 
-    private func performSend(message: String, stream: Bool, conversationID requestConversationID: UUID, sendID: UUID) async throws {
-        guard conversationID == requestConversationID else { throw CancellationError() }
+    public func sendOperation(message: String, stream: Bool = false) -> ChatSendOperation {
         let userMessage = Message(text: message, role: .user)
-        let userMessageID = userMessage.uuid
         messages.append(userMessage)
+        return makeSendOperation(userMessage: userMessage, stream: stream)
+    }
+
+    public func retryOperation(messageID: UUID, stream: Bool = false) throws -> ChatSendOperation {
+        guard let userMessage = messages.first(where: { $0.uuid == messageID && $0.isUser }),
+              userMessage.sendFailure != nil
+        else { throw ChatMessageServiceError.retryUnsupported }
+
+        let generatedIDs = failedAttemptGeneratedMessageIDs.removeValue(forKey: messageID) ?? []
+        messages.removeAll { $0.uuid == messageID || generatedIDs.contains($0.uuid) }
+        messages.append(userMessage)
+        setSendFailure(nil, on: userMessage)
+        userMessage.wasResponseStopped = false
+        return makeSendOperation(userMessage: userMessage, stream: stream)
+    }
+
+    public func markResponseStopped(messageID: UUID) {
+        guard let message = messages.first(where: { $0.uuid == messageID && $0.isUser }) else { return }
+        message.wasResponseStopped = true
+        notifyMessageUpdated(message, keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory)
+    }
+
+    private func makeSendOperation(
+        userMessage: Message,
+        stream: Bool
+    ) -> ChatSendOperation {
+        let requestConversationID = conversationID
+        let sendID = UUID()
+        let establishment = SendEstablishment()
+        eventBuffer.register(sendID)
+        let requestSnapshot = requestMessages(
+            keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory
+        )
+
+        let completion = Task { @MainActor in
+            defer {
+                eventBuffer.remove(sendID)
+                removeActiveSend(id: sendID, conversationID: requestConversationID)
+            }
+            do {
+                try await performSend(
+                    userMessage: userMessage,
+                    stream: stream,
+                    conversationID: requestConversationID,
+                    sendID: sendID,
+                    requestSnapshot: requestSnapshot,
+                    establishment: establishment
+                )
+            } catch {
+                establishment.fail(error)
+                throw error
+            }
+        }
+        activeSends[requestConversationID, default: [:]][sendID] = completion
+        let establishmentTask = Task { try await establishment.wait() }
+
+        return ChatSendOperation(
+            id: sendID,
+            messageID: userMessage.uuid,
+            establishment: establishmentTask,
+            completion: completion,
+            cancel: {
+                establishmentTask.cancel()
+                completion.cancel()
+            }
+        )
+    }
+
+    private func performSend(
+        userMessage: Message,
+        stream: Bool,
+        conversationID requestConversationID: UUID,
+        sendID: UUID,
+        requestSnapshot: [Message],
+        establishment: SendEstablishment
+    ) async throws {
+        guard conversationID == requestConversationID else { throw CancellationError() }
+        let userMessageID = userMessage.uuid
         var anchorMessageID: UUID?
         var assistantMessageIDs: Set<UUID> = []
+        var generatedMessageIDs: Set<UUID> = []
         var toolBreakOccurred = false
         let keepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
         let selectedModel = UserDefaults.model
         let replayService = selectedModel.apiService
 
         do {
-            var currentMessages = requestMessages(keepsToolCallsInHistory: keepsToolCallsInHistory)
+            var currentMessages = requestSnapshot
             currentMessages.insert(Message(text: systemMessage(), role: .system), at: 0)
 
             let activeTools = filteredTools(for: sendID)
@@ -208,6 +309,7 @@ public class MessageService {
                 self?.enqueueToolEvent(event, for: sendID, agentToolNames: agentToolNames)
             }
 
+            try Task.checkCancellation()
             let responseStream: AsyncThrowingStream<String, Error>
             if let conversationClient = networkClient as? any ConversationAwareNetworkClientProtocol {
                 responseStream = try conversationClient.streamChatCompletionRequest(
@@ -229,6 +331,8 @@ public class MessageService {
                     toolEventHandler: toolEventHandler
                 )
             }
+            try Task.checkCancellation()
+            establishment.succeed()
 
             var content = ""
             for try await chunk in responseStream {
@@ -237,6 +341,7 @@ public class MessageService {
                     for: sendID,
                     anchorMessageID: &anchorMessageID,
                     toolBreakOccurred: &toolBreakOccurred,
+                    generatedMessageIDs: &generatedMessageIDs,
                     keepsToolCallsInHistory: keepsToolCallsInHistory,
                     replayService: replayService
                 )
@@ -267,6 +372,7 @@ public class MessageService {
                     let responseMessage = Message(role: .assistant, contentType: .string(trimmed))
                     anchorMessageID = responseMessage.uuid
                     assistantMessageIDs.insert(responseMessage.uuid)
+                    generatedMessageIDs.insert(responseMessage.uuid)
                     messages.append(responseMessage)
                 }
             }
@@ -276,6 +382,7 @@ public class MessageService {
                 for: sendID,
                 anchorMessageID: &anchorMessageID,
                 toolBreakOccurred: &toolBreakOccurred,
+                generatedMessageIDs: &generatedMessageIDs,
                 keepsToolCallsInHistory: keepsToolCallsInHistory,
                 replayService: replayService
             )
@@ -288,6 +395,8 @@ public class MessageService {
                 in: assistantMessageIDs,
                 reason: "Tool call ended without a completion result."
             )
+            failedAttemptGeneratedMessageIDs.removeValue(forKey: userMessageID)
+            setSendFailure(nil, on: userMessage)
         } catch {
             guard conversationID == requestConversationID else { throw CancellationError() }
             // Preserve lifecycle events that fired before the failure, then run
@@ -296,6 +405,7 @@ public class MessageService {
                 for: sendID,
                 anchorMessageID: &anchorMessageID,
                 toolBreakOccurred: &toolBreakOccurred,
+                generatedMessageIDs: &generatedMessageIDs,
                 keepsToolCallsInHistory: keepsToolCallsInHistory,
                 replayService: replayService
             )
@@ -304,15 +414,23 @@ public class MessageService {
                 for: anchorMessageID,
                 keepsToolCallsInHistory: keepsToolCallsInHistory
             )
-            if anchorMessageID == nil {
-                messages.removeAll { $0.uuid == userMessageID }
-            }
             failPendingToolCalls(
                 in: assistantMessageIDs,
                 reason: error.localizedDescription
             )
+            if error is CancellationError || Task.isCancelled {
+                setSendFailure(nil, on: userMessage)
+                throw CancellationError()
+            }
+            failedAttemptGeneratedMessageIDs[userMessageID] = generatedMessageIDs
+            setSendFailure(ChatSendFailure(message: error.localizedDescription), on: userMessage)
             throw error
         }
+    }
+
+    private func setSendFailure(_ failure: ChatSendFailure?, on message: Message) {
+        guard messages.contains(where: { $0.uuid == message.uuid }) else { return }
+        message.sendFailure = failure
     }
 
     private func removeActiveSend(id: UUID, conversationID: UUID) {
@@ -326,7 +444,10 @@ public class MessageService {
         UserDefaults.systemMessage + "\n\nWhen agent tools return results, those results are displayed visually to the user as content cards. Do not repeat or summarize information already shown in the cards. You may add a brief natural-language acknowledgment but should not list out details the user can already see. Answer follow-up questions about the content if asked. If an agent tool returns an error, explain the error to the user."
     }
 
-    public func deleteMessage(id: UUID) { messages.removeAll(where: { $0.uuid == id }) }
+    public func deleteMessage(id: UUID) {
+        let generatedIDs = failedAttemptGeneratedMessageIDs.removeValue(forKey: id) ?? []
+        messages.removeAll { $0.uuid == id || generatedIDs.contains($0.uuid) }
+    }
 
     public func clearMessages() {
         let previousConversationID = conversationID
@@ -334,6 +455,7 @@ public class MessageService {
         let sendsToDrain = Array(sends.values)
         sends.keys.forEach { eventBuffer.remove($0) }
         conversationID = UUID()
+        failedAttemptGeneratedMessageIDs.removeAll()
         messages.removeAll()
         sendsToDrain.forEach { $0.cancel() }
 
@@ -352,7 +474,7 @@ extension MessageService {
         eventBuffer.enqueueTool(event, for: sendID, agentToolNames: agentToolNames)
     }
 
-    nonisolated private func enqueueAgentEvent(_ event: AgentEvent, for sendID: UUID) {
+    nonisolated func enqueueAgentEvent(_ event: AgentEvent, for sendID: UUID) {
         eventBuffer.enqueueAgent(event, for: sendID)
     }
 
@@ -384,10 +506,12 @@ extension MessageService {
     private func drainCompatibilityEvents() {
         var anchorMessageID = messages.last(where: \.isAssistant)?.uuid
         var toolBreakOccurred = false
+        var generatedMessageIDs: Set<UUID> = []
         drainEvents(
             for: compatibilitySendID,
             anchorMessageID: &anchorMessageID,
             toolBreakOccurred: &toolBreakOccurred,
+            generatedMessageIDs: &generatedMessageIDs,
             keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory,
             replayService: UserDefaults.model.apiService
         )
@@ -397,6 +521,7 @@ extension MessageService {
         for sendID: UUID,
         anchorMessageID: inout UUID?,
         toolBreakOccurred: inout Bool,
+        generatedMessageIDs: inout Set<UUID>,
         keepsToolCallsInHistory: Bool,
         replayService: APIService
     ) {
@@ -409,6 +534,7 @@ extension MessageService {
         } else {
             anchor = Message(role: .assistant, contentType: .null)
             anchorMessageID = anchor.uuid
+            generatedMessageIDs.insert(anchor.uuid)
             messages.append(anchor)
         }
 
@@ -424,6 +550,7 @@ extension MessageService {
                     agentEvent,
                     to: anchor,
                     toolBreakOccurred: &toolBreakOccurred,
+                    generatedMessageIDs: &generatedMessageIDs,
                     keepsToolCallsInHistory: keepsToolCallsInHistory,
                     replayService: replayService
                 )
@@ -437,8 +564,14 @@ extension MessageService {
     }
 
     private func requestMessages(keepsToolCallsInHistory: Bool) -> [Message] {
-        guard !keepsToolCallsInHistory else { return messages }
-        return messages.compactMap { message in
+        let failedGeneratedIDs = failedAttemptGeneratedMessageIDs.values.reduce(into: Set<UUID>()) {
+            $0.formUnion($1)
+        }
+        let eligibleMessages = messages.filter {
+            $0.sendFailure == nil && !failedGeneratedIDs.contains($0.uuid)
+        }
+        guard !keepsToolCallsInHistory else { return eligibleMessages }
+        return eligibleMessages.compactMap { message in
             let sanitized = sanitizedHistoryCopy(of: message)
             return isSemanticallyEmptyAssistantAnchor(sanitized) ? nil : sanitized
         }
@@ -472,13 +605,15 @@ extension MessageService {
     }
 
     private func sanitizedHistoryCopy(of message: Message) -> Message {
-        Message(
+        let copy = Message(
             uuid: message.uuid,
             role: message.role,
             contentType: message.contentType,
             imageDetail: message.imageDetail,
             createdAt: message.createdAt
         )
+        copy.wasResponseStopped = message.wasResponseStopped
+        return copy
     }
 
     private func isSemanticallyEmptyAssistantAnchor(_ message: Message) -> Bool {
@@ -519,6 +654,7 @@ extension MessageService {
         _ event: AgentEvent,
         to last: Message,
         toolBreakOccurred: inout Bool,
+        generatedMessageIDs: inout Set<UUID>,
         keepsToolCallsInHistory: Bool,
         replayService: APIService
     ) {
@@ -602,6 +738,7 @@ extension MessageService {
                 }
                 last.toolCalls = calls
                 toolBreakOccurred = true
+                generatedMessageIDs.insert(cardMessage.uuid)
                 messages.append(cardMessage)
             } else {
                 Self.setAgentStatus(agent, status: status, result: result, in: &calls)
