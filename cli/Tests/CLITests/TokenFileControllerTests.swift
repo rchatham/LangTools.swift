@@ -66,6 +66,63 @@ final class TokenFileControllerTests: XCTestCase {
         }
     }
 
+    func testConcurrentEnsureTokenCallsAgreeOnSingleToken() async throws {
+        let tokenURL = try makeTokenURL()
+
+        let tokens = try await withThrowingTaskGroup(of: String.self) { group in
+            for _ in 0..<16 {
+                group.addTask {
+                    try TokenFileController(tokenFileURL: tokenURL).ensureToken()
+                }
+            }
+
+            var values: [String] = []
+            for try await token in group {
+                values.append(token)
+            }
+            return values
+        }
+
+        XCTAssertEqual(Set(tokens).count, 1)
+        XCTAssertEqual(try HelperTokenLoader.load(from: tokenURL.path), tokens.first)
+        let attributes = try FileManager.default.attributesOfItem(atPath: tokenURL.path)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.int16Value ?? 0, 0o600)
+        try assertNoTemporaryFiles(alongside: tokenURL)
+    }
+
+    func testPublishFailsWithTypedEEXISTAndPreservesExistingFile() throws {
+        let tokenURL = try makeTokenURL()
+        let existing = String(repeating: "ab", count: 32)
+        let replacement = String(repeating: "cd", count: 32)
+        try Data(existing.utf8).write(to: tokenURL)
+        XCTAssertEqual(chmod(tokenURL.path, 0o600), 0)
+
+        XCTAssertThrowsError(try TokenFileController.publish(token: replacement, at: tokenURL)) { error in
+            guard case TokenFileController.TokenFileControllerError.publishFailed(let path, let errorCode) = error else {
+                return XCTFail("Expected publishFailed, got \(error)")
+            }
+            XCTAssertEqual(path, tokenURL.path)
+            XCTAssertEqual(errorCode, EEXIST)
+        }
+
+        XCTAssertEqual(String(data: try Data(contentsOf: tokenURL), encoding: .utf8), existing)
+        try assertNoTemporaryFiles(alongside: tokenURL)
+    }
+
+    func testEnsureTokenCreatesOwnerOnlyLockFile() throws {
+        let tokenURL = try makeTokenURL()
+        _ = try TokenFileController(tokenFileURL: tokenURL).ensureToken()
+        let lockURL = URL(fileURLWithPath: tokenURL.path + ".lock")
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: lockURL.path)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.int16Value ?? 0, 0o600)
+    }
+
+    private func assertNoTemporaryFiles(alongside tokenURL: URL) throws {
+        let names = try FileManager.default.contentsOfDirectory(atPath: tokenURL.deletingLastPathComponent().path)
+        XCTAssertTrue(names.filter { $0.contains(".tmp.") }.isEmpty, "Unexpected temporary files: \(names)")
+    }
+
     private func makeTokenURL() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("langtools-helper-token-\(UUID().uuidString)", isDirectory: true)

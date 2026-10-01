@@ -1,5 +1,7 @@
 #if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
 #endif
 import Foundation
 import HelperCore
@@ -12,23 +14,36 @@ import Security
 /// helper app.
 ///
 /// When the file is missing the controller generates a fresh 64-hex token
-/// (32 bytes of `SecRandomCopyBytes` entropy) and writes it owner-only: mode
-/// 0600, `O_EXCL` creation, umask 077, and no trailing newline. An existing
-/// file is validated with the `HelperTokenLoader` rules and reused as-is.
+/// (32 bytes of `SecRandomCopyBytes` entropy), writes it to an owner-only
+/// same-directory temporary file, and atomically publishes it without a
+/// partially written target ever becoming visible. A sibling lock file
+/// serializes cooperating helper processes. Existing token files are validated
+/// with the `HelperTokenLoader` rules and reused as-is.
 struct TokenFileController {
+    private static let processLock = NSLock()
+
     enum TokenFileControllerError: LocalizedError, Sendable {
         case entropyGenerationFailed
-        case createFailed(String)
-        case writeFailed(String)
+        case lockFailed(path: String, errno: Int32)
+        case createFailed(path: String, errno: Int32)
+        case writeFailed(path: String, errno: Int32)
+        case publishFailed(path: String, errno: Int32)
+        case replaceFailed(path: String, errno: Int32)
 
         var errorDescription: String? {
             switch self {
             case .entropyGenerationFailed:
                 return "Unable to generate secure random bytes for the helper token."
-            case .createFailed(let path):
-                return "Unable to create the helper token file at \(path)."
-            case .writeFailed(let path):
-                return "Unable to write the helper token file at \(path)."
+            case .lockFailed(let path, let errorCode):
+                return "Unable to lock the helper token file at \(path) (POSIX error \(errorCode))."
+            case .createFailed(let path, let errorCode):
+                return "Unable to create the helper token file at \(path) (POSIX error \(errorCode))."
+            case .writeFailed(let path, let errorCode):
+                return "Unable to write the helper token file at \(path) (POSIX error \(errorCode))."
+            case .publishFailed(let path, let errorCode):
+                return "Unable to publish the helper token file at \(path) (POSIX error \(errorCode))."
+            case .replaceFailed(let path, let errorCode):
+                return "Unable to replace the helper token file at \(path) (POSIX error \(errorCode))."
             }
         }
     }
@@ -42,6 +57,10 @@ struct TokenFileController {
 
     let tokenFileURL: URL
 
+    private var lockFileURL: URL {
+        URL(fileURLWithPath: tokenFileURL.path + ".lock")
+    }
+
     init(tokenFileURL: URL = TokenFileController.defaultTokenFileURL) {
         self.tokenFileURL = tokenFileURL
     }
@@ -51,32 +70,33 @@ struct TokenFileController {
     /// contract, reused; a legacy or malformed token is rotated. A missing
     /// file is generated and written.
     func ensureToken() throws -> String {
-        if FileManager.default.fileExists(atPath: tokenFileURL.path) {
-            let existing = try HelperTokenLoader.load(from: tokenFileURL.path)
-            if Self.isPairingCompatible(existing) {
-                return existing
+        try Self.ensureParentDirectory(for: tokenFileURL)
+        return try Self.withExclusiveLock(at: lockFileURL) {
+            if FileManager.default.fileExists(atPath: tokenFileURL.path) {
+                return try reuseOrRotateExistingToken()
             }
-            // A legacy token that the loader accepts but one-click pairing
-            // rejects (pairing requires exactly 64 hex). Rotate it so the
-            // stored token always satisfies the pairing contract.
-            FileHandle.standardError.write(Data("langtools: rotating legacy helper token to 64-hex format\n".utf8))
-            try FileManager.default.removeItem(at: tokenFileURL)
-            return try ensureToken()
-        }
-        let token = try Self.generateToken()
-        do {
-            try Self.createTokenFile(token: token, at: tokenFileURL)
-        } catch TokenFileControllerError.createFailed where errno == EEXIST {
-            // Another instance may have created the file after our existence
-            // check. Read and validate its value rather than using ours.
-            let token = try HelperTokenLoader.load(from: tokenFileURL.path)
-            if Self.isPairingCompatible(token) {
-                return token
+
+            let token = try Self.generateToken()
+            do {
+                try Self.publish(token: token, at: tokenFileURL)
+            } catch TokenFileControllerError.publishFailed(_, let errorCode) where errorCode == EEXIST {
+                // A non-cooperating writer may have published after our
+                // existence check. Validate and reuse or rotate its value.
+                return try reuseOrRotateExistingToken()
             }
-            FileHandle.standardError.write(Data("langtools: rotating legacy helper token from race to 64-hex format\n".utf8))
-            try? FileManager.default.removeItem(at: tokenFileURL)
-            return try ensureToken()
+            return try HelperTokenLoader.load(from: tokenFileURL.path)
         }
+    }
+
+    private func reuseOrRotateExistingToken() throws -> String {
+        let existing = try HelperTokenLoader.load(from: tokenFileURL.path)
+        guard Self.isPairingCompatible(existing) == false else { return existing }
+
+        // A legacy token that the loader accepts but one-click pairing rejects
+        // (pairing requires exactly 64 hex). Atomically replace it so readers
+        // see either the complete old token or the complete new token.
+        FileHandle.standardError.write(Data("langtools: rotating legacy helper token to 64-hex format\n".utf8))
+        try Self.replace(token: Self.generateToken(), at: tokenFileURL)
         return try HelperTokenLoader.load(from: tokenFileURL.path)
     }
 
@@ -94,29 +114,56 @@ struct TokenFileController {
         return bytes.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Writes the token with owner-only permissions: umask 077 around the
-    /// create, an owner-only parent directory, and `O_EXCL` so a file or
-    /// symlink that appears between the existence check and the create fails
-    /// closed instead of being followed or truncated. No trailing newline.
-    private static func createTokenFile(token: String, at url: URL) throws {
-        let savedUmask = umask(0o077)
-        defer { umask(savedUmask) }
+    /// Publishes a complete token without replacing an existing target.
+    /// `link(2)` is atomic and the staging file is in the same directory, so a
+    /// reader sees either no target or the complete owner-only token.
+    static func publish(token: String, at url: URL) throws {
+        let temporaryURL = try writeTemporaryToken(token, for: url)
+        defer { _ = unlink(temporaryURL.path) }
 
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: NSNumber(value: Int16(0o700))]
+        guard link(temporaryURL.path, url.path) == 0 else {
+            let errorCode = errno
+            throw TokenFileControllerError.publishFailed(path: url.path, errno: errorCode)
+        }
+    }
+
+    /// Atomically replaces a loader-valid legacy token. Readers see either the
+    /// complete legacy value or the complete replacement.
+    static func replace(token: String, at url: URL) throws {
+        let temporaryURL = try writeTemporaryToken(token, for: url)
+        defer { _ = unlink(temporaryURL.path) }
+
+        guard rename(temporaryURL.path, url.path) == 0 else {
+            let errorCode = errno
+            throw TokenFileControllerError.replaceFailed(path: url.path, errno: errorCode)
+        }
+    }
+
+    private static func writeTemporaryToken(_ token: String, for url: URL) throws -> URL {
+        try ensureParentDirectory(for: url)
+        let temporaryURL = url.deletingLastPathComponent().appendingPathComponent(
+            ".\(url.lastPathComponent).tmp.\(UUID().uuidString)"
         )
+        let descriptor = open(
+            temporaryURL.path,
+            O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+            0o600
+        )
+        guard descriptor >= 0 else {
+            let errorCode = errno
+            throw TokenFileControllerError.createFailed(path: temporaryURL.path, errno: errorCode)
+        }
 
-        let descriptor = open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
-        guard descriptor >= 0 else { throw TokenFileControllerError.createFailed(url.path) }
         var closed = false
         var complete = false
         defer {
             if closed == false { _ = close(descriptor) }
-            // We exclusively created this path; a failed write must not leave
-            // an invalid token that prevents every subsequent launch.
-            if complete == false { _ = unlink(url.path) }
+            if complete == false { _ = unlink(temporaryURL.path) }
+        }
+
+        guard fchmod(descriptor, 0o600) == 0 else {
+            let errorCode = errno
+            throw TokenFileControllerError.createFailed(path: temporaryURL.path, errno: errorCode)
         }
 
         let data = Data(token.utf8)
@@ -130,17 +177,87 @@ struct TokenFileController {
                 let written = Glibc.write(descriptor, base + offset, data.count - offset)
                 #endif
                 if written < 0 {
-                    if errno == EINTR { continue }
-                    throw TokenFileControllerError.writeFailed(url.path)
+                    let errorCode = errno
+                    if errorCode == EINTR { continue }
+                    throw TokenFileControllerError.writeFailed(path: temporaryURL.path, errno: errorCode)
                 }
-                guard written > 0 else { throw TokenFileControllerError.writeFailed(url.path) }
+                guard written > 0 else {
+                    throw TokenFileControllerError.writeFailed(path: temporaryURL.path, errno: EIO)
+                }
                 offset += written
             }
         }
+
+        guard fsync(descriptor) == 0 else {
+            let errorCode = errno
+            throw TokenFileControllerError.writeFailed(path: temporaryURL.path, errno: errorCode)
+        }
+
         let closeResult = close(descriptor)
+        let closeError = errno
         closed = true
-        guard closeResult == 0 else { throw TokenFileControllerError.writeFailed(url.path) }
+        guard closeResult == 0 else {
+            throw TokenFileControllerError.writeFailed(path: temporaryURL.path, errno: closeError)
+        }
         complete = true
+        return temporaryURL
+    }
+
+    private static func ensureParentDirectory(for url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: NSNumber(value: Int16(0o700))]
+        )
+    }
+
+    private static func withExclusiveLock<Result>(
+        at url: URL,
+        perform body: () throws -> Result
+    ) throws -> Result {
+        processLock.lock()
+        defer { processLock.unlock() }
+
+        let descriptor = open(url.path, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0o600)
+        guard descriptor >= 0 else {
+            let errorCode = errno
+            throw TokenFileControllerError.lockFailed(path: url.path, errno: errorCode)
+        }
+        defer { _ = close(descriptor) }
+
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0 else {
+            let errorCode = errno
+            throw TokenFileControllerError.lockFailed(path: url.path, errno: errorCode)
+        }
+        guard metadata.st_mode & S_IFMT == S_IFREG,
+              metadata.st_uid == geteuid(),
+              metadata.st_nlink == 1
+        else {
+            throw TokenFileControllerError.lockFailed(path: url.path, errno: EPERM)
+        }
+        guard fchmod(descriptor, 0o600) == 0 else {
+            let errorCode = errno
+            throw TokenFileControllerError.lockFailed(path: url.path, errno: errorCode)
+        }
+
+        while setRecordLock(descriptor, type: F_WRLCK, command: F_SETLKW) != 0 {
+            let errorCode = errno
+            if errorCode == EINTR { continue }
+            throw TokenFileControllerError.lockFailed(path: url.path, errno: errorCode)
+        }
+        defer { _ = setRecordLock(descriptor, type: F_UNLCK, command: F_SETLK) }
+
+        return try body()
+    }
+
+    private static func setRecordLock(_ descriptor: Int32, type: Int32, command: Int32) -> Int32 {
+        var lock = flock()
+        lock.l_type = Int16(type)
+        lock.l_whence = Int16(SEEK_SET)
+        lock.l_start = 0
+        lock.l_len = 0
+        return fcntl(descriptor, command, &lock)
     }
 
     private static func fillSecureRandomBytes(_ bytes: inout [UInt8]) -> Bool {
