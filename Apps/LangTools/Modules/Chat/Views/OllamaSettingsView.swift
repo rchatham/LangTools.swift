@@ -271,7 +271,7 @@ struct OllamaSettingsView: View {
                             
                             Button("Cancel") {
                                 isEditingServerUrl = false
-                                viewModel.editingServerUrl = viewModel.serverUrl
+                                viewModel.resetEditingServerUrl()
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
@@ -299,7 +299,7 @@ struct OllamaSettingsView: View {
                         Spacer()
                         
                         Button(action: {
-                            viewModel.editingServerUrl = viewModel.serverUrl
+                            viewModel.resetEditingServerUrl()
                             isEditingServerUrl = true
                         }) {
                             Label("Edit", systemImage: "pencil")
@@ -443,7 +443,7 @@ struct OllamaSettingsView: View {
                                 Spacer()
                                 Button("Cancel") {
                                     isEditingServerUrl = false
-                                    viewModel.editingServerUrl = viewModel.serverUrl
+                                    viewModel.resetEditingServerUrl()
                                 }
                                 Button("Save") {
                                     viewModel.updateServerUrl()
@@ -459,7 +459,7 @@ struct OllamaSettingsView: View {
                             Text(viewModel.serverUrl)
                                 .foregroundColor(.secondary)
                             Button(action: {
-                                viewModel.editingServerUrl = viewModel.serverUrl
+                                viewModel.resetEditingServerUrl()
                                 isEditingServerUrl = true
                             }) {
                                 Image(systemName: "pencil")
@@ -542,19 +542,27 @@ extension OllamaSettingsView {
             checksConnectionOnInit: Bool = true
         ) {
             self.ollamaService = ollamaService
-            let defaults = userDefaults
-            if defaults.object(forKey: OllamaEndpointPolicy.userDefaultsKey) == nil {
-                self.serverUrl = OllamaEndpointPolicy.defaultURL.absoluteString
-            } else {
-                self.serverUrl = defaults.string(forKey: OllamaEndpointPolicy.userDefaultsKey) ?? ""
-            }
-            self.editingServerUrl = self.serverUrl
-            
-            if checksConnectionOnInit {
-                checkConnection()
+            do {
+                // Never put an invalid legacy value (which may contain credentials) in
+                // either the visible label or the editable text field.
+                let url = try OllamaEndpointPolicy.resolve(userDefaults: userDefaults)
+                self.serverUrl = url.absoluteString
+                self.editingServerUrl = self.serverUrl
+                if checksConnectionOnInit {
+                    checkConnection()
+                }
+            } catch {
+                self.serverUrl = "Invalid saved URL"
+                self.editingServerUrl = ""
+                self.connectionError = "Saved Ollama server URL is invalid. Enter a new URL to reconnect."
             }
         }
         
+        func resetEditingServerUrl() {
+            // An invalid legacy value is displayed as a sentinel, not an editable URL.
+            editingServerUrl = (try? OllamaEndpointPolicy.validate(serverUrl)) == nil ? "" : serverUrl
+        }
+
         @discardableResult
         func updateServerUrl() -> Task<Void, Never>? {
             do {

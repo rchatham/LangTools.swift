@@ -15,17 +15,14 @@ public enum OllamaEndpointError: LocalizedError, Equatable {
             return "Ollama server URL cannot be empty."
         case .malformed:
             return "Ollama server URL is malformed."
-        case .unsupportedScheme(let scheme):
-            if let scheme {
-                return "Ollama server URL scheme \"\(scheme)\" is not supported. Use HTTPS, or HTTP for localhost."
-            }
-            return "Ollama server URL must include an HTTP or HTTPS scheme."
+        case .unsupportedScheme:
+            return "Ollama server URL must use HTTPS, or HTTP for localhost."
         case .missingHost:
             return "Ollama server URL must include a host."
         case .disallowedComponent(let component):
             return "Ollama server URL must not include a \(component)."
-        case .unsafeHTTPHost(let host):
-            return "HTTP is only allowed for localhost Ollama servers, not \"\(host)\". Use HTTPS for remote servers."
+        case .unsafeHTTPHost:
+            return "HTTP is only allowed for localhost Ollama servers. Use HTTPS for remote servers."
         }
     }
 }

@@ -100,6 +100,71 @@ final class OllamaEndpointPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testSettingsShowsDefaultAndValidSavedEndpointUnchanged() {
+        let service = OllamaService(userDefaults: defaults)
+        let defaultSettings = OllamaSettingsView.ViewModel(
+            ollamaService: service, userDefaults: defaults, checksConnectionOnInit: false
+        )
+        XCTAssertEqual(defaultSettings.serverUrl, OllamaEndpointPolicy.defaultURL.absoluteString)
+        XCTAssertEqual(defaultSettings.editingServerUrl, defaultSettings.serverUrl)
+
+        let savedURL = "https://ollama.example.com/custom/path"
+        defaults.set(savedURL, forKey: OllamaEndpointPolicy.userDefaultsKey)
+        let savedSettings = OllamaSettingsView.ViewModel(
+            ollamaService: service, userDefaults: defaults, checksConnectionOnInit: false
+        )
+        XCTAssertEqual(savedSettings.serverUrl, savedURL)
+        XCTAssertEqual(savedSettings.editingServerUrl, savedURL)
+        savedSettings.resetEditingServerUrl()
+        XCTAssertEqual(savedSettings.editingServerUrl, savedURL)
+        XCTAssertNil(savedSettings.connectionError)
+    }
+
+    @MainActor
+    func testSettingsDoNotDisplayInvalidLegacyEndpointSecrets() {
+        let invalidValues = [
+            "https://user:secret@ollama.example.com/path",
+            "https://ollama.example.com/path?token=secret",
+            "https://ollama.example.com/path#secret",
+            "secret://ollama.example.com/path",
+            "http://secret.example.com:11434",
+        ]
+
+        for value in invalidValues {
+            defaults.set(value, forKey: OllamaEndpointPolicy.userDefaultsKey)
+            let service = OllamaService(userDefaults: defaults, dependencies: .init(
+                availableModels: { _ in [] },
+                runningModels: { _ in [] },
+                checkConnection: { _ in },
+                cacheModels: { _ in }
+            ))
+            let settings = OllamaSettingsView.ViewModel(
+                ollamaService: service, userDefaults: defaults
+            )
+
+            XCTAssertEqual(settings.serverUrl, "Invalid saved URL")
+            XCTAssertEqual(settings.editingServerUrl, "")
+            XCTAssertEqual(
+                settings.connectionError,
+                "Saved Ollama server URL is invalid. Enter a new URL to reconnect."
+            )
+            XCTAssertFalse(settings.isCheckingConnection)
+            XCTAssertFalse(settings.isConnected)
+            XCTAssertNotNil(service.error)
+            XCTAssertFalse(service.error?.localizedDescription.contains("secret") ?? true)
+            XCTAssertEqual(defaults.string(forKey: OllamaEndpointPolicy.userDefaultsKey), value)
+
+            settings.resetEditingServerUrl() // Both settings Edit buttons seed this field.
+            XCTAssertEqual(settings.editingServerUrl, "")
+            settings.editingServerUrl = "http://127.0.0.1:11434"
+            _ = settings.updateServerUrl()
+            XCTAssertEqual(settings.serverUrl, "http://127.0.0.1:11434")
+            XCTAssertEqual(settings.editingServerUrl, settings.serverUrl)
+            XCTAssertEqual(defaults.string(forKey: OllamaEndpointPolicy.userDefaultsKey), settings.serverUrl)
+        }
+    }
+
+    @MainActor
     func testEndpointSaveSynchronouslyUpdatesServiceAndInjectedDefaults() throws {
         let service = OllamaService(userDefaults: defaults)
         let savedURL = try service.updateBaseUrl("https://ollama.example.com/custom/path")
