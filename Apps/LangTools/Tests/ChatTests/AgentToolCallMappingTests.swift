@@ -132,6 +132,61 @@ final class AgentToolCallMappingTests: XCTestCase {
         )
     }
 
+    func testIncrementalDelegationLifecyclePreservesNestedChronology() throws {
+        let service = MessageService(networkClient: AgentEventNetworkStub())
+
+        service.handleAgentEvent(.started(agent: "Main", parent: nil, task: "coordinate"))
+        service.drainAgentEvents()
+        var root = try XCTUnwrap(service.messages.first?.toolCalls.first)
+        XCTAssertEqual(root.status, .pending)
+        XCTAssertTrue(root.children.isEmpty)
+
+        service.handleAgentEvent(.agentTransfer(from: "Main", to: "Research", reason: "investigate"))
+        service.handleAgentEvent(.started(agent: "Research", parent: "Main", task: "investigate"))
+        service.drainAgentEvents()
+        root = try XCTUnwrap(service.messages.first?.toolCalls.first)
+        XCTAssertEqual(root.children.count, 1)
+        var delegated = root.children[0]
+        XCTAssertEqual(delegated.name, "Research")
+        XCTAssertEqual(delegated.status, .pending)
+
+        service.handleAgentEvent(.toolCalled(agent: "Research", tool: "search", arguments: "{}"))
+        service.drainAgentEvents()
+        delegated = try XCTUnwrap(service.messages.first?.toolCalls.first?.children.first)
+        XCTAssertEqual(delegated.children.map(\.name), ["search"])
+        XCTAssertEqual(delegated.children[0].status, .pending)
+
+        service.handleAgentEvent(.toolCompleted(agent: "Research", result: "source found"))
+        service.drainAgentEvents()
+        delegated = try XCTUnwrap(service.messages.first?.toolCalls.first?.children.first)
+        XCTAssertEqual(delegated.children[0].status, .success)
+        XCTAssertEqual(delegated.children[0].result, "source found")
+
+        service.handleAgentEvent(.toolCalled(agent: "Research", tool: "verify", arguments: "{}"))
+        service.handleAgentEvent(.error(agent: "Research", message: "verification failed"))
+        service.drainAgentEvents()
+        delegated = try XCTUnwrap(service.messages.first?.toolCalls.first?.children.first)
+        XCTAssertEqual(delegated.status, .pending, "A tool error must not complete its owning agent")
+        XCTAssertEqual(delegated.children.map(\.status), [.success, .failure])
+        XCTAssertEqual(delegated.children[1].result, "verification failed")
+
+        service.handleAgentEvent(.completed(agent: "Research", result: "partial result"))
+        service.drainAgentEvents()
+        root = try XCTUnwrap(service.messages.first?.toolCalls.first)
+        XCTAssertEqual(root.status, .pending)
+        XCTAssertEqual(root.children[0].status, .success)
+        XCTAssertEqual(root.children[0].result, "partial result")
+
+        service.handleAgentEvent(.completed(agent: "Main", result: "final output"))
+        service.drainAgentEvents()
+        root = try XCTUnwrap(service.messages.first?.toolCalls.first)
+        XCTAssertEqual(root.status, .success)
+        XCTAssertEqual(root.result, "final output")
+        XCTAssertEqual(root.children.count, 1)
+        XCTAssertEqual(root.children[0].name, "Research")
+        XCTAssertEqual(root.children[0].status, .success)
+    }
+
     func testStructuredAgentResultIsHiddenFromCardAndRetainedForReplay() throws {
         let previousKeepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
         ToolSettings.shared.keepsToolCallsInHistory = true
@@ -203,8 +258,8 @@ final class AgentToolCallMappingTests: XCTestCase {
 
         XCTAssertEqual(
             encodedCallbacks.count,
-            completions.count + 1,
-            "The empty content-card append and all three anchor updates must be captured"
+            completions.count * 2 + 1,
+            "Each started/completed transition and the empty content-card append must be captured"
         )
         for encoded in encodedCallbacks {
             let persisted = try JSONDecoder().decode(Message.self, from: Data(encoded.utf8))

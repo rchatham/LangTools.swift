@@ -5,6 +5,7 @@
 //
 
 import Foundation
+import HelperCore
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif

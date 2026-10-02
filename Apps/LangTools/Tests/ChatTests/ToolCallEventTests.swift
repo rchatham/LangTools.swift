@@ -125,12 +125,77 @@ final class ToolCallEventTests: XCTestCase {
         message.applyToolEvent(completed(result: "done"))
         message.applyToolEvent(called(name: "incomplete"))
 
-        message.failPendingToolCalls(reason: "follow-up failed")
+        XCTAssertTrue(message.failPendingToolCalls(reason: "follow-up failed"))
 
         XCTAssertEqual(message.toolCalls[0].status, .success)
         XCTAssertEqual(message.toolCalls[0].result, "done")
         XCTAssertEqual(message.toolCalls[1].status, .failure)
         XCTAssertEqual(message.toolCalls[1].result, "follow-up failed")
+    }
+
+    func testFailPendingToolCallsRecursivelyPreservesCallMetadata() {
+        let completedChild = ChatToolCall(
+            id: "completed-child",
+            name: "completedTool",
+            arguments: #"{"done":true}"#,
+            status: .success,
+            result: "complete"
+        )
+        let pendingChild = ChatToolCall(
+            id: "pending-child",
+            name: "pendingTool",
+            arguments: #"{"value":1}"#,
+            status: .pending,
+            details: "still running"
+        )
+        let message = Message(
+            role: .assistant,
+            contentType: .null,
+            toolCalls: [
+                ChatToolCall(
+                    id: "agent",
+                    name: "researchAgent",
+                    kind: .agent,
+                    arguments: #"{"topic":"Swift"}"#,
+                    status: .success,
+                    result: "agent complete",
+                    details: "delegated research",
+                    children: [completedChild, pendingChild]
+                )
+            ]
+        )
+
+        XCTAssertTrue(message.failPendingToolCalls(reason: "stream ended"))
+
+        let agent = message.toolCalls[0]
+        XCTAssertEqual(agent.id, "agent")
+        XCTAssertEqual(agent.name, "researchAgent")
+        XCTAssertEqual(agent.kind, .agent)
+        XCTAssertEqual(agent.arguments, #"{"topic":"Swift"}"#)
+        XCTAssertEqual(agent.status, .success)
+        XCTAssertEqual(agent.result, "agent complete")
+        XCTAssertEqual(agent.details, "delegated research")
+        XCTAssertEqual(agent.children[0], completedChild)
+        XCTAssertEqual(agent.children[1].id, "pending-child")
+        XCTAssertEqual(agent.children[1].name, "pendingTool")
+        XCTAssertEqual(agent.children[1].kind, .tool)
+        XCTAssertEqual(agent.children[1].arguments, #"{"value":1}"#)
+        XCTAssertEqual(agent.children[1].status, .failure)
+        XCTAssertEqual(agent.children[1].result, "stream ended")
+        XCTAssertEqual(agent.children[1].details, "still running")
+    }
+
+    func testFailPendingToolCallsIsIdempotent() {
+        let message = Message(
+            role: .assistant,
+            contentType: .null,
+            toolCalls: [ChatToolCall(id: "pending", name: "tool")]
+        )
+
+        XCTAssertTrue(message.failPendingToolCalls(reason: "first failure"))
+        XCTAssertFalse(message.failPendingToolCalls(reason: "second failure"))
+        XCTAssertEqual(message.toolCalls[0].status, .failure)
+        XCTAssertEqual(message.toolCalls[0].result, "first failure")
     }
 
     // MARK: - Codable round-trip

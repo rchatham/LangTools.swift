@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import CLI
+@testable import HelperCore
 
 final class CodexAppServerClientTests: XCTestCase {
     private struct RequestParams: Codable { let value: String }
@@ -16,7 +16,10 @@ final class CodexAppServerClientTests: XCTestCase {
             commandResolver: {
                 ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
             },
-            environment: ["LANGTOOLS_CODEX_HOME": "/tmp/langtools-test-codex-home"],
+            environment: [
+                "LANGTOOLS_CODEX_HOME": "/tmp/langtools-test-codex-home",
+                "SECRET_API_KEY": "should-not-leak"
+            ],
             defaultTimeout: .seconds(5),
             containmentMode: .disabledForTesting
         )
@@ -28,6 +31,37 @@ final class CodexAppServerClientTests: XCTestCase {
         XCTAssertEqual(Set(values), Set(["test/first", "test/second"]))
         let stableGeneration = try await client.initializedProcessGeneration()
         XCTAssertEqual(stableGeneration, initialGeneration)
+        await client.shutdown()
+    }
+
+    func testInitializationUsesSeparateTimeoutFromOperationalRequests() async throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-app-server-timeouts-\(UUID().uuidString).py")
+        try Data(Self.delayedResponseServer.utf8).write(to: scriptURL)
+        defer { try? FileManager.default.removeItem(at: scriptURL) }
+
+        let recorder = TimeoutRecorder()
+        let client = CodexAppServerClient(
+            commandResolver: {
+                ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
+            },
+            defaultTimeout: .seconds(30),
+            initializationTimeout: .seconds(8),
+            requestTimeoutSleeper: { method, duration in
+                recorder.record(method: method, duration: duration)
+                try await Task.sleep(for: .seconds(60))
+            },
+            containmentMode: .disabledForTesting
+        )
+
+        _ = try await client.initializedProcessGeneration()
+        let response: Response = try await client.request(
+            method: "test/delayed",
+            params: RequestParams(value: "request")
+        )
+        XCTAssertEqual(response.value, "test/delayed")
+        XCTAssertEqual(recorder.duration(for: "initialize"), .seconds(8))
+        XCTAssertEqual(recorder.duration(for: "test/delayed"), .seconds(30))
         await client.shutdown()
     }
 
@@ -610,14 +644,42 @@ if count == 1:
 write({"id":request["id"], "result":{"value":request["method"]}})
 """#
 
+    private static let delayedResponseServer = #"""
+import json, sys, time
+
+def read():
+    line = sys.stdin.readline()
+    if not line:
+        sys.exit(0)
+    return json.loads(line)
+
+def write(value):
+    print(json.dumps(value), flush=True)
+
+initialize = read()
+time.sleep(0.05)
+write({"id": initialize["id"], "result": {
+    "userAgent": "fake",
+    "codexHome": "/tmp",
+    "platformFamily": "unix",
+    "platformOs": "macos"
+}})
+assert read()["method"] == "initialized"
+request = read()
+time.sleep(0.05)
+write({"id": request["id"], "result": {"value": request["method"]}})
+"""#
+
     private static let fakeServer = #"""
 import json
 import os
 import sys
 
-assert sys.argv[1:] == ["app-server", "--listen", "stdio://"]
+assert sys.argv[1:] == ["app-server", "--listen", "stdio://", "-c", "model_provider=openai"]
 assert os.environ.get("CODEX_HOME") == "/tmp/langtools-test-codex-home"
 assert os.environ.get("CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED") == "1"
+assert os.environ.get("SECRET_API_KEY") is None
+assert os.environ.get("LANGTOOLS_CODEX_HOME") == "/tmp/langtools-test-codex-home"
 
 def read():
     return json.loads(sys.stdin.readline())
@@ -653,6 +715,59 @@ while len(requests) < 2 or len(declined) < 2:
 for request in reversed(requests):
     write({"id": request["id"], "result": {"value": request["method"]}})
 """#
+
+    // MARK: - Environment scrubbing
+
+    func testSensitiveEnvironmentKeyDeniesExactMatches() {
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("SECRET_API_KEY"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("OPENAI_API_KEY"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("GITHUB_TOKEN"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("SSH_AUTH_SOCK"))
+    }
+
+    func testSensitiveEnvironmentKeyDeniesSubstringMatches() {
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("MY_SECRET"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("DATABASE_PASSWORD"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("CREDENTIAL_DIR"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("GCP_PRIVATE_KEY_FILE"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("VERBOSE_API_KEY_DEBUG"))
+    }
+
+    func testSensitiveEnvironmentKeyAllowsPassthrough() {
+        // Load-bearing: the runtime depends on these through the denylist.
+        XCTAssertFalse(CodexAppServerClient.isSensitiveEnvironmentKey("LANGTOOLS_CODEX_HOME"))
+        XCTAssertFalse(CodexAppServerClient.isSensitiveEnvironmentKey("CODEX_CONFIG_PATH"))
+        XCTAssertFalse(CodexAppServerClient.isSensitiveEnvironmentKey("CODEX_LOG_LEVEL"))
+    }
+
+    func testSensitiveEnvironmentKeyKnownConservativeMatches() {
+        // The substring heuristic is intentionally aggressive. These
+        // variables are harmless but match via substring; documenting
+        // that they are dropped to prevent accidental secret leakage.
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("PASSWORD_MANAGER_VERSION"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("API_KEY_BACKUP_DIR"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("TOKEN_EXPIRY_SECONDS"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("ALL_TOKENS_CACHE"))
+    }
+
+    func testSensitiveEnvironmentKeyIsCaseInsensitive() {
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("secret_api_key"))
+        XCTAssertTrue(CodexAppServerClient.isSensitiveEnvironmentKey("My_Token"))
+        XCTAssertFalse(CodexAppServerClient.isSensitiveEnvironmentKey("codex_home"))
+    }
+}
+
+private final class TimeoutRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var durations: [String: Duration] = [:]
+
+    func record(method: String, duration: Duration) {
+        lock.withLock { durations[method] = duration }
+    }
+
+    func duration(for method: String) -> Duration? {
+        lock.withLock { durations[method] }
+    }
 }
 
 private final class ThreadSafeCounter: @unchecked Sendable {

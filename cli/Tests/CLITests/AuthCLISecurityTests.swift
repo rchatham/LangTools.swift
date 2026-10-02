@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import CLI
+@testable import HelperCore
 
 final class AuthCLISecurityTests: XCTestCase {
     func testOAuthURLMetadataOmitsCodeStateAndQuery() throws {

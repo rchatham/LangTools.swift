@@ -46,8 +46,10 @@ extension LangTools {
         }
     }
 
-    public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response {
-        return try await complete(request: request, response: try request.update(response: try await perform(request: try prepare(request: request.updating(stream: false)))) )
+    public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response { try await perform(request: request, onResponse: { _ in }) }
+
+    public func perform<Request: LangToolsRequest>(request: Request, onResponse: @escaping (Request.Response) -> Void) async throws -> Request.Response {
+        return try await complete(request: request, response: try request.update(response: try await perform(request: try prepare(request: request.updating(stream: false))) as Request.Response), onResponse: onResponse)
     }
 
     private func perform<Response: Decodable>(request: URLRequest) async -> Result<Response, Error> {
@@ -77,8 +79,9 @@ extension LangTools {
 
         let log = logger
         return AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
+                    try Task.checkCancellation()
                     log?.debug("Calling session.bytes(for:)...")
                     let (bytes, response) = try await session.bytes(for: httpRequest)
                     log?.debug("Got response from server")
@@ -116,6 +119,7 @@ extension LangTools {
                     var buffer = ""
                     var lineCount = 0
                     for try await line in bytes.lines {
+                        try Task.checkCancellation()
                         lineCount += 1
                         if lineCount == 1 {
                             log?.debug("Receiving streamed data...")
@@ -136,7 +140,9 @@ extension LangTools {
                             // If we were able to create a response object, enrich it with the accumulated stream state and request-specific information before adding it to the combined response used to handle tool completions.
                             let streamUpdatedResponse = response.updating(with: combinedResponse)
                             let updatedResponse = try request.update(response: streamUpdatedResponse)
-                            continuation.yield(updatedResponse)
+                            if case .terminated = continuation.yield(updatedResponse) {
+                                throw CancellationError()
+                            }
                             combinedResponse = combinedResponse.combining(with: updatedResponse)
                         }
                     }
@@ -147,16 +153,23 @@ extension LangTools {
 
                     log?.debug("Processed \(lineCount) lines from stream")
 
+                    try Task.checkCancellation()
                     if let completionRequest = try await completionRequest(request: request, response: combinedResponse) {
+                        try Task.checkCancellation()
                         log?.debug("Tool calling - making completion request...")
                         for try await response in stream(request: completionRequest) {
+                            try Task.checkCancellation()
                             // The nested stream has already applied updates for its
                             // completion request, so yield it directly.
-                            continuation.yield(response)
+                            if case .terminated = continuation.yield(response) {
+                                throw CancellationError()
+                            }
                         }
                     }
 
                     log?.info("Stream completed successfully")
+                    continuation.finish()
+                } catch is CancellationError {
                     continuation.finish()
                 } catch {
                     log?.error("Stream error: \(error)")
@@ -164,21 +177,52 @@ extension LangTools {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
         }
     }
 
     // Used because simply mapping the value will cause a compiler error in certain situations, such as in the non-async perform method.
     private func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<any LangToolsStreamableResponse, Error> {
-        return AsyncThrowingStream { cont in Task { for try await response in stream(request: request) { cont.yield(response) }; cont.finish() } }
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await response in stream(request: request) {
+                        try Task.checkCancellation()
+                        if case .terminated = continuation.yield(response) {
+                            return
+                        }
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
+        }
     }
 
-    private func complete<Request: LangToolsRequest>(request: Request, response: Request.Response) async throws -> Request.Response {
-        return try await completionRequest(request: request, response: response).flatMap { try await perform(request: $0) } ?? response
+    private func complete<Request: LangToolsRequest>(request: Request, response: Request.Response, onResponse: @escaping (Request.Response) -> Void) async throws -> Request.Response {
+        try Task.checkCancellation()
+        onResponse(response)
+        guard let completionRequest = try await completionRequest(request: request, response: response) else {
+            return response
+        }
+        try Task.checkCancellation()
+        return try await perform(request: completionRequest, onResponse: onResponse)
     }
 
     private func completionRequest<Request: LangToolsRequest>(request: Request, response: Request.Response) async throws -> Request? {
+        try Task.checkCancellation()
         guard let response = response as? any LangToolsToolCallingResponse else { return nil }
-        return try await (request as? any LangToolsToolCallingRequest)?.completion(self, response: response) as? Request
+        let completionRequest = try await (request as? any LangToolsToolCallingRequest)?.completion(self, response: response) as? Request
+        try Task.checkCancellation()
+        return completionRequest
     }
 
     public static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
@@ -253,13 +297,43 @@ public extension LangTools {
 }
 
 func AsyncThrowingSingleItemStream<T>(value: @escaping () async throws -> T) -> AsyncThrowingStream<T, Error> {
-    return AsyncThrowingStream { cont in Task { do { cont.yield(try await value()) } catch { cont.finish(throwing: error) }; cont.finish() }}
+    AsyncThrowingStream { continuation in
+        let task = Task {
+            do {
+                try Task.checkCancellation()
+                if case .terminated = continuation.yield(try await value()) {
+                    return
+                }
+                continuation.finish()
+            } catch is CancellationError {
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
+            }
+        }
+        continuation.onTermination = { @Sendable _ in
+            task.cancel()
+        }
+    }
 }
 func AsyncSingleErrorStream<T>(error: Error) -> AsyncThrowingStream<T, Error> {
     return AsyncThrowingStream { $0.finish(throwing: error) }
 }
 func AsyncSingleErrorStream<T>(error: @escaping () async throws -> Error) -> AsyncThrowingStream<T, Error> {
-    return AsyncThrowingStream { cont in Task { cont.finish(throwing: try await error()) } }
+    AsyncThrowingStream { continuation in
+        let task = Task {
+            do {
+                continuation.finish(throwing: try await error())
+            } catch is CancellationError {
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
+            }
+        }
+        continuation.onTermination = { @Sendable _ in
+            task.cancel()
+        }
+    }
 }
 
 // MARK: - Utilities
