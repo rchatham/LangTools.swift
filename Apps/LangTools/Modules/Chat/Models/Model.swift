@@ -165,3 +165,144 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         hasher.combine(rawValue)
     }
 }
+
+public struct ChatGenerationCapabilities: Equatable, Sendable {
+    public enum MaximumOutputField: Equatable, Sendable {
+        case openAIMaxTokens
+        case openAIMaxCompletionTokens
+        case anthropicMaxTokens
+        case ollamaNumPredict
+    }
+
+    public let maximumOutputField: MaximumOutputField?
+    public let maximumOutputTokenBound: Int?
+    public let maximumOutputWarning: String?
+    public let supportsTemperature: Bool
+    public let unsupportedReason: String?
+
+    public var supportsAnyOverride: Bool {
+        maximumOutputField != nil || supportsTemperature
+    }
+
+    public init(
+        maximumOutputField: MaximumOutputField?,
+        maximumOutputTokenBound: Int? = nil,
+        maximumOutputWarning: String? = nil,
+        supportsTemperature: Bool,
+        unsupportedReason: String? = nil
+    ) {
+        self.maximumOutputField = maximumOutputField
+        self.maximumOutputTokenBound = maximumOutputTokenBound
+        self.maximumOutputWarning = maximumOutputWarning
+        self.supportsTemperature = supportsTemperature
+        self.unsupportedReason = unsupportedReason
+    }
+}
+
+public extension Model {
+    var generationCapabilities: ChatGenerationCapabilities {
+        switch self {
+        case .codex, .claudeCode:
+            return .init(
+                maximumOutputField: nil,
+                supportsTemperature: false,
+                unsupportedReason: "Account-backed transport does not support advanced generation parameters."
+            )
+        case .anthropic:
+            return .init(
+                maximumOutputField: .anthropicMaxTokens,
+                maximumOutputTokenBound: 4_096,
+                supportsTemperature: true
+            )
+        case .ollama:
+            return .init(
+                maximumOutputField: .ollamaNumPredict,
+                maximumOutputTokenBound: 32_768,
+                maximumOutputWarning: "32,768 is an app ceiling, not a guarantee that the selected Ollama model supports that output length.",
+                supportsTemperature: true
+            )
+        case .gemini:
+            return .init(
+                maximumOutputField: .openAIMaxTokens,
+                maximumOutputTokenBound: 4_096,
+                supportsTemperature: true
+            )
+        case .xAI(let model):
+            guard Self.xAIGenerationModels.contains(model.rawValue) else {
+                return Self.unsupportedGenerationCapabilities
+            }
+            return .init(
+                maximumOutputField: .openAIMaxTokens,
+                maximumOutputTokenBound: 4_096,
+                supportsTemperature: true
+            )
+        case .openAI(let model):
+            switch model.rawValue {
+            case "gpt-3.5-turbo-instruct":
+                return Self.unsupportedGenerationCapabilities(
+                    "This completion-only model does not support chat generation parameters."
+                )
+            case "gpt-5.3-codex-spark":
+                return Self.unsupportedGenerationCapabilities(
+                    "This Codex-only model is not supported on the direct OpenAI chat route."
+                )
+            case "chatgpt-4o-latest":
+                return Self.unsupportedGenerationCapabilities(
+                    "This mutable model alias has no reliable output limit; advanced parameters are unavailable."
+                )
+            default:
+                break
+            }
+            if let bound = Self.openAIOrdinaryGenerationModelBounds[model.rawValue] {
+                return .init(
+                    maximumOutputField: .openAIMaxTokens,
+                    maximumOutputTokenBound: bound,
+                    supportsTemperature: true
+                )
+            }
+            if Self.openAIReasoningGenerationModels.contains(model.rawValue) {
+                return .init(
+                    maximumOutputField: .openAIMaxCompletionTokens,
+                    maximumOutputTokenBound: 32_768,
+                    supportsTemperature: false
+                )
+            }
+            return Self.unsupportedGenerationCapabilities
+        }
+    }
+
+    private static var unsupportedGenerationCapabilities: ChatGenerationCapabilities {
+        unsupportedGenerationCapabilities("The selected model does not support these advanced generation parameters.")
+    }
+
+    private static func unsupportedGenerationCapabilities(_ reason: String) -> ChatGenerationCapabilities {
+        .init(maximumOutputField: nil, supportsTemperature: false, unsupportedReason: reason)
+    }
+
+    private static let openAIOrdinaryGenerationModelBounds: [String: Int] = [
+        "gpt-3.5-turbo": 4_096, "gpt-3.5-turbo-0301": 4_096,
+        "gpt-3.5-turbo-1106": 4_096, "gpt-3.5-turbo-16k": 4_096,
+        "gpt-4": 4_096, "gpt-4-turbo": 4_096, "gpt-4-0613": 4_096,
+        "gpt-4-1106-preview": 4_096, "gpt-4-vision-preview": 4_096,
+        "gpt-4-32k-0613": 4_096, "gpt-4o-2024-05-13": 4_096,
+        "gpt-4o": 16_384, "gpt-4o-mini": 16_384,
+        "gpt-4o-2024-08-06": 16_384, "gpt-4o-2024-11-20": 16_384,
+        "gpt-4o-mini-2024-07-18": 16_384,
+        "gpt-4.1": 32_768, "gpt-4.1-mini": 32_768, "gpt-4.1-nano": 32_768,
+    ]
+
+    private static let openAIReasoningGenerationModels: Set<String> = [
+        "o1", "o1-mini", "o1-preview", "o3", "o3-pro", "o3-mini", "o4-mini",
+        "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5-pro", "gpt-5.1",
+        "gpt-5.2", "gpt-5.2-pro", "gpt-5.3", "gpt-5.4", "gpt-5.4-pro",
+        "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5", "gpt-5.5-pro",
+    ]
+
+    private static let xAIGenerationModels: Set<String> = [
+        "grok-4-1-fast-reasoning", "grok-4-1-fast-non-reasoning",
+        "grok-4-fast-reasoning", "grok-4-fast-non-reasoning", "grok-4-0709",
+        "grok-3", "grok-3-mini", "grok-code-fast-1", "grok-2-vision-1212",
+        "grok-2-1212", "grok-beta",
+    ]
+
+}
