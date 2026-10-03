@@ -52,7 +52,7 @@ extension NetworkClientProtocol {
     }
 
     func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) -> any LangToolsChatRequest & LangToolsStreamableRequest where Self: NetworkClient {
-        self.request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
+        self.directRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
     }
 
     func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
@@ -67,6 +67,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     private let accountLoginService: AccountLoginService
     private let accountProxyTransport: AccountProxyTransportProtocol
     private let openAIAccountChatBridge: OpenAIAccountChatBridging
+    private let generationSettingsProvider: @Sendable () -> ChatGenerationSettings
     public let providerAccessManager: ProviderAccessManager
 
     private var userDefaults: UserDefaults { .standard }
@@ -79,13 +80,17 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         accountLoginService: AccountLoginService = BrowserAccountLoginService.shared,
         accountProxyTransport: AccountProxyTransportProtocol = AccountProxyTransport(),
         openAIAccountChatBridge: OpenAIAccountChatBridging = CLIAccountSessionBridge(),
-        providerAccessManager: ProviderAccessManager = .shared
+        providerAccessManager: ProviderAccessManager = .shared,
+        generationSettingsProvider: @escaping @Sendable () -> ChatGenerationSettings = {
+            ChatGenerationSettingsStore().load()
+        }
     ) {
         self.keychainService = keychainService
         self.accountLoginService = accountLoginService
         self.accountProxyTransport = accountProxyTransport
         self.openAIAccountChatBridge = openAIAccountChatBridge
         self.providerAccessManager = providerAccessManager
+        self.generationSettingsProvider = generationSettingsProvider
         super.init()
         APIService.llms.forEach { llm in keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) } }
 
@@ -115,7 +120,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             )
         }
 
-        let response = try await langToolchain.perform(request: request(messages: messages, model: model, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler))
+        let response = try await langToolchain.perform(request: directRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler))
         guard let text = response.content?.text else {
             throw NetworkError.unexpectedResponseFormat
         }
@@ -154,7 +159,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             )
         }
 
-        return try langToolchain.stream(request: request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)).compactMapAsyncThrowingStream { $0.content?.text }
+        return try langToolchain.stream(request: directRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)).compactMapAsyncThrowingStream { $0.content?.text }
     }
 
     public func performChatCompletionRequest(
@@ -241,17 +246,98 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         catch { print(error.localizedDescription) }
     }
 
-    func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) -> any LangToolsChatRequest & LangToolsStreamableRequest {
+    func directRequest(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) -> any LangToolsChatRequest & LangToolsStreamableRequest {
+        let generationSettings = generationSettingsProvider()
+        return request(
+            messages: messages,
+            model: model,
+            generationSettings: generationSettings,
+            stream: stream,
+            tools: tools,
+            toolChoice: toolChoice,
+            toolEventHandler: toolEventHandler
+        )
+    }
+
+    func request(messages: [Message], model: Model, generationSettings: ChatGenerationSettings, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) -> any LangToolsChatRequest & LangToolsStreamableRequest {
         let replayMessages = messages.replayFiltered(
             targetService: model.apiService,
             allowCrossProvider: ToolSettings.shared.crossProviderToolReplay
         )
+        let capabilities = model.generationCapabilities
+        let temperature = capabilities.supportsTemperature ? generationSettings.temperature : nil
+        let maximumOutputTokens: Int? = if capabilities.maximumOutputField != nil,
+                                           let savedValue = generationSettings.maxOutputTokens,
+                                           let bound = capabilities.maximumOutputTokenBound,
+                                           savedValue <= bound {
+            savedValue
+        } else {
+            nil
+        }
+
         switch model {
-        case .anthropic(let model), .claudeCode(let model): return Anthropic.MessageRequest(model: model, messages: replayMessages.toAnthropicMessages(), stream: stream, system: messages.createAnthropicSystemMessage(), tools: tools?.convertTools(), tool_choice: toolChoice?.toAnthropicToolChoice(), toolEventHandler: toolEventHandler)
-        case .openAI(let model), .codex(let model): return OpenAI.ChatCompletionRequest(model: model, messages: replayMessages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice, toolEventHandler: toolEventHandler)
-        case .xAI(let model): return OpenAI.ChatCompletionRequest(model: model, messages: replayMessages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice, toolEventHandler: toolEventHandler)
-        case .gemini(let model): return OpenAI.ChatCompletionRequest(model: model, messages: replayMessages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice, toolEventHandler: toolEventHandler)
-        case .ollama(let model): return Ollama.ChatRequest(model: model, messages: replayMessages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools?.convertTools(), toolEventHandler: toolEventHandler)
+        case .anthropic(let providerModel), .claudeCode(let providerModel):
+            return Anthropic.MessageRequest(
+                model: providerModel,
+                messages: replayMessages.toAnthropicMessages(),
+                max_tokens: capabilities.maximumOutputField == .anthropicMaxTokens ? maximumOutputTokens ?? 4096 : 4096,
+                stream: stream,
+                system: messages.createAnthropicSystemMessage(),
+                temperature: temperature,
+                tools: tools?.convertTools(),
+                tool_choice: toolChoice?.toAnthropicToolChoice(),
+                toolEventHandler: toolEventHandler
+            )
+        case .openAI(let providerModel), .codex(let providerModel):
+            return OpenAI.ChatCompletionRequest(
+                model: providerModel,
+                messages: replayMessages.toOpenAIMessages(),
+                temperature: temperature,
+                stream: stream,
+                max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                max_completion_tokens: capabilities.maximumOutputField == .openAIMaxCompletionTokens ? maximumOutputTokens : nil,
+                tools: tools?.convertTools(),
+                tool_choice: toolChoice,
+                toolEventHandler: toolEventHandler
+            )
+        case .xAI(let providerModel):
+            return OpenAI.ChatCompletionRequest(
+                model: providerModel,
+                messages: replayMessages.toOpenAIMessages(),
+                temperature: temperature,
+                stream: stream,
+                max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                tools: tools?.convertTools(),
+                tool_choice: toolChoice,
+                toolEventHandler: toolEventHandler
+            )
+        case .gemini(let providerModel):
+            return OpenAI.ChatCompletionRequest(
+                model: providerModel,
+                messages: replayMessages.toOpenAIMessages(),
+                temperature: temperature,
+                stream: stream,
+                max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                tools: tools?.convertTools(),
+                tool_choice: toolChoice,
+                toolEventHandler: toolEventHandler
+            )
+        case .ollama(let providerModel):
+            let options: Ollama.GenerateOptions? = if maximumOutputTokens != nil || temperature != nil {
+                Ollama.GenerateOptions(num_predict: maximumOutputTokens, temperature: temperature)
+            } else {
+                nil
+            }
+            return Ollama.ChatRequest(
+                model: providerModel,
+                messages: replayMessages.toOllamaMessages(),
+                format: nil,
+                options: options,
+                stream: stream,
+                keep_alive: nil,
+                tools: tools?.convertTools(),
+                toolEventHandler: toolEventHandler
+            )
         }
     }
 

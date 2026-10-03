@@ -267,6 +267,12 @@ public struct ChatSettingsView: View {
                 }
             }
 
+            #if os(iOS)
+            Section(header: Text("Advanced Parameters")) {
+                generationSettingsControls
+            }
+            #endif
+
             #if !os(watchOS) && !os(tvOS)
             Section(header: Text("Local Models")) {
                 Button(action: {
@@ -818,59 +824,31 @@ public struct ChatSettingsView: View {
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 24) {
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Max Tokens")
-                            .font(.headline)
-
-                        Text("Maximum number of tokens to generate in the response. Higher values allow for longer outputs, but may increase processing time.")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-
-                        HStack {
-                            TextField("", value: $viewModel.maxTokens, formatter: NumberFormatter())
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .frame(width: 80)
-
-                            Slider(value: Binding(
-                                get: { Double(viewModel.maxTokens) },
-                                set: { viewModel.maxTokens = Int($0) }
-                            ), in: 0...4096, step: 128)
-                            .frame(maxWidth: 400)
-
-                            Text("\(viewModel.maxTokens)")
-                                .monospacedDigit()
-                                .frame(width: 60)
-                        }
-                    }
+            GroupBox {
+                generationSettingsControls
                     .padding(8)
-                }
+            }
+        }
+    }
 
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Temperature")
-                            .font(.headline)
-
-                        Text("Controls randomness in the response. Higher values (closer to 1) produce more creative results, while lower values (closer to 0) are more focused and deterministic.")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-
-                        HStack {
-                            TextField("", value: $viewModel.temperature, formatter: NumberFormatter())
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .frame(width: 80)
-
-                            Slider(value: $viewModel.temperature, in: 0...1, step: 0.01)
-                            .frame(maxWidth: 400)
-
-                            Text(String(format: "%.2f", viewModel.temperature))
-                                .monospacedDigit()
-                                .frame(width: 60)
-                        }
-                    }
-                    .padding(8)
-                }
+    private var generationSettingsControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ChatGenerationSettingsView(
+                maxOutputTokens: Binding(
+                    get: { viewModel.generationSettings.maxOutputTokens },
+                    set: { viewModel.updateMaximumOutputTokens($0) }
+                ),
+                temperature: Binding(
+                    get: { viewModel.generationSettings.temperature },
+                    set: { viewModel.updateTemperature($0) }
+                ),
+                capabilities: viewModel.model.generationCapabilities,
+                reset: viewModel.resetGenerationSettings
+            )
+            if let error = viewModel.generationSettingsError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(.red)
             }
         }
     }
@@ -1110,8 +1088,8 @@ extension ChatSettingsView {
         @Published var model: Model = UserDefaults.model {
             didSet { UserDefaults.model = model }
         }
-        @Published var maxTokens = UserDefaults.maxTokens
-        @Published var temperature = UserDefaults.temperature
+        @Published var generationSettings = ChatGenerationSettings.automatic
+        @Published var generationSettingsError: String?
         @Published var systemMessage = UserDefaults.systemMessage
         @Published var codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
         @Published var codexHelperToken = UserDefaults.codexHelperToken
@@ -1126,6 +1104,7 @@ extension ChatSettingsView {
         public var accessManager = ProviderAccessManager.shared
 
         let clearMessages: () -> Void
+        private let generationSettingsStore: ChatGenerationSettingsStoring
 
         /// Callback to trigger WhisperKit preload (set by app)
         public var onPreloadWhisperKit: (() -> Void)?
@@ -1140,8 +1119,12 @@ extension ChatSettingsView {
         /// Retains subscriptions that relay nested ObservableObject changes.
         private var cancellables: Set<AnyCancellable> = []
 
-        public init(clearMessages: @escaping () -> Void) {
+        public init(
+            clearMessages: @escaping () -> Void,
+            generationSettingsStore: ChatGenerationSettingsStoring = ChatGenerationSettingsStore()
+        ) {
             self.clearMessages = clearMessages
+            self.generationSettingsStore = generationSettingsStore
             // ToolManager is a nested ObservableObject. SwiftUI won't re-render this view
             // when ToolManager's @Published properties change unless we relay its
             // objectWillChange through our own.
@@ -1161,8 +1144,8 @@ extension ChatSettingsView {
         func loadSettings() {
             accessManager.refresh()
             model = accessManager.validateSelectedModel(UserDefaults.model)
-            maxTokens = UserDefaults.maxTokens
-            temperature = UserDefaults.temperature
+            generationSettings = generationSettingsStore.load()
+            generationSettingsError = nil
             systemMessage = UserDefaults.systemMessage
             codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
             codexHelperToken = UserDefaults.codexHelperToken
@@ -1193,8 +1176,8 @@ extension ChatSettingsView {
 
         func saveSettings() {
             UserDefaults.model = accessManager.validateSelectedModel(model)
-            UserDefaults.maxTokens = maxTokens
-            UserDefaults.temperature = temperature
+            generationSettingsStore.save(generationSettings)
+            generationSettingsError = nil
             UserDefaults.systemMessage = systemMessage
             if let url = URL(string: codexHelperBaseURLString), url.scheme?.isEmpty == false {
                 UserDefaults.codexHelperBaseURL = url
@@ -1207,6 +1190,32 @@ extension ChatSettingsView {
                 // Surface Keychain persistence failures instead of silently
                 // retaining the prior credential.
                 codexHelperTokenSaveError = error.localizedDescription
+            }
+        }
+
+        func updateMaximumOutputTokens(_ value: Int?) {
+            updateGenerationSettings(maxOutputTokens: value, temperature: generationSettings.temperature)
+        }
+
+        func updateTemperature(_ value: Double?) {
+            updateGenerationSettings(maxOutputTokens: generationSettings.maxOutputTokens, temperature: value)
+        }
+
+        func resetGenerationSettings() {
+            generationSettingsStore.reset()
+            generationSettings = .automatic
+            generationSettingsError = nil
+        }
+
+        private func updateGenerationSettings(maxOutputTokens: Int?, temperature: Double?) {
+            do {
+                generationSettings = try ChatGenerationSettings(
+                    maxOutputTokens: maxOutputTokens,
+                    temperature: temperature
+                )
+                generationSettingsError = nil
+            } catch {
+                generationSettingsError = error.localizedDescription
             }
         }
 
