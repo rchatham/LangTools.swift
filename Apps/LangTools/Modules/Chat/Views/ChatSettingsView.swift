@@ -267,9 +267,11 @@ public struct ChatSettingsView: View {
                 }
             }
 
+            #if os(iOS)
             Section(header: Text("Advanced Parameters")) {
                 generationSettingsControls
             }
+            #endif
 
             #if !os(watchOS) && !os(tvOS)
             Section(header: Text("Local Models")) {
