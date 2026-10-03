@@ -208,23 +208,29 @@ public extension Model {
                 supportsTemperature: false,
                 unsupportedReason: "Account-backed transport does not support advanced generation parameters."
             )
-        case .anthropic:
+        case .anthropic(let model):
+            guard let bound = Self.anthropicGenerationModelBounds[model.rawValue] else {
+                return Self.unsupportedGenerationCapabilities
+            }
             return .init(
                 maximumOutputField: .anthropicMaxTokens,
-                maximumOutputTokenBound: 4_096,
+                maximumOutputTokenBound: bound,
                 supportsTemperature: true
             )
         case .ollama:
             return .init(
                 maximumOutputField: .ollamaNumPredict,
-                maximumOutputTokenBound: 32_768,
-                maximumOutputWarning: "32,768 is an app ceiling, not a guarantee that the selected Ollama model supports that output length.",
+                maximumOutputTokenBound: ChatGenerationSettings.tokenRange.upperBound,
+                maximumOutputWarning: "The app guard is not a model limit. Ollama output capacity depends on the selected model and runtime configuration.",
                 supportsTemperature: true
             )
-        case .gemini:
+        case .gemini(let model):
+            guard let bound = Self.geminiGenerationModelBounds[model.rawValue] else {
+                return Self.unsupportedGenerationCapabilities
+            }
             return .init(
                 maximumOutputField: .openAIMaxTokens,
-                maximumOutputTokenBound: 4_096,
+                maximumOutputTokenBound: bound,
                 supportsTemperature: true
             )
         case .xAI(let model):
@@ -233,7 +239,8 @@ public extension Model {
             }
             return .init(
                 maximumOutputField: .openAIMaxTokens,
-                maximumOutputTokenBound: 4_096,
+                maximumOutputTokenBound: ChatGenerationSettings.tokenRange.upperBound,
+                maximumOutputWarning: "The app guard is not a model limit. xAI output capacity depends on the selected model.",
                 supportsTemperature: true
             )
         case .openAI(let model):
@@ -260,10 +267,10 @@ public extension Model {
                     supportsTemperature: true
                 )
             }
-            if Self.openAIReasoningGenerationModels.contains(model.rawValue) {
+            if let bound = Self.openAIReasoningGenerationModelBounds[model.rawValue] {
                 return .init(
                     maximumOutputField: .openAIMaxCompletionTokens,
-                    maximumOutputTokenBound: 32_768,
+                    maximumOutputTokenBound: bound,
                     supportsTemperature: false
                 )
             }
@@ -291,13 +298,55 @@ public extension Model {
         "gpt-4.1": 32_768, "gpt-4.1-mini": 32_768, "gpt-4.1-nano": 32_768,
     ]
 
-    private static let openAIReasoningGenerationModels: Set<String> = [
-        "o1", "o1-mini", "o1-preview", "o3", "o3-pro", "o3-mini", "o4-mini",
-        "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5-pro", "gpt-5.1",
-        "gpt-5.2", "gpt-5.2-pro", "gpt-5.3", "gpt-5.4", "gpt-5.4-pro",
-        "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5", "gpt-5.5-pro",
+    // OpenAI model pages publish per-model maximum output tokens. In particular:
+    // https://developers.openai.com/api/docs/models/o3
+    // https://developers.openai.com/api/docs/models/gpt-5-pro
+    private static let openAIReasoningGenerationModelBounds: [String: Int] = [
+        "o1": 100_000, "o1-mini": 65_536, "o1-preview": 32_768,
+        "o3": 100_000, "o3-pro": 100_000, "o3-mini": 100_000, "o4-mini": 100_000,
+        "gpt-5": 128_000, "gpt-5-mini": 128_000, "gpt-5-nano": 128_000,
+        "gpt-5-pro": 272_000, "gpt-5.1": 128_000, "gpt-5.2": 128_000,
+        "gpt-5.2-pro": 128_000,
+        // No public model page currently verifies a higher limit for this catalog ID.
+        "gpt-5.3": 32_768,
+        "gpt-5.4": 128_000,
+        "gpt-5.4-pro": 128_000, "gpt-5.4-mini": 128_000, "gpt-5.4-nano": 128_000,
+        "gpt-5.5": 128_000, "gpt-5.5-pro": 128_000,
     ]
 
+    // Anthropic's model overview is the source for the 4.5 and 4.6 output limits.
+    // Older IDs retain the existing conservative bound rather than inheriting a family limit.
+    // https://platform.claude.com/docs/en/models/overview
+    private static let anthropicGenerationModelBounds: [String: Int] = [
+        "claude-opus-4-6": 128_000, "claude-opus-4-6-20260205": 128_000,
+        "claude-sonnet-4-6": 128_000, "claude-sonnet-4-6-20260217": 128_000,
+        "claude-opus-4-5-20251101": 64_000, "claude-sonnet-4-5-latest": 64_000,
+        "claude-sonnet-4-5-20250929": 64_000, "claude-haiku-4-5-latest": 64_000,
+        "claude-haiku-4-5-20251001": 64_000,
+        "claude-opus-4-1-latest": 4_096, "claude-opus-4-1-20250805": 4_096,
+        "claude-opus-4-20250514": 4_096, "claude-sonnet-4-20250514": 4_096,
+        "claude-3-haiku-20240307": 4_096, "claude-3-7-sonnet-20250219": 4_096,
+        "claude-3-5-haiku-20241022": 4_096, "claude-3-5-sonnet-latest": 4_096,
+        "claude-3-5-sonnet-20241022": 4_096, "claude-3-5-sonnet-20240620": 4_096,
+        "claude-3-opus-latest": 4_096, "claude-3-opus-20240229": 4_096,
+        "claude-3-sonnet-20240229": 4_096,
+    ]
+
+    // Gemini model pages publish output token limits. Only exact documented 3 preview IDs
+    // get the 65,536 bound; other 3.x IDs retain the existing conservative bound.
+    // https://ai.google.dev/gemini-api/docs/models
+    private static let geminiGenerationModelBounds: [String: Int] = [
+        "gemini-3-pro-preview": 65_536, "gemini-3-flash-preview": 65_536,
+        "gemini-2.5-flash": 65_536, "gemini-2.5-flash-lite": 65_536,
+        "gemini-2.5-pro": 65_536,
+        "gemini-2.0-flash": 8_192, "gemini-2.0-flash-lite": 8_192,
+        "gemini-3-pro": 4_096, "gemini-3-flash": 4_096, "gemini-3.1-pro": 4_096,
+        "gemini-1.5-flash": 4_096, "gemini-1.5-flash-8b": 4_096,
+        "gemini-1.5-pro": 4_096, "gemini-1.0-pro": 4_096,
+    ]
+
+    // xAI documents limits per model, so recognized chat models use only the app guard.
+    // https://docs.x.ai/developers/models
     private static let xAIGenerationModels: Set<String> = [
         "grok-4-1-fast-reasoning", "grok-4-1-fast-non-reasoning",
         "grok-4-fast-reasoning", "grok-4-fast-non-reasoning", "grok-4-0709",
@@ -305,4 +354,6 @@ public extension Model {
         "grok-2-1212", "grok-beta",
     ]
 
+    // Ollama's num_predict is runtime/model dependent, not a universal provider limit.
+    // https://docs.ollama.com/modelfile
 }

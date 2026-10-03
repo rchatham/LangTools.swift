@@ -858,8 +858,12 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
             ("gpt-4o-2024-05-13", 4_096, "max_tokens", true),
             ("gpt-4o-2024-11-20", 16_384, "max_tokens", true),
             ("gpt-4.1", 32_768, "max_tokens", true),
-            ("o3", 32_768, "max_completion_tokens", false),
-            ("gpt-5", 32_768, "max_completion_tokens", false),
+            ("o1-mini", 65_536, "max_completion_tokens", false),
+            ("o1", 100_000, "max_completion_tokens", false),
+            ("o3", 100_000, "max_completion_tokens", false),
+            ("gpt-5", 128_000, "max_completion_tokens", false),
+            ("gpt-5-pro", 272_000, "max_completion_tokens", false),
+            ("gpt-5.3", 32_768, "max_completion_tokens", false),
         ]
         for (modelID, bound, field, supportsTemperature) in cases {
             let model = Model.openAI(OpenAI.Model(customModelID: modelID))
@@ -884,7 +888,7 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
 
     func testUnsupportedOpenAIModelsOmitBothOverrides() throws {
         let client = makeClient()
-        for modelID in ["gpt-3.5-turbo-instruct", "gpt-5.3-codex-spark", "chatgpt-4o-latest"] {
+        for modelID in ["gpt-3.5-turbo-instruct", "gpt-5.3-codex-spark", "chatgpt-4o-latest", "future-chat-model"] {
             let object = try encodedRequest(client.request(
                 messages: testMessages,
                 model: .openAI(OpenAI.Model(customModelID: modelID)),
@@ -917,12 +921,12 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
     }
 
     func testAnthropicOverboundOverrideFallsBackToRequiredDefaultWithoutDroppingTemperature() throws {
-        let providerModel = try XCTUnwrap(Anthropic.Model.allCases.first)
+        let providerModel = try XCTUnwrap(Anthropic.Model(rawValue: "claude-sonnet-4-6"))
         let client = makeClient()
         let object = try encodedRequest(client.request(
             messages: testMessages,
             model: .anthropic(providerModel),
-            generationSettings: try ChatGenerationSettings(maxOutputTokens: 8_192, temperature: 0.45)
+            generationSettings: try ChatGenerationSettings(maxOutputTokens: 128_001, temperature: 0.45)
         ))
 
         XCTAssertEqual(object["max_tokens"] as? Int, 4_096)
@@ -930,9 +934,9 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
     }
 
     func testAnthropicBoundaryAndOneAboveRetainsTemperature() throws {
-        let providerModel = try XCTUnwrap(Anthropic.Model.allCases.first)
+        let providerModel = try XCTUnwrap(Anthropic.Model(rawValue: "claude-sonnet-4-6"))
         let client = makeClient()
-        for (tokens, expected) in [(4_096, 4_096), (4_097, 4_096)] {
+        for (tokens, expected) in [(128_000, 128_000), (128_001, 4_096)] {
             let object = try encodedRequest(client.request(
                 messages: testMessages,
                 model: .anthropic(providerModel),
@@ -971,20 +975,27 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
         XCTAssertNil(unsupported["temperature"])
     }
 
-    func testXAIAndGeminiBoundaryAndOneAboveRetainTemperature() throws {
+    func testXAIUsesAppGuardAndGeminiUsesDocumentedBoundary() throws {
         let xAIModel = try XCTUnwrap(XAI.Model(rawValue: "grok-3"))
-        let geminiModel = try XCTUnwrap(Gemini.Model(rawValue: "gemini-3-flash"))
+        let geminiModel = try XCTUnwrap(Gemini.Model(rawValue: "gemini-3-flash-preview"))
         let client = makeClient()
-        for model in [Model.xAI(xAIModel), .gemini(geminiModel)] {
-            for tokens in [4_096, 4_097] {
-                let object = try encodedRequest(client.request(
-                    messages: testMessages,
-                    model: model,
-                    generationSettings: try ChatGenerationSettings(maxOutputTokens: tokens, temperature: 0.55)
-                ))
-                XCTAssertEqual(object["max_tokens"] as? Int, tokens == 4_096 ? 4_096 : nil, model.rawValue)
-                XCTAssertEqual(object["temperature"] as? Double, 0.55, model.rawValue)
-            }
+
+        let xAI = try encodedRequest(client.request(
+            messages: testMessages,
+            model: .xAI(xAIModel),
+            generationSettings: try ChatGenerationSettings(maxOutputTokens: 1_000_000, temperature: 0.55)
+        ))
+        XCTAssertEqual(xAI["max_tokens"] as? Int, 1_000_000)
+        XCTAssertEqual(xAI["temperature"] as? Double, 0.55)
+
+        for (tokens, expected) in [(65_536, 65_536), (65_537, nil)] as [(Int, Int?)] {
+            let object = try encodedRequest(client.request(
+                messages: testMessages,
+                model: .gemini(geminiModel),
+                generationSettings: try ChatGenerationSettings(maxOutputTokens: tokens, temperature: 0.55)
+            ))
+            XCTAssertEqual(object["max_tokens"] as? Int, expected)
+            XCTAssertEqual(object["temperature"] as? Double, 0.55)
         }
     }
 
@@ -994,16 +1005,22 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
         let client = makeClient()
         let settings = try ChatGenerationSettings(maxOutputTokens: 8_192, temperature: 0.55)
 
-        for model in [Model.xAI(xAIModel), .gemini(geminiModel)] {
-            let object = try encodedRequest(client.request(
-                messages: testMessages,
-                model: model,
-                generationSettings: settings
-            ))
-            XCTAssertNil(object["max_tokens"], model.rawValue)
-            XCTAssertNil(object["max_completion_tokens"], model.rawValue)
-            XCTAssertEqual(object["temperature"] as? Double, 0.55, model.rawValue)
-        }
+        let xAI = try encodedRequest(client.request(
+            messages: testMessages,
+            model: .xAI(xAIModel),
+            generationSettings: settings
+        ))
+        XCTAssertEqual(xAI["max_tokens"] as? Int, 8_192)
+        XCTAssertEqual(xAI["temperature"] as? Double, 0.55)
+
+        let gemini = try encodedRequest(client.request(
+            messages: testMessages,
+            model: .gemini(geminiModel),
+            generationSettings: settings
+        ))
+        XCTAssertNil(gemini["max_tokens"])
+        XCTAssertNil(gemini["max_completion_tokens"])
+        XCTAssertEqual(gemini["temperature"] as? Double, 0.55)
     }
 
     func testOllamaOptionsAreOmittedOrTranslated() throws {
@@ -1024,6 +1041,15 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
         XCTAssertEqual((tokenOnly["options"] as? [String: Any])?["num_predict"] as? Int, 4_096)
         XCTAssertNil((tokenOnly["options"] as? [String: Any])?["temperature"])
 
+        let temperatureOnly = try encodedRequest(client.request(
+            messages: testMessages,
+            model: .ollama(providerModel),
+            generationSettings: try ChatGenerationSettings(temperature: 0.6)
+        ))
+        let temperatureOptions = try XCTUnwrap(temperatureOnly["options"] as? [String: Any])
+        XCTAssertNil(temperatureOptions["num_predict"])
+        XCTAssertEqual(temperatureOptions["temperature"] as? Double, 0.6)
+
         let combined = try encodedRequest(client.request(
             messages: testMessages,
             model: .ollama(providerModel),
@@ -1034,19 +1060,19 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
         XCTAssertEqual(options["temperature"] as? Double, 0)
     }
 
-    func testOllamaAppCeilingIsEncodedAndLargerValuesFailValidation() throws {
+    func testOllamaAppGuardIsEncodedAndLargerValuesFailValidation() throws {
         let providerModel = try XCTUnwrap(Ollama.Model(rawValue: "llama3.2"))
         let client = makeClient()
         let object = try encodedRequest(client.request(
             messages: testMessages,
             model: .ollama(providerModel),
-            generationSettings: try ChatGenerationSettings(maxOutputTokens: 32_768, temperature: 0.6)
+            generationSettings: try ChatGenerationSettings(maxOutputTokens: 1_000_000, temperature: 0.6)
         ))
         let options = try XCTUnwrap(object["options"] as? [String: Any])
 
-        XCTAssertEqual(options["num_predict"] as? Int, 32_768)
+        XCTAssertEqual(options["num_predict"] as? Int, 1_000_000)
         XCTAssertEqual(options["temperature"] as? Double, 0.6)
-        XCTAssertThrowsError(try ChatGenerationSettings(maxOutputTokens: 32_769, temperature: 0.6))
+        XCTAssertThrowsError(try ChatGenerationSettings(maxOutputTokens: 1_000_001, temperature: 0.6))
     }
 
     func testDirectRequestReadsProviderOnceAndUsesSnapshot() throws {

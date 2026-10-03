@@ -58,12 +58,11 @@ public struct ChatGenerationSettingsView: View {
             Toggle("Maximum Output", isOn: Binding(
                 get: { isMaximumOutputActive },
                 set: { isEnabled in
-                    maxOutputTokens = isEnabled
-                        ? Self.maximumOutputValueWhenEnabled(
-                            savedValue: maxOutputTokens,
-                            maximumOutputTokenBound: capabilities.maximumOutputTokenBound
-                        )
-                        : nil
+                    maxOutputTokens = Self.maximumOutputValue(
+                        afterToggle: isEnabled,
+                        savedValue: maxOutputTokens,
+                        maximumOutputTokenBound: capabilities.maximumOutputTokenBound
+                    )
                 }
             ))
             .toggleStyle(.switch)
@@ -90,6 +89,10 @@ public struct ChatGenerationSettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+
+            Text("Available choices and the active bound change with the selected model. The app-wide persistence guard is not a provider guarantee.")
+                .font(.caption)
+                .foregroundColor(.secondary)
 
             if let warning = capabilities.maximumOutputWarning {
                 Text(warning)
@@ -141,20 +144,35 @@ public struct ChatGenerationSettingsView: View {
         return .value(savedValue)
     }
 
-    static func maximumOutputValueWhenEnabled(
+    static func maximumOutputValue(
+        afterToggle isEnabled: Bool,
         savedValue: Int?,
         maximumOutputTokenBound: Int?
     ) -> Int? {
-        guard let bound = maximumOutputTokenBound else { return nil }
+        guard isEnabled, let bound = maximumOutputTokenBound else { return nil }
         if let savedValue, savedValue <= bound {
             return savedValue
         }
         return defaultMaximumOutputTokens(maximumOutputTokenBound: bound)
     }
 
+    static func maximumOutputValueWhenEnabled(
+        savedValue: Int?,
+        maximumOutputTokenBound: Int?
+    ) -> Int? {
+        maximumOutputValue(
+            afterToggle: true,
+            savedValue: savedValue,
+            maximumOutputTokenBound: maximumOutputTokenBound
+        )
+    }
+
     static func tokenChoices(savedValue: Int?, maximumOutputTokenBound: Int?) -> [Int] {
         guard let bound = maximumOutputTokenBound else { return [] }
         var choices = ChatGenerationSettings.tokenPresets.filter { $0 <= bound }
+        if !choices.contains(bound) {
+            choices.append(bound)
+        }
         if let savedValue,
            savedValue <= bound,
            !choices.contains(savedValue) {
@@ -176,7 +194,7 @@ public struct ChatGenerationSettingsView: View {
             Toggle("Temperature", isOn: Binding(
                 get: { temperature != nil },
                 set: { isEnabled in
-                    temperature = isEnabled ? (temperature ?? 0.7) : nil
+                    temperature = Self.temperatureValue(afterToggle: isEnabled, savedValue: temperature)
                 }
             ))
             .toggleStyle(.switch)
@@ -197,6 +215,10 @@ public struct ChatGenerationSettingsView: View {
                     .foregroundColor(.secondary)
             }
         }
+    }
+
+    static func temperatureValue(afterToggle isEnabled: Bool, savedValue: Double?) -> Double? {
+        isEnabled ? (savedValue ?? 0.7) : nil
     }
 
     private func unsupportedField(_ message: String) -> some View {

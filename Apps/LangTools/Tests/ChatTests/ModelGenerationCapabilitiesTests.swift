@@ -20,11 +20,27 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
     private let gpt41OpenAI: Set<String> = [
         "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
     ]
-    private let reasoningOpenAI: Set<String> = [
-        "o1", "o1-mini", "o1-preview", "o3", "o3-pro", "o3-mini", "o4-mini",
-        "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5-pro", "gpt-5.1",
-        "gpt-5.2", "gpt-5.2-pro", "gpt-5.3", "gpt-5.4", "gpt-5.4-pro",
-        "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5", "gpt-5.5-pro",
+    private let reasoningOpenAI: [String: Int] = [
+        "o1": 100_000, "o1-mini": 65_536, "o1-preview": 32_768,
+        "o3": 100_000, "o3-pro": 100_000, "o3-mini": 100_000, "o4-mini": 100_000,
+        "gpt-5": 128_000, "gpt-5-mini": 128_000, "gpt-5-nano": 128_000,
+        "gpt-5-pro": 272_000, "gpt-5.1": 128_000, "gpt-5.2": 128_000,
+        "gpt-5.2-pro": 128_000, "gpt-5.3": 32_768, "gpt-5.4": 128_000,
+        "gpt-5.4-pro": 128_000, "gpt-5.4-mini": 128_000, "gpt-5.4-nano": 128_000,
+        "gpt-5.5": 128_000, "gpt-5.5-pro": 128_000,
+    ]
+    private let anthropicBounds: [String: Int] = [
+        "claude-opus-4-6": 128_000, "claude-opus-4-6-20260205": 128_000,
+        "claude-sonnet-4-6": 128_000, "claude-sonnet-4-6-20260217": 128_000,
+        "claude-opus-4-5-20251101": 64_000, "claude-sonnet-4-5-latest": 64_000,
+        "claude-sonnet-4-5-20250929": 64_000, "claude-haiku-4-5-latest": 64_000,
+        "claude-haiku-4-5-20251001": 64_000,
+    ]
+    private let geminiBounds: [String: Int] = [
+        "gemini-3-pro-preview": 65_536, "gemini-3-flash-preview": 65_536,
+        "gemini-2.5-flash": 65_536, "gemini-2.5-flash-lite": 65_536,
+        "gemini-2.5-pro": 65_536,
+        "gemini-2.0-flash": 8_192, "gemini-2.0-flash-lite": 8_192,
     ]
     private let supportedXAI: Set<String> = [
         "grok-4-1-fast-reasoning", "grok-4-1-fast-non-reasoning",
@@ -48,7 +64,7 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
 
     func testOpenAIModelsAreExhaustivelyClassified() {
         let ordinaryOpenAI = legacyOpenAI.union(modern4oOpenAI).union(gpt41OpenAI)
-        XCTAssertTrue(ordinaryOpenAI.isDisjoint(with: reasoningOpenAI))
+        XCTAssertTrue(ordinaryOpenAI.isDisjoint(with: Set(reasoningOpenAI.keys)))
 
         for providerModel in OpenAI.Model.allCases {
             let capabilities = Model.openAI(providerModel).generationCapabilities
@@ -58,9 +74,9 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
                 assertOrdinary(capabilities, bound: 16_384, modelID: providerModel.rawValue)
             } else if gpt41OpenAI.contains(providerModel.rawValue) {
                 assertOrdinary(capabilities, bound: 32_768, modelID: providerModel.rawValue)
-            } else if reasoningOpenAI.contains(providerModel.rawValue) {
+            } else if let bound = reasoningOpenAI[providerModel.rawValue] {
                 XCTAssertEqual(capabilities.maximumOutputField, .openAIMaxCompletionTokens, providerModel.rawValue)
-                XCTAssertEqual(capabilities.maximumOutputTokenBound, 32_768, providerModel.rawValue)
+                XCTAssertEqual(capabilities.maximumOutputTokenBound, bound, providerModel.rawValue)
                 XCTAssertFalse(capabilities.supportsTemperature, providerModel.rawValue)
             } else {
                 XCTAssertFalse(capabilities.supportsAnyOverride, providerModel.rawValue)
@@ -70,7 +86,7 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
 
         let allModelIDs = Set(OpenAI.Model.allCases.map(\.rawValue))
         XCTAssertEqual(allModelIDs.intersection(ordinaryOpenAI), ordinaryOpenAI)
-        XCTAssertEqual(allModelIDs.intersection(reasoningOpenAI), reasoningOpenAI)
+        XCTAssertEqual(allModelIDs.intersection(reasoningOpenAI.keys), Set(reasoningOpenAI.keys))
     }
 
     func testInstructModelFailsClosed() {
@@ -97,30 +113,40 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
         assertOrdinary(openAICapabilities("gpt-4o-mini"), bound: 16_384, modelID: "gpt-4o-mini")
         assertOrdinary(openAICapabilities("gpt-4.1"), bound: 32_768, modelID: "gpt-4.1")
 
-        for modelID in ["o3", "gpt-5", "gpt-5.5-pro"] {
+        for (modelID, bound) in [
+            "o1": 100_000, "o1-mini": 65_536, "o1-preview": 32_768,
+            "o3": 100_000, "o3-pro": 100_000, "o3-mini": 100_000, "o4-mini": 100_000,
+            "gpt-5": 128_000, "gpt-5-pro": 272_000, "gpt-5.5-pro": 128_000,
+        ] {
             let capabilities = openAICapabilities(modelID)
             XCTAssertEqual(capabilities.maximumOutputField, .openAIMaxCompletionTokens, modelID)
-            XCTAssertEqual(capabilities.maximumOutputTokenBound, 32_768, modelID)
+            XCTAssertEqual(capabilities.maximumOutputTokenBound, bound, modelID)
             XCTAssertFalse(capabilities.supportsTemperature, modelID)
         }
     }
 
-    func testAnthropicModelsSupportBothOverridesAt4096() {
+    func testAnthropicModelsUseDocumentedModernBoundsAndConservativeLegacyBounds() {
         for providerModel in Anthropic.Model.allCases {
             let capabilities = Model.anthropic(providerModel).generationCapabilities
             XCTAssertEqual(capabilities.maximumOutputField, .anthropicMaxTokens, providerModel.rawValue)
-            XCTAssertEqual(capabilities.maximumOutputTokenBound, 4_096, providerModel.rawValue)
+            XCTAssertEqual(
+                capabilities.maximumOutputTokenBound,
+                anthropicBounds[providerModel.rawValue] ?? 4_096,
+                providerModel.rawValue
+            )
             XCTAssertTrue(capabilities.supportsTemperature, providerModel.rawValue)
         }
+        XCTAssertEqual(Set(Anthropic.Model.allCases.map(\.rawValue)).intersection(anthropicBounds.keys), Set(anthropicBounds.keys))
     }
 
-    func testXAIModelsAreExhaustivelyClassifiedAt4096() {
+    func testXAIModelsAreExhaustivelyClassifiedWithAppGuard() {
         for providerModel in XAI.Model.allCases {
             let capabilities = Model.xAI(providerModel).generationCapabilities
             if supportedXAI.contains(providerModel.rawValue) {
                 XCTAssertEqual(capabilities.maximumOutputField, .openAIMaxTokens, providerModel.rawValue)
-                XCTAssertEqual(capabilities.maximumOutputTokenBound, 4_096, providerModel.rawValue)
+                XCTAssertEqual(capabilities.maximumOutputTokenBound, ChatGenerationSettings.tokenRange.upperBound, providerModel.rawValue)
                 XCTAssertTrue(capabilities.supportsTemperature, providerModel.rawValue)
+                XCTAssertTrue(capabilities.maximumOutputWarning?.contains("not a model limit") == true, providerModel.rawValue)
             } else {
                 XCTAssertFalse(capabilities.supportsAnyOverride, providerModel.rawValue)
                 XCTAssertNil(capabilities.maximumOutputTokenBound, providerModel.rawValue)
@@ -129,23 +155,28 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
         XCTAssertEqual(Set(XAI.Model.allCases.map(\.rawValue)).intersection(supportedXAI), supportedXAI)
     }
 
-    func testGeminiModelsSupportBothOverridesAt4096() {
+    func testGeminiModelsUseDocumentedBoundsAndConservativeUnverifiedBounds() {
         for providerModel in Gemini.Model.allCases {
             let capabilities = Model.gemini(providerModel).generationCapabilities
             XCTAssertEqual(capabilities.maximumOutputField, .openAIMaxTokens, providerModel.rawValue)
-            XCTAssertEqual(capabilities.maximumOutputTokenBound, 4_096, providerModel.rawValue)
+            XCTAssertEqual(
+                capabilities.maximumOutputTokenBound,
+                geminiBounds[providerModel.rawValue] ?? 4_096,
+                providerModel.rawValue
+            )
             XCTAssertTrue(capabilities.supportsTemperature, providerModel.rawValue)
         }
+        XCTAssertEqual(Set(Gemini.Model.allCases.map(\.rawValue)).intersection(geminiBounds.keys), Set(geminiBounds.keys))
     }
 
     func testArbitraryOllamaModelsUseAppCeilingWithWarning() throws {
         let providerModel = try XCTUnwrap(Ollama.Model(rawValue: "private-model:latest"))
         let capabilities = Model.ollama(providerModel).generationCapabilities
         XCTAssertEqual(capabilities.maximumOutputField, .ollamaNumPredict)
-        XCTAssertEqual(capabilities.maximumOutputTokenBound, 32_768)
+        XCTAssertEqual(capabilities.maximumOutputTokenBound, ChatGenerationSettings.tokenRange.upperBound)
         XCTAssertTrue(capabilities.supportsTemperature)
-        XCTAssertTrue(capabilities.maximumOutputWarning?.contains("app ceiling") == true)
-        XCTAssertTrue(capabilities.maximumOutputWarning?.contains("not a guarantee") == true)
+        XCTAssertTrue(capabilities.maximumOutputWarning?.contains("app guard") == true)
+        XCTAssertTrue(capabilities.maximumOutputWarning?.contains("not a model limit") == true)
     }
 
     private func openAICapabilities(_ modelID: String) -> ChatGenerationCapabilities {

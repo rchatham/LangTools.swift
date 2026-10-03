@@ -124,6 +124,78 @@ final class ChatSettingsViewModelTests: XCTestCase {
         )
     }
 
+    func testTokenPersistenceGuardAllowsDocumentedHighValues() throws {
+        XCTAssertEqual(ChatGenerationSettings.tokenRange, 1...1_000_000)
+        XCTAssertEqual(
+            Array(ChatGenerationSettings.tokenPresets.suffix(4)),
+            [65_536, 100_000, 128_000, 272_000]
+        )
+        XCTAssertEqual(
+            try ChatGenerationSettings(maxOutputTokens: 272_000).maxOutputTokens,
+            272_000
+        )
+        XCTAssertEqual(
+            try ChatGenerationSettings(maxOutputTokens: 1_000_000).maxOutputTokens,
+            1_000_000
+        )
+        XCTAssertThrowsError(try ChatGenerationSettings(maxOutputTokens: 1_000_001))
+    }
+
+    func testHighBoundPickerIncludesDocumentedPresetsOnlyUpToModelBound() {
+        XCTAssertEqual(
+            Array(ChatGenerationSettingsView.tokenChoices(
+                savedValue: nil,
+                maximumOutputTokenBound: 128_000
+            ).suffix(3)),
+            [65_536, 100_000, 128_000]
+        )
+        XCTAssertFalse(
+            ChatGenerationSettingsView.tokenChoices(
+                savedValue: nil,
+                maximumOutputTokenBound: 128_000
+            ).contains(272_000)
+        )
+        XCTAssertTrue(
+            ChatGenerationSettingsView.tokenChoices(
+                savedValue: nil,
+                maximumOutputTokenBound: 272_000
+            ).contains(272_000)
+        )
+        XCTAssertTrue(
+            ChatGenerationSettingsView.tokenChoices(
+                savedValue: nil,
+                maximumOutputTokenBound: 1_000_000
+            ).contains(1_000_000)
+        )
+    }
+
+    func testToggleMutatorsEnableDefaultsPreserveValuesAndDisableOverrides() {
+        XCTAssertEqual(
+            ChatGenerationSettingsView.maximumOutputValue(
+                afterToggle: true,
+                savedValue: nil,
+                maximumOutputTokenBound: 128_000
+            ),
+            4_096
+        )
+        XCTAssertNil(
+            ChatGenerationSettingsView.maximumOutputValue(
+                afterToggle: false,
+                savedValue: 100_000,
+                maximumOutputTokenBound: 128_000
+            )
+        )
+        XCTAssertEqual(
+            ChatGenerationSettingsView.temperatureValue(afterToggle: true, savedValue: nil),
+            0.7
+        )
+        XCTAssertEqual(
+            ChatGenerationSettingsView.temperatureValue(afterToggle: true, savedValue: 0),
+            0
+        )
+        XCTAssertNil(ChatGenerationSettingsView.temperatureValue(afterToggle: false, savedValue: 0.4))
+    }
+
     func testUnsupportedModelDoesNotEraseDraftOverrides() throws {
         let anthropic = try XCTUnwrap(Anthropic.Model.allCases.first)
         let settings = try ChatGenerationSettings(maxOutputTokens: 4_096, temperature: 0.25)
