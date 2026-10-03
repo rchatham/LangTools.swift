@@ -26,9 +26,6 @@ public final class ChatGenerationSettingsStore: ChatGenerationSettingsStoring {
 
     private let userDefaults: UserDefaults
 
-    // Test-only coordination point used to deterministically exercise cross-instance writes.
-    var willPersist: ((ChatGenerationSettings) -> Void)?
-
     public init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
     }
@@ -113,7 +110,6 @@ public final class ChatGenerationSettingsStore: ChatGenerationSettingsStoring {
 
     @discardableResult
     private func persist(_ settings: ChatGenerationSettings) -> Bool {
-        willPersist?(settings)
         do {
             let payload = try JSONEncoder().encode(StoredSettings(
                 schemaVersion: Self.schemaVersion,

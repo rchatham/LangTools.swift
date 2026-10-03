@@ -3,6 +3,17 @@ import Foundation
 import XCTest
 @testable import Chat
 
+private final class CoordinatedSettingsDefaults: UserDefaults {
+    var onSettingsWrite: (() -> Void)?
+
+    override func set(_ value: Any?, forKey defaultName: String) {
+        if defaultName == "chat_generation_settings" {
+            onSettingsWrite?()
+        }
+        super.set(value, forKey: defaultName)
+    }
+}
+
 final class ChatGenerationSettingsTests: XCTestCase {
     private var suiteName: String!
     private var defaults: UserDefaults!
@@ -144,21 +155,23 @@ final class ChatGenerationSettingsTests: XCTestCase {
 
     func testCrossInstanceMigrationCannotOverwriteConcurrentSave() throws {
         defaults.set(1_024, forKey: "max_tokens")
-        let migratingStore = ChatGenerationSettingsStore(userDefaults: defaults)
-        let savingStore = ChatGenerationSettingsStore(userDefaults: defaults)
+        let migratingDefaults = try XCTUnwrap(CoordinatedSettingsDefaults(suiteName: suiteName))
+        let savingDefaults = try XCTUnwrap(CoordinatedSettingsDefaults(suiteName: suiteName))
+        let migratingStore = ChatGenerationSettingsStore(userDefaults: migratingDefaults)
+        let savingStore = ChatGenerationSettingsStore(userDefaults: savingDefaults)
         let saved = try ChatGenerationSettings(maxOutputTokens: 8_192, temperature: 0.25)
         let migrationEntered = DispatchSemaphore(value: 0)
         let releaseMigration = DispatchSemaphore(value: 0)
         let migrationFinished = DispatchSemaphore(value: 0)
-        let saveAttempted = DispatchSemaphore(value: 0)
+        let releaseScheduled = DispatchSemaphore(value: 0)
         let saveEntered = DispatchSemaphore(value: 0)
-        let saveFinished = DispatchSemaphore(value: 0)
 
-        migratingStore.willPersist = { _ in
+        // Intercept UserDefaults writes rather than introducing a reentrant callback in the store.
+        migratingDefaults.onSettingsWrite = {
             migrationEntered.signal()
             releaseMigration.wait()
         }
-        savingStore.willPersist = { _ in
+        savingDefaults.onSettingsWrite = {
             saveEntered.signal()
         }
 
@@ -168,18 +181,16 @@ final class ChatGenerationSettingsTests: XCTestCase {
         }
         XCTAssertEqual(migrationEntered.wait(timeout: .now() + 1), .success)
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            saveAttempted.signal()
-            savingStore.save(saved)
-            saveFinished.signal()
+        // Save on this thread: a broken lock returns before migration is released and
+        // the migration write then overwrites it. Release asynchronously to avoid deadlock.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.1) {
+            releaseScheduled.signal()
+            releaseMigration.signal()
         }
-        XCTAssertEqual(saveAttempted.wait(timeout: .now() + 1), .success)
-        XCTAssertEqual(saveEntered.wait(timeout: .now() + 0.1), .timedOut)
-
-        releaseMigration.signal()
+        savingStore.save(saved)
+        XCTAssertEqual(releaseScheduled.wait(timeout: .now()), .success)
         XCTAssertEqual(migrationFinished.wait(timeout: .now() + 1), .success)
         XCTAssertEqual(saveEntered.wait(timeout: .now() + 1), .success)
-        XCTAssertEqual(saveFinished.wait(timeout: .now() + 1), .success)
         XCTAssertEqual(store.load(), saved)
     }
 
