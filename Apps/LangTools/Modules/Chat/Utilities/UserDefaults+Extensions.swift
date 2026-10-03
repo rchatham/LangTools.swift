@@ -24,6 +24,18 @@ public extension UserDefaults {
         set { standard.set(newValue.rawValue, forKey: "model") }
     }
 
+    @available(*, deprecated, message: "Use ChatGenerationSettingsStore instead.")
+    static var maxTokens: Int {
+        get { standard.integer(forKey: "max_tokens") }
+        set { standard.set(newValue, forKey: "max_tokens") }
+    }
+
+    @available(*, deprecated, message: "Use ChatGenerationSettingsStore instead.")
+    static var temperature: Double {
+        get { standard.double(forKey: "temperature") }
+        set { standard.set(newValue, forKey: "temperature") }
+    }
+
     private static func normalizeLegacyModelID(_ rawValue: String?) -> String? {
         guard let rawValue else { return nil }
 

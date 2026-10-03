@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 import XCTest
 @testable import Chat
@@ -33,13 +34,13 @@ final class ChatGenerationSettingsTests: XCTestCase {
         XCTAssertEqual(store.load().temperature, 0)
     }
 
-    func testValidBoundaryValues() throws {
+    func testValidRepresentativeValues() throws {
         XCTAssertNoThrow(try ChatGenerationSettings(maxOutputTokens: 1, temperature: 0))
-        XCTAssertNoThrow(try ChatGenerationSettings(maxOutputTokens: 32_768, temperature: 1))
+        XCTAssertNoThrow(try ChatGenerationSettings(maxOutputTokens: 16_384, temperature: 1))
     }
 
     func testRejectsInvalidTokens() {
-        for value in [0, -1, 32_769] {
+        for value in [0, -1, Int.max] {
             XCTAssertThrowsError(try ChatGenerationSettings(maxOutputTokens: value))
         }
     }
@@ -70,7 +71,7 @@ final class ChatGenerationSettingsTests: XCTestCase {
     }
 
     func testMigrationPreservesIndependentlyValidField() throws {
-        defaults.set(40_000, forKey: "max_tokens")
+        defaults.set("40000", forKey: "max_tokens")
         defaults.set(0.4, forKey: "temperature")
         XCTAssertEqual(store.load(), try ChatGenerationSettings(temperature: 0.4))
     }
@@ -132,6 +133,56 @@ final class ChatGenerationSettingsTests: XCTestCase {
         XCTAssertEqual(defaults.integer(forKey: "chat_generation_settings_migration_version"), 1)
     }
 
+    func testLoadDoesNotRewriteCompletedMigrationMarker() throws {
+        let expected = try ChatGenerationSettings(maxOutputTokens: 4_096)
+        store.save(expected)
+        defaults.set(2, forKey: "chat_generation_settings_migration_version")
+
+        XCTAssertEqual(store.load(), expected)
+        XCTAssertEqual(defaults.integer(forKey: "chat_generation_settings_migration_version"), 2)
+    }
+
+    func testCrossInstanceMigrationCannotOverwriteConcurrentSave() throws {
+        defaults.set(1_024, forKey: "max_tokens")
+        let migratingStore = ChatGenerationSettingsStore(userDefaults: defaults)
+        let savingStore = ChatGenerationSettingsStore(userDefaults: defaults)
+        let saved = try ChatGenerationSettings(maxOutputTokens: 8_192, temperature: 0.25)
+        let migrationEntered = DispatchSemaphore(value: 0)
+        let releaseMigration = DispatchSemaphore(value: 0)
+        let migrationFinished = DispatchSemaphore(value: 0)
+        let saveAttempted = DispatchSemaphore(value: 0)
+        let saveEntered = DispatchSemaphore(value: 0)
+        let saveFinished = DispatchSemaphore(value: 0)
+
+        migratingStore.willPersist = { _ in
+            migrationEntered.signal()
+            releaseMigration.wait()
+        }
+        savingStore.willPersist = { _ in
+            saveEntered.signal()
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = migratingStore.load()
+            migrationFinished.signal()
+        }
+        XCTAssertEqual(migrationEntered.wait(timeout: .now() + 1), .success)
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            saveAttempted.signal()
+            savingStore.save(saved)
+            saveFinished.signal()
+        }
+        XCTAssertEqual(saveAttempted.wait(timeout: .now() + 1), .success)
+        XCTAssertEqual(saveEntered.wait(timeout: .now() + 0.1), .timedOut)
+
+        releaseMigration.signal()
+        XCTAssertEqual(migrationFinished.wait(timeout: .now() + 1), .success)
+        XCTAssertEqual(saveEntered.wait(timeout: .now() + 1), .success)
+        XCTAssertEqual(saveFinished.wait(timeout: .now() + 1), .success)
+        XCTAssertEqual(store.load(), saved)
+    }
+
     func testMigrationRunsOnceAndDoesNotOverwriteLaterSave() throws {
         defaults.set(1_024, forKey: "max_tokens")
         XCTAssertEqual(store.load(), try ChatGenerationSettings(maxOutputTokens: 1_024))
@@ -151,5 +202,25 @@ final class ChatGenerationSettingsTests: XCTestCase {
         XCTAssertEqual(defaults.integer(forKey: "chat_generation_settings_migration_version"), 1)
         XCTAssertEqual(defaults.integer(forKey: "max_tokens"), 2_048)
         XCTAssertEqual(defaults.double(forKey: "temperature"), 0.5)
+    }
+
+    func testDeprecatedUserDefaultsPropertiesPreserveLegacySemantics() {
+        let standard = UserDefaults.standard
+        let originalMaxTokens = standard.object(forKey: "max_tokens")
+        let originalTemperature = standard.object(forKey: "temperature")
+        defer {
+            standard.set(originalMaxTokens, forKey: "max_tokens")
+            standard.set(originalTemperature, forKey: "temperature")
+        }
+
+        standard.removeObject(forKey: "max_tokens")
+        standard.removeObject(forKey: "temperature")
+        XCTAssertEqual(UserDefaults.maxTokens, 0)
+        XCTAssertEqual(UserDefaults.temperature, 0)
+
+        UserDefaults.maxTokens = -42
+        UserDefaults.temperature = 1.25
+        XCTAssertEqual(UserDefaults.maxTokens, -42)
+        XCTAssertEqual(UserDefaults.temperature, 1.25)
     }
 }

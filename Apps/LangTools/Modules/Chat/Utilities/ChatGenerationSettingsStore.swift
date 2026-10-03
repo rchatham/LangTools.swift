@@ -22,40 +22,46 @@ public final class ChatGenerationSettingsStore: ChatGenerationSettingsStoring {
 
     private static let schemaVersion = 1
     private static let migrationVersion = 1
+    private static let synchronizationLock = NSLock()
 
     private let userDefaults: UserDefaults
-    private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
+
+    // Test-only coordination point used to deterministically exercise cross-instance writes.
+    var willPersist: ((ChatGenerationSettings) -> Void)?
 
     public init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
     }
 
     public func load() -> ChatGenerationSettings {
-        if userDefaults.object(forKey: Keys.settings) != nil {
-            guard let payload = userDefaults.data(forKey: Keys.settings),
-                  let stored = try? decoder.decode(StoredSettings.self, from: payload),
-                  stored.schemaVersion == Self.schemaVersion else {
+        withSynchronizationLock {
+            if userDefaults.object(forKey: Keys.settings) != nil {
+                guard let payload = userDefaults.data(forKey: Keys.settings),
+                      let stored = try? JSONDecoder().decode(StoredSettings.self, from: payload),
+                      stored.schemaVersion == Self.schemaVersion else {
+                    return .automatic
+                }
+                markMigrationCompleteIfNeeded()
+                return stored.settings
+            }
+
+            guard !hasCompletedMigration else {
                 return .automatic
             }
-            markMigrationComplete()
-            return stored.settings
-        }
 
-        guard !hasCompletedMigration else {
-            return .automatic
+            let migrated = migratedLegacySettings()
+            if persist(migrated) {
+                markMigrationCompleteIfNeeded()
+            }
+            return migrated
         }
-
-        let migrated = migratedLegacySettings()
-        if persist(migrated) {
-            markMigrationComplete()
-        }
-        return migrated
     }
 
     public func save(_ settings: ChatGenerationSettings) {
-        if persist(settings) {
-            markMigrationComplete()
+        withSynchronizationLock {
+            if persist(settings) {
+                markMigrationCompleteIfNeeded()
+            }
         }
     }
 
@@ -107,8 +113,9 @@ public final class ChatGenerationSettingsStore: ChatGenerationSettingsStoring {
 
     @discardableResult
     private func persist(_ settings: ChatGenerationSettings) -> Bool {
+        willPersist?(settings)
         do {
-            let payload = try encoder.encode(StoredSettings(
+            let payload = try JSONEncoder().encode(StoredSettings(
                 schemaVersion: Self.schemaVersion,
                 settings: settings
             ))
@@ -120,7 +127,14 @@ public final class ChatGenerationSettingsStore: ChatGenerationSettingsStoring {
         }
     }
 
-    private func markMigrationComplete() {
+    private func markMigrationCompleteIfNeeded() {
+        guard !hasCompletedMigration else { return }
         userDefaults.set(Self.migrationVersion, forKey: Keys.migrationVersion)
+    }
+
+    private func withSynchronizationLock<T>(_ operation: () -> T) -> T {
+        Self.synchronizationLock.lock()
+        defer { Self.synchronizationLock.unlock() }
+        return operation()
     }
 }
