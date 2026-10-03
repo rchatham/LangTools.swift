@@ -271,7 +271,7 @@ struct OllamaSettingsView: View {
                             
                             Button("Cancel") {
                                 isEditingServerUrl = false
-                                viewModel.editingServerUrl = viewModel.serverUrl
+                                viewModel.resetEditingServerUrl()
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
@@ -299,7 +299,7 @@ struct OllamaSettingsView: View {
                         Spacer()
                         
                         Button(action: {
-                            viewModel.editingServerUrl = viewModel.serverUrl
+                            viewModel.resetEditingServerUrl()
                             isEditingServerUrl = true
                         }) {
                             Label("Edit", systemImage: "pencil")
@@ -443,7 +443,7 @@ struct OllamaSettingsView: View {
                                 Spacer()
                                 Button("Cancel") {
                                     isEditingServerUrl = false
-                                    viewModel.editingServerUrl = viewModel.serverUrl
+                                    viewModel.resetEditingServerUrl()
                                 }
                                 Button("Save") {
                                     viewModel.updateServerUrl()
@@ -459,7 +459,7 @@ struct OllamaSettingsView: View {
                             Text(viewModel.serverUrl)
                                 .foregroundColor(.secondary)
                             Button(action: {
-                                viewModel.editingServerUrl = viewModel.serverUrl
+                                viewModel.resetEditingServerUrl()
                                 isEditingServerUrl = true
                             }) {
                                 Image(systemName: "pencil")
@@ -527,62 +527,92 @@ extension OllamaSettingsView {
         @Published var isConnected: Bool = false
         @Published var isCheckingConnection: Bool = false
         @Published var connectionError: String? = nil
+
+        private let ollamaService: OllamaService
+        private var connectionTask: Task<Void, Never>?
+        private var connectionGeneration: UInt = 0
         
         var isValidUrl: Bool {
-            guard let url = URL(string: editingServerUrl) else { return false }
-            return url.scheme != nil && url.host != nil
+            (try? OllamaEndpointPolicy.validate(editingServerUrl)) != nil
         }
         
-        init() {
-            // Load server URL from UserDefaults or use default
-            self.serverUrl = UserDefaults.standard.string(forKey: "ollamaServerUrl") ?? "http://localhost:11434"
-            self.editingServerUrl = self.serverUrl
-            
-            // Check connection on init
-            checkConnection()
-        }
-        
-        func updateServerUrl() {
-            guard isValidUrl else { return }
-            
-            // Save the new URL
-            serverUrl = editingServerUrl
-            UserDefaults.standard.set(serverUrl, forKey: "ollamaServerUrl")
-            
-            // Update OllamaService with the new URL
-            OllamaService.shared.updateBaseUrl(serverUrl)
-            
-            // Check connection with new URL
-            checkConnection()
-        }
-        
-        func checkConnection() {
-            isCheckingConnection = true
-            connectionError = nil
-            
-            Task {
-                do {
-                    let isReachable = try await OllamaService.shared.checkConnection()
-                    await MainActor.run {
-                        self.isConnected = isReachable
-                        self.isCheckingConnection = false
-                        
-                        if !isReachable {
-                            self.connectionError = "Could not connect to Ollama"
-                        }
-                    }
-                } catch {
-                    await MainActor.run {
-                        self.isConnected = false
-                        self.isCheckingConnection = false
-                        self.connectionError = error.localizedDescription
-                    }
+        init(
+            ollamaService: OllamaService = .shared,
+            userDefaults: UserDefaults = .standard,
+            checksConnectionOnInit: Bool = true
+        ) {
+            self.ollamaService = ollamaService
+            do {
+                // Never put an invalid legacy value (which may contain credentials) in
+                // either the visible label or the editable text field.
+                let url = try OllamaEndpointPolicy.resolve(userDefaults: userDefaults)
+                self.serverUrl = url.absoluteString
+                self.editingServerUrl = self.serverUrl
+                if checksConnectionOnInit {
+                    checkConnection()
                 }
+            } catch {
+                self.serverUrl = "Invalid saved URL"
+                self.editingServerUrl = ""
+                self.connectionError = "Saved Ollama server URL is invalid. Enter a new URL to reconnect."
             }
         }
         
+        func resetEditingServerUrl() {
+            // An invalid legacy value is displayed as a sentinel, not an editable URL.
+            editingServerUrl = (try? OllamaEndpointPolicy.validate(serverUrl)) == nil ? "" : serverUrl
+        }
+
+        @discardableResult
+        func updateServerUrl() -> Task<Void, Never>? {
+            do {
+                let url = try ollamaService.updateBaseUrl(editingServerUrl)
+                serverUrl = url.absoluteString
+                editingServerUrl = serverUrl
+                return checkConnection(refreshModelsOnSuccess: true)
+            } catch {
+                connectionError = error.localizedDescription
+                return nil
+            }
+        }
+        
+        @discardableResult
+        func checkConnection(refreshModelsOnSuccess: Bool = false) -> Task<Void, Never> {
+            connectionTask?.cancel()
+            connectionGeneration &+= 1
+            let operationGeneration = connectionGeneration
+            isConnected = false
+            isCheckingConnection = true
+            connectionError = nil
+
+            let task = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let isReachable = try await self.ollamaService.checkConnection()
+                    guard self.connectionGeneration == operationGeneration else { return }
+                    self.isConnected = isReachable
+                    self.isCheckingConnection = false
+                    if !isReachable {
+                        self.connectionError = "Could not connect to Ollama"
+                    } else if refreshModelsOnSuccess {
+                        let refreshTask = self.ollamaService.refreshModels()
+                        await refreshTask.value
+                    }
+                } catch is CancellationError {
+                    // A newer endpoint or settings probe owns the connection status.
+                } catch {
+                    guard self.connectionGeneration == operationGeneration else { return }
+                    self.isConnected = false
+                    self.isCheckingConnection = false
+                    self.connectionError = error.localizedDescription
+                }
+            }
+            connectionTask = task
+            return task
+        }
+        
         func toggleModel(_ model: Ollama.Model) {
-            if OllamaService.shared.runningModels.contains(where: { $0.model == model.rawValue }) {
+            if ollamaService.runningModels.contains(where: { $0.model == model.rawValue }) {
                 // Model is already running, no need to do anything
                 return
             }
@@ -591,7 +621,7 @@ extension OllamaSettingsView {
             
             Task {
                 do {
-                    try await OllamaService.shared.loadModel(model)
+                    try await self.ollamaService.loadModel(model)
                     await MainActor.run {
                         self.loadingModelName = nil
                     }
@@ -612,7 +642,7 @@ extension OllamaSettingsView {
             
             Task {
                 do {
-                    try await OllamaService.shared.pullModel(newModelName) { [weak self] progress in
+                    try await self.ollamaService.pullModel(newModelName) { [weak self] progress in
                         self?.pullProgress = progress
                     }
                     
