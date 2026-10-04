@@ -128,7 +128,7 @@ final class NetworkClientAuthTests: XCTestCase {
         var receivedEventCount = 0
 
         for model in models {
-            let request = client.request(
+            let request = try client.request(
                 messages: [Message(text: "Hello", role: .user)],
                 model: model,
                 toolEventHandler: { _ in receivedEventCount += 1 }
@@ -148,6 +148,23 @@ final class NetworkClientAuthTests: XCTestCase {
         XCTAssertEqual(receivedEventCount, models.count)
     }
 
+    func testDefaultClientDoesNotRouteOllamaCloudThroughConfiguredOllamaEndpoint() throws {
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager
+        )
+        let cloudModel = try XCTUnwrap(Ollama.Model(rawValue: "glm-5.2"))
+
+        XCTAssertThrowsError(try client.request(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .ollamaCloud(cloudModel)
+        )) { error in
+            XCTAssertEqual(error as? NetworkClient.NetworkError, .ollamaCloudTransportUnavailable)
+        }
+    }
+
     func testGeminiRequestEncodesToolsAndToolChoiceAndWiresHandler() throws {
         let client = NetworkClient(
             keychainService: keychainService,
@@ -160,7 +177,7 @@ final class NetworkClientAuthTests: XCTestCase {
         let event = LangToolsToolEvent.toolCalled(TestToolSelection(name: "lookup_weather"))
         var receivedEventCount = 0
 
-        let request = try XCTUnwrap(client.request(
+        let request = try XCTUnwrap(try client.request(
             messages: [Message(text: "What is the weather?", role: .user)],
             model: .gemini(geminiModel),
             tools: [tool],

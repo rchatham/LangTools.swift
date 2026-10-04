@@ -7,20 +7,43 @@ import Gemini
 import Ollama
 
 public final class ProviderAccessManager: ObservableObject {
+    public typealias OllamaCloudAccessEligibility = () -> Bool
+
     public static let shared = ProviderAccessManager()
 
     @Published public private(set) var states: [APIService: ProviderAccessState] = [:]
 
     private let keychainService: KeychainService
     private let sessionStore: AuthSessionStore
+    private let defaultOllamaCloudAccessEligibility: OllamaCloudAccessEligibility
+    private var ollamaCloudAccessEligibilityOverride: OllamaCloudAccessEligibility?
     private let stateLock = NSLock()
 
     public init(
         keychainService: KeychainService = .shared,
-        sessionStore: AuthSessionStore = .shared
+        sessionStore: AuthSessionStore = .shared,
+        ollamaCloudAccessEligibility: OllamaCloudAccessEligibility? = nil
     ) {
         self.keychainService = keychainService
         self.sessionStore = sessionStore
+        self.defaultOllamaCloudAccessEligibility = {
+            keychainService.getApiKey(for: .ollama)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty == false
+        }
+        self.ollamaCloudAccessEligibilityOverride = ollamaCloudAccessEligibility
+        refresh()
+    }
+
+    /// Overrides standalone API-key eligibility for hosts that can execute
+    /// Ollama Cloud requests through another transport, such as an app proxy.
+    /// Pass `nil` to restore the standalone `.ollama` API-key policy.
+    public func configureOllamaCloudAccessEligibilityOverride(
+        _ eligibility: OllamaCloudAccessEligibility?
+    ) {
+        stateLock.lock()
+        ollamaCloudAccessEligibilityOverride = eligibility
+        stateLock.unlock()
         refresh()
     }
 
@@ -87,17 +110,38 @@ public final class ProviderAccessManager: ObservableObject {
     }
 
     public func availableChatModels() -> [Model] {
-        statesForAccessUI()
-            .flatMap(\.availableModels)
-            + state(for: .ollama).availableModels
+        availableChatModels(ollamaCloudAccessEligible: isOllamaCloudAccessEligible())
     }
 
     public func validateSelectedModel(_ model: Model) -> Model {
-        let available = availableChatModels()
+        let cloudAccessEligible = isOllamaCloudAccessEligible()
+        let available = availableChatModels(ollamaCloudAccessEligible: cloudAccessEligible)
         if available.contains(model) {
             return model
         }
+        if case .ollamaCloud = model, cloudAccessEligible == false {
+            // Keep the user's persisted cloud preference across temporary key
+            // or proxy unavailability, but never use it as a new fallback.
+            return model
+        }
         return available.first ?? model
+    }
+
+    private func availableChatModels(ollamaCloudAccessEligible: Bool) -> [Model] {
+        let cloudModels = ollamaCloudAccessEligible
+            ? Model.cachedOllamaCloudModels.map { Model.ollamaCloud($0) }
+            : []
+        return statesForAccessUI()
+            .flatMap(\.availableModels)
+            + state(for: .ollama).availableModels
+            + cloudModels
+    }
+
+    private func isOllamaCloudAccessEligible() -> Bool {
+        stateLock.lock()
+        let eligibility = ollamaCloudAccessEligibilityOverride ?? defaultOllamaCloudAccessEligibility
+        stateLock.unlock()
+        return eligibility()
     }
 
     public func accessibleModelIDs(for service: APIService) -> [String] {

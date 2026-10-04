@@ -19,6 +19,7 @@ public enum ModelRoute: String, Codable, Hashable {
     case xAI = "xai"
     case gemini = "gemini"
     case ollama = "ollama"
+    case ollamaCloud = "ollama-cloud"
 }
 
 public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equatable {
@@ -29,6 +30,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
     case xAI(XAI.Model)
     case gemini(Gemini.Model)
     case ollama(Ollama.Model)
+    case ollamaCloud(Ollama.Model)
 
     public init?(rawValue: String) {
         let components = rawValue.split(separator: "/", maxSplits: 1).map(String.init)
@@ -57,6 +59,11 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             case ModelRoute.ollama.rawValue:
                 guard let model = Ollama.Model(rawValue: slug) else { return nil }
                 self = .ollama(model)
+            case ModelRoute.ollamaCloud.rawValue:
+                guard let modelID = Self.normalizedOllamaCloudModelID(slug),
+                      let model = Ollama.Model(rawValue: modelID)
+                else { return nil }
+                self = .ollamaCloud(model)
             default:
                 return nil
             }
@@ -85,7 +92,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             return model.rawValue
         case .gemini(let model):
             return model.rawValue
-        case .ollama(let model):
+        case .ollama(let model), .ollamaCloud(let model):
             return model.rawValue
         }
     }
@@ -106,6 +113,8 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             return .gemini
         case .ollama:
             return .ollama
+        case .ollamaCloud:
+            return .ollamaCloud
         }
     }
 
@@ -123,8 +132,9 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             }
             return cachedOllamaModels
         }().map { .ollama($0) }
+        let ollamaCloudModels: [Model] = cachedOllamaCloudModels.map { .ollamaCloud($0) }
 
-        return standardModels + ollamaModels
+        return standardModels + ollamaModels + ollamaCloudModels
     }
 
     public static var chatModels: [Model] {
@@ -133,6 +143,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
         + cachedOllamaModels.map { .ollama($0) }
+        + cachedOllamaCloudModels.map { .ollamaCloud($0) }
     }
 
     static var cachedOllamaModels: [Ollama.Model] {
@@ -147,13 +158,48 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         UserDefaults.standard.set(modelNames, forKey: "ollamaModels")
     }
 
+    public static let defaultOllamaCloudModelID = "glm-5.2"
+
+    public static var cachedOllamaCloudModels: [Ollama.Model] {
+        let cachedModels = UserDefaults.standard
+            .stringArray(forKey: "ollamaCloudModels")?
+            .compactMap(normalizedOllamaCloudModelID)
+            .compactMap(Ollama.Model.init(rawValue:)) ?? []
+        return cachedModels.isEmpty ? defaultOllamaCloudModels : cachedModels
+    }
+
+    public static func updateCachedOllamaCloudModels(_ models: [Ollama.Model]) {
+        var seen = Set<String>()
+        let modelNames = models.compactMap { model -> String? in
+            guard let modelID = normalizedOllamaCloudModelID(model.rawValue),
+                  seen.insert(modelID).inserted
+            else { return nil }
+            return modelID
+        }
+        UserDefaults.standard.set(modelNames, forKey: "ollamaCloudModels")
+    }
+
+    private static var defaultOllamaCloudModels: [Ollama.Model] {
+        guard let model = Ollama.Model(rawValue: defaultOllamaCloudModelID) else { return [] }
+        return [model]
+    }
+
+    private static func normalizedOllamaCloudModelID(_ rawValue: String) -> String? {
+        var modelID = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if modelID.hasSuffix(":cloud") {
+            modelID.removeLast(":cloud".count)
+        }
+        modelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return modelID.isEmpty ? nil : modelID
+    }
+
     public var apiService: APIService {
         switch self {
         case .openAI, .codex: return .openAI
         case .anthropic, .claudeCode: return .anthropic
         case .xAI: return .xAI
         case .gemini: return .gemini
-        case .ollama: return .ollama
+        case .ollama, .ollamaCloud: return .ollama
         }
     }
 

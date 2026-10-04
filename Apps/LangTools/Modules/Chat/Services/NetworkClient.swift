@@ -51,8 +51,8 @@ extension NetworkClientProtocol {
         try streamChatCompletionRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
     }
 
-    func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) -> any LangToolsChatRequest & LangToolsStreamableRequest where Self: NetworkClient {
-        self.request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
+    func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> any LangToolsChatRequest & LangToolsStreamableRequest where Self: NetworkClient {
+        try self.request(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
     }
 
     func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
@@ -115,7 +115,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             )
         }
 
-        let response = try await langToolchain.perform(request: request(messages: messages, model: model, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler))
+        let response = try await langToolchain.perform(request: try request(messages: messages, model: model, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler))
         guard let text = response.content?.text else {
             throw NetworkError.unexpectedResponseFormat
         }
@@ -241,7 +241,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         catch { print(error.localizedDescription) }
     }
 
-    func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) -> any LangToolsChatRequest & LangToolsStreamableRequest {
+    func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> any LangToolsChatRequest & LangToolsStreamableRequest {
         let replayMessages = messages.replayFiltered(
             targetService: model.apiService,
             allowCrossProvider: ToolSettings.shared.crossProviderToolReplay
@@ -252,6 +252,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .xAI(let model): return OpenAI.ChatCompletionRequest(model: model, messages: replayMessages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice, toolEventHandler: toolEventHandler)
         case .gemini(let model): return OpenAI.ChatCompletionRequest(model: model, messages: replayMessages.toOpenAIMessages(), stream: stream, tools: tools?.convertTools(), tool_choice: toolChoice, toolEventHandler: toolEventHandler)
         case .ollama(let model): return Ollama.ChatRequest(model: model, messages: replayMessages.toOllamaMessages(), format: nil, options: nil, stream: stream, keep_alive: nil, tools: tools?.convertTools(), toolEventHandler: toolEventHandler)
+        case .ollamaCloud: throw NetworkError.ollamaCloudTransportUnavailable
         }
     }
 
@@ -270,6 +271,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .openAI(let model), .codex(let model): return AgentContext(langTool: try requiredLangTool(OpenAI.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
         case .xAI(let model): return AgentContext(langTool: try requiredLangTool(XAI.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
         case .ollama(let model): return AgentContext(langTool: try requiredLangTool(Ollama.self), model: model, messages: replayMessages.toOllamaMessages(), eventHandler: eventHandler)
+        case .ollamaCloud: throw NetworkError.ollamaCloudTransportUnavailable
         }
     }
 
@@ -365,6 +367,9 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         }
     }
     private func ensureModelAccess(for model: Model) throws {
+        if model.route == .ollamaCloud {
+            throw NetworkError.ollamaCloudTransportUnavailable
+        }
         switch model.apiService {
         case .ollama:
             return
@@ -418,6 +423,7 @@ extension NetworkClient {
         case missingApiKey
         case emptyApiKey
         case incompatibleRequest
+        case ollamaCloudTransportUnavailable
         case modelAccessUnavailable(String)
         case accountProxyTransportFailed(String)
         case unexpectedResponseFormat
@@ -431,6 +437,8 @@ extension NetworkClient {
                 return "API key cannot be empty."
             case .incompatibleRequest:
                 return "The selected request is incompatible with the current provider."
+            case .ollamaCloudTransportUnavailable:
+                return "Ollama Cloud transport must be provided by the hosting app and does not use the configured Ollama endpoint."
             case .modelAccessUnavailable(let modelID):
                 return "Your current credentials do not include access to \(modelID)."
             case .accountProxyTransportFailed(let message):

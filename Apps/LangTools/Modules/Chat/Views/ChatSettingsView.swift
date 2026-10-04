@@ -887,7 +887,7 @@ public struct ChatSettingsView: View {
                 Text("Manage Ollama Models")
                     .font(.headline)
 
-                Text("Ollama allows you to run large language models locally on your Mac. Configure and manage your local models from here.")
+                Text("Configure models served by your self-hosted Ollama endpoint. Every model selected under the ollama/ route uses that endpoint, including model IDs ending in :cloud. Hosted Ollama Cloud models use the separate ollama-cloud/ route and do not require a self-hosted daemon.")
                     .font(.body)
                     .foregroundColor(.secondary)
                     .padding(.bottom, 8)
@@ -971,7 +971,9 @@ public struct ChatSettingsView: View {
         case .gemini where model.slug.contains("gemini"):
             return "Gemini is Google's multimodal AI model with strong reasoning and multimodal capabilities."
         case .ollama:
-            return "This is a locally-hosted model running through Ollama. Performance and capabilities depend on the model and your local hardware."
+            return "This model runs through your configured self-hosted Ollama endpoint, including when its model ID ends in :cloud. Performance and capabilities depend on that endpoint."
+        case .ollamaCloud:
+            return "This model runs through Ollama Cloud using the app's selected backend mode. It is independent from local Ollama and does not require a local daemon."
         default:
             return "Selected model"
         }

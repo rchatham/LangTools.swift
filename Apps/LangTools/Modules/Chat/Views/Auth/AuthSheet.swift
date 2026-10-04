@@ -76,6 +76,9 @@ private struct ManageAccessPromptModifier: ViewModifier {
     }
 
     private var dialogTitle: String {
+        if currentDestination == nil, UserDefaults.model.route == .ollamaCloud {
+            return "Ollama Cloud Access"
+        }
         switch currentService {
         case .openAI:
             return "OpenAI Access"
@@ -171,8 +174,10 @@ private struct ManageAccessPromptModifier: ViewModifier {
             return "Models are shown when their provider is configured. Anthropic status: \(status). Add an Anthropic API key or sign in with Claude Code for account-based access."
         case .xAI, .gemini:
             return "\(service.displayName) status: \(status). Use an API key to enable this provider and make its models appear in the picker."
+        case .ollama where UserDefaults.model.route == .ollamaCloud:
+            return "Ollama Cloud models run through Ollama's hosted service. Cloud credentials and routing are managed by the app's selected backend mode; a local Ollama daemon is not required."
         case .ollama:
-            return "Ollama models run locally and do not require API keys or account login."
+            return "Models under the ollama/ route run through your configured self-hosted Ollama endpoint and do not require app-managed API keys or account login. This includes model IDs ending in :cloud."
         case .serper:
             return "Use your Serper API key for web search capabilities."
         }

@@ -1,6 +1,7 @@
 import XCTest
 import KeychainAccess
 import Anthropic
+import Ollama
 @testable import Chat
 
 final class ProviderAccessManagerTests: XCTestCase {
@@ -8,26 +9,117 @@ final class ProviderAccessManagerTests: XCTestCase {
     private var keychainService: KeychainService!
     private var sessionStore: AuthSessionStore!
     private var accessManager: ProviderAccessManager!
+    private var previousLocalModels: Any?
+    private var previousCloudModels: Any?
 
     override func setUp() {
         super.setUp()
         keychain = Keychain(service: "ProviderAccessManagerTests.\(UUID().uuidString)")
         keychainService = KeychainService(keychain: keychain)
         sessionStore = AuthSessionStore(keychain: keychain)
+        previousLocalModels = UserDefaults.standard.object(forKey: "ollamaModels")
+        previousCloudModels = UserDefaults.standard.object(forKey: "ollamaCloudModels")
+        UserDefaults.standard.removeObject(forKey: "ollamaModels")
+        UserDefaults.standard.removeObject(forKey: "ollamaCloudModels")
         accessManager = ProviderAccessManager(keychainService: keychainService, sessionStore: sessionStore)
     }
 
     override func tearDown() {
         try? keychain.removeAll()
+        restore(previousLocalModels, forKey: "ollamaModels")
+        restore(previousCloudModels, forKey: "ollamaCloudModels")
         super.tearDown()
     }
 
-    func testNoCredentialsKeepsRequestedSelectionWithoutInventingAccessibleFallback() {
+    func testNoCredentialsDoesNotOfferOrSelectOllamaCloudFallback() {
         let requested = Model.codex(.gpt5_5)
+
+        XCTAssertFalse(accessManager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
         XCTAssertEqual(accessManager.validateSelectedModel(requested), requested)
     }
 
-    func testNoCredentialsHidesRemoteModels() {
+    func testWhitespaceOllamaAPIKeyDoesNotEnableCloudModels() {
+        keychainService.saveApiKey(apiKey: "  \n ", for: .ollama)
+        accessManager.refresh()
+
+        XCTAssertFalse(accessManager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
+    }
+
+    func testOllamaAPIKeyEnablesCloudModels() {
+        keychainService.saveApiKey(apiKey: "ollama-cloud-key", for: .ollama)
+        accessManager.refresh()
+
+        XCTAssertTrue(accessManager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
+    }
+
+    func testEligibilityOverrideEnablesCloudModelsWithoutClientKey() {
+        let manager = ProviderAccessManager(
+            keychainService: keychainService,
+            sessionStore: sessionStore,
+            ollamaCloudAccessEligibility: { true }
+        )
+
+        XCTAssertTrue(manager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
+    }
+
+    func testEligibilityOverrideCanDisableCloudModelsDespiteClientKey() {
+        keychainService.saveApiKey(apiKey: "ollama-cloud-key", for: .ollama)
+        let manager = ProviderAccessManager(
+            keychainService: keychainService,
+            sessionStore: sessionStore,
+            ollamaCloudAccessEligibility: { false }
+        )
+
+        XCTAssertFalse(manager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
+    }
+
+    func testConfiguredEligibilityOverrideCanTrackProxyAvailability() {
+        var proxyIsAvailable = false
+        accessManager.configureOllamaCloudAccessEligibilityOverride { proxyIsAvailable }
+        XCTAssertFalse(accessManager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
+
+        proxyIsAvailable = true
+        accessManager.refresh()
+        XCTAssertTrue(accessManager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
+
+        accessManager.configureOllamaCloudAccessEligibilityOverride(nil)
+        XCTAssertFalse(accessManager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
+    }
+
+    func testTemporarilyIneligibleSelectedCloudModelIsPreservedInsteadOfUsingFallback() throws {
+        let selected = try XCTUnwrap(Model(rawValue: "ollama-cloud/glm-5.2"))
+        let localFallback = try XCTUnwrap(Ollama.Model(rawValue: "local-fallback"))
+        Model.updateCachedOllamaModels([localFallback])
+        accessManager.refresh()
+
+        XCTAssertEqual(accessManager.validateSelectedModel(selected), selected)
+    }
+
+    func testSelectedModelValidationUsesSingleEligibilitySnapshot() throws {
+        let selected = try XCTUnwrap(Model(rawValue: "ollama-cloud/glm-5.2"))
+        let localFallback = try XCTUnwrap(Ollama.Model(rawValue: "local-fallback"))
+        Model.updateCachedOllamaModels([localFallback])
+        var evaluationCount = 0
+        accessManager.configureOllamaCloudAccessEligibilityOverride {
+            evaluationCount += 1
+            return evaluationCount > 1
+        }
+
+        XCTAssertEqual(accessManager.validateSelectedModel(selected), selected)
+        XCTAssertEqual(evaluationCount, 1)
+    }
+
+    func testLocalOllamaModelsRemainAvailableWithoutCloudEligibility() throws {
+        let localModel = try XCTUnwrap(Ollama.Model(rawValue: "glm-5.2:cloud"))
+        Model.updateCachedOllamaModels([localModel])
+        accessManager.refresh()
+
+        let modelIDs = accessManager.availableChatModels().map(\.rawValue)
+        XCTAssertTrue(modelIDs.contains("ollama/glm-5.2:cloud"))
+        XCTAssertFalse(modelIDs.contains("ollama-cloud/glm-5.2"))
+    }
+
+    func testNoCredentialsHidesCredentialedRemoteModels() {
         accessManager.refresh()
 
         XCTAssertFalse(accessManager.availableChatModels().contains(where: { $0.apiService == .openAI }))
@@ -159,6 +251,14 @@ final class ProviderAccessManagerTests: XCTestCase {
         XCTAssertEqual(modelIDs, ["codex/gpt-5.5"])
         XCTAssertFalse(modelIDs.contains("openai/gpt-5.5"))
         XCTAssertFalse(modelIDs.contains("openai/gpt-4o-mini"))
+    }
+
+    private func restore(_ value: Any?, forKey key: String) {
+        if let value {
+            UserDefaults.standard.set(value, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
     }
 
     func testConcurrentRefreshAndStateReadsAreSafeAcrossIsolation() async {

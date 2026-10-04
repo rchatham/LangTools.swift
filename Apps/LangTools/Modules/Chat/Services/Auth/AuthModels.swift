@@ -84,7 +84,7 @@ public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
         case .claudeCode: return .claudeCode
         case .xAI: return .xAI
         case .gemini: return .gemini
-        case .ollama: return nil
+        case .ollama, .ollamaCloud: return nil
         }
     }
 
