@@ -196,6 +196,99 @@ final class ChatSettingsViewModelTests: XCTestCase {
         XCTAssertNil(ChatGenerationSettingsView.temperatureValue(afterToggle: false, savedValue: 0.4))
     }
 
+    func testTopPUpdatePreservesOtherFields() throws {
+        let store = FakeGenerationSettingsStore()
+        let viewModel = ChatSettingsView.ViewModel(clearMessages: {}, generationSettingsStore: store)
+        viewModel.loadSettings()
+
+        viewModel.updateTemperature(0.5)
+        viewModel.updateTopP(0.9)
+        viewModel.saveSettings()
+
+        XCTAssertEqual(viewModel.generationSettings.temperature, 0.5)
+        XCTAssertEqual(viewModel.generationSettings.topP, 0.9)
+        XCTAssertNil(viewModel.generationSettings.frequencyPenalty)
+    }
+
+    func testPenaltyUpdatesPreserveOtherFields() throws {
+        let store = FakeGenerationSettingsStore()
+        let viewModel = ChatSettingsView.ViewModel(clearMessages: {}, generationSettingsStore: store)
+        viewModel.loadSettings()
+
+        viewModel.updateFrequencyPenalty(0.5)
+        viewModel.updatePresencePenalty(-0.3)
+        viewModel.saveSettings()
+
+        XCTAssertEqual(viewModel.generationSettings.frequencyPenalty, 0.5)
+        XCTAssertEqual(viewModel.generationSettings.presencePenalty, -0.3)
+        XCTAssertNil(viewModel.generationSettings.topK)
+    }
+
+    func testTopKAndSeedAndStopUpdatesPreserveOtherFields() throws {
+        let store = FakeGenerationSettingsStore()
+        let viewModel = ChatSettingsView.ViewModel(clearMessages: {}, generationSettingsStore: store)
+        viewModel.loadSettings()
+
+        viewModel.updateTopK(40)
+        viewModel.updateSeed(12345)
+        viewModel.updateStop(["END", "STOP"])
+        viewModel.saveSettings()
+
+        XCTAssertEqual(viewModel.generationSettings.topK, 40)
+        XCTAssertEqual(viewModel.generationSettings.seed, 12345)
+        XCTAssertEqual(viewModel.generationSettings.stop, ["END", "STOP"])
+    }
+
+    func testInvalidNewFieldsRejected() {
+        XCTAssertThrowsError(try ChatGenerationSettings(topP: -0.1))
+        XCTAssertThrowsError(try ChatGenerationSettings(topP: 1.1))
+        XCTAssertThrowsError(try ChatGenerationSettings(frequencyPenalty: -2.1))
+        XCTAssertThrowsError(try ChatGenerationSettings(frequencyPenalty: 2.1))
+        XCTAssertThrowsError(try ChatGenerationSettings(presencePenalty: -2.1))
+        XCTAssertThrowsError(try ChatGenerationSettings(presencePenalty: 2.1))
+        XCTAssertThrowsError(try ChatGenerationSettings(topK: 0))
+        XCTAssertThrowsError(try ChatGenerationSettings(topK: -1))
+    }
+
+    func testValidNewFieldsAccepted() throws {
+        let s = try ChatGenerationSettings(
+            topP: 0.5, frequencyPenalty: 0.0, presencePenalty: -1.0,
+            topK: 50, seed: 42, stop: ["\n\n"]
+        )
+        XCTAssertEqual(s.topP, 0.5)
+        XCTAssertEqual(s.frequencyPenalty, 0.0)
+        XCTAssertEqual(s.presencePenalty, -1.0)
+        XCTAssertEqual(s.topK, 50)
+        XCTAssertEqual(s.seed, 42)
+        XCTAssertEqual(s.stop, ["\n\n"])
+    }
+
+    func testNewFieldsDecodeFromLegacyPayloadAsNil() throws {
+        let legacy = """
+        {"maxOutputTokens":4096,"temperature":0.5}
+        """
+        let decoded = try JSONDecoder().decode(ChatGenerationSettings.self, from: Data(legacy.utf8))
+        XCTAssertEqual(decoded.maxOutputTokens, 4_096)
+        XCTAssertEqual(decoded.temperature, 0.5)
+        XCTAssertNil(decoded.topP)
+        XCTAssertNil(decoded.frequencyPenalty)
+        XCTAssertNil(decoded.presencePenalty)
+        XCTAssertNil(decoded.topK)
+        XCTAssertNil(decoded.seed)
+        XCTAssertNil(decoded.stop)
+    }
+
+    func testNewFieldsRoundTripThroughCoding() throws {
+        let original = try ChatGenerationSettings(
+            maxOutputTokens: 4_096, temperature: 0.5,
+            topP: 0.9, frequencyPenalty: 0.2, presencePenalty: -0.1,
+            topK: 40, seed: 99, stop: ["END"]
+        )
+        let encoded = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(ChatGenerationSettings.self, from: encoded)
+        XCTAssertEqual(decoded, original)
+    }
+
     func testUnsupportedModelDoesNotEraseDraftOverrides() throws {
         let anthropic = try XCTUnwrap(Anthropic.Model.allCases.first)
         let settings = try ChatGenerationSettings(maxOutputTokens: 4_096, temperature: 0.25)

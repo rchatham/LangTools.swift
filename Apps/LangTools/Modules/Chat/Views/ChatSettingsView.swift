@@ -842,6 +842,30 @@ public struct ChatSettingsView: View {
                     get: { viewModel.generationSettings.temperature },
                     set: { viewModel.updateTemperature($0) }
                 ),
+                topP: Binding(
+                    get: { viewModel.generationSettings.topP },
+                    set: { viewModel.updateTopP($0) }
+                ),
+                frequencyPenalty: Binding(
+                    get: { viewModel.generationSettings.frequencyPenalty },
+                    set: { viewModel.updateFrequencyPenalty($0) }
+                ),
+                presencePenalty: Binding(
+                    get: { viewModel.generationSettings.presencePenalty },
+                    set: { viewModel.updatePresencePenalty($0) }
+                ),
+                topK: Binding(
+                    get: { viewModel.generationSettings.topK },
+                    set: { viewModel.updateTopK($0) }
+                ),
+                seed: Binding(
+                    get: { viewModel.generationSettings.seed },
+                    set: { viewModel.updateSeed($0) }
+                ),
+                stop: Binding(
+                    get: { viewModel.generationSettings.stop },
+                    set: { viewModel.updateStop($0) }
+                ),
                 capabilities: viewModel.model.generationCapabilities,
                 reset: viewModel.resetGenerationSettings
             )
@@ -1194,11 +1218,123 @@ extension ChatSettingsView {
         }
 
         func updateMaximumOutputTokens(_ value: Int?) {
-            updateGenerationSettings(maxOutputTokens: value, temperature: generationSettings.temperature)
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: value,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
         }
 
         func updateTemperature(_ value: Double?) {
-            updateGenerationSettings(maxOutputTokens: generationSettings.maxOutputTokens, temperature: value)
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: value,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateTopP(_ value: Double?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: value,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateFrequencyPenalty(_ value: Double?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: value,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updatePresencePenalty(_ value: Double?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: value,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateTopK(_ value: Int?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: value,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateSeed(_ value: Int?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: value,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateStop(_ value: [String]?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: value
+                )
+            }
         }
 
         func resetGenerationSettings() {
@@ -1207,12 +1343,9 @@ extension ChatSettingsView {
             generationSettingsError = nil
         }
 
-        private func updateGenerationSettings(maxOutputTokens: Int?, temperature: Double?) {
+        private func updateGenerationSettings(transform: (ChatGenerationSettings) throws -> ChatGenerationSettings) {
             do {
-                generationSettings = try ChatGenerationSettings(
-                    maxOutputTokens: maxOutputTokens,
-                    temperature: temperature
-                )
+                generationSettings = try transform(generationSettings)
                 generationSettingsError = nil
             } catch {
                 generationSettingsError = error.localizedDescription
