@@ -43,358 +43,365 @@ public struct ChatGenerationSettingsView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             if capabilities.supportsAnyOverride {
-                if capabilities.maximumOutputField != nil {
-                    maximumOutputControls
-                } else {
-                    unsupportedField("Maximum output is not supported by this model.")
+                if capabilities.maximumOutputField != nil || capabilities.supportsStop {
+                    outputSection
                 }
 
-                if capabilities.supportsTemperature {
-                    temperatureControls
-                } else {
-                    unsupportedField("Temperature is not supported by this model.")
+                if capabilities.supportsTemperature || capabilities.supportsTopP || capabilities.supportsTopK {
+                    samplingSection
                 }
 
-                if capabilities.supportsTopP {
-                    topPControls
-                }
-
-                if capabilities.supportsFrequencyPenalty {
-                    frequencyPenaltyControls
-                }
-
-                if capabilities.supportsPresencePenalty {
-                    presencePenaltyControls
-                }
-
-                if capabilities.supportsTopK {
-                    topKControls
+                if capabilities.supportsFrequencyPenalty || capabilities.supportsPresencePenalty {
+                    penaltiesSection
                 }
 
                 if capabilities.supportsSeed {
-                    seedControls
-                }
-
-                if capabilities.supportsStop {
-                    stopControls
+                    seedSection
                 }
             } else {
-                Text(capabilities.unsupportedReason ?? "Advanced generation parameters are unavailable for this model.")
-                    .font(.callout)
-                    .foregroundColor(.secondary)
+                unsupportedMessage
             }
 
-            Text("Saved values that are unsupported by the selected model are retained and become active again when you switch to a compatible model.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            savedValuesFootnote
 
-            Button("Reset to Automatic", action: reset)
-                .buttonStyle(.bordered)
+            HStack {
+                Spacer()
+                Button("Reset to Automatic", action: reset)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
         }
     }
 
-    // MARK: - Maximum Output
+    // MARK: - Sections
 
-    private var maximumOutputControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle("Maximum Output", isOn: Binding(
-                get: { isMaximumOutputActive },
-                set: { isEnabled in
-                    maxOutputTokens = Self.maximumOutputValue(
-                        afterToggle: isEnabled,
-                        savedValue: maxOutputTokens,
-                        maximumOutputTokenBound: capabilities.maximumOutputTokenBound
-                    )
-                }
-            ))
-            .toggleStyle(.switch)
-            .accessibilityIdentifier("gen.maxOutput")
+    private var outputSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionHeader("Output")
+            Divider()
+
+            if capabilities.maximumOutputField != nil {
+                maximumOutputRow
+            }
+
+            if capabilities.supportsStop {
+                stopRow
+            }
+        }
+    }
+
+    private var samplingSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionHeader("Sampling")
+            Divider()
+
+            if capabilities.supportsTemperature {
+                checkboxSliderRow(
+                    label: "Temperature",
+                    isOn: Binding(get: { temperature != nil }, set: { temperature = $0 ? (temperature ?? 0.7) : nil }),
+                    value: Binding(get: { temperature ?? 0.7 }, set: { temperature = $0 }),
+                    range: ChatGenerationSettings.temperatureRange,
+                    step: 0.05,
+                    format: "%.2f"
+                )
+            }
+
+            if capabilities.supportsTopP {
+                checkboxSliderRow(
+                    label: "Top P",
+                    isOn: Binding(get: { topP != nil }, set: { topP = $0 ? (topP ?? 1.0) : nil }),
+                    value: Binding(get: { topP ?? 1.0 }, set: { topP = $0 }),
+                    range: ChatGenerationSettings.topPRange,
+                    step: 0.05,
+                    format: "%.2f"
+                )
+            }
+
+            if capabilities.supportsTopK {
+                checkboxStepperRow(
+                    label: "Top K",
+                    isOn: Binding(get: { topK != nil }, set: { topK = $0 ? (topK ?? 40) : nil }),
+                    value: Binding(get: { topK ?? 40 }, set: { topK = $0 }),
+                    range: 1...200
+                )
+            }
+        }
+    }
+
+    private var penaltiesSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionHeader("Penalties")
+            Divider()
+
+            if capabilities.supportsFrequencyPenalty {
+                checkboxSliderRow(
+                    label: "Frequency Penalty",
+                    isOn: Binding(get: { frequencyPenalty != nil }, set: { frequencyPenalty = $0 ? (frequencyPenalty ?? 0) : nil }),
+                    value: Binding(get: { frequencyPenalty ?? 0 }, set: { frequencyPenalty = $0 }),
+                    range: ChatGenerationSettings.penaltyRange,
+                    step: 0.05,
+                    format: "%+.2f"
+                )
+            }
+
+            if capabilities.supportsPresencePenalty {
+                checkboxSliderRow(
+                    label: "Presence Penalty",
+                    isOn: Binding(get: { presencePenalty != nil }, set: { presencePenalty = $0 ? (presencePenalty ?? 0) : nil }),
+                    value: Binding(get: { presencePenalty ?? 0 }, set: { presencePenalty = $0 }),
+                    range: ChatGenerationSettings.penaltyRange,
+                    step: 0.05,
+                    format: "%+.2f"
+                )
+            }
+        }
+    }
+
+    private var seedSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionHeader("Reproducibility")
+            Divider()
+
+            checkboxSeedRow(
+                isOn: Binding(get: { seed != nil }, set: { seed = $0 ? (seed ?? Int.random(in: 0...Int.max)) : nil }),
+                value: Binding(get: { seed ?? 0 }, set: { seed = $0 })
+            )
+        }
+    }
+
+    // MARK: - Rows
+
+    private var maximumOutputRow: some View {
+        HStack(spacing: 8) {
+            Text("Max Tokens")
+                .frame(width: labelWidth, alignment: .leading)
 
             if isMaximumOutputActive, let maxOutputTokens {
-                Picker("Token Limit", selection: Binding(
+                Picker(selection: Binding(
                     get: { MaximumOutputSelection.value(maxOutputTokens) },
-                    set: { selection in
-                        guard case .value(let value) = selection else { return }
-                        self.maxOutputTokens = value
-                    }
+                    set: { if case .value(let v) = $0 { self.maxOutputTokens = v } }
                 )) {
                     ForEach(tokenChoices, id: \.self) { value in
                         Text(value.formatted()).tag(MaximumOutputSelection.value(value))
                     }
-                }
+                } label: { EmptyView() }
                 .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 100)
+
+                if let warning = capabilities.maximumOutputWarning {
+                    Image(systemName: "info.circle")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .help(warning)
+                }
             } else if let maxOutputTokens, let bound = capabilities.maximumOutputTokenBound {
-                Text("Saved value \(maxOutputTokens.formatted()) exceeds this model's \(bound.formatted()) limit and is retained but inactive. Enable Maximum Output to replace it with a valid limit.")
+                Text("\(maxOutputTokens) exceeds \(bound) limit — inactive")
                     .font(.caption)
                     .foregroundColor(.secondary)
             } else {
-                Text(automaticMaximumOutputDescription)
+                Text(automaticDescription)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
 
-            Text("Available choices and the active bound change with the selected model. The app-wide persistence guard is not a provider guarantee.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            Spacer()
+        }
+    }
 
-            if let warning = capabilities.maximumOutputWarning {
-                Text(warning)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+    private var stopRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Toggle(isOn: Binding(
+                    get: { stop != nil },
+                    set: { stop = $0 ? (stop ?? []) : nil }
+                )) {
+                    Text("Stop Sequences").frame(width: labelWidth - 20, alignment: .leading)
+                }
+                .toggleStyle(.checkbox)
+
+                if stop == nil {
+                    Text("Automatic")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+
+            if let stopSequences = stop {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(stopSequences.indices, id: \.self) { index in
+                        HStack(spacing: 4) {
+                            TextField("sequence", text: Binding(
+                                get: { stopSequences.indices.contains(index) ? stopSequences[index] : "" },
+                                set: { newValue in
+                                    guard stopSequences.indices.contains(index) else { return }
+                                    if newValue.isEmpty {
+                                        stop?.remove(at: index)
+                                        if stop?.isEmpty == true { stop = nil }
+                                    } else {
+                                        stop?[index] = newValue
+                                    }
+                                }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 160)
+
+                            Button {
+                                stop?.remove(at: index)
+                                if stop?.isEmpty == true { stop = nil }
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    Button {
+                        stop?.append("")
+                    } label: {
+                        Label("Add", systemImage: "plus.circle")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.leading, labelWidth + 8)
             }
         }
     }
 
+    // MARK: - Reusable row builders
+
+    private func checkboxSliderRow(
+        label: String,
+        isOn: Binding<Bool>,
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
+        step: Double,
+        format: String
+    ) -> some View {
+        HStack(spacing: 8) {
+            Toggle(isOn: isOn) {
+                Text(label).frame(width: labelWidth - 20, alignment: .leading)
+            }
+            .toggleStyle(.checkbox)
+
+            if isOn.wrappedValue {
+                Slider(value: value, in: range, step: step)
+                    .frame(maxWidth: 180)
+
+                Text(String(format: format, value.wrappedValue))
+                    .monospacedDigit()
+                    .frame(width: 46, alignment: .trailing)
+                    .font(.caption)
+            } else {
+                Text("Automatic")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+        }
+    }
+
+    private func checkboxStepperRow(
+        label: String,
+        isOn: Binding<Bool>,
+        value: Binding<Int>,
+        range: ClosedRange<Int>
+    ) -> some View {
+        HStack(spacing: 8) {
+            Toggle(isOn: isOn) {
+                Text(label).frame(width: labelWidth - 20, alignment: .leading)
+            }
+            .toggleStyle(.checkbox)
+
+            if isOn.wrappedValue {
+                Stepper(value: value, in: range) {
+                    Text("\(value.wrappedValue)")
+                        .monospacedDigit()
+                        .frame(minWidth: 30, alignment: .trailing)
+                }
+                .frame(maxWidth: 200)
+            } else {
+                Text("Automatic")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+        }
+    }
+
+    private func checkboxSeedRow(
+        isOn: Binding<Bool>,
+        value: Binding<Int>
+    ) -> some View {
+        HStack(spacing: 8) {
+            Toggle(isOn: isOn) {
+                Text("Seed").frame(width: labelWidth - 20, alignment: .leading)
+            }
+            .toggleStyle(.checkbox)
+
+            if isOn.wrappedValue {
+                TextField("", value: value, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 100)
+                    .monospacedDigit()
+
+                Button("Random") {
+                    seed = Int.random(in: 0...Int.max)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            } else {
+                Text("Automatic")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.subheadline)
+            .fontWeight(.semibold)
+            .foregroundColor(.secondary)
+    }
+
+    private var unsupportedMessage: some View {
+        Text(capabilities.unsupportedReason ?? "Advanced generation parameters are unavailable for this model.")
+            .font(.callout)
+            .foregroundColor(.secondary)
+    }
+
+    private var savedValuesFootnote: some View {
+        Text("Saved values for unsupported models are retained and reactivate when switching back.")
+            .font(.caption)
+            .foregroundColor(.secondary)
+    }
+
+    private var labelWidth: CGFloat { 150 }
+
+    private var automaticDescription: String {
+        Self.automaticMaximumOutputDescription(maximumOutputField: capabilities.maximumOutputField)
+    }
+
     private var tokenChoices: [Int] {
-        Self.tokenChoices(
-            savedValue: maxOutputTokens,
-            maximumOutputTokenBound: capabilities.maximumOutputTokenBound
-        )
+        Self.tokenChoices(savedValue: maxOutputTokens, maximumOutputTokenBound: capabilities.maximumOutputTokenBound)
     }
 
     private var isMaximumOutputActive: Bool {
         guard case .value = Self.maximumOutputSelection(
-            savedValue: maxOutputTokens,
-            maximumOutputTokenBound: capabilities.maximumOutputTokenBound
-        ) else {
-            return false
-        }
+            savedValue: maxOutputTokens, maximumOutputTokenBound: capabilities.maximumOutputTokenBound
+        ) else { return false }
         return true
-    }
-
-    private var automaticMaximumOutputDescription: String {
-        Self.automaticMaximumOutputDescription(maximumOutputField: capabilities.maximumOutputField)
-    }
-
-    // MARK: - Temperature
-
-    private var temperatureControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle("Temperature", isOn: Binding(
-                get: { temperature != nil },
-                set: { isEnabled in
-                    temperature = Self.temperatureValue(afterToggle: isEnabled, savedValue: temperature)
-                }
-            ))
-            .toggleStyle(.switch)
-
-            if temperature != nil {
-                HStack {
-                    Slider(value: Binding(
-                        get: { temperature ?? 0.7 },
-                        set: { temperature = $0 }
-                    ), in: ChatGenerationSettings.temperatureRange, step: 0.05)
-                    Text(String(format: "%.2f", temperature ?? 0))
-                        .monospacedDigit()
-                        .frame(width: 40, alignment: .trailing)
-                }
-            } else {
-                Text("Automatic uses the provider default.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-
-    // MARK: - Top P
-
-    private var topPControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle("Top P", isOn: Binding(
-                get: { topP != nil },
-                set: { isEnabled in
-                    topP = isEnabled ? (topP ?? 1.0) : nil
-                }
-            ))
-            .toggleStyle(.switch)
-
-            if topP != nil {
-                HStack {
-                    Slider(value: Binding(
-                        get: { topP ?? 1.0 },
-                        set: { topP = $0 }
-                    ), in: ChatGenerationSettings.topPRange, step: 0.05)
-                    Text(String(format: "%.2f", topP ?? 0))
-                        .monospacedDigit()
-                        .frame(width: 40, alignment: .trailing)
-                }
-            } else {
-                Text("Automatic uses the provider default.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-
-    // MARK: - Frequency Penalty
-
-    private var frequencyPenaltyControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle("Frequency Penalty", isOn: Binding(
-                get: { frequencyPenalty != nil },
-                set: { isEnabled in
-                    frequencyPenalty = isEnabled ? (frequencyPenalty ?? 0) : nil
-                }
-            ))
-            .toggleStyle(.switch)
-
-            if frequencyPenalty != nil {
-                HStack {
-                    Slider(value: Binding(
-                        get: { frequencyPenalty ?? 0 },
-                        set: { frequencyPenalty = $0 }
-                    ), in: ChatGenerationSettings.penaltyRange, step: 0.05)
-                    Text(String(format: "%+.2f", frequencyPenalty ?? 0))
-                        .monospacedDigit()
-                        .frame(width: 50, alignment: .trailing)
-                }
-            } else {
-                Text("Automatic uses the provider default.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-
-    // MARK: - Presence Penalty
-
-    private var presencePenaltyControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle("Presence Penalty", isOn: Binding(
-                get: { presencePenalty != nil },
-                set: { isEnabled in
-                    presencePenalty = isEnabled ? (presencePenalty ?? 0) : nil
-                }
-            ))
-            .toggleStyle(.switch)
-
-            if presencePenalty != nil {
-                HStack {
-                    Slider(value: Binding(
-                        get: { presencePenalty ?? 0 },
-                        set: { presencePenalty = $0 }
-                    ), in: ChatGenerationSettings.penaltyRange, step: 0.05)
-                    Text(String(format: "%+.2f", presencePenalty ?? 0))
-                        .monospacedDigit()
-                        .frame(width: 50, alignment: .trailing)
-                }
-            } else {
-                Text("Automatic uses the provider default.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-
-    // MARK: - Top K
-
-    private var topKControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle("Top K", isOn: Binding(
-                get: { topK != nil },
-                set: { isEnabled in
-                    topK = isEnabled ? (topK ?? 40) : nil
-                }
-            ))
-            .toggleStyle(.switch)
-
-            if topK != nil {
-                HStack {
-                    Stepper("Top K: \(topK ?? 40)", value: Binding(
-                        get: { topK ?? 40 },
-                        set: { topK = $0 }
-                    ), in: 1...200)
-                }
-            } else {
-                Text("Automatic uses the provider default.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-
-    // MARK: - Seed
-
-    private var seedControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle("Seed", isOn: Binding(
-                get: { seed != nil },
-                set: { isEnabled in
-                    seed = isEnabled ? (seed ?? Int.random(in: 0...Int.max)) : nil
-                }
-            ))
-            .toggleStyle(.switch)
-
-            if seed != nil {
-                HStack {
-                    TextField("Seed", value: Binding(
-                        get: { seed ?? 0 },
-                        set: { seed = $0 }
-                    ), format: .number)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 120)
-                    Button("Random") {
-                        seed = Int.random(in: 0...Int.max)
-                    }
-                }
-            } else {
-                Text("Automatic uses the provider default.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-
-    // MARK: - Stop Sequences
-
-    private var stopControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle("Stop Sequences", isOn: Binding(
-                get: { stop != nil },
-                set: { isEnabled in
-                    stop = isEnabled ? (stop ?? []) : nil
-                }
-            ))
-            .toggleStyle(.switch)
-
-            if let stopSequences = stop {
-                ForEach(stopSequences.indices, id: \.self) { index in
-                    HStack {
-                        TextField("Stop sequence", text: Binding(
-                            get: { stopSequences.indices.contains(index) ? stopSequences[index] : "" },
-                            set: { newValue in
-                                guard stopSequences.indices.contains(index) else { return }
-                                if newValue.isEmpty {
-                                    stop?.remove(at: index)
-                                    if stop?.isEmpty == true { stop = nil }
-                                } else {
-                                    stop?[index] = newValue
-                                }
-                            }
-                        ))
-                        .textFieldStyle(.roundedBorder)
-                        Button(role: .destructive) {
-                            stop?.remove(at: index)
-                            if stop?.isEmpty == true { stop = nil }
-                        } label: {
-                            Image(systemName: "minus.circle.fill")
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                Button {
-                    stop?.append("")
-                } label: {
-                    Label("Add Stop Sequence", systemImage: "plus.circle")
-                }
-            } else {
-                Text("Stop sequences halt generation when encountered. Automatic uses the provider default.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
     }
 
     // MARK: - Static helpers
@@ -405,7 +412,7 @@ public struct ChatGenerationSettingsView: View {
         if maximumOutputField == .anthropicMaxTokens {
             return "The app sends the required default of 4,096 tokens."
         }
-        return "Automatic uses the provider default."
+        return "Automatic"
     }
 
     static func maximumOutputSelection(
@@ -413,8 +420,7 @@ public struct ChatGenerationSettingsView: View {
         maximumOutputTokenBound: Int?
     ) -> MaximumOutputSelection {
         guard let savedValue else { return .automatic }
-        guard let bound = maximumOutputTokenBound,
-              savedValue <= bound else {
+        guard let bound = maximumOutputTokenBound, savedValue <= bound else {
             return .inactive(savedValue: savedValue)
         }
         return .value(savedValue)
@@ -426,9 +432,7 @@ public struct ChatGenerationSettingsView: View {
         maximumOutputTokenBound: Int?
     ) -> Int? {
         guard isEnabled, let bound = maximumOutputTokenBound else { return nil }
-        if let savedValue, savedValue <= bound {
-            return savedValue
-        }
+        if let savedValue, savedValue <= bound { return savedValue }
         return defaultMaximumOutputTokens(maximumOutputTokenBound: bound)
     }
 
@@ -436,27 +440,17 @@ public struct ChatGenerationSettingsView: View {
         savedValue: Int?,
         maximumOutputTokenBound: Int?
     ) -> Int? {
-        maximumOutputValue(
-            afterToggle: true,
-            savedValue: savedValue,
-            maximumOutputTokenBound: maximumOutputTokenBound
-        )
+        maximumOutputValue(afterToggle: true, savedValue: savedValue, maximumOutputTokenBound: maximumOutputTokenBound)
     }
 
     static func tokenChoices(savedValue: Int?, maximumOutputTokenBound: Int?) -> [Int] {
         guard let bound = maximumOutputTokenBound else { return [] }
         var choices = ChatGenerationSettings.tokenPresets.filter { $0 <= bound }
-        if !choices.contains(bound) {
-            choices.append(bound)
-        }
-        if let savedValue,
-           savedValue <= bound,
-           !choices.contains(savedValue) {
+        if !choices.contains(bound) { choices.append(bound) }
+        if let savedValue, savedValue <= bound, !choices.contains(savedValue) {
             choices.append(savedValue)
         }
-        if choices.isEmpty {
-            choices.append(bound)
-        }
+        if choices.isEmpty { choices.append(bound) }
         return choices.sorted()
     }
 
@@ -467,11 +461,5 @@ public struct ChatGenerationSettingsView: View {
 
     static func temperatureValue(afterToggle isEnabled: Bool, savedValue: Double?) -> Double? {
         isEnabled ? (savedValue ?? 0.7) : nil
-    }
-
-    private func unsupportedField(_ message: String) -> some View {
-        Text(message)
-            .font(.caption)
-            .foregroundColor(.secondary)
     }
 }
