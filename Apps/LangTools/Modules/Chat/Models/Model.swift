@@ -178,10 +178,18 @@ public struct ChatGenerationCapabilities: Equatable, Sendable {
     public let maximumOutputTokenBound: Int?
     public let maximumOutputWarning: String?
     public let supportsTemperature: Bool
+    public let supportsTopP: Bool
+    public let supportsFrequencyPenalty: Bool
+    public let supportsPresencePenalty: Bool
+    public let supportsTopK: Bool
+    public let supportsSeed: Bool
+    public let supportsStop: Bool
     public let unsupportedReason: String?
 
     public var supportsAnyOverride: Bool {
-        maximumOutputField != nil || supportsTemperature
+        maximumOutputField != nil || supportsTemperature || supportsTopP
+            || supportsFrequencyPenalty || supportsPresencePenalty
+            || supportsTopK || supportsSeed || supportsStop
     }
 
     public init(
@@ -189,12 +197,24 @@ public struct ChatGenerationCapabilities: Equatable, Sendable {
         maximumOutputTokenBound: Int? = nil,
         maximumOutputWarning: String? = nil,
         supportsTemperature: Bool,
+        supportsTopP: Bool = false,
+        supportsFrequencyPenalty: Bool = false,
+        supportsPresencePenalty: Bool = false,
+        supportsTopK: Bool = false,
+        supportsSeed: Bool = false,
+        supportsStop: Bool = false,
         unsupportedReason: String? = nil
     ) {
         self.maximumOutputField = maximumOutputField
         self.maximumOutputTokenBound = maximumOutputTokenBound
         self.maximumOutputWarning = maximumOutputWarning
         self.supportsTemperature = supportsTemperature
+        self.supportsTopP = supportsTopP
+        self.supportsFrequencyPenalty = supportsFrequencyPenalty
+        self.supportsPresencePenalty = supportsPresencePenalty
+        self.supportsTopK = supportsTopK
+        self.supportsSeed = supportsSeed
+        self.supportsStop = supportsStop
         self.unsupportedReason = unsupportedReason
     }
 }
@@ -215,14 +235,23 @@ public extension Model {
             return .init(
                 maximumOutputField: .anthropicMaxTokens,
                 maximumOutputTokenBound: bound,
-                supportsTemperature: true
+                supportsTemperature: true,
+                supportsTopP: true,
+                supportsTopK: true,
+                supportsStop: true
             )
         case .ollama:
             return .init(
                 maximumOutputField: .ollamaNumPredict,
                 maximumOutputTokenBound: ChatGenerationSettings.tokenRange.upperBound,
                 maximumOutputWarning: "The app guard is not a model limit. Ollama output capacity depends on the selected model and runtime configuration.",
-                supportsTemperature: true
+                supportsTemperature: true,
+                supportsTopP: true,
+                supportsFrequencyPenalty: true,
+                supportsPresencePenalty: true,
+                supportsTopK: true,
+                supportsSeed: true,
+                supportsStop: true
             )
         case .gemini(let model):
             guard let bound = Self.geminiGenerationModelBounds[model.rawValue] else {
@@ -231,7 +260,12 @@ public extension Model {
             return .init(
                 maximumOutputField: .openAIMaxTokens,
                 maximumOutputTokenBound: bound,
-                supportsTemperature: true
+                supportsTemperature: true,
+                supportsTopP: true,
+                supportsFrequencyPenalty: true,
+                supportsPresencePenalty: true,
+                supportsSeed: true,
+                supportsStop: true
             )
         case .xAI(let model):
             guard Self.xAIGenerationModels.contains(model.rawValue) else {
@@ -241,7 +275,12 @@ public extension Model {
                 maximumOutputField: .openAIMaxTokens,
                 maximumOutputTokenBound: ChatGenerationSettings.tokenRange.upperBound,
                 maximumOutputWarning: "The app guard is not a model limit. xAI output capacity depends on the selected model.",
-                supportsTemperature: true
+                supportsTemperature: true,
+                supportsTopP: true,
+                supportsFrequencyPenalty: true,
+                supportsPresencePenalty: true,
+                supportsSeed: true,
+                supportsStop: true
             )
         case .openAI(let model):
             switch model.rawValue {
@@ -264,14 +303,21 @@ public extension Model {
                 return .init(
                     maximumOutputField: .openAIMaxTokens,
                     maximumOutputTokenBound: bound,
-                    supportsTemperature: true
+                    supportsTemperature: true,
+                    supportsTopP: true,
+                    supportsFrequencyPenalty: true,
+                    supportsPresencePenalty: true,
+                    supportsSeed: true,
+                    supportsStop: true
                 )
             }
             if let bound = Self.openAIReasoningGenerationModelBounds[model.rawValue] {
                 return .init(
                     maximumOutputField: .openAIMaxCompletionTokens,
                     maximumOutputTokenBound: bound,
-                    supportsTemperature: false
+                    supportsTemperature: false,
+                    supportsTopP: true,
+                    supportsStop: true
                 )
             }
             return Self.unsupportedGenerationCapabilities

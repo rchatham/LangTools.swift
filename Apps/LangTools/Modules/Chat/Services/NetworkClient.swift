@@ -274,6 +274,12 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         } else {
             nil
         }
+        let topP = capabilities.supportsTopP ? generationSettings.topP : nil
+        let frequencyPenalty = capabilities.supportsFrequencyPenalty ? generationSettings.frequencyPenalty : nil
+        let presencePenalty = capabilities.supportsPresencePenalty ? generationSettings.presencePenalty : nil
+        let topK = capabilities.supportsTopK ? generationSettings.topK : nil
+        let seed = capabilities.supportsSeed ? generationSettings.seed : nil
+        let stop = capabilities.supportsStop ? generationSettings.stop : nil
 
         switch model {
         case .anthropic(let providerModel), .claudeCode(let providerModel):
@@ -281,11 +287,14 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                 model: providerModel,
                 messages: replayMessages.toAnthropicMessages(),
                 max_tokens: capabilities.maximumOutputField == .anthropicMaxTokens ? maximumOutputTokens ?? 4096 : 4096,
+                stop_sequences: stop,
                 stream: stream,
                 system: messages.createAnthropicSystemMessage(),
                 temperature: temperature,
                 tools: tools?.convertTools(),
                 tool_choice: toolChoice?.toAnthropicToolChoice(),
+                top_k: topK,
+                top_p: topP,
                 toolEventHandler: toolEventHandler
             )
         case .openAI(let providerModel), .codex(let providerModel):
@@ -293,9 +302,14 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                 model: providerModel,
                 messages: replayMessages.toOpenAIMessages(),
                 temperature: temperature,
+                top_p: topP,
                 stream: stream,
+                stop: stop.map { .array($0) },
                 max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
                 max_completion_tokens: capabilities.maximumOutputField == .openAIMaxCompletionTokens ? maximumOutputTokens : nil,
+                presence_penalty: presencePenalty,
+                frequency_penalty: frequencyPenalty,
+                seed: seed,
                 tools: tools?.convertTools(),
                 tool_choice: toolChoice,
                 toolEventHandler: toolEventHandler
@@ -305,8 +319,13 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                 model: providerModel,
                 messages: replayMessages.toOpenAIMessages(),
                 temperature: temperature,
+                top_p: topP,
                 stream: stream,
+                stop: stop.map { .array($0) },
                 max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                presence_penalty: presencePenalty,
+                frequency_penalty: frequencyPenalty,
+                seed: seed,
                 tools: tools?.convertTools(),
                 tool_choice: toolChoice,
                 toolEventHandler: toolEventHandler
@@ -316,15 +335,29 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                 model: providerModel,
                 messages: replayMessages.toOpenAIMessages(),
                 temperature: temperature,
+                top_p: topP,
                 stream: stream,
+                stop: stop.map { .array($0) },
                 max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                presence_penalty: presencePenalty,
+                frequency_penalty: frequencyPenalty,
+                seed: seed,
                 tools: tools?.convertTools(),
                 tool_choice: toolChoice,
                 toolEventHandler: toolEventHandler
             )
         case .ollama(let providerModel):
-            let options: Ollama.GenerateOptions? = if maximumOutputTokens != nil || temperature != nil {
-                Ollama.GenerateOptions(num_predict: maximumOutputTokens, temperature: temperature)
+            let options: Ollama.GenerateOptions? = if maximumOutputTokens != nil || temperature != nil || topP != nil || topK != nil || seed != nil || frequencyPenalty != nil || presencePenalty != nil || stop != nil {
+                Ollama.GenerateOptions(
+                    seed: seed,
+                    num_predict: maximumOutputTokens,
+                    top_k: topK,
+                    top_p: topP,
+                    temperature: temperature,
+                    presence_penalty: presencePenalty,
+                    frequency_penalty: frequencyPenalty,
+                    stop: stop
+                )
             } else {
                 nil
             }
