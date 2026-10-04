@@ -38,7 +38,6 @@ final class LangToolsAppUITests: XCTestCase {
         let chatWindow = app.windows.firstMatch
         XCTAssertTrue(chatWindow.waitForExistence(timeout: 10))
 
-        // Open settings via the toolbar button
         let settingsButton = chatWindow.toolbars.firstMatch.buttons.firstMatch
         XCTAssertTrue(settingsButton.waitForExistence(timeout: 5))
         settingsButton.click()
@@ -46,21 +45,29 @@ final class LangToolsAppUITests: XCTestCase {
         let settingsWindow = app.windows.allElementsBoundByIndex.last!
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
 
-        // Navigate to Advanced tab by finding and clicking its button in the outline
         let advancedBtn = settingsWindow.outlines.firstMatch
             .descendants(matching: .button)
             .matching(NSPredicate(format: "label == 'Advanced'"))
             .firstMatch
-        XCTAssertTrue(advancedBtn.waitForExistence(timeout: 5), "Advanced tab button not found")
+        XCTAssertTrue(advancedBtn.waitForExistence(timeout: 5))
         advancedBtn.click()
         sleep(2)
 
-        // Verify we are on the Advanced tab
         XCTAssertTrue(settingsWindow.staticTexts["Advanced Parameters"]
             .waitForExistence(timeout: 5), "Advanced tab heading not found")
 
-        // Screenshot: all controls at default (Automatic)
-        takeScreenshot(settingsWindow, name: "advanced_params_automatic")
+        // Screenshot: compact checkbox layout with all controls at default
+        takeScreenshot(settingsWindow, name: "advanced_params_default")
+
+        // Toggle some checkboxes on to show active state
+        for label in ["Temperature", "Top P", "Frequency Penalty", "Seed"] {
+            let cb = settingsWindow.checkBoxes[label]
+            if cb.waitForExistence(timeout: 2) {
+                cb.click()
+                sleep(1)
+            }
+        }
+        takeScreenshot(settingsWindow, name: "advanced_params_active")
 
         settingsWindow.buttons[XCUIIdentifierCloseWindow].click()
     }
@@ -72,7 +79,6 @@ final class LangToolsAppUITests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
 
-        // Also save to the sandbox temp directory for extraction
         let dirURL = FileManager.default.temporaryDirectory.appendingPathComponent("langtools-screenshots")
         try? FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
         let path = dirURL.appendingPathComponent("\(name).png").path
