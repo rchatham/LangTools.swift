@@ -104,6 +104,7 @@ public struct ChatSettingsView: View {
                         }
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .accessibilityIdentifier("settings.\(tab.rawValue)Tab")
                     .padding(.vertical, 4)
                     .background(selectedCustomTab == nil && selectedTab == tab ? (colorScheme == .dark ? Color.gray.opacity(0.3) : Color.blue.opacity(0.1)) : Color.clear)
                     .cornerRadius(6)

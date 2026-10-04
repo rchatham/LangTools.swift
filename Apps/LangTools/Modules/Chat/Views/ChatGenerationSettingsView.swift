@@ -110,6 +110,7 @@ public struct ChatGenerationSettingsView: View {
                 }
             ))
             .toggleStyle(.switch)
+            .accessibilityIdentifier("gen.maxOutput")
 
             if isMaximumOutputActive, let maxOutputTokens {
                 Picker("Token Limit", selection: Binding(
