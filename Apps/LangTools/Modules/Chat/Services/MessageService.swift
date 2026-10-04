@@ -15,6 +15,86 @@ private enum BufferedMessageEvent {
     case agent(AgentEvent)
 }
 
+private enum SendUpdate {
+    case responseChunk(String, eventsUpTo: UInt64)
+    case eventsAvailable(upTo: UInt64)
+}
+
+private struct SequencedBufferedMessageEvent {
+    let sequence: UInt64
+    let event: BufferedMessageEvent
+}
+
+private struct PendingToolCallIdentity {
+    let selectionID: String?
+    let anchorMessageID: UUID
+    let uiCallID: String
+    let name: String?
+    let arguments: String?
+}
+
+@MainActor
+private final class RequestToolCallTracker {
+    private var pendingCalls: [PendingToolCallIdentity] = []
+    private var toolAnchorMessageIDs: [UUID] = []
+
+    func append(
+        selectionID: String?,
+        anchorMessageID: UUID,
+        uiCallID: String,
+        name: String?,
+        arguments: String?
+    ) {
+        pendingCalls.append(
+            PendingToolCallIdentity(
+                selectionID: selectionID.flatMap { $0.isEmpty ? nil : $0 },
+                anchorMessageID: anchorMessageID,
+                uiCallID: uiCallID,
+                name: name,
+                arguments: arguments
+            )
+        )
+        recordToolAnchor(anchorMessageID)
+    }
+
+    func dequeue(selectionID: String) -> PendingToolCallIdentity? {
+        let index: Int?
+        if selectionID.isEmpty {
+            index = pendingCalls.firstIndex(where: { $0.selectionID == nil })
+                ?? pendingCalls.indices.first
+        } else {
+            index = pendingCalls.firstIndex(where: { $0.selectionID == selectionID })
+        }
+        guard let index else { return nil }
+        return pendingCalls.remove(at: index)
+    }
+
+    func dequeueEarliest() -> PendingToolCallIdentity? {
+        guard !pendingCalls.isEmpty else { return nil }
+        return pendingCalls.removeFirst()
+    }
+
+    func recordToolAnchor(_ messageID: UUID) {
+        guard toolAnchorMessageIDs.last != messageID else { return }
+        toolAnchorMessageIDs.append(messageID)
+    }
+
+    func latestToolAnchor(in messages: [Message]) -> Message? {
+        for messageID in toolAnchorMessageIDs.reversed() {
+            if let message = messages.first(where: {
+                $0.uuid == messageID && $0.isAssistant && !$0.toolCalls.isEmpty
+            }) {
+                return message
+            }
+        }
+        return nil
+    }
+
+    var trackedAnchorMessageIDs: Set<UUID> {
+        Set(toolAnchorMessageIDs)
+    }
+}
+
 private struct AgentReplayArguments: Encodable {
     let reason: String
 }
@@ -61,15 +141,23 @@ private final class SendEstablishment: @unchecked Sendable {
 /// `MessageService`'s main actor.
 private final class SendEventBuffer: @unchecked Sendable {
     private struct State {
-        var events: [BufferedMessageEvent] = []
+        var events: [SequencedBufferedMessageEvent] = []
+        var latestSequence: UInt64 = 0
         var agentCallIDCounts: [String: Int] = [:]
+        var eventContinuation: AsyncStream<UInt64>.Continuation?
     }
 
     private let lock = NSLock()
     private var states: [UUID: State] = [:]
 
-    func register(_ sendID: UUID) {
-        lock.withLock { states[sendID] = State() }
+    func register(_ sendID: UUID) -> AsyncStream<UInt64> {
+        let (stream, continuation) = AsyncStream<UInt64>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        lock.withLock {
+            states[sendID] = State(eventContinuation: continuation)
+        }
+        return stream
     }
 
     func registerIfNeeded(_ sendID: UUID) {
@@ -81,13 +169,21 @@ private final class SendEventBuffer: @unchecked Sendable {
     }
 
     func remove(_ sendID: UUID) {
-        lock.withLock { _ = states.removeValue(forKey: sendID) }
+        let continuation = lock.withLock {
+            states.removeValue(forKey: sendID)?.eventContinuation
+        }
+        continuation?.finish()
     }
 
     func enqueueAgent(_ event: AgentEvent, for sendID: UUID) {
         lock.withLock {
-            guard states[sendID] != nil else { return }
-            states[sendID]?.events.append(.agent(event))
+            guard var state = states[sendID] else { return }
+            state.latestSequence += 1
+            state.events.append(
+                SequencedBufferedMessageEvent(sequence: state.latestSequence, event: .agent(event))
+            )
+            states[sendID] = state
+            state.eventContinuation?.yield(state.latestSequence)
         }
     }
 
@@ -116,16 +212,32 @@ private final class SendEventBuffer: @unchecked Sendable {
                     return
                 }
             }
-            state.events.append(.tool(event))
+            state.latestSequence += 1
+            state.events.append(
+                SequencedBufferedMessageEvent(sequence: state.latestSequence, event: .tool(event))
+            )
             states[sendID] = state
+            state.eventContinuation?.yield(state.latestSequence)
         }
     }
 
-    func takeEvents(for sendID: UUID) -> [BufferedMessageEvent] {
+    /// Runs `body` while holding the same lock used to sequence events so the
+    /// watermark and the queued response update form one ordering boundary.
+    func withCurrentWatermark(for sendID: UUID, _ body: (UInt64) -> Void) {
+        lock.withLock {
+            guard let state = states[sendID] else { return }
+            body(state.latestSequence)
+        }
+    }
+
+    func takeEvents(for sendID: UUID, upTo watermark: UInt64? = nil) -> [BufferedMessageEvent] {
         lock.withLock {
             guard var state = states[sendID] else { return [] }
-            let events = state.events
-            state.events.removeAll(keepingCapacity: true)
+            let count = watermark.map { watermark in
+                state.events.prefix { $0.sequence <= watermark }.count
+            } ?? state.events.count
+            let events = state.events.prefix(count).map(\.event)
+            state.events.removeFirst(count)
             states[sendID] = state
             return events
         }
@@ -158,6 +270,8 @@ public class MessageService {
     /// This is intentionally ephemeral and excluded from persisted conversation history.
     private var failedAttemptGeneratedMessageIDs: [UUID: Set<UUID>] = [:]
     @ObservationIgnored private let eventBuffer = SendEventBuffer()
+    /// Test-only gate after a response update is queued but before it is applied.
+    @ObservationIgnored var responseChunkPreApplyHook: (() async -> Void)?
     /// Retains the pre-request test/helper API without sharing production send state.
     @ObservationIgnored private let compatibilitySendID = UUID()
 
@@ -242,7 +356,7 @@ public class MessageService {
         let requestConversationID = conversationID
         let sendID = UUID()
         let establishment = SendEstablishment()
-        eventBuffer.register(sendID)
+        let eventNotifications = eventBuffer.register(sendID)
         let requestSnapshot = requestMessages(
             keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory
         )
@@ -259,7 +373,8 @@ public class MessageService {
                     conversationID: requestConversationID,
                     sendID: sendID,
                     requestSnapshot: requestSnapshot,
-                    establishment: establishment
+                    establishment: establishment,
+                    eventNotifications: eventNotifications
                 )
             } catch {
                 establishment.fail(error)
@@ -287,7 +402,8 @@ public class MessageService {
         conversationID requestConversationID: UUID,
         sendID: UUID,
         requestSnapshot: [Message],
-        establishment: SendEstablishment
+        establishment: SendEstablishment,
+        eventNotifications: AsyncStream<UInt64>
     ) async throws {
         guard conversationID == requestConversationID else { throw CancellationError() }
         let userMessageID = userMessage.uuid
@@ -295,6 +411,7 @@ public class MessageService {
         var assistantMessageIDs: Set<UUID> = []
         var generatedMessageIDs: Set<UUID> = []
         var toolBreakOccurred = false
+        let toolCallTracker = RequestToolCallTracker()
         let keepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
         let selectedModel = UserDefaults.model
         let replayService = selectedModel.apiService
@@ -335,18 +452,47 @@ public class MessageService {
             establishment.succeed()
 
             var content = ""
-            for try await chunk in responseStream {
+            let updates = Self.merge(
+                responseStream: responseStream,
+                eventNotifications: eventNotifications,
+                eventBuffer: eventBuffer,
+                sendID: sendID
+            )
+            for try await update in updates {
                 guard conversationID == requestConversationID else { throw CancellationError() }
-                drainEvents(
-                    for: sendID,
-                    responseToMessageID: userMessageID,
-                    anchorMessageID: &anchorMessageID,
-                    toolBreakOccurred: &toolBreakOccurred,
-                    generatedMessageIDs: &generatedMessageIDs,
-                    keepsToolCallsInHistory: keepsToolCallsInHistory,
-                    replayService: replayService
-                )
-                if let anchorMessageID { assistantMessageIDs.insert(anchorMessageID) }
+                let chunk: String
+                switch update {
+                case .eventsAvailable(let watermark):
+                    drainEvents(
+                        for: sendID,
+                        upTo: watermark,
+                        responseToMessageID: userMessageID,
+                        anchorMessageID: &anchorMessageID,
+                        toolBreakOccurred: &toolBreakOccurred,
+                        generatedMessageIDs: &generatedMessageIDs,
+                        keepsToolCallsInHistory: keepsToolCallsInHistory,
+                        replayService: replayService,
+                        toolCallTracker: toolCallTracker
+                    )
+                    if let anchorMessageID { assistantMessageIDs.insert(anchorMessageID) }
+                    continue
+
+                case .responseChunk(let responseChunk, let watermark):
+                    await responseChunkPreApplyHook?()
+                    drainEvents(
+                        for: sendID,
+                        upTo: watermark,
+                        responseToMessageID: userMessageID,
+                        anchorMessageID: &anchorMessageID,
+                        toolBreakOccurred: &toolBreakOccurred,
+                        generatedMessageIDs: &generatedMessageIDs,
+                        keepsToolCallsInHistory: keepsToolCallsInHistory,
+                        replayService: replayService,
+                        toolCallTracker: toolCallTracker
+                    )
+                    if let anchorMessageID { assistantMessageIDs.insert(anchorMessageID) }
+                    chunk = responseChunk
+                }
 
                 content += chunk
                 let anchor = assistantMessage(withID: anchorMessageID)
@@ -386,16 +532,19 @@ public class MessageService {
                 toolBreakOccurred: &toolBreakOccurred,
                 generatedMessageIDs: &generatedMessageIDs,
                 keepsToolCallsInHistory: keepsToolCallsInHistory,
-                replayService: replayService
+                replayService: replayService,
+                toolCallTracker: toolCallTracker
             )
             if let anchorMessageID { assistantMessageIDs.insert(anchorMessageID) }
+            assistantMessageIDs.formUnion(toolCallTracker.trackedAnchorMessageIDs)
             clearToolHistoryIfNeeded(
-                for: anchorMessageID,
+                in: assistantMessageIDs,
                 keepsToolCallsInHistory: keepsToolCallsInHistory
             )
             failPendingToolCalls(
                 in: assistantMessageIDs,
-                reason: "Tool call ended without a completion result."
+                reason: "Tool call ended without a completion result.",
+                keepsToolCallsInHistory: keepsToolCallsInHistory
             )
             failedAttemptGeneratedMessageIDs.removeValue(forKey: userMessageID)
             setSendFailure(nil, on: userMessage)
@@ -410,16 +559,19 @@ public class MessageService {
                 toolBreakOccurred: &toolBreakOccurred,
                 generatedMessageIDs: &generatedMessageIDs,
                 keepsToolCallsInHistory: keepsToolCallsInHistory,
-                replayService: replayService
+                replayService: replayService,
+                toolCallTracker: toolCallTracker
             )
             if let anchorMessageID { assistantMessageIDs.insert(anchorMessageID) }
+            assistantMessageIDs.formUnion(toolCallTracker.trackedAnchorMessageIDs)
             clearToolHistoryIfNeeded(
-                for: anchorMessageID,
+                in: assistantMessageIDs,
                 keepsToolCallsInHistory: keepsToolCallsInHistory
             )
             failPendingToolCalls(
                 in: assistantMessageIDs,
-                reason: error.localizedDescription
+                reason: error.localizedDescription,
+                keepsToolCallsInHistory: keepsToolCallsInHistory
             )
             if error is CancellationError || Task.isCancelled {
                 setSendFailure(nil, on: userMessage)
@@ -428,6 +580,39 @@ public class MessageService {
             failedAttemptGeneratedMessageIDs[userMessageID] = generatedMessageIDs
             setSendFailure(ChatSendFailure(message: error.localizedDescription), on: userMessage)
             throw error
+        }
+    }
+
+    nonisolated private static func merge(
+        responseStream: AsyncThrowingStream<String, Error>,
+        eventNotifications: AsyncStream<UInt64>,
+        eventBuffer: SendEventBuffer,
+        sendID: UUID
+    ) -> AsyncThrowingStream<SendUpdate, Error> {
+        AsyncThrowingStream { continuation in
+            let responseTask = Task {
+                do {
+                    for try await chunk in responseStream {
+                        try Task.checkCancellation()
+                        eventBuffer.withCurrentWatermark(for: sendID) { watermark in
+                            continuation.yield(.responseChunk(chunk, eventsUpTo: watermark))
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            let eventTask = Task {
+                for await watermark in eventNotifications {
+                    guard !Task.isCancelled else { return }
+                    continuation.yield(.eventsAvailable(upTo: watermark))
+                }
+            }
+            continuation.onTermination = { @Sendable _ in
+                responseTask.cancel()
+                eventTask.cancel()
+            }
         }
     }
 
@@ -523,34 +708,89 @@ extension MessageService {
 
     private func drainEvents(
         for sendID: UUID,
+        upTo watermark: UInt64? = nil,
         responseToMessageID: UUID?,
         anchorMessageID: inout UUID?,
         toolBreakOccurred: inout Bool,
         generatedMessageIDs: inout Set<UUID>,
         keepsToolCallsInHistory: Bool,
-        replayService: APIService
+        replayService: APIService,
+        toolCallTracker: RequestToolCallTracker? = nil
     ) {
-        let events = eventBuffer.takeEvents(for: sendID)
+        let events = eventBuffer.takeEvents(for: sendID, upTo: watermark)
         guard !events.isEmpty else { return }
 
-        let anchor: Message
-        if let existing = assistantMessage(withID: anchorMessageID) {
-            anchor = existing
-        } else {
-            anchor = Message(role: .assistant, contentType: .null, responseToMessageID: responseToMessageID)
-            anchorMessageID = anchor.uuid
-            generatedMessageIDs.insert(anchor.uuid)
-            messages.append(anchor)
-        }
-
         for event in events {
+            let updatedMessage: Message?
             switch event {
-            case .tool(let toolEvent):
-                anchor.applyToolEvent(toolEvent)
-                if case .toolCompleted = toolEvent {
-                    toolBreakOccurred = true
+            case .tool(.toolCalled(let selection)):
+                let anchor = eventAnchor(
+                    for: &anchorMessageID,
+                    responseToMessageID: responseToMessageID,
+                    generatedMessageIDs: &generatedMessageIDs
+                )
+                anchor.applyToolEvent(.toolCalled(selection))
+                if let uiCallID = anchor.toolCalls.last?.id {
+                    toolCallTracker?.append(
+                        selectionID: selection.id,
+                        anchorMessageID: anchor.uuid,
+                        uiCallID: uiCallID,
+                        name: selection.name,
+                        arguments: selection.arguments.isEmpty ? nil : selection.arguments
+                    )
                 }
+                updatedMessage = anchor
+
+            case .tool(.toolCompleted(let result)):
+                if let toolCallTracker {
+                    let identity = result.map {
+                        toolCallTracker.dequeue(selectionID: $0.tool_selection_id)
+                    } ?? toolCallTracker.dequeueEarliest()
+                    if let identity,
+                       let message = assistantMessage(withID: identity.anchorMessageID),
+                       let index = message.toolCalls.firstIndex(where: {
+                           $0.id == identity.uiCallID && $0.kind == .tool && $0.status == .pending
+                       }) {
+                        if let result {
+                            message.toolCalls[index].status = result.is_error ? .failure : .success
+                            message.toolCalls[index].result = result.result
+                        } else {
+                            message.toolCalls[index].status = .failure
+                            message.toolCalls[index].result = "Tool call ended without a completion result."
+                        }
+                        toolBreakOccurred = identity.anchorMessageID == anchorMessageID
+                        updatedMessage = message
+                    } else if let result {
+                        let anchor = orphanToolCompletionAnchor(
+                            for: toolCallTracker,
+                            currentAnchorMessageID: anchorMessageID,
+                            responseToMessageID: responseToMessageID,
+                            generatedMessageIDs: &generatedMessageIDs
+                        )
+                        appendOrphanToolCompletion(result, identity: identity, to: anchor)
+                        toolCallTracker.recordToolAnchor(anchor.uuid)
+                        toolBreakOccurred = anchor.uuid == anchorMessageID
+                        updatedMessage = anchor
+                    } else {
+                        updatedMessage = nil
+                    }
+                } else {
+                    let anchor = eventAnchor(
+                        for: &anchorMessageID,
+                        responseToMessageID: responseToMessageID,
+                        generatedMessageIDs: &generatedMessageIDs
+                    )
+                    anchor.applyToolEvent(.toolCompleted(result))
+                    toolBreakOccurred = true
+                    updatedMessage = anchor
+                }
+
             case .agent(let agentEvent):
+                let anchor = eventAnchor(
+                    for: &anchorMessageID,
+                    responseToMessageID: responseToMessageID,
+                    generatedMessageIDs: &generatedMessageIDs
+                )
                 applyAgentEvent(
                     agentEvent,
                     to: anchor,
@@ -559,13 +799,76 @@ extension MessageService {
                     keepsToolCallsInHistory: keepsToolCallsInHistory,
                     replayService: replayService
                 )
+                updatedMessage = anchor
             }
+
+            guard let updatedMessage else { continue }
+            if !keepsToolCallsInHistory {
+                updatedMessage.providerToolResults = [:]
+                updatedMessage.providerToolResultServices = [:]
+            }
+            notifyMessageUpdated(updatedMessage, keepsToolCallsInHistory: keepsToolCallsInHistory)
         }
-        if !keepsToolCallsInHistory {
-            anchor.providerToolResults = [:]
-            anchor.providerToolResultServices = [:]
+    }
+
+    private func eventAnchor(
+        for anchorMessageID: inout UUID?,
+        responseToMessageID: UUID?,
+        generatedMessageIDs: inout Set<UUID>
+    ) -> Message {
+        if let existing = assistantMessage(withID: anchorMessageID) {
+            return existing
         }
-        notifyMessageUpdated(anchor, keepsToolCallsInHistory: keepsToolCallsInHistory)
+        let anchor = Message(
+            role: .assistant,
+            contentType: .null,
+            responseToMessageID: responseToMessageID
+        )
+        anchorMessageID = anchor.uuid
+        generatedMessageIDs.insert(anchor.uuid)
+        messages.append(anchor)
+        return anchor
+    }
+
+    private func orphanToolCompletionAnchor(
+        for tracker: RequestToolCallTracker,
+        currentAnchorMessageID: UUID?,
+        responseToMessageID: UUID?,
+        generatedMessageIDs: inout Set<UUID>
+    ) -> Message {
+        if let anchor = tracker.latestToolAnchor(in: messages) {
+            return anchor
+        }
+
+        let anchor = Message(
+            role: .assistant,
+            contentType: .null,
+            responseToMessageID: responseToMessageID
+        )
+        generatedMessageIDs.insert(anchor.uuid)
+        if let currentAnchorMessageID,
+           let currentIndex = messages.firstIndex(where: { $0.uuid == currentAnchorMessageID }) {
+            messages.insert(anchor, at: currentIndex)
+        } else {
+            messages.append(anchor)
+        }
+        return anchor
+    }
+
+    private func appendOrphanToolCompletion(
+        _ result: any LangToolsToolSelectionResult,
+        identity: PendingToolCallIdentity?,
+        to message: Message
+    ) {
+        message.toolCalls.append(
+            ChatToolCall(
+                id: identity?.uiCallID ?? UUID().uuidString,
+                name: identity?.name ?? "tool",
+                arguments: identity?.arguments,
+                status: result.is_error ? .failure : .success,
+                result: result.result
+            )
+        )
     }
 
     private func requestMessages(keepsToolCallsInHistory: Bool) -> [Message] {
@@ -579,6 +882,13 @@ extension MessageService {
         return eligibleMessages.compactMap { message in
             let sanitized = sanitizedHistoryCopy(of: message)
             return isSemanticallyEmptyAssistantAnchor(sanitized) ? nil : sanitized
+        }
+    }
+
+    private func clearToolHistoryIfNeeded(in assistantMessageIDs: Set<UUID>, keepsToolCallsInHistory: Bool) {
+        guard !keepsToolCallsInHistory else { return }
+        for messageID in assistantMessageIDs {
+            clearToolHistoryIfNeeded(for: messageID, keepsToolCallsInHistory: false)
         }
     }
 
@@ -650,9 +960,14 @@ extension MessageService {
     /// Marks every pending tool call owned by this send as failed so cards do
     /// not spin forever when the stream fails or ends without a completion
     /// result. Completed calls are left untouched.
-    private func failPendingToolCalls(in assistantMessageIDs: Set<UUID>, reason: String) {
+    private func failPendingToolCalls(
+        in assistantMessageIDs: Set<UUID>,
+        reason: String,
+        keepsToolCallsInHistory: Bool
+    ) {
         for message in messages where assistantMessageIDs.contains(message.uuid) {
-            message.failPendingToolCalls(reason: reason)
+            guard message.failPendingToolCalls(reason: reason) else { continue }
+            notifyMessageUpdated(message, keepsToolCallsInHistory: keepsToolCallsInHistory)
         }
     }
     @MainActor

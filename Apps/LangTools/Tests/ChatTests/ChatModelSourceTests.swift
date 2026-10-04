@@ -57,6 +57,71 @@ final class ChatModelSourceTests: XCTestCase {
         XCTAssertEqual(viewModel.availableModels, [])
     }
 
+    func testLoadSettingsReconcilesProxyModelAndLoadsGenerationSettings() throws {
+        let savedModel = Model.openAI(OpenAI.Model(customModelID: "gpt-server-fixture"))
+        UserDefaults.model = savedModel
+        let store = FakeGenSettingsStore(settings: try ChatGenerationSettings(maxOutputTokens: 2048, temperature: 0.5))
+        let source = ChatModelSource()
+        let viewModel = ChatSettingsView.ViewModel(
+            clearMessages: {},
+            modelSource: source,
+            generationSettingsStore: store
+        )
+        source.update(.ready([.openAI(.gpt4o_mini), savedModel]))
+        viewModel.loadSettings()
+        XCTAssertEqual(viewModel.model, savedModel, "existing selection preserved when present in catalog")
+        XCTAssertEqual(viewModel.generationSettings.maxOutputTokens, 2048)
+        XCTAssertEqual(viewModel.generationSettings.temperature, 0.5)
+        XCTAssertEqual(store.loadCount, 1)
+    }
+
+    func testSaveSettingsPersistsProxyModelAndGenerationSettings() throws {
+        let selected = Model.openAI(OpenAI.Model(customModelID: "gpt-server-fixture"))
+        let store = FakeGenSettingsStore()
+        let source = ChatModelSource()
+        let viewModel = ChatSettingsView.ViewModel(
+            clearMessages: {},
+            modelSource: source,
+            generationSettingsStore: store
+        )
+        source.update(.ready([.openAI(.gpt4o_mini), selected]))
+        viewModel.model = selected
+        viewModel.generationSettings = try ChatGenerationSettings(maxOutputTokens: 4096, temperature: 0.25)
+        source.update(.failed("fixture"))
+        viewModel.saveSettings()
+        XCTAssertEqual(UserDefaults.model, selected)
+        XCTAssertEqual(Model(rawValue: selected.rawValue), selected)
+        XCTAssertEqual(store.saveCount, 1)
+        XCTAssertEqual(store.settings.maxOutputTokens, 4096)
+        XCTAssertEqual(store.settings.temperature, 0.25)
+    }
+
+    func testLoadSettingsWithInjectedStoreUsesProvidedStore() throws {
+        let store = FakeGenSettingsStore(settings: try ChatGenerationSettings(maxOutputTokens: 512, temperature: 0.9))
+        let viewModel = ChatSettingsView.ViewModel(
+            clearMessages: {},
+            generationSettingsStore: store
+        )
+        viewModel.loadSettings()
+        XCTAssertEqual(store.loadCount, 1)
+        XCTAssertEqual(viewModel.generationSettings.maxOutputTokens, 512)
+        XCTAssertEqual(viewModel.generationSettings.temperature, 0.9)
+    }
+
+    func testSaveSettingsWithInjectedStoreSavesToProvidedStore() throws {
+        let store = FakeGenSettingsStore()
+        let viewModel = ChatSettingsView.ViewModel(
+            clearMessages: {},
+            generationSettingsStore: store
+        )
+        viewModel.generationSettings = try ChatGenerationSettings(maxOutputTokens: 1024, temperature: 0.6)
+        viewModel.saveSettings()
+        XCTAssertEqual(store.saveCount, 1)
+        XCTAssertEqual(store.settings.maxOutputTokens, 1024)
+        XCTAssertEqual(store.settings.temperature, 0.6)
+        XCTAssertNil(viewModel.generationSettingsError)
+    }
+
     func testDefaultAndDirectCatalogUseExistingProviderAccessManager() throws {
         let keychain = Keychain(service: "ChatModelSourceTests.\(UUID().uuidString)")
         defer { try? keychain.removeAll() }
@@ -74,5 +139,31 @@ final class ChatModelSourceTests: XCTestCase {
         XCTAssertEqual(composed.availableModels, direct.availableModels)
         source.update(.ready([.openAI(.gpt4o_mini)]))
         XCTAssertEqual(composed.availableModels, [.openAI(.gpt4o_mini)])
+    }
+}
+
+private final class FakeGenSettingsStore: ChatGenerationSettingsStoring {
+    var settings: ChatGenerationSettings
+    private(set) var loadCount = 0
+    private(set) var saveCount = 0
+    private(set) var resetCount = 0
+
+    init(settings: ChatGenerationSettings = .automatic) {
+        self.settings = settings
+    }
+
+    func load() -> ChatGenerationSettings {
+        loadCount += 1
+        return settings
+    }
+
+    func save(_ settings: ChatGenerationSettings) {
+        saveCount += 1
+        self.settings = settings
+    }
+
+    func reset() {
+        resetCount += 1
+        settings = .automatic
     }
 }
