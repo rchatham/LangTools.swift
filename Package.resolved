@@ -5,8 +5,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/rchatham/JSON.swift.git",
       "state" : {
-        "revision" : "921c97415e5df0ef35e4a7133881498cac9f2650",
-        "version" : "1.0.3"
+        "revision" : "7fd62c1ace77e31aa26980f0bbbb112547f5b76e"
       }
     },
     {
