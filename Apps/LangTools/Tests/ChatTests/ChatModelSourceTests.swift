@@ -23,6 +23,27 @@ final class ChatModelSourceTests: XCTestCase {
         XCTAssertNil(Model(rawValue: "openai/ "))
     }
 
+    func testExplicitOpenAIRouteRejectsSurroundingWhitespace() {
+        for slug in [OpenAI.Model.gpt4o_mini.rawValue, "gpt-server-fixture", "vendor/custom-model"] {
+            for padding in [" ", "\t", "\n", "\r\n", "\u{00A0}"] {
+                for paddedSlug in [padding + slug, slug + padding, padding + slug + padding] {
+                    XCTAssertNil(Model(rawValue: "openai/" + paddedSlug),
+                                 "Reject padded model ID: \(paddedSlug.debugDescription)")
+                }
+            }
+        }
+    }
+
+    func testExplicitOpenAIRoutePreservesValidIDs() {
+        XCTAssertEqual(Model(rawValue: "openai/" + OpenAI.Model.gpt4o_mini.rawValue), .openAI(.gpt4o_mini))
+        for slug in ["gpt-server-fixture", "vendor/custom-model"] {
+            let model = Model(rawValue: "openai/" + slug)
+            XCTAssertEqual(model, .openAI(OpenAI.Model(customModelID: slug)))
+            XCTAssertEqual(model?.slug, slug)
+            XCTAssertEqual(model?.rawValue, "openai/" + slug)
+        }
+    }
+
     func testOnlyReadyNonemptyCatalogReconcilesSelection() {
         let selected = Model.codex(.gpt5_4)
         let first = Model.openAI(.gpt4o_mini)
