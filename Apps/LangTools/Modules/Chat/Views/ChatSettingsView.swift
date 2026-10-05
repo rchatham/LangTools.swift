@@ -49,7 +49,14 @@ public struct ChatSettingsView: View {
             #endif
         }
         .onReceive(pairingCoordinator.$pairedHelper.compactMap { $0 }) { helper in
+            guard !viewModel.isProxyContext else { return }
             viewModel.applyHydratedHelperConfigurationIfTokenUnedited(port: helper.port)
+        }
+        .onChange(of: viewModel.isProxyContext) { _, isProxy in
+            if isProxy {
+                showingOllamaSettings = false
+                if selectedTab == .localModels { selectedTab = .general }
+            }
         }
     }
 
@@ -91,7 +98,7 @@ public struct ChatSettingsView: View {
                     .listRowSeparator(.hidden)
                 #endif
 
-                ForEach(SettingsTab.allCases) { tab in
+                ForEach(SettingsTab.allCases.filter { !viewModel.isProxyContext || $0 != .localModels }) { tab in
                     Button(action: {
                         selectedTab = tab
                         selectedCustomTab = nil
@@ -185,7 +192,7 @@ public struct ChatSettingsView: View {
             OllamaSettingsView()
         }
         #endif
-        .manageAccessPrompts()
+        .directAccessPrompts(enabled: !viewModel.isProxyContext)
     }
 
     // iOS/iPadOS layout (unchanged)
@@ -203,10 +210,15 @@ public struct ChatSettingsView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .accessibilityIdentifier("settings.modelPicker")
+                .disabled(viewModel.availableModels.isEmpty)
 
-                Text("Available models depend on which providers you have connected. If a provider is missing, add an API key or sign in from Manage Access.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                modelCatalogStatus
+                if !viewModel.isProxyContext {
+                    Text("Available models depend on which providers you have connected. If a provider is missing, add an API key or sign in from Manage Access.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
 
             if viewModel.canManageAccess {
@@ -274,6 +286,7 @@ public struct ChatSettingsView: View {
             #endif
 
             #if !os(watchOS) && !os(tvOS)
+            if !viewModel.isProxyContext {
             Section(header: Text("Local Models")) {
                 Button(action: {
                     showingOllamaSettings = true
@@ -286,6 +299,7 @@ public struct ChatSettingsView: View {
                             .foregroundColor(.gray)
                     }
                 }
+            }
             }
             #endif
 
@@ -451,7 +465,39 @@ public struct ChatSettingsView: View {
         .sheet(isPresented: $showingOllamaSettings) {
             OllamaSettingsView()
         }
-        .manageAccessPrompts()
+        .directAccessPrompts(enabled: !viewModel.isProxyContext)
+    }
+
+    @ViewBuilder
+    private var modelCatalogStatus: some View {
+        if let source = viewModel.modelSource {
+            switch source.state {
+            case .direct, .ready:
+                EmptyView()
+            case .loading:
+                ProgressView("Loading server models…")
+                    .accessibilityIdentifier("settings.models.loading")
+            case .authenticationRequired:
+                Text("Sign in to load server models.")
+                    .accessibilityIdentifier("settings.models.error")
+                Button("Sign In", action: source.signIn)
+                    .accessibilityIdentifier("settings.models.signIn")
+            case .empty:
+                Text("No models are configured on this server.")
+                    .accessibilityIdentifier("settings.models.empty")
+                Button("Retry", action: source.retry)
+                    .accessibilityIdentifier("settings.models.retry")
+            case .failed(let message):
+                Text(message).accessibilityIdentifier("settings.models.error")
+                Button("Retry", action: source.retry)
+                    .accessibilityIdentifier("settings.models.retry")
+            case .unsupportedCatalog:
+                Text("The server catalog contains no supported chat models. Update the app or contact the server administrator.")
+                    .accessibilityIdentifier("settings.models.error")
+                Button("Retry", action: source.retry)
+                    .accessibilityIdentifier("settings.models.retry")
+            }
+        }
     }
 
     // MARK: - macOS Detail Views
@@ -482,7 +528,10 @@ public struct ChatSettingsView: View {
                         }
                         .pickerStyle(.menu)
                         .frame(maxWidth: 400)
+                        .accessibilityIdentifier("settings.modelPicker")
+                        .disabled(viewModel.availableModels.isEmpty)
 
+                        modelCatalogStatus
                         Divider()
 
                         VStack(alignment: .leading, spacing: 6) {
@@ -490,7 +539,7 @@ public struct ChatSettingsView: View {
                                 .font(.headline)
                                 .foregroundColor(.secondary)
 
-                            Text(modelDescription(for: viewModel.model))
+                            Text(viewModel.isProxyContext ? "Models are provided by the Botsworth server. No personal provider API key is required." : modelDescription(for: viewModel.model))
                                 .font(.body)
                         }
 
@@ -956,6 +1005,13 @@ public struct ChatSettingsView: View {
     }
 }
 
+private extension View {
+    @ViewBuilder
+    func directAccessPrompts(enabled: Bool) -> some View {
+        if enabled { manageAccessPrompts() } else { self }
+    }
+}
+
 struct SystemMessageEditor: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
@@ -1085,7 +1141,10 @@ struct SystemMessageEditor: View {
 
 extension ChatSettingsView {
     @MainActor public class ViewModel: ObservableObject {
-        @Published var model: Model = UserDefaults.model {
+        public let modelSource: ChatModelSource?
+        public var isProxyContext: Bool { modelSource?.isProxy == true }
+
+        @Published public var model: Model = UserDefaults.model {
             didSet { UserDefaults.model = model }
         }
         @Published var generationSettings = ChatGenerationSettings.automatic
@@ -1121,10 +1180,19 @@ extension ChatSettingsView {
 
         public init(
             clearMessages: @escaping () -> Void,
+            modelSource: ChatModelSource? = nil,
             generationSettingsStore: ChatGenerationSettingsStoring = ChatGenerationSettingsStore()
         ) {
             self.clearMessages = clearMessages
+            self.modelSource = modelSource
             self.generationSettingsStore = generationSettingsStore
+            modelSource?.$state.sink { [weak self] state in
+                guard let self else { return }
+                if case .ready(let models) = state, !models.contains(self.model), let first = models.first {
+                    self.model = first
+                }
+                self.objectWillChange.send()
+            }.store(in: &cancellables)
             // ToolManager is a nested ObservableObject. SwiftUI won't re-render this view
             // when ToolManager's @Published properties change unless we relay its
             // objectWillChange through our own.
@@ -1137,13 +1205,18 @@ extension ChatSettingsView {
                 .store(in: &cancellables)
         }
 
-        var availableModels: [Model] {
-            accessManager.availableChatModels()
+        public var availableModels: [Model] {
+            if let modelSource, modelSource.isProxy { return modelSource.models }
+            return accessManager.availableChatModels()
         }
 
         func loadSettings() {
-            accessManager.refresh()
-            model = accessManager.validateSelectedModel(UserDefaults.model)
+            if let modelSource, modelSource.isProxy {
+                model = modelSource.reconciledSelection(UserDefaults.model)
+            } else {
+                accessManager.refresh()
+                model = accessManager.validateSelectedModel(UserDefaults.model)
+            }
             generationSettings = generationSettingsStore.load()
             generationSettingsError = nil
             systemMessage = UserDefaults.systemMessage
@@ -1154,7 +1227,7 @@ extension ChatSettingsView {
         }
 
         var canManageAccess: Bool {
-            model.apiService != .ollama
+            !isProxyContext && model.apiService != .ollama
         }
 
         var providerAccessStates: [ProviderAccessState] {
@@ -1175,10 +1248,11 @@ extension ChatSettingsView {
         }
 
         func saveSettings() {
-            UserDefaults.model = accessManager.validateSelectedModel(model)
+            UserDefaults.model = isProxyContext ? (modelSource?.reconciledSelection(model) ?? model) : accessManager.validateSelectedModel(model)
             generationSettingsStore.save(generationSettings)
             generationSettingsError = nil
             UserDefaults.systemMessage = systemMessage
+            guard !isProxyContext else { return }
             if let url = URL(string: codexHelperBaseURLString), url.scheme?.isEmpty == false {
                 UserDefaults.codexHelperBaseURL = url
                 lastSyncedHelperURLSnapshot = codexHelperBaseURLString
@@ -1220,6 +1294,7 @@ extension ChatSettingsView {
         }
 
         func presentManageAccess(for destination: AccessDestination? = nil) {
+            guard !isProxyContext else { return }
             let targetDestination = destination ?? AccessDestination.destination(for: model)
             AuthPresentationCoordinator.shared.present(preferredDestination: targetDestination)
         }
