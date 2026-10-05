@@ -448,14 +448,22 @@ final class OllamaEndpointPolicyTests: XCTestCase {
         let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
 
         XCTAssertNil(service.configuredBaseURL)
-        XCTAssertNotNil(service.error as? OllamaEndpointError)
+        XCTAssertEqual(service.error as? OllamaEndpointError, .unsafeHTTPHost("remote.example.com"))
+        XCTAssertTrue(service.availableModels.isEmpty)
+        XCTAssertTrue(service.runningModels.isEmpty)
 
-        await service.refreshModels().value
+        let refresh = service.refreshModels()
+
+        XCTAssertTrue(service.isLoading)
+        XCTAssertNil(service.error)
+        await refresh.value
 
         XCTAssertFalse(service.isLoading)
         XCTAssertEqual(service.error as? OllamaEndpointError, .unsafeHTTPHost("remote.example.com"))
         XCTAssertNil(service.configuredBaseURL)
-        XCTAssertTrue(counter.calls.isEmpty, "Expected no dependency calls, got \(counter.calls)")
+        XCTAssertTrue(service.availableModels.isEmpty)
+        XCTAssertTrue(service.runningModels.isEmpty)
+        XCTAssertTrue(counter.calls.isEmpty, "Expected no discovery or cache calls, got \(counter.calls)")
     }
 
     @MainActor
@@ -472,6 +480,8 @@ final class OllamaEndpointPolicyTests: XCTestCase {
         let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
 
         XCTAssertNil(service.configuredBaseURL)
+        XCTAssertEqual(service.error as? OllamaEndpointError, .unsafeHTTPHost("remote.example.com"))
+        XCTAssertFalse(service.isLoading)
 
         var progressCalled = false
         do {
@@ -484,7 +494,11 @@ final class OllamaEndpointPolicyTests: XCTestCase {
         }
 
         XCTAssertFalse(progressCalled)
-        XCTAssertTrue(counter.calls.isEmpty, "Expected no dependency calls, got \(counter.calls)")
+        XCTAssertFalse(service.isLoading)
+        XCTAssertTrue(service.availableModels.isEmpty)
+        XCTAssertTrue(service.runningModels.isEmpty)
+        XCTAssertNil(service.configuredBaseURL)
+        XCTAssertTrue(counter.calls.isEmpty, "Expected no discovery or cache calls, got \(counter.calls)")
     }
 
     @MainActor
@@ -501,6 +515,8 @@ final class OllamaEndpointPolicyTests: XCTestCase {
         let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
 
         XCTAssertNil(service.configuredBaseURL)
+        XCTAssertEqual(service.error as? OllamaEndpointError, .unsafeHTTPHost("remote.example.com"))
+        XCTAssertFalse(service.isLoading)
 
         let testModel = Ollama.Model(rawValue: "test-model")!
         do {
@@ -510,7 +526,11 @@ final class OllamaEndpointPolicyTests: XCTestCase {
             XCTAssertEqual(error as? OllamaEndpointError, .unsafeHTTPHost("remote.example.com"))
         }
 
-        XCTAssertTrue(counter.calls.isEmpty, "Expected no dependency calls, got \(counter.calls)")
+        XCTAssertFalse(service.isLoading)
+        XCTAssertTrue(service.availableModels.isEmpty)
+        XCTAssertTrue(service.runningModels.isEmpty)
+        XCTAssertNil(service.configuredBaseURL)
+        XCTAssertTrue(counter.calls.isEmpty, "Expected no discovery or cache calls, got \(counter.calls)")
     }
 
     private func model(_ name: String) -> Ollama.Model {
