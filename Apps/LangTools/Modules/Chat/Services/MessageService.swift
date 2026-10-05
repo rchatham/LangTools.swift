@@ -629,7 +629,21 @@ public class MessageService {
     }
 
     func systemMessage() -> String {
-        UserDefaults.systemMessage + "\n\nWhen agent tools return results, those results are displayed visually to the user as content cards. Do not repeat or summarize information already shown in the cards. You may add a brief natural-language acknowledgment but should not list out details the user can already see. Answer follow-up questions about the content if asked. If an agent tool returns an error, explain the error to the user."
+        let store = ChatConversationSettingsStore()
+        let settings = store.load()
+        var prompt = settings.systemPrompt
+
+        // Append memory fields if set
+        let fields = settings.memoryFields.filter { !$0.label.isEmpty && !$0.value.isEmpty }
+        if !fields.isEmpty {
+            prompt += "\n\n## User Context\n"
+            for field in fields {
+                prompt += "- \(field.label): \(field.value)\n"
+            }
+        }
+
+        prompt += "\n\nWhen agent tools return results, those results are displayed visually to the user as content cards. Do not repeat or summarize information already shown in the cards. You may add a brief natural-language acknowledgment but should not list out details the user can already see. Answer follow-up questions about the content if asked. If an agent tool returns an error, explain the error to the user."
+        return prompt
     }
 
     public func deleteMessage(id: UUID) {
@@ -875,9 +889,18 @@ extension MessageService {
         let failedGeneratedIDs = failedAttemptGeneratedMessageIDs.values.reduce(into: Set<UUID>()) {
             $0.formUnion($1)
         }
-        let eligibleMessages = messages.filter {
+        var eligibleMessages = messages.filter {
             $0.sendFailure == nil && !failedGeneratedIDs.contains($0.uuid)
         }
+
+        // Apply context window truncation from conversation settings
+        let convSettings = ChatConversationSettingsStore().load()
+        if let limit = convSettings.maxContextMessages, limit > 0 {
+            // Always keep the most recent user+assistant pair and system message
+            let keepCount = min(limit, eligibleMessages.count)
+            eligibleMessages = Array(eligibleMessages.suffix(keepCount))
+        }
+
         guard !keepsToolCallsInHistory else { return eligibleMessages }
         return eligibleMessages.compactMap { message in
             let sanitized = sanitizedHistoryCopy(of: message)
