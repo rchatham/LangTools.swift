@@ -183,6 +183,28 @@ public class ToolSettings: ObservableObject {
         didSet { saveSettings() }
     }
 
+    // MARK: - Tool execution settings
+
+    /// Max tool-call iterations per user message. Nil = unlimited.
+    @Published public var maxToolIterations: Int? {
+        didSet { saveSettings() }
+    }
+
+    /// Wall-clock timeout in seconds per tool execution. Nil = no timeout.
+    @Published public var toolTimeoutSeconds: Int? {
+        didSet { saveSettings() }
+    }
+
+    /// Automatically retry a failed tool call once before reporting the error.
+    @Published public var autoRetryFailedTools: Bool {
+        didSet { saveSettings() }
+    }
+
+    /// Override the conversation model for agent execution. Nil = use conversation model.
+    @Published public var agentModelOverride: Model? {
+        didSet { saveSettings() }
+    }
+
     private init() {
         self.richContentEnabled = UserDefaults.standard.object(forKey: "richContentEnabled") as? Bool ?? true
         self.keepsToolCallsInHistory = UserDefaults.standard.object(forKey: "keepsToolCallsInHistory") as? Bool ?? true
@@ -230,6 +252,15 @@ public class ToolSettings: ObservableObject {
         } else {
             self.streamingChunkInterval = .threeSeconds
         }
+
+        self.maxToolIterations = UserDefaults.standard.object(forKey: "maxToolIterations") as? Int
+        self.toolTimeoutSeconds = UserDefaults.standard.object(forKey: "toolTimeoutSeconds") as? Int
+        self.autoRetryFailedTools = UserDefaults.standard.object(forKey: "autoRetryFailedTools") as? Bool ?? false
+        if let rawValue = UserDefaults.standard.string(forKey: "agentModelOverride") {
+            self.agentModelOverride = Model(rawValue: rawValue)
+        } else {
+            self.agentModelOverride = nil
+        }
     }
 
     func saveSettings() {
@@ -246,6 +277,14 @@ public class ToolSettings: ObservableObject {
         UserDefaults.standard.set(streamingTranscriptionEnabled, forKey: "streamingTranscriptionEnabled")
         UserDefaults.standard.set(enableOpenAISimulatedStreaming, forKey: "enableOpenAISimulatedStreaming")
         UserDefaults.standard.set(streamingChunkInterval.rawValue, forKey: "streamingChunkIntervalSeconds")
+
+        if let v = maxToolIterations { UserDefaults.standard.set(v, forKey: "maxToolIterations") }
+        else { UserDefaults.standard.removeObject(forKey: "maxToolIterations") }
+        if let v = toolTimeoutSeconds { UserDefaults.standard.set(v, forKey: "toolTimeoutSeconds") }
+        else { UserDefaults.standard.removeObject(forKey: "toolTimeoutSeconds") }
+        UserDefaults.standard.set(autoRetryFailedTools, forKey: "autoRetryFailedTools")
+        if let v = agentModelOverride { UserDefaults.standard.set(v.rawValue, forKey: "agentModelOverride") }
+        else { UserDefaults.standard.removeObject(forKey: "agentModelOverride") }
     }
 
     func resetToDefaults() {
@@ -262,6 +301,10 @@ public class ToolSettings: ObservableObject {
         streamingTranscriptionEnabled = true
         enableOpenAISimulatedStreaming = true
         streamingChunkInterval = .threeSeconds
+        maxToolIterations = nil
+        toolTimeoutSeconds = nil
+        autoRetryFailedTools = false
+        agentModelOverride = nil
         saveSettings()
     }
 }
