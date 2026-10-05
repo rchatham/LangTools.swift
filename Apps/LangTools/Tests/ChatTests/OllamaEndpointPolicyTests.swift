@@ -434,6 +434,85 @@ final class OllamaEndpointPolicyTests: XCTestCase {
         XCTAssertNil(viewModel.connectionError)
     }
 
+    @MainActor
+    func testRefreshModelsColdStartUnsafeHTTPHostPublishesErrorAndClearsLoading() async {
+        defaults.set("http://remote.example.com:11434", forKey: OllamaEndpointPolicy.userDefaultsKey)
+
+        let counter = DependencyCallCounter()
+        let dependencies = OllamaService.Dependencies(
+            availableModels: { _ in counter.record(.availableModels); throw TestFailure.expected },
+            runningModels: { _ in counter.record(.runningModels); throw TestFailure.expected },
+            checkConnection: { _ in counter.record(.checkConnection); throw TestFailure.expected },
+            cacheModels: { _ in counter.record(.cacheModels) }
+        )
+        let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
+
+        XCTAssertNil(service.configuredBaseURL)
+        XCTAssertNotNil(service.error as? OllamaEndpointError)
+
+        await service.refreshModels().value
+
+        XCTAssertFalse(service.isLoading)
+        XCTAssertEqual(service.error as? OllamaEndpointError, .unsafeHTTPHost("remote.example.com"))
+        XCTAssertNil(service.configuredBaseURL)
+        XCTAssertTrue(counter.calls.isEmpty, "Expected no dependency calls, got \(counter.calls)")
+    }
+
+    @MainActor
+    func testPullModelColdStartUnsafeHTTPHostThrowsBeforeTransport() async {
+        defaults.set("http://remote.example.com:11434", forKey: OllamaEndpointPolicy.userDefaultsKey)
+
+        let counter = DependencyCallCounter()
+        let dependencies = OllamaService.Dependencies(
+            availableModels: { _ in counter.record(.availableModels); throw TestFailure.expected },
+            runningModels: { _ in counter.record(.runningModels); throw TestFailure.expected },
+            checkConnection: { _ in counter.record(.checkConnection); throw TestFailure.expected },
+            cacheModels: { _ in counter.record(.cacheModels) }
+        )
+        let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
+
+        XCTAssertNil(service.configuredBaseURL)
+
+        var progressCalled = false
+        do {
+            try await service.pullModel("test-model") { _ in
+                progressCalled = true
+            }
+            XCTFail("Expected pullModel to throw")
+        } catch {
+            XCTAssertEqual(error as? OllamaEndpointError, .unsafeHTTPHost("remote.example.com"))
+        }
+
+        XCTAssertFalse(progressCalled)
+        XCTAssertTrue(counter.calls.isEmpty, "Expected no dependency calls, got \(counter.calls)")
+    }
+
+    @MainActor
+    func testLoadModelColdStartUnsafeHTTPHostThrowsBeforeTransport() async {
+        defaults.set("http://remote.example.com:11434", forKey: OllamaEndpointPolicy.userDefaultsKey)
+
+        let counter = DependencyCallCounter()
+        let dependencies = OllamaService.Dependencies(
+            availableModels: { _ in counter.record(.availableModels); throw TestFailure.expected },
+            runningModels: { _ in counter.record(.runningModels); throw TestFailure.expected },
+            checkConnection: { _ in counter.record(.checkConnection); throw TestFailure.expected },
+            cacheModels: { _ in counter.record(.cacheModels) }
+        )
+        let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
+
+        XCTAssertNil(service.configuredBaseURL)
+
+        let testModel = Ollama.Model(rawValue: "test-model")!
+        do {
+            try await service.loadModel(testModel)
+            XCTFail("Expected loadModel to throw")
+        } catch {
+            XCTAssertEqual(error as? OllamaEndpointError, .unsafeHTTPHost("remote.example.com"))
+        }
+
+        XCTAssertTrue(counter.calls.isEmpty, "Expected no dependency calls, got \(counter.calls)")
+    }
+
     private func model(_ name: String) -> Ollama.Model {
         Ollama.Model(rawValue: name)!
     }
@@ -507,6 +586,30 @@ private actor SequencedAsyncResults<Value> {
             return try await first.wait()
         }
         return try await second.wait()
+    }
+}
+
+private final class DependencyCallCounter {
+    enum Call: String {
+        case availableModels
+        case runningModels
+        case checkConnection
+        case cacheModels
+    }
+
+    private let lock = NSLock()
+    private var _calls: [Call] = []
+
+    var calls: [Call] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _calls
+    }
+
+    func record(_ call: Call) {
+        lock.lock()
+        defer { lock.unlock() }
+        _calls.append(call)
     }
 }
 
