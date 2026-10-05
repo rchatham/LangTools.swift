@@ -1637,6 +1637,70 @@ extension ChatSettingsView {
                     .padding(8)
                 }
 
+                Divider()
+
+                // Tool execution settings
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Tool Execution")
+                        .font(.headline)
+
+                    HStack(spacing: 16) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Max Iterations")
+                                .font(.caption)
+                            TextField("Unlimited", value: Binding(
+                                get: { viewModel.toolSettings.maxToolIterations },
+                                set: { viewModel.toolSettings.maxToolIterations = $0 }
+                            ), format: .number.grouping(.never))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Timeout (s) — stored only")
+                                .font(.caption)
+                            TextField("None", value: Binding(
+                                get: { viewModel.toolSettings.toolTimeoutSeconds },
+                                set: { viewModel.toolSettings.toolTimeoutSeconds = $0 }
+                            ), format: .number.grouping(.never))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                        }
+                    }
+                    .padding(.bottom, 4)
+
+                    Toggle("Auto-Retry Failed Tools", isOn: $viewModel.toolSettings.autoRetryFailedTools)
+                        .toggleStyle(.checkbox)
+                    Text("Automatically retry a failed tool call once before reporting the error. (UI only — execution wiring coming soon)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.top, 8)
+
+                Divider()
+
+                // Agent model override
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Agent Model")
+                        .font(.headline)
+
+                    Text("Override the conversation model for agent execution. Leave as 'Conversation Model' to use the currently selected model.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Picker("Agent Model Override", selection: Binding(
+                        get: { viewModel.toolSettings.agentModelOverride },
+                        set: { viewModel.toolSettings.agentModelOverride = $0 }
+                    )) {
+                        Text("Conversation Model").tag(nil as Model?)
+                        ForEach(viewModel.availableModels, id: \.self) { model in
+                            Text(model.rawValue).tag(model as Model?)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+                .padding(.top, 8)
+
                 // Reset button
                 Button(action: {
                     viewModel.toolManager.resetToDefaults()

@@ -375,15 +375,16 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     }
 
     public func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
-        try ensureModelAccess(for: model)
-        if accountSession(for: model) != nil {
+        let effectiveModel = ToolSettings.shared.agentModelOverride ?? model
+        try ensureModelAccess(for: effectiveModel)
+        if accountSession(for: effectiveModel) != nil {
             throw NetworkError.accountProxyTransportFailed("Account-backed agent execution is not supported. Use an API key for agent runs.")
         }
         let replayMessages = messages.replayFiltered(
-            targetService: model.apiService,
+            targetService: effectiveModel.apiService,
             allowCrossProvider: ToolSettings.shared.crossProviderToolReplay
         )
-        switch model {
+        switch effectiveModel {
         case .anthropic(let model), .claudeCode(let model): return AgentContext(langTool: try requiredLangTool(Anthropic.self), model: model, messages: replayMessages.toAnthropicMessages(), eventHandler: eventHandler)
         case .gemini(let model): return AgentContext(langTool: try requiredLangTool(Gemini.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
         case .openAI(let model), .codex(let model): return AgentContext(langTool: try requiredLangTool(OpenAI.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)

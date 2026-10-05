@@ -183,69 +183,111 @@ public class ToolSettings: ObservableObject {
         didSet { saveSettings() }
     }
 
-    private init() {
-        self.richContentEnabled = UserDefaults.standard.object(forKey: "richContentEnabled") as? Bool ?? true
-        self.keepsToolCallsInHistory = UserDefaults.standard.object(forKey: "keepsToolCallsInHistory") as? Bool ?? true
-        self.crossProviderToolReplay = UserDefaults.standard.object(forKey: "crossProviderToolReplay") as? Bool ?? true
-        self.voiceInputEnabled = UserDefaults.standard.object(forKey: "voiceInputEnabled") as? Bool ?? true
+    // MARK: - Tool execution settings
 
-        if let rawValue = UserDefaults.standard.string(forKey: "sttProviderRawValue"),
+    /// Max tool-call iterations per user message. Nil = unlimited.
+    @Published public var maxToolIterations: Int? {
+        didSet { saveSettings() }
+    }
+
+    /// Wall-clock timeout in seconds per tool execution. Nil = no timeout.
+    @Published public var toolTimeoutSeconds: Int? {
+        didSet { saveSettings() }
+    }
+
+    /// Automatically retry a failed tool call once before reporting the error.
+    @Published public var autoRetryFailedTools: Bool {
+        didSet { saveSettings() }
+    }
+
+    /// Override the conversation model for agent execution. Nil = use conversation model.
+    @Published public var agentModelOverride: Model? {
+        didSet { saveSettings() }
+    }
+
+    private let defaults: UserDefaults
+
+    private init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        self.richContentEnabled = defaults.object(forKey: "richContentEnabled") as? Bool ?? true
+        self.keepsToolCallsInHistory = defaults.object(forKey: "keepsToolCallsInHistory") as? Bool ?? true
+        self.crossProviderToolReplay = defaults.object(forKey: "crossProviderToolReplay") as? Bool ?? true
+        self.voiceInputEnabled = defaults.object(forKey: "voiceInputEnabled") as? Bool ?? true
+
+        if let rawValue = defaults.string(forKey: "sttProviderRawValue"),
            let provider = STTProvider(rawValue: rawValue) {
             self.sttProvider = provider
         } else {
             self.sttProvider = .appleSpeech
         }
 
-        self.voiceButtonReplaceSend = UserDefaults.standard.object(forKey: "voiceButtonReplaceSend") as? Bool ?? false
+        self.voiceButtonReplaceSend = defaults.object(forKey: "voiceButtonReplaceSend") as? Bool ?? false
 
-        if let rawValue = UserDefaults.standard.string(forKey: "sttLanguage"),
+        if let rawValue = defaults.string(forKey: "sttLanguage"),
            let language = STTLanguage(rawValue: rawValue) {
             self.sttLanguage = language
         } else {
             self.sttLanguage = .auto
         }
 
-        if let rawValue = UserDefaults.standard.string(forKey: "whisperKitModelSize"),
+        if let rawValue = defaults.string(forKey: "whisperKitModelSize"),
            let modelSize = WhisperKitModelSize(rawValue: rawValue) {
             self.whisperKitModelSize = modelSize
         } else {
             self.whisperKitModelSize = .base
         }
 
-        self.autoStopOnSilence = UserDefaults.standard.object(forKey: "autoStopOnSilence") as? Bool ?? true
+        self.autoStopOnSilence = defaults.object(forKey: "autoStopOnSilence") as? Bool ?? true
 
-        if let rawValue = UserDefaults.standard.object(forKey: "silenceTimeoutSeconds") as? Double,
+        if let rawValue = defaults.object(forKey: "silenceTimeoutSeconds") as? Double,
            let timeout = SilenceTimeout(rawValue: rawValue) {
             self.silenceTimeout = timeout
         } else {
             self.silenceTimeout = .twoSeconds
         }
 
-        self.streamingTranscriptionEnabled = UserDefaults.standard.object(forKey: "streamingTranscriptionEnabled") as? Bool ?? true
-        self.enableOpenAISimulatedStreaming = UserDefaults.standard.object(forKey: "enableOpenAISimulatedStreaming") as? Bool ?? true
+        self.streamingTranscriptionEnabled = defaults.object(forKey: "streamingTranscriptionEnabled") as? Bool ?? true
+        self.enableOpenAISimulatedStreaming = defaults.object(forKey: "enableOpenAISimulatedStreaming") as? Bool ?? true
 
-        if let rawValue = UserDefaults.standard.object(forKey: "streamingChunkIntervalSeconds") as? Double,
+        if let rawValue = defaults.object(forKey: "streamingChunkIntervalSeconds") as? Double,
            let interval = StreamingChunkInterval(rawValue: rawValue) {
             self.streamingChunkInterval = interval
         } else {
             self.streamingChunkInterval = .threeSeconds
         }
+
+        self.maxToolIterations = defaults.object(forKey: "maxToolIterations") as? Int
+        self.toolTimeoutSeconds = defaults.object(forKey: "toolTimeoutSeconds") as? Int
+        self.autoRetryFailedTools = defaults.object(forKey: "autoRetryFailedTools") as? Bool ?? false
+        if let rawValue = defaults.string(forKey: "agentModelOverride") {
+            self.agentModelOverride = Model(rawValue: rawValue)
+        } else {
+            self.agentModelOverride = nil
+        }
     }
 
     func saveSettings() {
-        UserDefaults.standard.set(richContentEnabled, forKey: "richContentEnabled")
-        UserDefaults.standard.set(keepsToolCallsInHistory, forKey: "keepsToolCallsInHistory")
-        UserDefaults.standard.set(crossProviderToolReplay, forKey: "crossProviderToolReplay")
-        UserDefaults.standard.set(voiceInputEnabled, forKey: "voiceInputEnabled")
-        UserDefaults.standard.set(sttProvider.rawValue, forKey: "sttProviderRawValue")
-        UserDefaults.standard.set(voiceButtonReplaceSend, forKey: "voiceButtonReplaceSend")
-        UserDefaults.standard.set(sttLanguage.rawValue, forKey: "sttLanguage")
-        UserDefaults.standard.set(whisperKitModelSize.rawValue, forKey: "whisperKitModelSize")
-        UserDefaults.standard.set(autoStopOnSilence, forKey: "autoStopOnSilence")
-        UserDefaults.standard.set(silenceTimeout.rawValue, forKey: "silenceTimeoutSeconds")
-        UserDefaults.standard.set(streamingTranscriptionEnabled, forKey: "streamingTranscriptionEnabled")
-        UserDefaults.standard.set(enableOpenAISimulatedStreaming, forKey: "enableOpenAISimulatedStreaming")
-        UserDefaults.standard.set(streamingChunkInterval.rawValue, forKey: "streamingChunkIntervalSeconds")
+        defaults.set(richContentEnabled, forKey: "richContentEnabled")
+        defaults.set(keepsToolCallsInHistory, forKey: "keepsToolCallsInHistory")
+        defaults.set(crossProviderToolReplay, forKey: "crossProviderToolReplay")
+        defaults.set(voiceInputEnabled, forKey: "voiceInputEnabled")
+        defaults.set(sttProvider.rawValue, forKey: "sttProviderRawValue")
+        defaults.set(voiceButtonReplaceSend, forKey: "voiceButtonReplaceSend")
+        defaults.set(sttLanguage.rawValue, forKey: "sttLanguage")
+        defaults.set(whisperKitModelSize.rawValue, forKey: "whisperKitModelSize")
+        defaults.set(autoStopOnSilence, forKey: "autoStopOnSilence")
+        defaults.set(silenceTimeout.rawValue, forKey: "silenceTimeoutSeconds")
+        defaults.set(streamingTranscriptionEnabled, forKey: "streamingTranscriptionEnabled")
+        defaults.set(enableOpenAISimulatedStreaming, forKey: "enableOpenAISimulatedStreaming")
+        defaults.set(streamingChunkInterval.rawValue, forKey: "streamingChunkIntervalSeconds")
+
+        if let v = maxToolIterations { defaults.set(v, forKey: "maxToolIterations") }
+        else { defaults.removeObject(forKey: "maxToolIterations") }
+        if let v = toolTimeoutSeconds { defaults.set(v, forKey: "toolTimeoutSeconds") }
+        else { defaults.removeObject(forKey: "toolTimeoutSeconds") }
+        defaults.set(autoRetryFailedTools, forKey: "autoRetryFailedTools")
+        if let v = agentModelOverride { defaults.set(v.rawValue, forKey: "agentModelOverride") }
+        else { defaults.removeObject(forKey: "agentModelOverride") }
     }
 
     func resetToDefaults() {
@@ -262,6 +304,10 @@ public class ToolSettings: ObservableObject {
         streamingTranscriptionEnabled = true
         enableOpenAISimulatedStreaming = true
         streamingChunkInterval = .threeSeconds
+        maxToolIterations = nil
+        toolTimeoutSeconds = nil
+        autoRetryFailedTools = false
+        agentModelOverride = nil
         saveSettings()
     }
 }

@@ -72,6 +72,50 @@ final class LangToolsAppUITests: XCTestCase {
         settingsWindow.buttons[XCUIIdentifierCloseWindow].click()
     }
 
+    @MainActor
+    func testToolSettingsScreenshots() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["LANGTOOLS_UI_TEST_MODE"] = "standard"
+        app.launch()
+
+        let chatWindow = app.windows.firstMatch
+        XCTAssertTrue(chatWindow.waitForExistence(timeout: 10))
+
+        let settingsButton = chatWindow.toolbars.firstMatch.buttons.firstMatch
+        XCTAssertTrue(settingsButton.waitForExistence(timeout: 5))
+        settingsButton.click()
+
+        let settingsWindow = app.windows.allElementsBoundByIndex.last!
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
+
+        // Navigate to Tools tab
+        let toolsBtn = settingsWindow.outlines.firstMatch
+            .descendants(matching: .button)
+            .matching(NSPredicate(format: "label == 'Tools'"))
+            .firstMatch
+        XCTAssertTrue(toolsBtn.waitForExistence(timeout: 5))
+        toolsBtn.click()
+        sleep(2)
+
+        XCTAssertTrue(settingsWindow.staticTexts["AI Tools"]
+            .waitForExistence(timeout: 5), "Tools tab heading not found")
+
+        // Screenshot: tool execution settings at default
+        takeScreenshot(settingsWindow, name: "tool_settings_default")
+
+        // Set some values to show active state
+        let maxIterField = settingsWindow.textFields.firstMatch
+        if maxIterField.waitForExistence(timeout: 3) {
+            maxIterField.click()
+            maxIterField.typeText("3")
+            sleep(1)
+        }
+
+        takeScreenshot(settingsWindow, name: "tool_settings_active")
+
+        settingsWindow.buttons[XCUIIdentifierCloseWindow].click()
+    }
+
     private func takeScreenshot(_ element: XCUIElement, name: String) {
         let screenshot = element.screenshot()
         let attachment = XCTAttachment(screenshot: screenshot)
