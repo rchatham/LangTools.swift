@@ -1657,7 +1657,7 @@ extension ChatSettingsView {
                         }
 
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Timeout (s)")
+                            Text("Timeout (s) — stored only")
                                 .font(.caption)
                             TextField("None", value: Binding(
                                 get: { viewModel.toolSettings.toolTimeoutSeconds },
@@ -1671,7 +1671,7 @@ extension ChatSettingsView {
 
                     Toggle("Auto-Retry Failed Tools", isOn: $viewModel.toolSettings.autoRetryFailedTools)
                         .toggleStyle(.checkbox)
-                    Text("Automatically retry a failed tool call once before reporting the error.")
+                    Text("Automatically retry a failed tool call once before reporting the error. (UI only — execution wiring coming soon)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
