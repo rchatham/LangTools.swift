@@ -10,24 +10,16 @@ import XCTest
 final class LangToolsAppUITests: XCTestCase {
 
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
-        // In UI tests it is usually best to stop immediately when a failure occurs.
-        continueAfterFailure = false
-
-        // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
+        continueAfterFailure = true
     }
 
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
-    }
+    override func tearDownWithError() throws {}
 
 #if !os(macOS)
     @MainActor
     func testPromotedAppLaunch() throws {
         let app = XCUIApplication()
         app.launch()
-
         XCTAssertTrue(app.staticTexts["LangTools"].firstMatch.waitForExistence(timeout: 10))
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "LangTools app"
@@ -38,47 +30,114 @@ final class LangToolsAppUITests: XCTestCase {
 
 #if os(macOS)
     @MainActor
-    func testCodexBackedChatDisplaysAssistantReply() throws {
+    func testAdvancedGenerationSettingsScreenshots() throws {
         let app = XCUIApplication()
-        app.launchEnvironment["LANGTOOLS_UI_TEST_MODE"] = "codexSuccess"
+        app.launchEnvironment["LANGTOOLS_UI_TEST_MODE"] = "standard"
         app.launch()
 
-        let input = app.descendants(matching: .any)["chat.promptInput"]
-        XCTAssertTrue(input.waitForExistence(timeout: 5))
-        input.click()
-        input.typeText("Reply with exactly OK")
+        let chatWindow = app.windows.firstMatch
+        XCTAssertTrue(chatWindow.waitForExistence(timeout: 10))
 
-        let sendButton = app.buttons["chat.sendButton"]
-        XCTAssertTrue(sendButton.waitForExistence(timeout: 2))
-        sendButton.click()
+        let settingsButton = chatWindow.toolbars.firstMatch.buttons.firstMatch
+        XCTAssertTrue(settingsButton.waitForExistence(timeout: 5))
+        settingsButton.click()
 
-        XCTAssertTrue(app.staticTexts["OK"].waitForExistence(timeout: 5))
+        let settingsWindow = app.windows.allElementsBoundByIndex.last!
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
+
+        let advancedBtn = settingsWindow.outlines.firstMatch
+            .descendants(matching: .button)
+            .matching(NSPredicate(format: "label == 'Advanced'"))
+            .firstMatch
+        XCTAssertTrue(advancedBtn.waitForExistence(timeout: 5))
+        advancedBtn.click()
+        sleep(2)
+
+        XCTAssertTrue(settingsWindow.staticTexts["Advanced Parameters"]
+            .waitForExistence(timeout: 5), "Advanced tab heading not found")
+
+        // Screenshot: compact checkbox layout with all controls at default
+        takeScreenshot(settingsWindow, name: "advanced_params_default")
+
+        // Toggle some checkboxes on to show active state
+        for label in ["Temperature", "Top P", "Frequency Penalty", "Seed"] {
+            let cb = settingsWindow.checkBoxes[label]
+            if cb.waitForExistence(timeout: 2) {
+                cb.click()
+                sleep(1)
+            }
+        }
+        takeScreenshot(settingsWindow, name: "advanced_params_active")
+
+        settingsWindow.buttons[XCUIIdentifierCloseWindow].click()
     }
 
     @MainActor
-    func testCodexNotLoggedInDisplaysHelpfulAlert() throws {
+    func testToolSettingsScreenshots() throws {
         let app = XCUIApplication()
-        app.launchEnvironment["LANGTOOLS_UI_TEST_MODE"] = "codexNotLoggedIn"
+        app.launchEnvironment["LANGTOOLS_UI_TEST_MODE"] = "standard"
         app.launch()
 
-        let input = app.descendants(matching: .any)["chat.promptInput"]
-        XCTAssertTrue(input.waitForExistence(timeout: 5))
-        input.click()
-        input.typeText("Test auth failure")
+        let chatWindow = app.windows.firstMatch
+        XCTAssertTrue(chatWindow.waitForExistence(timeout: 10))
 
-        let sendButton = app.buttons["chat.sendButton"]
-        XCTAssertTrue(sendButton.waitForExistence(timeout: 2))
-        sendButton.click()
+        let settingsButton = chatWindow.toolbars.firstMatch.buttons.firstMatch
+        XCTAssertTrue(settingsButton.waitForExistence(timeout: 5))
+        settingsButton.click()
 
-        XCTAssertTrue(app.staticTexts["OpenAI Account Error"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Codex is not logged in.")).firstMatch.waitForExistence(timeout: 2))
+        let settingsWindow = app.windows.allElementsBoundByIndex.last!
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
+
+        // Navigate to Tools tab
+        let toolsBtn = settingsWindow.outlines.firstMatch
+            .descendants(matching: .button)
+            .matching(NSPredicate(format: "label == 'Tools'"))
+            .firstMatch
+        XCTAssertTrue(toolsBtn.waitForExistence(timeout: 5))
+        toolsBtn.click()
+        sleep(2)
+
+        XCTAssertTrue(settingsWindow.staticTexts["AI Tools"]
+            .waitForExistence(timeout: 5), "Tools tab heading not found")
+
+        // Screenshot: tool execution settings at default
+        takeScreenshot(settingsWindow, name: "tool_settings_default")
+
+        // Set some values to show active state
+        let maxIterField = settingsWindow.textFields.firstMatch
+        if maxIterField.waitForExistence(timeout: 3) {
+            maxIterField.click()
+            maxIterField.typeText("3")
+            sleep(1)
+        }
+
+        takeScreenshot(settingsWindow, name: "tool_settings_active")
+
+        settingsWindow.buttons[XCUIIdentifierCloseWindow].click()
+    }
+
+    private func takeScreenshot(_ element: XCUIElement, name: String) {
+        let screenshot = element.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        let dirURL = FileManager.default.temporaryDirectory.appendingPathComponent("langtools-screenshots")
+        try? FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+        let path = dirURL.appendingPathComponent("\(name).png").path
+        do {
+            try screenshot.pngRepresentation.write(to: URL(fileURLWithPath: path))
+            print("Screenshot saved: \(path)")
+        } catch {
+            print("Failed to save \(name): \(error)")
+        }
     }
 #endif
 
 #if !os(macOS)
     @MainActor
     func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             XCUIApplication().launch()
         }

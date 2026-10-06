@@ -179,10 +179,20 @@ public struct ChatGenerationCapabilities: Equatable, Sendable {
     public let maximumOutputTokenBound: Int?
     public let maximumOutputWarning: String?
     public let supportsTemperature: Bool
+    public let supportsTopP: Bool
+    public let supportsFrequencyPenalty: Bool
+    public let supportsPresencePenalty: Bool
+    public let supportsTopK: Bool
+    public let supportsSeed: Bool
+    public let supportsStop: Bool
+    /// The model's published context window size (input tokens). Nil when unknown or account-backed.
+    public let contextWindowTokens: Int?
     public let unsupportedReason: String?
 
     public var supportsAnyOverride: Bool {
-        maximumOutputField != nil || supportsTemperature
+        maximumOutputField != nil || supportsTemperature || supportsTopP
+            || supportsFrequencyPenalty || supportsPresencePenalty
+            || supportsTopK || supportsSeed || supportsStop
     }
 
     public init(
@@ -190,12 +200,26 @@ public struct ChatGenerationCapabilities: Equatable, Sendable {
         maximumOutputTokenBound: Int? = nil,
         maximumOutputWarning: String? = nil,
         supportsTemperature: Bool,
+        supportsTopP: Bool = false,
+        supportsFrequencyPenalty: Bool = false,
+        supportsPresencePenalty: Bool = false,
+        supportsTopK: Bool = false,
+        supportsSeed: Bool = false,
+        supportsStop: Bool = false,
+        contextWindowTokens: Int? = nil,
         unsupportedReason: String? = nil
     ) {
         self.maximumOutputField = maximumOutputField
         self.maximumOutputTokenBound = maximumOutputTokenBound
         self.maximumOutputWarning = maximumOutputWarning
         self.supportsTemperature = supportsTemperature
+        self.supportsTopP = supportsTopP
+        self.supportsFrequencyPenalty = supportsFrequencyPenalty
+        self.supportsPresencePenalty = supportsPresencePenalty
+        self.supportsTopK = supportsTopK
+        self.supportsSeed = supportsSeed
+        self.supportsStop = supportsStop
+        self.contextWindowTokens = contextWindowTokens
         self.unsupportedReason = unsupportedReason
     }
 }
@@ -216,14 +240,25 @@ public extension Model {
             return .init(
                 maximumOutputField: .anthropicMaxTokens,
                 maximumOutputTokenBound: bound,
-                supportsTemperature: true
+                supportsTemperature: true,
+                supportsTopP: true,
+                supportsTopK: true,
+                supportsStop: true,
+                contextWindowTokens: Self.anthropicContextWindows[model.rawValue]
             )
         case .ollama:
             return .init(
                 maximumOutputField: .ollamaNumPredict,
                 maximumOutputTokenBound: ChatGenerationSettings.tokenRange.upperBound,
                 maximumOutputWarning: "The app guard is not a model limit. Ollama output capacity depends on the selected model and runtime configuration.",
-                supportsTemperature: true
+                supportsTemperature: true,
+                supportsTopP: true,
+                supportsFrequencyPenalty: true,
+                supportsPresencePenalty: true,
+                supportsTopK: true,
+                supportsSeed: true,
+                supportsStop: true,
+                contextWindowTokens: nil
             )
         case .gemini(let model):
             guard let bound = Self.geminiGenerationModelBounds[model.rawValue] else {
@@ -232,7 +267,13 @@ public extension Model {
             return .init(
                 maximumOutputField: .openAIMaxTokens,
                 maximumOutputTokenBound: bound,
-                supportsTemperature: true
+                supportsTemperature: true,
+                supportsTopP: true,
+                supportsFrequencyPenalty: true,
+                supportsPresencePenalty: true,
+                supportsSeed: true,
+                supportsStop: true,
+                contextWindowTokens: Self.geminiContextWindows[model.rawValue]
             )
         case .xAI(let model):
             guard Self.xAIGenerationModels.contains(model.rawValue) else {
@@ -242,7 +283,12 @@ public extension Model {
                 maximumOutputField: .openAIMaxTokens,
                 maximumOutputTokenBound: ChatGenerationSettings.tokenRange.upperBound,
                 maximumOutputWarning: "The app guard is not a model limit. xAI output capacity depends on the selected model.",
-                supportsTemperature: true
+                supportsTemperature: true,
+                supportsTopP: true,
+                supportsFrequencyPenalty: true,
+                supportsPresencePenalty: true,
+                supportsSeed: true,
+                supportsStop: true
             )
         case .openAI(let model):
             switch model.rawValue {
@@ -265,14 +311,23 @@ public extension Model {
                 return .init(
                     maximumOutputField: .openAIMaxTokens,
                     maximumOutputTokenBound: bound,
-                    supportsTemperature: true
+                    supportsTemperature: true,
+                    supportsTopP: true,
+                    supportsFrequencyPenalty: true,
+                    supportsPresencePenalty: true,
+                    supportsSeed: true,
+                    supportsStop: true,
+                    contextWindowTokens: Self.openAIContextWindows[model.rawValue]
                 )
             }
             if let bound = Self.openAIReasoningGenerationModelBounds[model.rawValue] {
                 return .init(
                     maximumOutputField: .openAIMaxCompletionTokens,
                     maximumOutputTokenBound: bound,
-                    supportsTemperature: false
+                    supportsTemperature: false,
+                    supportsTopP: true,
+                    supportsStop: true,
+                    contextWindowTokens: Self.openAIContextWindows[model.rawValue]
                 )
             }
             return Self.unsupportedGenerationCapabilities
@@ -357,4 +412,56 @@ public extension Model {
 
     // Ollama's num_predict is runtime/model dependent, not a universal provider limit.
     // https://docs.ollama.com/modelfile
+
+    // MARK: - Context windows
+
+    /// Published context window sizes (input tokens). Nil = unknown / account-backed.
+    /// Sources: provider model pages as linked above. Ollama is model-dependent.
+    private static let openAIContextWindows: [String: Int] = [
+        // Ordinary models
+        "gpt-3.5-turbo": 16_385, "gpt-3.5-turbo-0301": 4_096,
+        "gpt-3.5-turbo-1106": 16_385, "gpt-3.5-turbo-16k": 16_385,
+        "gpt-4": 8_192, "gpt-4-turbo": 128_000, "gpt-4-0613": 8_192,
+        "gpt-4-1106-preview": 128_000, "gpt-4-vision-preview": 128_000,
+        "gpt-4-32k-0613": 32_768, "gpt-4o-2024-05-13": 128_000,
+        "gpt-4o": 128_000, "gpt-4o-mini": 128_000,
+        "gpt-4o-2024-08-06": 128_000, "gpt-4o-2024-11-20": 128_000,
+        "gpt-4o-mini-2024-07-18": 128_000,
+        "gpt-4.1": 1_000_000, "gpt-4.1-mini": 1_000_000, "gpt-4.1-nano": 1_000_000,
+        // Reasoning models
+        "o1": 200_000, "o1-mini": 128_000, "o1-preview": 128_000,
+        "o3": 200_000, "o3-pro": 200_000, "o3-mini": 200_000, "o4-mini": 200_000,
+        "gpt-5": 128_000, "gpt-5-mini": 128_000, "gpt-5-nano": 128_000,
+        "gpt-5-pro": 272_000, "gpt-5.1": 128_000, "gpt-5.2": 128_000,
+        "gpt-5.2-pro": 128_000, "gpt-5.3": 128_000,
+        "gpt-5.4": 128_000, "gpt-5.4-pro": 128_000,
+        "gpt-5.4-mini": 128_000, "gpt-5.4-nano": 128_000,
+        "gpt-5.5": 128_000, "gpt-5.5-pro": 128_000,
+    ]
+
+    private static let anthropicContextWindows: [String: Int] = [
+        "claude-opus-4-6": 200_000, "claude-opus-4-6-20260205": 200_000,
+        "claude-sonnet-4-6": 200_000, "claude-sonnet-4-6-20260217": 200_000,
+        "claude-opus-4-5-20251101": 200_000, "claude-sonnet-4-5-latest": 200_000,
+        "claude-sonnet-4-5-20250929": 200_000, "claude-haiku-4-5-latest": 200_000,
+        "claude-haiku-4-5-20251001": 200_000,
+        "claude-opus-4-1-latest": 200_000, "claude-opus-4-1-20250805": 200_000,
+        "claude-opus-4-20250514": 200_000, "claude-sonnet-4-20250514": 200_000,
+        "claude-3-haiku-20240307": 200_000, "claude-3-7-sonnet-20250219": 200_000,
+        "claude-3-5-haiku-20241022": 200_000, "claude-3-5-sonnet-latest": 200_000,
+        "claude-3-5-sonnet-20241022": 200_000, "claude-3-5-sonnet-20240620": 200_000,
+        "claude-3-opus-latest": 200_000, "claude-3-opus-20240229": 200_000,
+        "claude-3-sonnet-20240229": 200_000,
+    ]
+
+    private static let geminiContextWindows: [String: Int] = [
+        "gemini-3-pro-preview": 1_048_576, "gemini-3-flash-preview": 1_048_576,
+        "gemini-3-pro": 1_048_576, "gemini-3-flash": 1_048_576,
+        "gemini-3.1-pro": 1_048_576,
+        "gemini-2.5-flash": 1_048_576, "gemini-2.5-flash-lite": 1_048_576,
+        "gemini-2.5-pro": 1_048_576,
+        "gemini-2.0-flash": 1_048_576, "gemini-2.0-flash-lite": 1_048_576,
+        "gemini-1.5-flash": 1_048_576, "gemini-1.5-flash-8b": 1_048_576,
+        "gemini-1.5-pro": 2_097_152, "gemini-1.0-pro": 32_768,
+    ]
 }
