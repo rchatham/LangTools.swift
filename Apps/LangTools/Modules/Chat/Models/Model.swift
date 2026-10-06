@@ -39,8 +39,9 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             let slug = components[1]
             switch route {
             case ModelRoute.openAI.rawValue:
-                guard let model = OpenAI.Model(rawValue: slug) else { return nil }
-                self = .openAI(model)
+                guard !slug.isEmpty,
+                      slug == slug.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+                self = .openAI(OpenAI.Model(rawValue: slug) ?? OpenAI.Model(customModelID: slug))
             case ModelRoute.codex.rawValue:
                 guard let model = OpenAI.Model(rawValue: slug) else { return nil }
                 self = .codex(model)
