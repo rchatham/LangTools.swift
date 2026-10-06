@@ -25,9 +25,7 @@ let package = Package(
         .library(name: "WhisperKitLangTools", targets: ["WhisperKitLangTools"]),
     ],
     dependencies: [
-        // JSON.swift PR #1 fixes FoundationNetworking imports for Linux consumers.
-        // Use its immutable revision until a release containing the fix is available.
-        .package(url: "https://github.com/rchatham/JSON.swift.git", revision: "f80d29f5113b5a3ed0a47e6afa908eab07ef024c"),
+        .package(url: "https://github.com/rchatham/JSON.swift.git", from: "1.0.4"),
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.18.0"),
         // Benchmark comparison deps — only used by BenchmarkTests, not linked into any library product.
         // To run competitor benchmarks: uncomment these and the BenchmarkTests product deps below.
