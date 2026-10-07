@@ -266,6 +266,30 @@ public final class AuthPresentationCoordinator: ObservableObject {
 
     @Published public var isPresented = false
     @Published public var preferredDestination: AccessDestination?
+    @Published private(set) var presentationOwner: UUID?
+    private var presenters: [UUID: (priority: Int, order: UInt64)] = [:]
+    private var registrationOrder: UInt64 = 0
+
+    /// Settings sheets/windows own their own prompts while visible. The chat
+    /// root stays registered as a fallback, not a second simultaneous presenter.
+    func registerPresenter(_ id: UUID, priority: Int) {
+        registrationOrder &+= 1
+        presenters[id] = (priority, registrationOrder)
+        updatePresentationOwner()
+    }
+
+    func unregisterPresenter(_ id: UUID) {
+        presenters.removeValue(forKey: id)
+        updatePresentationOwner()
+    }
+
+    private func updatePresentationOwner() {
+        let owner = presenters.max {
+            if $0.value.priority == $1.value.priority { return $0.value.order < $1.value.order }
+            return $0.value.priority < $1.value.priority
+        }?.key
+        if owner != presentationOwner { presentationOwner = owner }
+    }
 
     public func present(preferredDestination: AccessDestination? = nil) {
         self.preferredDestination = preferredDestination

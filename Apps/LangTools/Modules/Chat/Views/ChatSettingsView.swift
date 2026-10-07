@@ -185,7 +185,7 @@ public struct ChatSettingsView: View {
             OllamaSettingsView()
         }
         #endif
-        .manageAccessPrompts()
+        .manageAccessPrompts(priority: 10)
     }
 
     // iOS/iPadOS layout (unchanged)
@@ -445,7 +445,7 @@ public struct ChatSettingsView: View {
         .sheet(isPresented: $showingOllamaSettings) {
             OllamaSettingsView()
         }
-        .manageAccessPrompts()
+        .manageAccessPrompts(priority: 10)
     }
 
     // MARK: - macOS Detail Views

@@ -283,6 +283,28 @@ final class MobileHelperTests: XCTestCase {
         XCTAssertTrue(store.records.isEmpty)
     }
 
+    func testOneAuthPresenterPerVisibleContextWithDesktopRootFallback() {
+        let coordinator = AuthPresentationCoordinator()
+        let root = UUID()
+        let settings = UUID()
+        let secondWindow = UUID()
+        coordinator.registerPresenter(root, priority: 0)
+        XCTAssertEqual(coordinator.presentationOwner, root)
+        coordinator.registerPresenter(settings, priority: 10)
+        XCTAssertEqual(coordinator.presentationOwner, settings)
+        coordinator.registerPresenter(secondWindow, priority: 10)
+        XCTAssertEqual(coordinator.presentationOwner, secondWindow)
+        coordinator.present(preferredDestination: .openAI)
+        XCTAssertTrue(coordinator.isPresented)
+        coordinator.unregisterPresenter(secondWindow)
+        XCTAssertEqual(coordinator.presentationOwner, settings)
+        coordinator.unregisterPresenter(settings)
+        XCTAssertEqual(coordinator.presentationOwner, root)
+        XCTAssertTrue(coordinator.isPresented)
+        coordinator.dismiss()
+        XCTAssertFalse(coordinator.isPresented)
+    }
+
     private func makeCoordinator() -> MobileHelperPairingCoordinator {
         MobileHelperPairingCoordinator(configuration: configuration,
             client: MobileHelperPairingClient(sessionFactory: { _, _ in
