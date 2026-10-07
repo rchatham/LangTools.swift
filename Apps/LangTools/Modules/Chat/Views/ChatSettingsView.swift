@@ -1155,7 +1155,9 @@ extension ChatSettingsView {
         }
 
         var availableModels: [Model] {
-            accessManager.availableChatModels()
+            let available = accessManager.availableChatModels()
+            guard model.apiService == .ollama, !available.contains(model) else { return available }
+            return [model] + available
         }
 
         func loadSettings() {
@@ -1237,7 +1239,11 @@ extension ChatSettingsView {
         }
 
         func modelPickerTitle(for model: Model) -> String {
-            model.rawValue
+            if model.apiService == .ollama,
+               !accessManager.availableChatModels().contains(model) {
+                return "\(model.rawValue) — Unavailable on current Ollama server"
+            }
+            return model.rawValue
         }
 
         /// Trigger WhisperKit preload

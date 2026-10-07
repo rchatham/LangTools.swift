@@ -9,12 +9,28 @@
 import SwiftUI
 import Ollama
 
+@MainActor
 struct OllamaSettingsView: View {
-    @StateObject private var viewModel = ViewModel()
+    @StateObject private var viewModel: ViewModel
     @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var ollamaService = OllamaService.shared
+    @ObservedObject private var ollamaService: OllamaService
     @Environment(\.colorScheme) private var colorScheme
     @State private var isEditingServerUrl = false
+
+    init() {
+        self.init(ollamaService: .shared)
+    }
+
+    init(
+        ollamaService: OllamaService,
+        endpointConfiguration: OllamaEndpointConfiguration? = nil
+    ) {
+        _ollamaService = ObservedObject(wrappedValue: ollamaService)
+        _viewModel = StateObject(wrappedValue: ViewModel(
+            ollamaService: ollamaService,
+            endpointConfiguration: endpointConfiguration ?? ollamaService.endpointConfiguration
+        ))
+    }
     
     var body: some View {
         #if os(macOS)
@@ -48,6 +64,8 @@ struct OllamaSettingsView: View {
             // Content
             ScrollView {
                 VStack(spacing: 24) {
+                    helperTransportSection
+
                     // Available Models Section
                     availableModelsSection
                     
@@ -61,9 +79,8 @@ struct OllamaSettingsView: View {
                 .padding(.bottom, 30)
             }
         }
-        .onAppear {
-            ollamaService.refreshModels()
-        }
+        .onAppear { viewModel.activate() }
+        .onChange(of: ollamaService.transportRevision) { _, _ in viewModel.transportDidChange() }
     }
     
     private var availableModelsSection: some View {
@@ -277,15 +294,20 @@ struct OllamaSettingsView: View {
                             .controlSize(.small)
                             
                             Button("Save") {
-                                viewModel.updateServerUrl()
-                                isEditingServerUrl = false
+                                if viewModel.updateServerUrl() {
+                                    isEditingServerUrl = false
+                                }
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
-                            .disabled(!viewModel.isValidUrl)
                         }
                     }
-                    .padding(.vertical, 8)
+                    if let validationError = viewModel.endpointValidationError {
+                        Text(validationError)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                            .padding(.vertical, 8)
+                    }
                 } else {
                     HStack {
                         Text("Server URL:")
@@ -338,7 +360,7 @@ struct OllamaSettingsView: View {
                     }
                 }
                 
-                Text("Ollama needs to be running on your machine for this to work.")
+                Text("On iPhone, localhost refers to the phone. Use a reachable LAN address for the Mac running Ollama, such as http://192.168.1.10:11434.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.top, 4)
@@ -355,10 +377,41 @@ struct OllamaSettingsView: View {
     #endif
     
     
+    private var helperTransportSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let helperID = viewModel.helperID {
+                Label("Via LangToolsHelper", systemImage: "lock.shield")
+                    .font(.headline)
+                Text(viewModel.helperName ?? "Paired Mac").font(.title3)
+                Text(helperID).font(.caption2).foregroundStyle(.secondary)
+                if viewModel.isCheckingConnection {
+                    ProgressView("Verifying connection…")
+                } else if let error = viewModel.connectionError ?? ollamaService.error?.localizedDescription {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                } else if viewModel.isConnected {
+                    Label("Connected", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                } else {
+                    Text("Not connected").foregroundStyle(.secondary)
+                }
+                Button("Retry Helper") { viewModel.checkConnection(); ollamaService.refreshModels() }
+                Button("Disconnect Helper", role: .destructive) { viewModel.disconnectHelper() }
+                    .accessibilityIdentifier("mobile-helper-disconnect")
+                Button("Use Direct Ollama Instead") { viewModel.useDirect() }
+                    .accessibilityIdentifier("mobile-helper-use-direct")
+            } else {
+                Label("Direct Ollama", systemImage: "network").font(.headline)
+            }
+            Text("To connect securely via your Mac, choose Connect iPhone in LangToolsHelper, then scan its QR using the iPhone Camera. Direct Ollama remains an explicit alternative below; saving a direct URL switches transport.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 8)
+    }
+
     // Keep the original mobile layout
     private var mobileLayout: some View {
         NavigationStack {
             List {
+                Section(header: Text("Ollama Transport")) { helperTransportSection }
                 Section(header: Text("Available Models")) {
                     if ollamaService.isLoading {
                         ProgressView()
@@ -446,11 +499,16 @@ struct OllamaSettingsView: View {
                                     viewModel.editingServerUrl = viewModel.serverUrl
                                 }
                                 Button("Save") {
-                                    viewModel.updateServerUrl()
-                                    isEditingServerUrl = false
+                                    if viewModel.updateServerUrl() {
+                                        isEditingServerUrl = false
+                                    }
                                 }
-                                .disabled(!viewModel.isValidUrl)
                             }
+                        }
+                        if let validationError = viewModel.endpointValidationError {
+                            Text(validationError)
+                                .font(.caption)
+                                .foregroundColor(.red)
                         }
                     } else {
                         HStack {
@@ -469,6 +527,10 @@ struct OllamaSettingsView: View {
                         }
                     }
                     
+                    Text("On iPhone, localhost is the phone. Enter the reachable LAN address of the Mac running Ollama.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
                     if viewModel.isConnected {
                         HStack {
                             Circle()
@@ -501,9 +563,8 @@ struct OllamaSettingsView: View {
             })
             .listStyle(InsetGroupedListStyle())
             #endif
-            .onAppear {
-                ollamaService.refreshModels()
-            }
+            .onAppear { viewModel.activate() }
+            .onChange(of: ollamaService.transportRevision) { _, _ in viewModel.transportDidChange() }
             .refreshable {
                 ollamaService.refreshModels()
             }
@@ -522,84 +583,152 @@ extension OllamaSettingsView {
         @Published var pullError: String? = nil
         
         // Server configuration
+        @Published var helperID: String?
+        @Published var helperName: String?
         @Published var serverUrl: String
         @Published var editingServerUrl: String = ""
         @Published var isConnected: Bool = false
         @Published var isCheckingConnection: Bool = false
         @Published var connectionError: String? = nil
-        
+        @Published var endpointValidationError: String? = nil
+
+        private let ollamaService: OllamaService
+        private let endpointConfiguration: OllamaEndpointConfiguration
+        private var connectionGeneration: UInt64 = 0
+        private var loadGeneration: UInt64 = 0
+        private var pullGeneration: UInt64 = 0
+
         var isValidUrl: Bool {
-            guard let url = URL(string: editingServerUrl) else { return false }
-            return url.scheme != nil && url.host != nil
+            (try? OllamaEndpointConfiguration.validate(editingServerUrl)) != nil
         }
-        
-        init() {
-            // Load server URL from UserDefaults or use default
-            self.serverUrl = UserDefaults.standard.string(forKey: "ollamaServerUrl") ?? "http://localhost:11434"
-            self.editingServerUrl = self.serverUrl
-            
-            // Check connection on init
-            checkConnection()
+
+        convenience init() {
+            self.init(ollamaService: .shared)
         }
-        
-        func updateServerUrl() {
-            guard isValidUrl else { return }
-            
-            // Save the new URL
-            serverUrl = editingServerUrl
-            UserDefaults.standard.set(serverUrl, forKey: "ollamaServerUrl")
-            
-            // Update OllamaService with the new URL
-            OllamaService.shared.updateBaseUrl(serverUrl)
-            
-            // Check connection with new URL
-            checkConnection()
+
+        init(
+            ollamaService: OllamaService,
+            endpointConfiguration: OllamaEndpointConfiguration? = nil
+        ) {
+            self.ollamaService = ollamaService
+            let resolvedConfiguration = endpointConfiguration ?? ollamaService.endpointConfiguration
+            self.endpointConfiguration = resolvedConfiguration
+            let snapshot = resolvedConfiguration.snapshot()
+            helperID = snapshot.helperID
+            helperName = snapshot.helperName
+            serverUrl = resolvedConfiguration.directBaseURL.absoluteString
+            editingServerUrl = serverUrl
         }
-        
-        func checkConnection() {
+
+        func activate() {
+            transportDidChange()
+            ollamaService.refreshModels()
+        }
+
+        func transportDidChange() {
+            let snapshot = endpointConfiguration.snapshot()
+            helperID = snapshot.helperID
+            helperName = snapshot.helperName
+            serverUrl = endpointConfiguration.directBaseURL.absoluteString
+            editingServerUrl = serverUrl
+            loadGeneration &+= 1
+            pullGeneration &+= 1
+            loadingModelName = nil
+            isPulling = false
+            pullProgress = 0
+            pullError = nil
+            checkConnection(for: snapshot)
+        }
+
+        func disconnectHelper() {
+            do {
+                try endpointConfiguration.disconnectHelper()
+                ollamaService.transportDidChange()
+                transportDidChange()
+            } catch { connectionError = MobileHelperError.persistence(error.localizedDescription).localizedDescription }
+        }
+
+        func useDirect() {
+            endpointConfiguration.useDirect()
+            ollamaService.transportDidChange()
+            transportDidChange()
+        }
+
+        @discardableResult
+        func updateServerUrl() -> Bool {
+            do {
+                let previousSnapshot = endpointConfiguration.snapshot()
+                let snapshot = try ollamaService.updateEndpoint(editingServerUrl)
+                if snapshot != previousSnapshot {
+                    loadGeneration &+= 1
+                    pullGeneration &+= 1
+                    loadingModelName = nil
+                    isPulling = false
+                    pullProgress = 0
+                    pullError = nil
+                }
+                helperID = snapshot.helperID
+                helperName = snapshot.helperName
+                serverUrl = endpointConfiguration.directBaseURL.absoluteString
+                editingServerUrl = serverUrl
+                endpointValidationError = nil
+                checkConnection(for: snapshot)
+                return true
+            } catch {
+                endpointValidationError = error.localizedDescription
+                return false
+            }
+        }
+
+        func checkConnection(
+            for snapshot: OllamaEndpointConfiguration.Snapshot? = nil
+        ) {
+            let capturedSnapshot = snapshot ?? endpointConfiguration.snapshot()
+            connectionGeneration &+= 1
+            let generation = connectionGeneration
             isCheckingConnection = true
+            isConnected = false
             connectionError = nil
-            
+
             Task {
                 do {
-                    let isReachable = try await OllamaService.shared.checkConnection()
-                    await MainActor.run {
-                        self.isConnected = isReachable
-                        self.isCheckingConnection = false
-                        
-                        if !isReachable {
-                            self.connectionError = "Could not connect to Ollama"
-                        }
-                    }
+                    try await ollamaService.checkConnection(for: capturedSnapshot)
+                    guard generation == connectionGeneration,
+                          endpointConfiguration.isCurrent(capturedSnapshot) else { return }
+                    isConnected = true
+                    isCheckingConnection = false
                 } catch {
-                    await MainActor.run {
-                        self.isConnected = false
-                        self.isCheckingConnection = false
-                        self.connectionError = error.localizedDescription
-                    }
+                    guard generation == connectionGeneration,
+                          endpointConfiguration.isCurrent(capturedSnapshot) else { return }
+                    isConnected = false
+                    isCheckingConnection = false
+                    connectionError = "Could not connect to \(capturedSnapshot.baseURL.absoluteString). \(error.localizedDescription)"
                 }
             }
         }
         
         func toggleModel(_ model: Ollama.Model) {
-            if OllamaService.shared.runningModels.contains(where: { $0.model == model.rawValue }) {
+            if ollamaService.runningModels.contains(where: { $0.model == model.rawValue }) {
                 // Model is already running, no need to do anything
                 return
             }
             
             loadingModelName = model.rawValue
-            
+            loadGeneration &+= 1
+            let generation = loadGeneration
+            let snapshot = endpointConfiguration.snapshot()
+
             Task {
                 do {
-                    try await OllamaService.shared.loadModel(model)
-                    await MainActor.run {
-                        self.loadingModelName = nil
-                    }
+                    try await ollamaService.loadModel(model, for: snapshot)
+                    guard generation == loadGeneration,
+                          endpointConfiguration.isCurrent(snapshot) else { return }
+                    loadingModelName = nil
                 } catch {
-                    await MainActor.run {
-                        self.loadingModelName = nil
-                        print("Failed to load model: \(error)")
-                    }
+                    guard generation == loadGeneration,
+                          endpointConfiguration.isCurrent(snapshot) else { return }
+                    loadingModelName = nil
+                    connectionError = snapshot.isHelper ? MobileHelperError.actionable(error).localizedDescription : error.localizedDescription
                 }
             }
         }
@@ -609,23 +738,28 @@ extension OllamaSettingsView {
             isPulling = true
             pullError = nil
             pullProgress = 0
-            
+            pullGeneration &+= 1
+            let generation = pullGeneration
+            let snapshot = endpointConfiguration.snapshot()
+
             Task {
                 do {
-                    try await OllamaService.shared.pullModel(newModelName) { [weak self] progress in
-                        self?.pullProgress = progress
+                    try await ollamaService.pullModel(newModelName, for: snapshot) { [weak self] progress in
+                        guard let self,
+                              generation == self.pullGeneration,
+                              self.endpointConfiguration.isCurrent(snapshot) else { return }
+                        self.pullProgress = progress
                     }
-                    
-                    await MainActor.run {
-                        self.isPulling = false
-                        self.newModelName = ""
-                        self.pullProgress = 0
-                    }
+                    guard generation == pullGeneration,
+                          endpointConfiguration.isCurrent(snapshot) else { return }
+                    isPulling = false
+                    newModelName = ""
+                    pullProgress = 0
                 } catch {
-                    await MainActor.run {
-                        self.isPulling = false
-                        self.pullError = error.localizedDescription
-                    }
+                    guard generation == pullGeneration,
+                          endpointConfiguration.isCurrent(snapshot) else { return }
+                    isPulling = false
+                    pullError = snapshot.isHelper ? MobileHelperError.actionable(error).localizedDescription : error.localizedDescription
                 }
             }
         }

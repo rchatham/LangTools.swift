@@ -117,12 +117,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
 
-        let ollamaModels: [Model] = {
-            if !OllamaService.shared.availableModels.isEmpty {
-                return OllamaService.shared.availableModels
-            }
-            return cachedOllamaModels
-        }().map { .ollama($0) }
+        let ollamaModels = OllamaEndpointConfiguration.shared.cachedModels().map { Model.ollama($0) }
 
         return standardModels + ollamaModels
     }
@@ -132,19 +127,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         + Anthropic.Model.allCases.map { .anthropic($0) }
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
-        + cachedOllamaModels.map { .ollama($0) }
-    }
-
-    static var cachedOllamaModels: [Ollama.Model] {
-        guard let modelNames = UserDefaults.standard.stringArray(forKey: "ollamaModels") else {
-            return []
-        }
-        return modelNames.compactMap { Ollama.Model(rawValue: $0) }
-    }
-
-    static func updateCachedOllamaModels(_ models: [Ollama.Model]) {
-        let modelNames = models.map { $0.rawValue }
-        UserDefaults.standard.set(modelNames, forKey: "ollamaModels")
+        + OllamaEndpointConfiguration.shared.cachedModels().map { .ollama($0) }
     }
 
     public var apiService: APIService {

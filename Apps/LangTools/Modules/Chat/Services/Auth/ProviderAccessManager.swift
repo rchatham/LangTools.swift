@@ -13,14 +13,17 @@ public final class ProviderAccessManager: ObservableObject {
 
     private let keychainService: KeychainService
     private let sessionStore: AuthSessionStore
+    private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
     private let stateLock = NSLock()
 
     public init(
         keychainService: KeychainService = .shared,
-        sessionStore: AuthSessionStore = .shared
+        sessionStore: AuthSessionStore = .shared,
+        ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared
     ) {
         self.keychainService = keychainService
         self.sessionStore = sessionStore
+        self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
         refresh()
     }
 
@@ -94,7 +97,7 @@ public final class ProviderAccessManager: ObservableObject {
 
     public func validateSelectedModel(_ model: Model) -> Model {
         let available = availableChatModels()
-        if available.contains(model) {
+        if available.contains(model) || model.apiService == .ollama {
             return model
         }
         return available.first ?? model
@@ -196,7 +199,7 @@ public final class ProviderAccessManager: ObservableObject {
 
     private func availableModels(for service: APIService, apiKey: String?, session: AccountSession?) -> [Model] {
         if service == .ollama {
-            return Model.cachedOllamaModels.map { .ollama($0) }
+            return ollamaEndpointConfiguration.cachedModels().map { .ollama($0) }
         }
 
         let hasAPIKey = apiKey?.isEmpty == false
@@ -240,7 +243,7 @@ public final class ProviderAccessManager: ObservableObject {
             case .gemini:
                 return Gemini.Model.allCases.map { .gemini($0) }
             case .ollama:
-                return Model.cachedOllamaModels.map { .ollama($0) }
+                return ollamaEndpointConfiguration.cachedModels().map { .ollama($0) }
             case .serper:
                 return []
             }
