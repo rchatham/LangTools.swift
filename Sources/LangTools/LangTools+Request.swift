@@ -54,10 +54,16 @@ public protocol LangToolsStreamableResponse: Decodable {
     static var empty: Self { get }
     func combining(with: Self) -> Self
     func updating(with accumulated: Self) -> Self
+    /// Validate the accumulated response at EOF, before executing tools or completing
+    /// the stream. Providers that require a terminal record should throw if it is absent.
+    func validateStreamCompletion() throws
 }
 
 extension LangToolsStreamableResponse {
     public func updating(with accumulated: Self) -> Self { self }
+
+    /// By default, EOF is sufficient. Providers opt in to stricter validation.
+    public func validateStreamCompletion() throws {}
 
     public var content: (any LangToolsContent)? { (self as? any LangToolsStreamableChatResponse)?.delta?.content.map { LangToolsTextContent(text: $0) }  ?? (self as? any LangToolsChatResponse)?.message?.content }
 }
