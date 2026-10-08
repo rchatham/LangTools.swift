@@ -53,10 +53,7 @@ public struct ChatSettingsView: View {
             viewModel.applyHydratedHelperConfigurationIfTokenUnedited(port: helper.port)
         }
         .onChange(of: viewModel.isProxyContext) { _, isProxy in
-            if isProxy {
-                showingOllamaSettings = false
-                if selectedTab == .localModels { selectedTab = .general }
-            }
+            // Local model management remains available in proxy modes.
         }
     }
 
@@ -98,7 +95,7 @@ public struct ChatSettingsView: View {
                     .listRowSeparator(.hidden)
                 #endif
 
-                ForEach(SettingsTab.allCases.filter { !viewModel.isProxyContext || $0 != .localModels }) { tab in
+                ForEach(SettingsTab.allCases) { tab in
                     Button(action: {
                         selectedTab = tab
                         selectedCustomTab = nil
@@ -287,7 +284,6 @@ public struct ChatSettingsView: View {
             #endif
 
             #if !os(watchOS) && !os(tvOS)
-            if !viewModel.isProxyContext {
             Section(header: Text("Local Models")) {
                 Button(action: {
                     showingOllamaSettings = true
@@ -300,7 +296,6 @@ public struct ChatSettingsView: View {
                             .foregroundColor(.gray)
                     }
                 }
-            }
             }
             #endif
 
@@ -540,7 +535,9 @@ public struct ChatSettingsView: View {
                                 .font(.headline)
                                 .foregroundColor(.secondary)
 
-                            Text(viewModel.isProxyContext ? "Models are provided by the Botsworth server. No personal provider API key is required." : modelDescription(for: viewModel.model))
+                            Text(viewModel.isProxyContext && ![ModelRoute.ollama, .ollamaCloud].contains(viewModel.model.route)
+                                 ? "Models are provided by the Botsworth server. No personal provider API key is required."
+                                 : modelDescription(for: viewModel.model))
                                 .font(.body)
                         }
 
@@ -1305,11 +1302,16 @@ extension ChatSettingsView {
             self.conversationSettingsStore = conversationSettingsStore
             modelSource?.$state.sink { [weak self] state in
                 guard let self else { return }
-                if case .ready(let models) = state, !models.contains(self.model), let first = models.first {
-                    self.model = first
+                if case .ready = state {
+                    // Use reconciledSelection so local ollama/Cloud choices are never
+                    // replaced by the first hosted model.
+                    self.model = self.modelSource?.reconciledSelection(self.model, state: state) ?? self.model
                 }
                 self.objectWillChange.send()
             }.store(in: &cancellables)
+            modelSource?.$independentModels
+                .sink { [weak self] _ in self?.objectWillChange.send() }
+                .store(in: &cancellables)
             // ToolManager is a nested ObservableObject. SwiftUI won't re-render this view
             // when ToolManager's @Published properties change unless we relay its
             // objectWillChange through our own.
@@ -1323,7 +1325,7 @@ extension ChatSettingsView {
         }
 
         public var availableModels: [Model] {
-            if let modelSource, modelSource.isProxy { return modelSource.models }
+            if let modelSource, modelSource.isProxy { return modelSource.allModels }
             return accessManager.availableChatModels()
         }
 

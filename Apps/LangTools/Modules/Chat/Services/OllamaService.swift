@@ -32,7 +32,7 @@ public class OllamaService: ObservableObject {
         )
     }
 
-    @Published var availableModels: [Ollama.Model] = []
+    @Published public var availableModels: [Ollama.Model] = []
     @Published var runningModels: [Ollama.ListRunningModelsResponse.RunningModelInfo] = []
     @Published var isLoading = false
     @Published public var error: Error?
