@@ -298,6 +298,13 @@ public class MessageService {
     /// Register this from the app target to keep `Chat` agnostic of specific agents.
     public var agentResultParser: ((_ result: String, _ agentName: String) -> Message?)?
 
+    /// Optional hook called when a tool or agent completes successfully.
+    /// Receives the raw result string, the tool/agent name, and the call's kind;
+    /// returns an optional `ChatToolCall.DisplayContent` to render rich content
+    /// beneath the call card. When this returns `nil`, the legacy
+    /// `agentResultParser` is still consulted for agents.
+    public var resultContentParser: ((_ result: String, _ name: String, _ kind: ChatToolCall.Kind) -> ChatToolCall.DisplayContent?)?
+
     /// Snapshot of tools filtered by the current ToolManager state.
     /// Delegates to `ToolManager.filteredTools()` for the enabled-id set, then
     /// intersects with `self.tools` so future changes to ToolManager filtering
@@ -788,8 +795,12 @@ extension MessageService {
                            $0.id == identity.uiCallID && $0.kind == .tool && $0.status == .pending
                        }) {
                         if let result {
-                            message.toolCalls[index].status = result.is_error ? .failure : .success
+                            let isSuccess = !result.is_error
+                            message.toolCalls[index].status = isSuccess ? .success : .failure
                             message.toolCalls[index].result = result.result
+                            if isSuccess {
+                                applyToolDisplayContent(result: result.result, name: identity.name ?? "", kind: .tool, toCallAt: index, in: message, keepsToolCallsInHistory: keepsToolCallsInHistory, generatedMessageIDs: &generatedMessageIDs)
+                            }
                         } else {
                             message.toolCalls[index].status = .failure
                             message.toolCalls[index].result = "Tool call ended without a completion result."
@@ -804,6 +815,9 @@ extension MessageService {
                             generatedMessageIDs: &generatedMessageIDs
                         )
                         appendOrphanToolCompletion(result, identity: identity, to: anchor)
+                        if !result.is_error, let lastIdx = anchor.toolCalls.indices.last {
+                            applyToolDisplayContent(result: result.result, name: identity?.name ?? "tool", kind: .tool, toCallAt: lastIdx, in: anchor, keepsToolCallsInHistory: keepsToolCallsInHistory, generatedMessageIDs: &generatedMessageIDs)
+                        }
                         toolCallTracker.recordToolAnchor(anchor.uuid)
                         toolBreakOccurred = anchor.uuid == anchorMessageID
                         updatedMessage = anchor
@@ -816,7 +830,10 @@ extension MessageService {
                         responseToMessageID: responseToMessageID,
                         generatedMessageIDs: &generatedMessageIDs
                     )
-                    anchor.applyToolEvent(.toolCompleted(result))
+                    let completedIdx = anchor.applyToolEventReturningCompletedIndex(.toolCompleted(result))
+                    if let result, !result.is_error, let idx = completedIdx, anchor.toolCalls.indices.contains(idx) {
+                        applyToolDisplayContent(result: result.result, name: anchor.toolCalls[idx].name, kind: .tool, toCallAt: idx, in: anchor, keepsToolCallsInHistory: keepsToolCallsInHistory, generatedMessageIDs: &generatedMessageIDs)
+                    }
                     toolBreakOccurred = true
                     updatedMessage = anchor
                 }
@@ -1002,6 +1019,28 @@ extension MessageService {
         return messages.first { $0.uuid == id && $0.isAssistant }
     }
 
+    /// Applies `resultContentParser` output to a completed tool call.
+    private func applyToolDisplayContent(
+        result: String, name: String, kind: ChatToolCall.Kind,
+        toCallAt index: Int, in message: Message,
+        keepsToolCallsInHistory: Bool, generatedMessageIDs: inout Set<UUID>
+    ) {
+        guard let displayContent = resultContentParser?(result, name, kind) else { return }
+        guard message.toolCalls.indices.contains(index) else { return }
+        if keepsToolCallsInHistory {
+            message.toolCalls[index].displayContent = displayContent
+            message.providerToolResults[message.toolCalls[index].id] = result
+            message.providerToolResultServices[message.toolCalls[index].id] = UserDefaults.model.apiService
+        } else {
+            let cardMessage = Message.contentCards(ContentCardsContent(
+                cardType: displayContent.type, message: displayContent.summary,
+                cardsJSON: displayContent.json, cardCount: displayContent.itemCount))
+            cardMessage.responseToMessageID = message.responseToMessageID
+            generatedMessageIDs.insert(cardMessage.uuid)
+            messages.append(cardMessage)
+        }
+    }
+
     /// Marks every pending tool call owned by this send as failed so cards do
     /// not spin forever when the stream fails or ends without a completion
     /// result. Completed calls are left untouched.
@@ -1087,16 +1126,42 @@ extension MessageService {
             last.toolCalls = calls
 
         case .toolCompleted(let agent, let result):
-            // result can be nil when a tool produces no output; still complete the
-            // pending child so it doesn't stay stuck on the spinner.
             var calls = last.toolCalls
-            Self.completePendingChild(ofAgent: agent, result: result ?? "", status: .success, in: &calls)
+            let resolvedResult = result ?? ""
+            let completedIdentity = Self.completePendingChild(ofAgent: agent, result: resolvedResult, status: .success, in: &calls)
+            if let identity = completedIdentity,
+               let displayContent = resultContentParser?(resolvedResult, identity.name, .tool) {
+                if keepsToolCallsInHistory {
+                    Self.attachDisplayContentToCompletedChild(ofAgent: agent, childID: identity.id, displayContent: displayContent, in: &calls)
+                } else {
+                    let cardMessage = Message.contentCards(ContentCardsContent(cardType: displayContent.type, message: displayContent.summary, cardsJSON: displayContent.json, cardCount: displayContent.itemCount))
+                    cardMessage.responseToMessageID = last.responseToMessageID
+                    generatedMessageIDs.insert(cardMessage.uuid)
+                    messages.append(cardMessage)
+                }
+            }
             last.toolCalls = calls
 
         case .completed(let agent, let result, let is_error):
             var calls = last.toolCalls
             let status: ChatToolCall.Status = is_error ? .failure : .success
-            if !is_error, let cardMessage = agentResultParser?(result, agent) {
+            let displayContent = (!is_error) ? resultContentParser?(result, agent, .agent) : nil
+            if let displayContent {
+                if keepsToolCallsInHistory {
+                    if let callID = Self.setAgentStatus(agent, status: .success, result: result, in: &calls, displayContent: displayContent) {
+                        last.providerToolResults[callID] = result
+                        last.providerToolResultServices[callID] = replayService
+                    }
+                } else {
+                    _ = Self.setAgentStatus(agent, status: .success, result: result, in: &calls)
+                    let cardMessage = Message.contentCards(ContentCardsContent(cardType: displayContent.type, message: displayContent.summary, cardsJSON: displayContent.json, cardCount: displayContent.itemCount))
+                    cardMessage.responseToMessageID = last.responseToMessageID
+                    generatedMessageIDs.insert(cardMessage.uuid)
+                    messages.append(cardMessage)
+                }
+                last.toolCalls = calls
+                toolBreakOccurred = true
+            } else if !is_error, let cardMessage = agentResultParser?(result, agent) {
                 if let callID = Self.setAgentStatus(agent, status: .success, result: nil, in: &calls),
                    keepsToolCallsInHistory {
                     last.providerToolResults[callID] = result
@@ -1177,16 +1242,18 @@ extension MessageService {
     }
 
     /// Completes the oldest pending tool child of the most recent pending agent
-    /// invocation. Agent children are never consumed by tool completion/error events.
-    @MainActor
-    static func completePendingChild(ofAgent agent: String, result: String, status: ChatToolCall.Status, in calls: inout [ChatToolCall]) {
+    /// invocation. Returns the completed child's `(id, name)` for precise
+    /// downstream matching, or `nil` when no pending tool child was found.
+    @MainActor @discardableResult
+    static func completePendingChild(ofAgent agent: String, result: String, status: ChatToolCall.Status, in calls: inout [ChatToolCall]) -> (id: String, name: String)? {
+        var identity: (id: String, name: String)?
         _ = updateMostRecentPendingAgent(agent, in: &calls) { call in
-            guard let index = call.children.firstIndex(where: {
-                $0.kind == .tool && $0.status == .pending
-            }) else { return }
+            guard let index = call.children.firstIndex(where: { $0.kind == .tool && $0.status == .pending }) else { return }
             call.children[index].status = status
             call.children[index].result = result
+            identity = (call.children[index].id, call.children[index].name)
         }
+        return identity
     }
 
     /// Reconciles every pending descendant of the most recent matching invocation.
@@ -1200,17 +1267,26 @@ extension MessageService {
 
     /// Terminates the most recent pending invocation and reconciles all of its
     /// descendants without modifying earlier terminal invocations.
-    @MainActor
-    @discardableResult
-    static func setAgentStatus(_ agent: String, status: ChatToolCall.Status, result: String?, in calls: inout [ChatToolCall]) -> String? {
+    @MainActor @discardableResult
+    static func setAgentStatus(_ agent: String, status: ChatToolCall.Status, result: String?, in calls: inout [ChatToolCall], displayContent: ChatToolCall.DisplayContent? = nil) -> String? {
         var updatedCallID: String?
         _ = updateMostRecentPendingAgent(agent, in: &calls) { call in
             updatedCallID = call.id
             call.status = status
             if let result { call.result = result }
+            call.displayContent = displayContent
             reconcilePendingDescendants(in: &call.children, status: status)
         }
         return updatedCallID
+    }
+
+    /// Attaches `displayContent` to the completed tool child identified by `childID`.
+    @MainActor
+    static func attachDisplayContentToCompletedChild(ofAgent agent: String, childID: String, displayContent: ChatToolCall.DisplayContent, in calls: inout [ChatToolCall]) {
+        _ = updateMostRecentPendingAgent(agent, in: &calls) { call in
+            guard let index = call.children.firstIndex(where: { $0.id == childID && $0.kind == .tool }) else { return }
+            call.children[index].displayContent = displayContent
+        }
     }
 
     @MainActor

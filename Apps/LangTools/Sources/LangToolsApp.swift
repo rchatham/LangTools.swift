@@ -145,6 +145,7 @@ struct ChatContainerView: View {
             MessageService(agents: agents)
         }
         service.agentResultParser = ContentCardRegistry.shared.agentResultParser
+        service.resultContentParser = ContentCardRegistry.shared.resultContentParser
         _messageService = StateObject(wrappedValue: service)
         self.voiceInputHandler = voiceInputHandler
     }
@@ -161,6 +162,12 @@ struct ChatContainerView: View {
                           case .contentCards(let content) = message.contentType
                     else { return nil }
                     return AnyView(ContentCardRegistry.shared.view(for: content))
+                },
+                toolCallContent: { call in
+                    guard ToolSettings.shared.richContentEnabled,
+                          let displayContent = call.displayContent
+                    else { return nil }
+                    return AnyView(ContentCardRegistry.shared.view(for: displayContent))
                 }
             )
         }

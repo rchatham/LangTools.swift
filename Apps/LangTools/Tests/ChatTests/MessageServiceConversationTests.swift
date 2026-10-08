@@ -8,6 +8,14 @@ import XCTest
 
 @MainActor
 final class MessageServiceConversationTests: XCTestCase {
+
+    override func setUp() {
+        super.setUp()
+        // Pin safe defaults so a dirty UserDefaults from a prior crashed run
+        // never leaks into history-dependent tests.
+        ToolSettings.shared.keepsToolCallsInHistory = true
+    }
+
     func testSendsReuseConversationAndClearRotatesBeforeCleanup() async throws {
         let client = ConversationNetworkStub()
         let service = MessageService(networkClient: client)

@@ -504,6 +504,30 @@ extension Message {
         }
     }
 
+    /// Returns the index of the completed tool call for `.toolCompleted` events,
+    /// or `nil` for `.toolCalled`/orphan appends. Internal — used by
+    /// `MessageService` for precise display-content attachment without breaking
+    /// the public `applyToolEvent` Void signature.
+    func applyToolEventReturningCompletedIndex(_ event: LangToolsToolEvent) -> Int? {
+        switch event {
+        case .toolCalled:
+            applyToolEvent(event)
+            return nil
+        case .toolCompleted(let result):
+            guard result != nil else { applyToolEvent(event); return nil }
+            // Save the index that `applyToolEvent` will complete (last pending).
+            let pendingIndex = toolCalls.lastIndex(where: { $0.kind == .tool && $0.status == .pending })
+            let countBefore = toolCalls.count
+            applyToolEvent(event)
+            if let idx = pendingIndex, toolCalls.count == countBefore {
+                return idx
+            }
+            // Orphan append: a new call was added.
+            if toolCalls.count > countBefore { return toolCalls.indices.last }
+            return nil
+        }
+    }
+
     /// Marks tool calls that never emitted a completion as failed while leaving
     /// already completed calls untouched.
     @discardableResult
