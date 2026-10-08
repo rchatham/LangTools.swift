@@ -13,7 +13,10 @@ import XCTest
 
 @MainActor
 final class MR21SettingsCapabilitiesTests: XCTestCase {
-    private let botsworthSettings = ChatSettingsView.SupportedSettings(
+    /// Botsworth now honors both host capabilities (agent-model override and
+    /// advanced generation) upstream, so its host uses the defaults. The
+    /// false/false configuration remains covered as a generic opt-out host.
+    private let optOutSettings = ChatSettingsView.SupportedSettings(
         agentModelOverride: false, advancedGeneration: false
     )
 
@@ -28,11 +31,11 @@ final class MR21SettingsCapabilitiesTests: XCTestCase {
         XCTAssertEqual(view.supportedSettings.generationCapabilities(for: .openAI(.gpt4o)), Model.openAI(.gpt4o).generationCapabilities)
     }
 
-    func testBotsworthHidesOnlyNewGenerationControlsWithoutChangingSavedValues() throws {
+    func testOptOutHostHidesOnlyNewGenerationControlsWithoutChangingSavedValues() throws {
         let preferences = MR21PreferenceSnapshot()
         defer { preferences.restore() }
         let original = Model.openAI(.gpt4o).generationCapabilities
-        let filtered = botsworthSettings.generationCapabilities(for: .openAI(.gpt4o))
+        let filtered = optOutSettings.generationCapabilities(for: .openAI(.gpt4o))
         XCTAssertEqual(filtered.maximumOutputField, original.maximumOutputField)
         XCTAssertEqual(filtered.maximumOutputTokenBound, original.maximumOutputTokenBound)
         XCTAssertEqual(filtered.supportsTemperature, original.supportsTemperature)
@@ -45,12 +48,12 @@ final class MR21SettingsCapabilitiesTests: XCTestCase {
         XCTAssertFalse(filtered.supportsStop)
         let ollama = try XCTUnwrap(Model(rawValue: "ollama/synthetic-model"))
         XCTAssertTrue(ChatSettingsView.SupportedSettings().generationCapabilities(for: ollama).supportsTopK)
-        XCTAssertFalse(botsworthSettings.generationCapabilities(for: ollama).supportsTopK)
+        XCTAssertFalse(optOutSettings.generationCapabilities(for: ollama).supportsTopK)
         let settings = try ChatGenerationSettings(temperature: 0.4, topP: 0.8, seed: 21)
         let store = MR21GenerationStore(settings: settings)
         let model = ChatSettingsView.ViewModel(clearMessages: {}, generationSettingsStore: store)
         model.generationSettings = settings
-        _ = ChatSettingsView(viewModel: model, supportedSettings: botsworthSettings)
+        _ = ChatSettingsView(viewModel: model, supportedSettings: optOutSettings)
         XCTAssertEqual(model.generationSettings, settings)
         XCTAssertEqual(store.settings, settings)
         XCTAssertEqual(store.saveCount, 0)
@@ -90,7 +93,7 @@ final class MR21SettingsCapabilitiesTests: XCTestCase {
         ToolSettings.shared.toolTimeoutSeconds = nil
         ToolSettings.shared.agentModelOverride = nil
         let output = ProcessInfo.processInfo.environment["MR21_SETTINGS_ARTIFACT_DIR"]
-        for (name, support) in [("botsworth", botsworthSettings), ("sample", ChatSettingsView.SupportedSettings())] {
+        for (name, support) in [("botsworth", ChatSettingsView.SupportedSettings()), ("optout", optOutSettings)] {
             for width in [700, 1000] {
                 let generation = MR21GenerationStore(settings: try ChatGenerationSettings(
                     maxOutputTokens: 2_048, temperature: 0.4, topP: 0.8, seed: 21
@@ -112,7 +115,7 @@ final class MR21SettingsCapabilitiesTests: XCTestCase {
                 try press(identifier: "settings.ToolsTab", in: host)
                 var text = accessibleText(in: host)
                 XCTAssertTrue(text.contains("Tool Execution"), text)
-                XCTAssertFalse(text.contains("Max Iterations"), text)
+                XCTAssertTrue(text.contains("Max Iterations"), "Restored iteration cap control is visible in every host: \(text)")
                 XCTAssertEqual(text.contains("Agent Model Override"), support.agentModelOverride, text)
                 if let output { try snapshot(host, directory: output, name: "mr21-settings-\(name)-tools-\(width)") }
 

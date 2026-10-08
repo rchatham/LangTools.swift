@@ -1776,6 +1776,17 @@ extension ChatSettingsView {
 
                     HStack(spacing: 16) {
                         VStack(alignment: .leading, spacing: 4) {
+                            Text("Max Iterations")
+                                .font(.caption)
+                            TextField("Unlimited", value: Binding(
+                                get: { viewModel.toolSettings.maxToolIterations },
+                                set: { viewModel.toolSettings.maxToolIterations = $0 }
+                            ), format: .number.grouping(.never))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
                             Text("Timeout (s) — stored only")
                                 .font(.caption)
                             TextField("None", value: Binding(

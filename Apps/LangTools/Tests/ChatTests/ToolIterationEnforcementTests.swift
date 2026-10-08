@@ -3,69 +3,80 @@ import ChatUI
 import Foundation
 import LangTools
 import OpenAI
+import ToolKit
 import XCTest
 @testable import Chat
 
+/// Enforces the configured Max Iterations budget at the MessageService seam:
+/// over-budget callbacks never execute, and every requested call still gets an
+/// invocation record — excess calls surface as inline failures the model can
+/// see and respond to (no orphans, no alerts).
 @MainActor
-final class DeferredToolIterationLimitTests: XCTestCase {
-    func testStoredIterationCapDoesNotManufactureFailuresOrOrphanSuccesses() async throws {
-        let preferences = DeferredIterationPreferenceSnapshot()
+final class ToolIterationEnforcementTests: XCTestCase {
+    func testBudgetStopsExcessCallbacksAndSurfacesInlineFailures() async throws {
+        let preferences = ToolSettingsAmbientSnapshot()
         let oldCap = ToolSettings.shared.maxToolIterations
         let oldHistory = ToolSettings.shared.keepsToolCallsInHistory
+        let oldToolsEnabled = ToolManager.shared.toolsEnabled
+        let oldSyntheticEnabled = ToolManager.shared["synthetic_side_effect"]
         defer {
             ToolSettings.shared.maxToolIterations = oldCap
             ToolSettings.shared.keepsToolCallsInHistory = oldHistory
+            ToolManager.shared.toolsEnabled = oldToolsEnabled
+            ToolManager.shared["synthetic_side_effect"] = oldSyntheticEnabled
             preferences.restore()
         }
         ToolSettings.shared.maxToolIterations = 1
         ToolSettings.shared.keepsToolCallsInHistory = true
         UserDefaults.model = .openAI(.gpt4o)
+        ToolManager.shared.toolsEnabled = true
 
-        let counter = DeferredIterationCounter()
-        let client = DeferredIterationClient(counter: counter)
+        let counter = ToolIterationCounter()
+        // `filteredTools(for:)` intersects service tools with ToolManager's
+        // enabled registrations, so the synthetic tool must be registered for
+        // `budgetedTools(_:)` to wrap — and therefore budget — its callback.
+        ToolManager.shared.register(
+            ToolConfiguration(
+                id: "synthetic_side_effect",
+                displayName: "Synthetic Side Effect",
+                description: "Deterministic test callback",
+                iconName: "wrench",
+                callback: { _ in await counter.record() },
+                toolSchema: OpenAI.Tool.FunctionSchema.Parameters()
+            )
+        )
+
+        let client = ToolIterationEnforcementClient()
         defer { client.session.invalidateAndCancel() }
         let service = MessageService(networkClient: client)
-        var updatedCalls: [ChatToolCall] = []
-        service.messageUpdatedCallback = { message in
-            updatedCalls.append(contentsOf: message.toolCalls)
-        }
         let operation = service.sendOperation(message: "Run five synthetic callbacks", stream: true)
         try await operation.waitUntilEstablished()
         try await operation.waitForCompletion()
 
         let callbackCount = await counter.count
-        XCTAssertEqual(callbackCount, 5, "Real provider tool callbacks run beyond the stored cap")
+        XCTAssertEqual(callbackCount, 1, "The budget stops callback execution after the first iteration")
+
         let calls = service.messages.flatMap(\.toolCalls)
-        XCTAssertEqual(calls.count, 5, "One invocation record per callback, no orphan duplicates")
+        XCTAssertEqual(calls.count, 5, "One invocation record per requested call")
         XCTAssertEqual(Set(calls.map(\.id)).count, 5, "UI invocation identities remain distinct")
-        XCTAssertTrue(calls.allSatisfy { $0.status == .success })
+        XCTAssertTrue(calls.allSatisfy { $0.status != .pending }, "Every card settles — no orphans")
         XCTAssertTrue(calls.allSatisfy { $0.name == "synthetic_side_effect" })
-        XCTAssertEqual(calls.map(\.result), (1...5).map { "side-effect-\($0)" })
-        XCTAssertFalse(updatedCalls.contains { $0.status == .failure }, "No transient falsely failed cards either")
+        let successes = calls.filter { $0.status == .success }
+        XCTAssertEqual(successes.count, 1, "Only the budgeted iteration succeeds")
+        XCTAssertEqual(successes.first?.result, "side-effect-1")
+        let failures = calls.filter { $0.status == .failure }
+        XCTAssertEqual(failures.count, 4, "Excess iterations surface as inline failures")
+        XCTAssertTrue(
+            failures.allSatisfy { $0.result == "Tool iteration limit reached." },
+            "Inline failures explain the budget: \(calls.map(\.result))"
+        )
         XCTAssertEqual(ToolSettings.shared.maxToolIterations, 1, "Persisted compatibility value is retained")
         XCTAssertEqual(UserDefaults.standard.integer(forKey: "maxToolIterations"), 1)
     }
 
 }
 
-/// Restore only changed keys from a complete snapshot, including missing keys.
-/// This avoids persisting untouched global-domain defaults into the app domain.
-private struct DeferredIterationPreferenceSnapshot {
-    private let original = UserDefaults.standard.dictionaryRepresentation()
-    func restore() {
-        let defaults = UserDefaults.standard
-        let current = defaults.dictionaryRepresentation()
-        for key in Set(original.keys).union(current.keys) {
-            let before = original[key] as? NSObject
-            let after = current[key] as? NSObject
-            guard before != after else { continue }
-            if let value = original[key] { defaults.set(value, forKey: key) }
-            else { defaults.removeObject(forKey: key) }
-        }
-    }
-}
-
-private actor DeferredIterationCounter {
+private actor ToolIterationCounter {
     private(set) var count = 0
     func record() -> String {
         count += 1
@@ -74,26 +85,30 @@ private actor DeferredIterationCounter {
 }
 
 /// Exercise LangTools' actual callback/completion loop behind MessageService's
-/// public client seam. URLProtocol serves synthetic responses; no live model.
-private final class DeferredIterationClient: NetworkClientProtocol {
-    static let shared: any NetworkClientProtocol = DeferredIterationClient(counter: DeferredIterationCounter())
+/// public client seam. The budgeted tools MessageService passes in are routed
+/// through the same provider conversion seam the real client uses
+/// (`tools?.convertTools()`), so the iteration budget applies to the stub's
+/// callbacks exactly as it does in production. URLProtocol serves synthetic
+/// responses; no live model.
+private final class ToolIterationEnforcementClient: NetworkClientProtocol {
+    static let shared: any NetworkClientProtocol = ToolIterationEnforcementClient()
     let session: URLSession
     private let provider: OpenAI
-    private let counter: DeferredIterationCounter
 
-    init(counter: DeferredIterationCounter) {
-        self.counter = counter
+    init() {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [DeferredIterationURLProtocol.self]
+        configuration.protocolClasses = [ToolIterationEnforcementURLProtocol.self]
         session = URLSession(configuration: configuration)
         provider = OpenAI(baseURL: URL(string: "https://mr21-synthetic.invalid/v1/")!, apiKey: "synthetic-not-a-credential", session: session)
     }
 
     func streamChatCompletionRequest(messages: [Message], model: Model, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> AsyncThrowingStream<String, Error> {
-        let tool = OpenAI.Tool(name: "synthetic_side_effect", description: "Deterministic test callback", tool_schema: .init(properties: [:])) { [counter] _, _ in
-            await counter.record()
-        }
-        let request = OpenAI.ChatCompletionRequest(model: .gpt4o, messages: messages.toOpenAIMessages(), tools: [tool], toolEventHandler: toolEventHandler)
+        let request = OpenAI.ChatCompletionRequest(
+            model: .gpt4o,
+            messages: messages.toOpenAIMessages(),
+            tools: tools?.convertTools(),
+            toolEventHandler: toolEventHandler
+        )
         return AsyncThrowingStream { continuation in
             let task = Task { [provider] in
                 do {
@@ -117,7 +132,7 @@ private final class DeferredIterationClient: NetworkClientProtocol {
     func disconnectAccount(_ provider: AccountLoginProvider) async throws {}
 }
 
-private final class DeferredIterationURLProtocol: URLProtocol {
+private final class ToolIterationEnforcementURLProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "mr21-synthetic.invalid" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
