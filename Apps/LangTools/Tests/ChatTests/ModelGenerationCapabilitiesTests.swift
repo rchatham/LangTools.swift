@@ -78,6 +78,12 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
                 XCTAssertEqual(capabilities.maximumOutputField, .openAIMaxCompletionTokens, providerModel.rawValue)
                 XCTAssertEqual(capabilities.maximumOutputTokenBound, bound, providerModel.rawValue)
                 XCTAssertFalse(capabilities.supportsTemperature, providerModel.rawValue)
+                XCTAssertTrue(capabilities.supportsTopP, providerModel.rawValue)
+                XCTAssertFalse(capabilities.supportsFrequencyPenalty, providerModel.rawValue)
+                XCTAssertFalse(capabilities.supportsPresencePenalty, providerModel.rawValue)
+                XCTAssertFalse(capabilities.supportsTopK, providerModel.rawValue)
+                XCTAssertFalse(capabilities.supportsSeed, providerModel.rawValue)
+                XCTAssertTrue(capabilities.supportsStop, providerModel.rawValue)
             } else {
                 XCTAssertFalse(capabilities.supportsAnyOverride, providerModel.rawValue)
                 XCTAssertNil(capabilities.maximumOutputTokenBound, providerModel.rawValue)
@@ -122,6 +128,9 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
             XCTAssertEqual(capabilities.maximumOutputField, .openAIMaxCompletionTokens, modelID)
             XCTAssertEqual(capabilities.maximumOutputTokenBound, bound, modelID)
             XCTAssertFalse(capabilities.supportsTemperature, modelID)
+            XCTAssertTrue(capabilities.supportsTopP, modelID)
+            XCTAssertFalse(capabilities.supportsFrequencyPenalty, modelID)
+            XCTAssertTrue(capabilities.supportsStop, modelID)
         }
     }
 
@@ -135,6 +144,12 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
                 providerModel.rawValue
             )
             XCTAssertTrue(capabilities.supportsTemperature, providerModel.rawValue)
+            XCTAssertTrue(capabilities.supportsTopP, providerModel.rawValue)
+            XCTAssertTrue(capabilities.supportsTopK, providerModel.rawValue)
+            XCTAssertFalse(capabilities.supportsFrequencyPenalty, providerModel.rawValue)
+            XCTAssertFalse(capabilities.supportsPresencePenalty, providerModel.rawValue)
+            XCTAssertFalse(capabilities.supportsSeed, providerModel.rawValue)
+            XCTAssertTrue(capabilities.supportsStop, providerModel.rawValue)
         }
         XCTAssertEqual(Set(Anthropic.Model.allCases.map(\.rawValue)).intersection(anthropicBounds.keys), Set(anthropicBounds.keys))
     }
@@ -146,6 +161,12 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
                 XCTAssertEqual(capabilities.maximumOutputField, .openAIMaxTokens, providerModel.rawValue)
                 XCTAssertEqual(capabilities.maximumOutputTokenBound, ChatGenerationSettings.tokenRange.upperBound, providerModel.rawValue)
                 XCTAssertTrue(capabilities.supportsTemperature, providerModel.rawValue)
+                XCTAssertTrue(capabilities.supportsTopP, providerModel.rawValue)
+                XCTAssertTrue(capabilities.supportsFrequencyPenalty, providerModel.rawValue)
+                XCTAssertTrue(capabilities.supportsPresencePenalty, providerModel.rawValue)
+                XCTAssertFalse(capabilities.supportsTopK, providerModel.rawValue)
+                XCTAssertTrue(capabilities.supportsSeed, providerModel.rawValue)
+                XCTAssertTrue(capabilities.supportsStop, providerModel.rawValue)
                 XCTAssertTrue(capabilities.maximumOutputWarning?.contains("not a model limit") == true, providerModel.rawValue)
             } else {
                 XCTAssertFalse(capabilities.supportsAnyOverride, providerModel.rawValue)
@@ -165,6 +186,12 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
                 providerModel.rawValue
             )
             XCTAssertTrue(capabilities.supportsTemperature, providerModel.rawValue)
+            XCTAssertTrue(capabilities.supportsTopP, providerModel.rawValue)
+            XCTAssertTrue(capabilities.supportsFrequencyPenalty, providerModel.rawValue)
+            XCTAssertTrue(capabilities.supportsPresencePenalty, providerModel.rawValue)
+            XCTAssertFalse(capabilities.supportsTopK, providerModel.rawValue)
+            XCTAssertTrue(capabilities.supportsSeed, providerModel.rawValue)
+            XCTAssertTrue(capabilities.supportsStop, providerModel.rawValue)
         }
         XCTAssertEqual(Set(Gemini.Model.allCases.map(\.rawValue)).intersection(geminiBounds.keys), Set(geminiBounds.keys))
     }
@@ -175,6 +202,12 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
         XCTAssertEqual(capabilities.maximumOutputField, .ollamaNumPredict)
         XCTAssertEqual(capabilities.maximumOutputTokenBound, ChatGenerationSettings.tokenRange.upperBound)
         XCTAssertTrue(capabilities.supportsTemperature)
+        XCTAssertTrue(capabilities.supportsTopP)
+        XCTAssertTrue(capabilities.supportsFrequencyPenalty)
+        XCTAssertTrue(capabilities.supportsPresencePenalty)
+        XCTAssertTrue(capabilities.supportsTopK)
+        XCTAssertTrue(capabilities.supportsSeed)
+        XCTAssertTrue(capabilities.supportsStop)
         XCTAssertTrue(capabilities.maximumOutputWarning?.contains("app guard") == true)
         XCTAssertTrue(capabilities.maximumOutputWarning?.contains("not a model limit") == true)
     }
@@ -203,5 +236,11 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
         XCTAssertEqual(capabilities.maximumOutputField, .openAIMaxTokens, modelID, file: file, line: line)
         XCTAssertEqual(capabilities.maximumOutputTokenBound, bound, modelID, file: file, line: line)
         XCTAssertTrue(capabilities.supportsTemperature, modelID, file: file, line: line)
+        XCTAssertTrue(capabilities.supportsTopP, modelID, file: file, line: line)
+        XCTAssertTrue(capabilities.supportsFrequencyPenalty, modelID, file: file, line: line)
+        XCTAssertTrue(capabilities.supportsPresencePenalty, modelID, file: file, line: line)
+        XCTAssertFalse(capabilities.supportsTopK, modelID, file: file, line: line)
+        XCTAssertTrue(capabilities.supportsSeed, modelID, file: file, line: line)
+        XCTAssertTrue(capabilities.supportsStop, modelID, file: file, line: line)
     }
 }

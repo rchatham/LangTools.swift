@@ -18,7 +18,7 @@ public struct ChatSettingsView: View {
 
     public enum SettingsTab: String, CaseIterable, Identifiable {
         case general = "General"
-        case systemPrompt = "System Prompt"
+        case context = "Context"
         case advanced = "Advanced"
         case localModels = "Local Models"
         case tools = "Tools"
@@ -28,7 +28,7 @@ public struct ChatSettingsView: View {
         public var icon: String {
             switch self {
             case .general: return "gear"
-            case .systemPrompt: return "text.bubble"
+            case .context: return "text.bubble"
             case .advanced: return "slider.horizontal.3"
             case .localModels: return "cpu"
             case .tools: return "hammer.fill"
@@ -111,6 +111,7 @@ public struct ChatSettingsView: View {
                         }
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .accessibilityIdentifier("settings.\(tab.rawValue)Tab")
                     .padding(.vertical, 4)
                     .background(selectedCustomTab == nil && selectedTab == tab ? (colorScheme == .dark ? Color.gray.opacity(0.3) : Color.blue.opacity(0.1)) : Color.clear)
                     .cornerRadius(6)
@@ -153,8 +154,8 @@ public struct ChatSettingsView: View {
                         switch selectedTab {
                         case .general:
                             generalSettingsView
-                        case .systemPrompt:
-                            systemPromptSettingsView
+                        case .context:
+                            contextSettingsView
                         case .advanced:
                             advancedSettingsView
                         case .localModels:
@@ -805,62 +806,148 @@ public struct ChatSettingsView: View {
         }
     }
 
-    private var systemPromptSettingsView: some View {
+    private var contextSettingsView: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("System Prompt")
+            Text("Context & Memory")
                 .font(.title2)
                 .fontWeight(.semibold)
 
             Divider()
 
+            // System prompt section
             VStack(alignment: .leading, spacing: 12) {
-                Text("Instructions for the AI")
+                Text("System Prompt")
                     .font(.headline)
 
-                Text("The system prompt provides instructions to the AI that guide its behavior. This message sets the context for how the AI should respond.")
+                Text("Instructions that guide the AI's behavior. This message sets the context for how the AI should respond.")
                     .font(.body)
                     .foregroundColor(.secondary)
-                    .padding(.bottom, 8)
 
                 GroupBox {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Current System Prompt")
-                            .font(.headline)
-                            .foregroundColor(.secondary)
-
-                        ScrollView {
-                            Text(viewModel.systemMessage)
-                                .font(.system(.body, design: .monospaced))
-                                .padding(10)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                    #if os(macOS)
-                                        .fill(colorScheme == .dark ? Color(.textBackgroundColor) : Color(.controlBackgroundColor))
-                                    #endif
-                                )
-                        }
-                        .frame(height: 200)
+                    ScrollView {
+                        Text(viewModel.systemMessage)
+                            .font(.system(.body, design: .monospaced))
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                #if os(macOS)
+                                    .fill(colorScheme == .dark ? Color(.textBackgroundColor) : Color(.controlBackgroundColor))
+                                #endif
+                            )
                     }
-                    .padding(8)
+                    .frame(height: 120)
+                    .padding(4)
                 }
 
-                HStack(spacing: 16) {
-                    Button(action: {
+                HStack(spacing: 12) {
+                    Button("Reset to Default") {
                         viewModel.systemMessage = "You are a helpful AI assistant."
-                    }) {
-                        Text("Reset to Default")
+                    }
+                    Button {
+                        isEditingSystemMessage = true
+                    } label: {
+                        Label("Edit", systemImage: "pencil")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+            }
+
+            Divider()
+
+            // Context window section
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Context Window")
+                    .font(.headline)
+
+                if let ctxTokens = viewModel.model.generationCapabilities.contextWindowTokens {
+                    Text("This model supports up to \(ctxTokens.formatted()) input tokens.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Message Limit")
+                            .font(.caption)
+                        TextField("Unlimited", value: Binding(
+                            get: { viewModel.conversationSettings.maxContextMessages },
+                            set: { viewModel.updateMaxContextMessages($0) }
+                        ), format: .number.grouping(.never))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
                     }
 
-                    Button(action: {
-                        isEditingSystemMessage = true
-                    }) {
-                        Label("Edit System Prompt", systemImage: "pencil")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Window %")
+                            .font(.caption)
+                        TextField("100", value: Binding(
+                            get: { viewModel.conversationSettings.contextWindowPercent },
+                            set: { viewModel.updateContextWindowPercent($0) }
+                        ), format: .number.grouping(.never))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 60)
                     }
-                    .keyboardShortcut("e", modifiers: [.command])
-                    .buttonStyle(.borderedProminent)
+
+                    Text("Leave empty for no limit.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
-                .padding(.top, 8)
+            }
+
+            Divider()
+
+            // Memory fields section
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Memory")
+                        .font(.headline)
+                    Spacer()
+                    Button {
+                        viewModel.addMemoryField(label: "", value: "")
+                    } label: {
+                        Label("Add", systemImage: "plus.circle")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Text("Custom information injected into the system prompt. Useful for names, preferences, project context, or any details you want the AI to remember.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                if viewModel.conversationSettings.memoryFields.isEmpty {
+                    Text("No memory fields. Add some to give the AI personal context.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.vertical, 8)
+                }
+
+                ForEach(viewModel.conversationSettings.memoryFields) { field in
+                    HStack(spacing: 8) {
+                        TextField("Label", text: Binding(
+                            get: { field.label },
+                            set: { viewModel.updateMemoryField(id: field.id, label: $0, value: field.value) }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 120)
+
+                        TextField("Value", text: Binding(
+                            get: { field.value },
+                            set: { viewModel.updateMemoryField(id: field.id, label: field.label, value: $0) }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+
+                        Button {
+                            viewModel.removeMemoryField(id: field.id)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
         }
     }
@@ -890,6 +977,30 @@ public struct ChatSettingsView: View {
                 temperature: Binding(
                     get: { viewModel.generationSettings.temperature },
                     set: { viewModel.updateTemperature($0) }
+                ),
+                topP: Binding(
+                    get: { viewModel.generationSettings.topP },
+                    set: { viewModel.updateTopP($0) }
+                ),
+                frequencyPenalty: Binding(
+                    get: { viewModel.generationSettings.frequencyPenalty },
+                    set: { viewModel.updateFrequencyPenalty($0) }
+                ),
+                presencePenalty: Binding(
+                    get: { viewModel.generationSettings.presencePenalty },
+                    set: { viewModel.updatePresencePenalty($0) }
+                ),
+                topK: Binding(
+                    get: { viewModel.generationSettings.topK },
+                    set: { viewModel.updateTopK($0) }
+                ),
+                seed: Binding(
+                    get: { viewModel.generationSettings.seed },
+                    set: { viewModel.updateSeed($0) }
+                ),
+                stop: Binding(
+                    get: { viewModel.generationSettings.stop },
+                    set: { viewModel.updateStop($0) }
                 ),
                 capabilities: viewModel.model.generationCapabilities,
                 reset: viewModel.resetGenerationSettings
@@ -1151,7 +1262,8 @@ extension ChatSettingsView {
         }
         @Published var generationSettings = ChatGenerationSettings.automatic
         @Published var generationSettingsError: String?
-        @Published var systemMessage = UserDefaults.systemMessage
+        @Published var conversationSettings = ChatConversationSettings.default
+        @Published var systemMessage = UserDefaults.systemMessage // legacy source compat
         @Published var codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
         @Published var codexHelperToken = UserDefaults.codexHelperToken
         /// Raw helper token as last synced from a successful pairing.
@@ -1166,6 +1278,7 @@ extension ChatSettingsView {
 
         let clearMessages: () -> Void
         private let generationSettingsStore: ChatGenerationSettingsStoring
+        private let conversationSettingsStore: ChatConversationSettingsStoring
 
         /// Callback to trigger WhisperKit preload (set by app)
         public var onPreloadWhisperKit: (() -> Void)?
@@ -1183,11 +1296,13 @@ extension ChatSettingsView {
         public init(
             clearMessages: @escaping () -> Void,
             modelSource: ChatModelSource? = nil,
-            generationSettingsStore: ChatGenerationSettingsStoring = ChatGenerationSettingsStore()
+            generationSettingsStore: ChatGenerationSettingsStoring = ChatGenerationSettingsStore(),
+            conversationSettingsStore: ChatConversationSettingsStoring = ChatConversationSettingsStore()
         ) {
             self.clearMessages = clearMessages
             self.modelSource = modelSource
             self.generationSettingsStore = generationSettingsStore
+            self.conversationSettingsStore = conversationSettingsStore
             modelSource?.$state.sink { [weak self] state in
                 guard let self else { return }
                 if case .ready(let models) = state, !models.contains(self.model), let first = models.first {
@@ -1221,7 +1336,8 @@ extension ChatSettingsView {
             }
             generationSettings = generationSettingsStore.load()
             generationSettingsError = nil
-            systemMessage = UserDefaults.systemMessage
+            conversationSettings = conversationSettingsStore.load()
+            systemMessage = conversationSettings.systemPrompt
             codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
             codexHelperToken = UserDefaults.codexHelperToken
             lastSyncedHelperURLSnapshot = codexHelperBaseURLString
@@ -1253,7 +1369,15 @@ extension ChatSettingsView {
             UserDefaults.model = isProxyContext ? (modelSource?.reconciledSelection(model) ?? model) : accessManager.validateSelectedModel(model)
             generationSettingsStore.save(generationSettings)
             generationSettingsError = nil
-            UserDefaults.systemMessage = systemMessage
+            var cs = conversationSettings
+            cs = ChatConversationSettings(
+                systemPrompt: systemMessage,
+                maxContextMessages: cs.maxContextMessages,
+                contextWindowPercent: cs.contextWindowPercent,
+                memoryFields: cs.memoryFields
+            )
+            conversationSettingsStore.save(cs)
+            UserDefaults.systemMessage = systemMessage // legacy compat
             guard !isProxyContext else { return }
             if let url = URL(string: codexHelperBaseURLString), url.scheme?.isEmpty == false {
                 UserDefaults.codexHelperBaseURL = url
@@ -1270,11 +1394,123 @@ extension ChatSettingsView {
         }
 
         func updateMaximumOutputTokens(_ value: Int?) {
-            updateGenerationSettings(maxOutputTokens: value, temperature: generationSettings.temperature)
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: value,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
         }
 
         func updateTemperature(_ value: Double?) {
-            updateGenerationSettings(maxOutputTokens: generationSettings.maxOutputTokens, temperature: value)
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: value,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateTopP(_ value: Double?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: value,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateFrequencyPenalty(_ value: Double?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: value,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updatePresencePenalty(_ value: Double?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: value,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateTopK(_ value: Int?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: value,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateSeed(_ value: Int?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: value,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateStop(_ value: [String]?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: value
+                )
+            }
         }
 
         func resetGenerationSettings() {
@@ -1283,12 +1519,64 @@ extension ChatSettingsView {
             generationSettingsError = nil
         }
 
-        private func updateGenerationSettings(maxOutputTokens: Int?, temperature: Double?) {
+        // MARK: - Conversation settings
+
+        func updateMaxContextMessages(_ value: Int?) {
+            conversationSettings = ChatConversationSettings(
+                systemPrompt: conversationSettings.systemPrompt,
+                maxContextMessages: value,
+                contextWindowPercent: conversationSettings.contextWindowPercent,
+                memoryFields: conversationSettings.memoryFields
+            )
+        }
+
+        func updateContextWindowPercent(_ value: Int?) {
+            conversationSettings = ChatConversationSettings(
+                systemPrompt: conversationSettings.systemPrompt,
+                maxContextMessages: conversationSettings.maxContextMessages,
+                contextWindowPercent: value,
+                memoryFields: conversationSettings.memoryFields
+            )
+        }
+
+        func addMemoryField(label: String, value: String) {
+            var fields = conversationSettings.memoryFields
+            fields.append(.init(label: label, value: value))
+            conversationSettings = ChatConversationSettings(
+                systemPrompt: conversationSettings.systemPrompt,
+                maxContextMessages: conversationSettings.maxContextMessages,
+                contextWindowPercent: conversationSettings.contextWindowPercent,
+                memoryFields: fields
+            )
+        }
+
+        func updateMemoryField(id: UUID, label: String, value: String) {
+            var fields = conversationSettings.memoryFields
+            if let idx = fields.firstIndex(where: { $0.id == id }) {
+                fields[idx] = .init(id: id, label: label, value: value)
+            }
+            conversationSettings = ChatConversationSettings(
+                systemPrompt: conversationSettings.systemPrompt,
+                maxContextMessages: conversationSettings.maxContextMessages,
+                contextWindowPercent: conversationSettings.contextWindowPercent,
+                memoryFields: fields
+            )
+        }
+
+        func removeMemoryField(id: UUID) {
+            var fields = conversationSettings.memoryFields
+            fields.removeAll { $0.id == id }
+            conversationSettings = ChatConversationSettings(
+                systemPrompt: conversationSettings.systemPrompt,
+                maxContextMessages: conversationSettings.maxContextMessages,
+                contextWindowPercent: conversationSettings.contextWindowPercent,
+                memoryFields: fields
+            )
+        }
+
+        private func updateGenerationSettings(transform: (ChatGenerationSettings) throws -> ChatGenerationSettings) {
             do {
-                generationSettings = try ChatGenerationSettings(
-                    maxOutputTokens: maxOutputTokens,
-                    temperature: temperature
-                )
+                generationSettings = try transform(generationSettings)
                 generationSettingsError = nil
             } catch {
                 generationSettingsError = error.localizedDescription
@@ -1425,6 +1713,72 @@ extension ChatSettingsView {
                     }
                     .padding(8)
                 }
+
+                Divider()
+
+                // Tool execution settings
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Tool Execution")
+                        .font(.headline)
+
+                    HStack(spacing: 16) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Max Iterations")
+                                .font(.caption)
+                            TextField("Unlimited", value: Binding(
+                                get: { viewModel.toolSettings.maxToolIterations },
+                                set: { viewModel.toolSettings.maxToolIterations = $0 }
+                            ), format: .number.grouping(.never))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Timeout (s) — stored only")
+                                .font(.caption)
+                            TextField("None", value: Binding(
+                                get: { viewModel.toolSettings.toolTimeoutSeconds },
+                                set: { viewModel.toolSettings.toolTimeoutSeconds = $0 }
+                            ), format: .number.grouping(.never))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                        }
+                    }
+                    .padding(.bottom, 4)
+
+                    Toggle("Auto-Retry Failed Tools", isOn: $viewModel.toolSettings.autoRetryFailedTools)
+#if os(macOS)
+                        .toggleStyle(.checkbox)
+#endif
+                    Text("Automatically retry a failed tool call once before reporting the error. (UI only — execution wiring coming soon)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.top, 8)
+
+                Divider()
+
+                // Agent model override
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Agent Model")
+                        .font(.headline)
+
+                    Text("Override the conversation model for agent execution. Leave as 'Conversation Model' to use the currently selected model.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Picker("Agent Model Override", selection: Binding(
+                        get: { viewModel.toolSettings.agentModelOverride },
+                        set: { viewModel.toolSettings.agentModelOverride = $0 }
+                    )) {
+                        Text("Conversation Model").tag(nil as Model?)
+                        ForEach(viewModel.availableModels, id: \.self) { model in
+                            Text(model.rawValue).tag(model as Model?)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+                .padding(.top, 8)
 
                 // Reset button
                 Button(action: {

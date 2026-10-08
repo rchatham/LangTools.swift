@@ -37,6 +37,19 @@ private struct PendingToolCallIdentity {
 private final class RequestToolCallTracker {
     private var pendingCalls: [PendingToolCallIdentity] = []
     private var toolAnchorMessageIDs: [UUID] = []
+    private var toolCallCount = 0
+    let maxIterations: Int?
+
+    init(maxIterations: Int? = nil) {
+        self.maxIterations = maxIterations
+    }
+
+    var isAtLimit: Bool {
+        guard let max = maxIterations else { return false }
+        return toolCallCount >= max
+    }
+
+    func incrementCount() { toolCallCount += 1 }
 
     func append(
         selectionID: String?,
@@ -411,7 +424,7 @@ public class MessageService {
         var assistantMessageIDs: Set<UUID> = []
         var generatedMessageIDs: Set<UUID> = []
         var toolBreakOccurred = false
-        let toolCallTracker = RequestToolCallTracker()
+        let toolCallTracker = RequestToolCallTracker(maxIterations: ToolSettings.shared.maxToolIterations)
         let keepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
         let selectedModel = UserDefaults.model
         let replayService = selectedModel.apiService
@@ -629,7 +642,21 @@ public class MessageService {
     }
 
     func systemMessage() -> String {
-        UserDefaults.systemMessage + "\n\nWhen agent tools return results, those results are displayed visually to the user as content cards. Do not repeat or summarize information already shown in the cards. You may add a brief natural-language acknowledgment but should not list out details the user can already see. Answer follow-up questions about the content if asked. If an agent tool returns an error, explain the error to the user."
+        let store = ChatConversationSettingsStore()
+        let settings = store.load()
+        var prompt = settings.systemPrompt
+
+        // Append memory fields if set
+        let fields = settings.memoryFields.filter { !$0.label.isEmpty && !$0.value.isEmpty }
+        if !fields.isEmpty {
+            prompt += "\n\n## User Context\n"
+            for field in fields {
+                prompt += "- \(field.label): \(field.value)\n"
+            }
+        }
+
+        prompt += "\n\nWhen agent tools return results, those results are displayed visually to the user as content cards. Do not repeat or summarize information already shown in the cards. You may add a brief natural-language acknowledgment but should not list out details the user can already see. Answer follow-up questions about the content if asked. If an agent tool returns an error, explain the error to the user."
+        return prompt
     }
 
     public func deleteMessage(id: UUID) {
@@ -730,14 +757,23 @@ extension MessageService {
                     generatedMessageIDs: &generatedMessageIDs
                 )
                 anchor.applyToolEvent(.toolCalled(selection))
-                if let uiCallID = anchor.toolCalls.last?.id {
-                    toolCallTracker?.append(
-                        selectionID: selection.id,
-                        anchorMessageID: anchor.uuid,
-                        uiCallID: uiCallID,
-                        name: selection.name,
-                        arguments: selection.arguments.isEmpty ? nil : selection.arguments
-                    )
+                if let tracker = toolCallTracker {
+                    if tracker.isAtLimit {
+                        // Cap reached — immediately fail this tool call
+                        if let idx = anchor.toolCalls.indices.last {
+                            anchor.toolCalls[idx].status = .failure
+                            anchor.toolCalls[idx].result = "Tool iteration limit reached."
+                        }
+                    } else {
+                        tracker.incrementCount()
+                        tracker.append(
+                            selectionID: selection.id,
+                            anchorMessageID: anchor.uuid,
+                            uiCallID: anchor.toolCalls.last?.id ?? "",
+                            name: selection.name,
+                            arguments: selection.arguments.isEmpty ? nil : selection.arguments
+                        )
+                    }
                 }
                 updatedMessage = anchor
 
@@ -875,9 +911,18 @@ extension MessageService {
         let failedGeneratedIDs = failedAttemptGeneratedMessageIDs.values.reduce(into: Set<UUID>()) {
             $0.formUnion($1)
         }
-        let eligibleMessages = messages.filter {
+        var eligibleMessages = messages.filter {
             $0.sendFailure == nil && !failedGeneratedIDs.contains($0.uuid)
         }
+
+        // Apply context window truncation from conversation settings
+        let convSettings = ChatConversationSettingsStore().load()
+        if let limit = convSettings.maxContextMessages, limit > 0 {
+            // Always keep the most recent user+assistant pair and system message
+            let keepCount = min(limit, eligibleMessages.count)
+            eligibleMessages = Array(eligibleMessages.suffix(keepCount))
+        }
+
         guard !keepsToolCallsInHistory else { return eligibleMessages }
         return eligibleMessages.compactMap { message in
             let sanitized = sanitizedHistoryCopy(of: message)
