@@ -15,7 +15,7 @@ The helper provides an opt-in, encrypted, Ollama-only LAN transport. Direct Olla
 
 Post-merge checks retain upstream generation settings and authoritative proxy catalogs alongside captured helper credentials and effective agent-model routing. They do not constitute physical-iPhone acceptance or a completely green full application/CLI suite.
 
-## Review-fix verification (current source)
+## Earlier review-fix verification
 
 - Local runs of the new CI commands passed: root `swift test --jobs 2` executed 370 tests (5 skipped, no failures); helper relay/lifecycle executed 14 (no skips/failures); focused app transport, routing, generation and proxy-isolation executed 100 (no skips/failures).
 - Five deterministic access-state regressions verify that queued refreshes cannot restore an old server/helper catalog, including endpoint revision changes and same-endpoint refresh ordering. Four load/pull regressions distinguish recorded pin rejection from actual task cancellation.
@@ -24,6 +24,15 @@ Post-merge checks retain upstream generation settings and authoritative proxy ca
 - Independent code/security review found no new code findings in these fixes. This does not clear acceptance blockers.
 - The Mac helper was rebuilt from the merged PR configuration; strict ad-hoc signature and bundle fixture-exclusion checks passed. Its current LAN-off/Keychain-denied UI was rendered and inspected. No active QR, token or private key appears in that screenshot.
 - Clean detached-checkout iOS signed-build and simulator-UI attempts exited 65 at normal JSON macro validation, before tests (zero tests/screenshots). After synchronizing every approved source fix, the signed-build retry remained blocked. Final iOS signature/fixture checks and current iPhone screenshots therefore remain unverified.
+
+## Session-lifetime and CI portability follow-up (current source)
+
+- Root `swift test --jobs 2 --no-parallel` passed 373 tests (5 skips); helper mobile suites passed 14 (no skips); the CI-equivalent app filter passed 109 (no skips). All completed without failures.
+- Twelve additional regressions cover session ownership: 3 root tests, 7 isolated app lifecycle tests and 2 real-TLS tests. Captured providers, snapshots, agent contexts, unconsumed streams and active requests keep their helper transport alive after selection changes. Successful stale/failed-save pairings retire without being selected; final lease release gracefully finishes tasks and invalidates the session.
+- Retirement assertions observe lease/provider/delegate release and invalidation. Foundation may retain an invalidated raw session wrapper internally; its private wrapper lifetime is not a transport-ownership guarantee.
+- The new stream regressions use explicit response/terminal gates, including a deliberate 1.4-second delay before ownership assertions. Nine focused regressions passed three consecutive serial runs after independent review corrected two scheduling-sensitive test assumptions.
+- Remote run `37716378991` passed helper 14/app 100 XCTest cases, but both jobs failed afterward because the hosted runner lacked `rg`. Four guard/report searches now use native `grep -E`; YAML/shell syntax and 14 success, empty-suite, failed-command and skip/report probes passed with `rg` absent. Remote checks on the follow-up commits still require verification.
+- Independent scoped code and security reviews found no remaining findings in this follow-up. These nonvisual changes do not resolve the existing authorization, current-iOS, physical-device or full-suite acceptance blockers below.
 
 ## Known verification blockers
 
