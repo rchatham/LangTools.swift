@@ -50,6 +50,82 @@ jobs:
       # Follow-up for MockURLProtocol hardening: https://github.com/rchatham/LangTools.swift/issues/41
       run: swift test -v --no-parallel --skip AppleSpeechTests --skip WhisperKitLangToolsTests
 
+  helper-mobile-tests:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+    - name: Run bounded helper relay and pairing lifecycle suites
+      shell: bash
+      run: |
+        set -euo pipefail
+        swift test --package-path cli --jobs 2 --no-parallel \
+          --filter 'MobileHelperTests|MobilePairingControllerTests' 2>&1 | tee "$RUNNER_TEMP/helper-mobile-tests.log"
+        if ! rg -q 'Executed [1-9][0-9]* tests?' "$RUNNER_TEMP/helper-mobile-tests.log"; then
+          echo 'Expected focused helper XCTest cases to execute.' >&2
+          exit 1
+        fi
+    - name: Report helper execution and LAN-dependent skips
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        {
+          echo '### Helper mobile verification'
+          echo 'Real LAN-bound tests explicitly skip if no active private IPv4 interface is available. Skips do not verify LAN acceptance.'
+          if test -f "$RUNNER_TEMP/helper-mobile-tests.log"; then
+            if ! rg 'Executed [0-9]+ tests?|skipped|XCTSkip|Test Suite.*(passed|failed)' "$RUNNER_TEMP/helper-mobile-tests.log"; then
+              echo 'No XCTest summary found; inspect the preceding step for the failure.'
+            fi
+          else
+            echo 'No test log produced; inspect the preceding step for the failure.'
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+  app-helper-tests:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+        submodules: true # The app manifest requires the pinned local ChatUI package.
+    - name: Run bounded app transport and routing regressions
+      shell: bash
+      run: |
+        set -euo pipefail
+        # These suites use isolated credentials and local fixtures, not live
+        # accounts/Ollama or legacy Keychain ACLs. Keep shared mock state serial.
+        swift test --package-path Apps/LangTools --jobs 2 --no-parallel \
+          --filter 'MobileHelper|OllamaEndpoint|ProviderAccessManagerTests|ProviderAccessRefreshRegressionTests|OllamaSettingsErrorRegressionTests|ChatGenerationSettingsTests|ModelGenerationCapabilitiesTests|ChatModelSourceTests/testProxyOllamaCatalogAndTitlesIgnoreDirectEndpointAvailability|ChatModelSourceTests/testDefaultAndDirectCatalogUseExistingProviderAccessManager' \
+          2>&1 | tee "$RUNNER_TEMP/app-helper-tests.log"
+        if ! rg -q 'Executed [1-9][0-9]* tests?' "$RUNNER_TEMP/app-helper-tests.log"; then
+          echo 'Expected focused app XCTest cases to execute.' >&2
+          exit 1
+        fi
+    - name: Report app suite execution and skips
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        {
+          echo '### App helper verification'
+          echo 'Focused macOS package tests do not replace iOS UI or physical-device acceptance.'
+          if test -f "$RUNNER_TEMP/app-helper-tests.log"; then
+            if ! rg 'Executed [0-9]+ tests?|skipped|XCTSkip|Test Suite.*(passed|failed)' "$RUNNER_TEMP/app-helper-tests.log"; then
+              echo 'No XCTest summary found; inspect the preceding step for the failure.'
+            fi
+          else
+            echo 'No test log produced; inspect the preceding step for the failure.'
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
   extended-tests:
     runs-on: macos-latest
     timeout-minutes: 30
