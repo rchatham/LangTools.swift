@@ -143,10 +143,10 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
     }
 
     /// Returns this message when cross-provider replay is allowed. Otherwise
-    /// returns a copy whose hidden raw results recorded from a *different*
-    /// originating service are removed, so replay falls back to the visible
-    /// `ChatToolCall.result`. Entries without a recorded origin (legacy history)
-    /// are kept and treated as same-origin.
+    /// returns an outbound copy with known foreign-origin raw results removed
+    /// from both the replay dictionary and matching `ChatToolCall.result`
+    /// fallbacks. Local raw disclosure and typed display content are unchanged.
+    /// Entries without a recorded origin (legacy history) are kept.
     public func replayFiltered(targetService: APIService, allowCrossProvider: Bool) -> Message {
         guard !allowCrossProvider, !providerToolResultServices.isEmpty else { return self }
         let keptResults = providerToolResults.filter { callID, _ in
@@ -155,17 +155,26 @@ public final class Message: Codable, Sendable, ObservableObject, Identifiable, E
         }
         guard keptResults.count != providerToolResults.count else { return self }
         let keptServices = providerToolResultServices.filter { keptResults[$0.key] != nil }
-        return Message(
+        let withheldCallIDs = Set(providerToolResults.keys).subtracting(keptResults.keys)
+        func filteredCall(_ call: ChatToolCall) -> ChatToolCall {
+            var copy = call
+            if withheldCallIDs.contains(call.id) { copy.result = nil }
+            copy.children = call.children.map(filteredCall)
+            return copy
+        }
+        let copy = Message(
             uuid: uuid,
             role: role,
             contentType: contentType,
             imageDetail: imageDetail,
             createdAt: createdAt,
-            toolCalls: toolCalls,
+            toolCalls: toolCalls.map(filteredCall),
             providerToolResults: keptResults,
             providerToolResultServices: keptServices,
             responseToMessageID: responseToMessageID
         )
+        copy.wasResponseStopped = wasResponseStopped
+        return copy
     }
 }
 
