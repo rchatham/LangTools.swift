@@ -207,7 +207,7 @@ public class ToolSettings: ObservableObject {
 
     private let defaults: UserDefaults
 
-    private init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.richContentEnabled = defaults.object(forKey: "richContentEnabled") as? Bool ?? true
         self.keepsToolCallsInHistory = defaults.object(forKey: "keepsToolCallsInHistory") as? Bool ?? true
