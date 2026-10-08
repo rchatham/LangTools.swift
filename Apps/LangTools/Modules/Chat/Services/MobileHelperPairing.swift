@@ -28,8 +28,10 @@ struct MobileHelperPairingClient {
             try await Self.verifyHealth(credential: credential, session: session)
             return MobileHelperConnection(credential: credential, session: session)
         } catch {
+            // Invalidation can release the delegate and its recorded pin rejection.
+            let actionableError = MobileHelperError.actionable(error, session: session)
             session.invalidateAndCancel()
-            throw MobileHelperError.actionable(error, session: session)
+            throw actionableError
         }
     }
 
