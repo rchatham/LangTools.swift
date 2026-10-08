@@ -13,17 +13,31 @@ final class OllamaEndpointRoutingTests: XCTestCase {
     private var endpointConfiguration: OllamaEndpointConfiguration!
     private var session: URLSession!
     private var keychain: Keychain!
+    private var helperKeychain: Keychain!
     private var keychainService: KeychainService!
     private var sessionStore: AuthSessionStore!
     private var accessManager: ProviderAccessManager!
+    private var savedAgentModelOverride: Model?
+    private var globalToolSettings: [String: Any] = [:]
+    private let toolSettingsKeys = [
+        "richContentEnabled", "keepsToolCallsInHistory", "crossProviderToolReplay", "voiceInputEnabled",
+        "sttProviderRawValue", "voiceButtonReplaceSend", "sttLanguage", "whisperKitModelSize",
+        "autoStopOnSilence", "silenceTimeoutSeconds", "streamingTranscriptionEnabled",
+        "enableOpenAISimulatedStreaming", "streamingChunkIntervalSeconds", "maxToolIterations",
+        "toolTimeoutSeconds", "autoRetryFailedTools", "agentModelOverride"
+    ]
 
     override func setUp() {
         super.setUp()
+        globalToolSettings = UserDefaults.standard.dictionaryRepresentation().filter { toolSettingsKeys.contains($0.key) }
+        savedAgentModelOverride = ToolSettings.shared.agentModelOverride
+        ToolSettings.shared.agentModelOverride = nil
         suiteName = "OllamaEndpointRoutingTests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
+        helperKeychain = Keychain(service: suiteName + ".helper")
         endpointConfiguration = OllamaEndpointConfiguration(userDefaults: defaults,
-            credentialStore: MobileHelperCredentialStore(keychain: Keychain(service: suiteName + ".helper")))
+            credentialStore: MobileHelperCredentialStore(keychain: helperKeychain))
 
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [OllamaRoutingURLProtocol.self]
@@ -41,8 +55,11 @@ final class OllamaEndpointRoutingTests: XCTestCase {
     }
 
     override func tearDown() {
+        ToolSettings.shared.agentModelOverride = savedAgentModelOverride
+        for key in toolSettingsKeys { UserDefaults.standard.set(globalToolSettings[key], forKey: key) }
         session.invalidateAndCancel()
         try? keychain.removeAll()
+        try? helperKeychain.removeAll()
         defaults.removePersistentDomain(forName: suiteName)
         OllamaRoutingURLProtocol.reset()
         super.tearDown()
@@ -327,8 +344,11 @@ final class OllamaEndpointRoutingTests: XCTestCase {
 
         let original = UserDefaults.model
         defer { UserDefaults.model = original }
-        let viewModel = ChatSettingsView.ViewModel(clearMessages: {})
-        viewModel.accessManager = accessManager
+        let viewModel = ChatSettingsView.ViewModel(
+            clearMessages: {},
+            accessManager: accessManager,
+            codexHelperTokenStore: CodexHelperTokenStore(defaults: defaults, keychain: keychainService)
+        )
         viewModel.model = selected
 
         XCTAssertTrue(viewModel.availableModels.contains(selected))
@@ -405,13 +425,145 @@ final class OllamaEndpointRoutingTests: XCTestCase {
         try endpointConfiguration.disconnectHelper()
     }
 
-    private func makeClient() -> NetworkClient {
+    func testGenerationOverridesPreserveDirectChatAndStreamEndpointSnapshots() async throws {
+        _ = try endpointConfiguration.update("http://old.local:11434")
+        let settings = try Self.generationOverrides()
+        OllamaRoutingURLProtocol.handler = { request in
+            let streaming = try Self.assertGenerationOverrides(in: request, settings: settings)
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            XCTAssertEqual(request.url?.path, "/api/chat")
+            let host = request.url?.host ?? "missing"
+            if streaming {
+                return .stream([Self.chatResponse(content: host, done: false), Self.chatResponse(content: "")],
+                               interChunkDelay: 0.01)
+            }
+            return .json(Self.chatResponse(content: host), delay: host == "old.local" ? 0.1 : 0)
+        }
+        let client = makeClient(generationSettingsProvider: { settings })
+        let model = Model.ollama(try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")))
+        let oldStream = try client.streamChatCompletionRequest(messages: [], model: model, stream: true,
+                                                               tools: nil, toolChoice: nil)
+        let oldChat = Task {
+            try await client.performChatCompletionRequest(messages: [], model: model, tools: nil, toolChoice: nil)
+        }
+        try await waitUntil { OllamaRoutingURLProtocol.requests().filter { $0.url?.host == "old.local" }.count == 2 }
+        _ = try endpointConfiguration.update("http://new.local:11434")
+        let newChat = try await client.performChatCompletionRequest(messages: [], model: model, tools: nil, toolChoice: nil)
+        let newStream = try client.streamChatCompletionRequest(messages: [], model: model, stream: true,
+                                                               tools: nil, toolChoice: nil)
+        let oldChatResponse = try await oldChat.value
+        let oldStreamResponse = try await Self.collect(oldStream)
+        let newStreamResponse = try await Self.collect(newStream)
+        XCTAssertEqual(oldChatResponse.text, "old.local")
+        XCTAssertEqual(oldStreamResponse, "old.local")
+        XCTAssertEqual(newChat.text, "new.local")
+        XCTAssertEqual(newStreamResponse, "new.local")
+        let requests = OllamaRoutingURLProtocol.requests()
+        XCTAssertEqual(requests.count, 4)
+        XCTAssertEqual(requests.filter { $0.url?.host == "old.local" }.count, 2)
+        XCTAssertEqual(requests.filter { $0.url?.host == "new.local" }.count, 2)
+    }
+
+    func testGenerationOverridesPreserveHelperChatAndStreamCredentialSnapshots() async throws {
+        let helperID = UUID().uuidString
+        let oldConnection = helperConnection(helperID: helperID, host: "192.168.1.10", token: "a")
+        let newConnection = helperConnection(helperID: helperID, host: "192.168.1.11", token: "b")
+        try endpointConfiguration.selectHelper(oldConnection)
+        let settings = try Self.generationOverrides()
+        OllamaRoutingURLProtocol.handler = { request in
+            let streaming = try Self.assertGenerationOverrides(in: request, settings: settings)
+            XCTAssertEqual(request.url?.path, "/v1/ollama/api/chat")
+            let host = request.url?.host ?? "missing"
+            let expectedToken = host == "192.168.1.10" ? oldConnection.credential.token : newConnection.credential.token
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(expectedToken)")
+            if streaming {
+                return .stream([Self.chatResponse(content: host, done: false), Self.chatResponse(content: "")],
+                               interChunkDelay: 0.01)
+            }
+            return .json(Self.chatResponse(content: host), delay: host == "192.168.1.10" ? 0.1 : 0)
+        }
+        let client = makeClient(generationSettingsProvider: { settings })
+        let model = Model.ollama(try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")))
+        let oldStream = try client.streamChatCompletionRequest(messages: [], model: model, stream: true,
+                                                               tools: nil, toolChoice: nil)
+        let oldChat = Task {
+            try await client.performChatCompletionRequest(messages: [], model: model, tools: nil, toolChoice: nil)
+        }
+        try await waitUntil { OllamaRoutingURLProtocol.requests().filter { $0.url?.host == "192.168.1.10" }.count == 2 }
+        try endpointConfiguration.selectHelper(newConnection)
+        let newChat = try await client.performChatCompletionRequest(messages: [], model: model, tools: nil, toolChoice: nil)
+        let newStream = try client.streamChatCompletionRequest(messages: [], model: model, stream: true,
+                                                               tools: nil, toolChoice: nil)
+        let oldChatResponse = try await oldChat.value
+        let oldStreamResponse = try await Self.collect(oldStream)
+        let newStreamResponse = try await Self.collect(newStream)
+        XCTAssertEqual(oldChatResponse.text, "192.168.1.10")
+        XCTAssertEqual(oldStreamResponse, "192.168.1.10")
+        XCTAssertEqual(newChat.text, "192.168.1.11")
+        XCTAssertEqual(newStreamResponse, "192.168.1.11")
+        let requests = OllamaRoutingURLProtocol.requests()
+        XCTAssertEqual(requests.count, 4)
+        XCTAssertEqual(requests.filter { $0.url?.host == "192.168.1.10" }.count, 2)
+        XCTAssertEqual(requests.filter { $0.url?.host == "192.168.1.11" }.count, 2)
+        try endpointConfiguration.disconnectHelper()
+    }
+
+    func testAgentModelOverrideIntoOllamaCapturesHelperInsteadOfConversationProvider() throws {
+        let connection = helperConnection(helperID: UUID().uuidString, host: "192.168.1.10", token: "a")
+        try endpointConfiguration.selectHelper(connection)
+        let model = try XCTUnwrap(Ollama.Model(rawValue: "llama3.2"))
+        ToolSettings.shared.agentModelOverride = .ollama(model)
+        let client = makeClient(generationSettingsProvider: { XCTFail("Agent execution must not read chat generation overrides"); return .automatic })
+        let context = try client.agentContext(messages: [], model: .openAI(.gpt4o_mini)) { _ in }
+        let provider = try XCTUnwrap(context.langTool as? Ollama)
+        XCTAssertEqual(context.model as? Ollama.Model, model)
+        _ = try endpointConfiguration.update("http://direct.local:11434")
+        XCTAssertTrue(provider.session === session)
+        XCTAssertEqual(provider.configuration.baseURL.absoluteString, "https://192.168.1.10:8086/v1/ollama")
+        XCTAssertEqual(provider.configuration.apiKey, connection.credential.token)
+        let next = try client.agentContext(messages: [], model: .openAI(.gpt4o_mini)) { _ in }
+        let directProvider = try XCTUnwrap(next.langTool as? Ollama)
+        XCTAssertEqual(directProvider.configuration.baseURL.absoluteString, "http://direct.local:11434")
+        XCTAssertNil(directProvider.configuration.apiKey)
+    }
+
+    private func helperConnection(helperID: String, host: String, token: String) -> MobileHelperConnection {
+        let credential = MobileHelperCredential(endpoint: URL(string: "https://\(host):8086")!,
+            helperID: helperID, fingerprint: String(repeating: "a", count: 64), name: "Test Mac",
+            deviceID: UUID().uuidString, token: String(repeating: token, count: 64), capabilities: ["ollama"])
+        return MobileHelperConnection(credential: credential, session: session)
+    }
+
+    private static func generationOverrides() throws -> ChatGenerationSettings {
+        try ChatGenerationSettings(maxOutputTokens: 512, temperature: 0, topP: 0.8,
+            frequencyPenalty: 0.2, presencePenalty: -0.1, topK: 40, seed: 42, stop: ["STOP"])
+    }
+
+    private static func assertGenerationOverrides(in request: URLRequest, settings: ChatGenerationSettings) throws -> Bool {
+        let body = try OllamaRoutingURLProtocol.requestBody(request)
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(payload["model"] as? String, "llama3.2")
+        let options = try XCTUnwrap(payload["options"] as? [String: Any])
+        XCTAssertEqual(options["num_predict"] as? Int, settings.maxOutputTokens)
+        XCTAssertEqual(options["temperature"] as? Double, settings.temperature)
+        XCTAssertEqual(options["top_p"] as? Double, settings.topP)
+        XCTAssertEqual(options["frequency_penalty"] as? Double, settings.frequencyPenalty)
+        XCTAssertEqual(options["presence_penalty"] as? Double, settings.presencePenalty)
+        XCTAssertEqual(options["top_k"] as? Int, settings.topK)
+        XCTAssertEqual(options["seed"] as? Int, settings.seed)
+        XCTAssertEqual(options["stop"] as? [String], settings.stop)
+        XCTAssertEqual(request.httpMethod, "POST")
+        return try XCTUnwrap(payload["stream"] as? Bool)
+    }
+
+    private func makeClient(generationSettingsProvider: @escaping @Sendable () -> ChatGenerationSettings = { .automatic }) -> NetworkClient {
         NetworkClient(
             keychainService: keychainService,
             accountLoginService: RoutingStubAccountLoginService(),
             providerAccessManager: accessManager,
             ollamaEndpointConfiguration: endpointConfiguration,
-            ollamaSession: session
+            ollamaSession: session,
+            generationSettingsProvider: generationSettingsProvider
         )
     }
 
@@ -483,6 +635,22 @@ private final class OllamaRoutingURLProtocol: URLProtocol {
 
     static func requests() -> [URLRequest] {
         lock.withLock { recordedRequests }
+    }
+
+    static func requestBody(_ request: URLRequest) throws -> Data {
+        if let body = request.httpBody { return body }
+        let stream = try XCTUnwrap(request.httpBodyStream)
+        stream.open()
+        defer { stream.close() }
+        var body = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count >= 0 else { throw stream.streamError ?? URLError(.cannotDecodeContentData) }
+            if count == 0 { break }
+            body.append(buffer, count: count)
+        }
+        return body
     }
 
     override class func canInit(with request: URLRequest) -> Bool { true }

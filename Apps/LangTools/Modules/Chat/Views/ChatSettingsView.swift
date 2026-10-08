@@ -18,7 +18,7 @@ public struct ChatSettingsView: View {
 
     public enum SettingsTab: String, CaseIterable, Identifiable {
         case general = "General"
-        case systemPrompt = "System Prompt"
+        case context = "Context"
         case advanced = "Advanced"
         case localModels = "Local Models"
         case tools = "Tools"
@@ -28,7 +28,7 @@ public struct ChatSettingsView: View {
         public var icon: String {
             switch self {
             case .general: return "gear"
-            case .systemPrompt: return "text.bubble"
+            case .context: return "text.bubble"
             case .advanced: return "slider.horizontal.3"
             case .localModels: return "cpu"
             case .tools: return "hammer.fill"
@@ -49,7 +49,14 @@ public struct ChatSettingsView: View {
             #endif
         }
         .onReceive(pairingCoordinator.$pairedHelper.compactMap { $0 }) { helper in
+            guard !viewModel.isProxyContext else { return }
             viewModel.applyHydratedHelperConfigurationIfTokenUnedited(port: helper.port)
+        }
+        .onChange(of: viewModel.isProxyContext) { _, isProxy in
+            if isProxy {
+                showingOllamaSettings = false
+                if selectedTab == .localModels { selectedTab = .general }
+            }
         }
     }
 
@@ -91,7 +98,7 @@ public struct ChatSettingsView: View {
                     .listRowSeparator(.hidden)
                 #endif
 
-                ForEach(SettingsTab.allCases) { tab in
+                ForEach(SettingsTab.allCases.filter { !viewModel.isProxyContext || $0 != .localModels }) { tab in
                     Button(action: {
                         selectedTab = tab
                         selectedCustomTab = nil
@@ -104,6 +111,7 @@ public struct ChatSettingsView: View {
                         }
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .accessibilityIdentifier("settings.\(tab.rawValue)Tab")
                     .padding(.vertical, 4)
                     .background(selectedCustomTab == nil && selectedTab == tab ? (colorScheme == .dark ? Color.gray.opacity(0.3) : Color.blue.opacity(0.1)) : Color.clear)
                     .cornerRadius(6)
@@ -146,8 +154,8 @@ public struct ChatSettingsView: View {
                         switch selectedTab {
                         case .general:
                             generalSettingsView
-                        case .systemPrompt:
-                            systemPromptSettingsView
+                        case .context:
+                            contextSettingsView
                         case .advanced:
                             advancedSettingsView
                         case .localModels:
@@ -185,7 +193,7 @@ public struct ChatSettingsView: View {
             OllamaSettingsView()
         }
         #endif
-        .manageAccessPrompts(priority: 10)
+        .directAccessPrompts(enabled: !viewModel.isProxyContext)
     }
 
     // iOS/iPadOS layout (unchanged)
@@ -203,10 +211,15 @@ public struct ChatSettingsView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .accessibilityIdentifier("settings.modelPicker")
+                .disabled(viewModel.availableModels.isEmpty)
 
-                Text("Available models depend on which providers you have connected. If a provider is missing, add an API key or sign in from Manage Access.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                modelCatalogStatus
+                if !viewModel.isProxyContext {
+                    Text("Available models depend on which providers you have connected. If a provider is missing, add an API key or sign in from Manage Access.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
 
             if viewModel.canManageAccess {
@@ -267,7 +280,14 @@ public struct ChatSettingsView: View {
                 }
             }
 
+            #if os(iOS)
+            Section(header: Text("Advanced Parameters")) {
+                generationSettingsControls
+            }
+            #endif
+
             #if !os(watchOS) && !os(tvOS)
+            if !viewModel.isProxyContext {
             Section(header: Text("Local Models")) {
                 Button(action: {
                     showingOllamaSettings = true
@@ -280,6 +300,7 @@ public struct ChatSettingsView: View {
                             .foregroundColor(.gray)
                     }
                 }
+            }
             }
             #endif
 
@@ -445,7 +466,39 @@ public struct ChatSettingsView: View {
         .sheet(isPresented: $showingOllamaSettings) {
             OllamaSettingsView()
         }
-        .manageAccessPrompts(priority: 10)
+        .directAccessPrompts(enabled: !viewModel.isProxyContext)
+    }
+
+    @ViewBuilder
+    private var modelCatalogStatus: some View {
+        if let source = viewModel.modelSource {
+            switch source.state {
+            case .direct, .ready:
+                EmptyView()
+            case .loading:
+                ProgressView("Loading server models…")
+                    .accessibilityIdentifier("settings.models.loading")
+            case .authenticationRequired:
+                Text("Sign in to load server models.")
+                    .accessibilityIdentifier("settings.models.error")
+                Button("Sign In", action: source.signIn)
+                    .accessibilityIdentifier("settings.models.signIn")
+            case .empty:
+                Text("No models are configured on this server.")
+                    .accessibilityIdentifier("settings.models.empty")
+                Button("Retry", action: source.retry)
+                    .accessibilityIdentifier("settings.models.retry")
+            case .failed(let message):
+                Text(message).accessibilityIdentifier("settings.models.error")
+                Button("Retry", action: source.retry)
+                    .accessibilityIdentifier("settings.models.retry")
+            case .unsupportedCatalog:
+                Text("The server catalog contains no supported chat models. Update the app or contact the server administrator.")
+                    .accessibilityIdentifier("settings.models.error")
+                Button("Retry", action: source.retry)
+                    .accessibilityIdentifier("settings.models.retry")
+            }
+        }
     }
 
     // MARK: - macOS Detail Views
@@ -476,7 +529,10 @@ public struct ChatSettingsView: View {
                         }
                         .pickerStyle(.menu)
                         .frame(maxWidth: 400)
+                        .accessibilityIdentifier("settings.modelPicker")
+                        .disabled(viewModel.availableModels.isEmpty)
 
+                        modelCatalogStatus
                         Divider()
 
                         VStack(alignment: .leading, spacing: 6) {
@@ -484,7 +540,7 @@ public struct ChatSettingsView: View {
                                 .font(.headline)
                                 .foregroundColor(.secondary)
 
-                            Text(modelDescription(for: viewModel.model))
+                            Text(viewModel.isProxyContext ? "Models are provided by the Botsworth server. No personal provider API key is required." : modelDescription(for: viewModel.model))
                                 .font(.body)
                         }
 
@@ -750,62 +806,148 @@ public struct ChatSettingsView: View {
         }
     }
 
-    private var systemPromptSettingsView: some View {
+    private var contextSettingsView: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("System Prompt")
+            Text("Context & Memory")
                 .font(.title2)
                 .fontWeight(.semibold)
 
             Divider()
 
+            // System prompt section
             VStack(alignment: .leading, spacing: 12) {
-                Text("Instructions for the AI")
+                Text("System Prompt")
                     .font(.headline)
 
-                Text("The system prompt provides instructions to the AI that guide its behavior. This message sets the context for how the AI should respond.")
+                Text("Instructions that guide the AI's behavior. This message sets the context for how the AI should respond.")
                     .font(.body)
                     .foregroundColor(.secondary)
-                    .padding(.bottom, 8)
 
                 GroupBox {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Current System Prompt")
-                            .font(.headline)
-                            .foregroundColor(.secondary)
-
-                        ScrollView {
-                            Text(viewModel.systemMessage)
-                                .font(.system(.body, design: .monospaced))
-                                .padding(10)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                    #if os(macOS)
-                                        .fill(colorScheme == .dark ? Color(.textBackgroundColor) : Color(.controlBackgroundColor))
-                                    #endif
-                                )
-                        }
-                        .frame(height: 200)
+                    ScrollView {
+                        Text(viewModel.systemMessage)
+                            .font(.system(.body, design: .monospaced))
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                #if os(macOS)
+                                    .fill(colorScheme == .dark ? Color(.textBackgroundColor) : Color(.controlBackgroundColor))
+                                #endif
+                            )
                     }
-                    .padding(8)
+                    .frame(height: 120)
+                    .padding(4)
                 }
 
-                HStack(spacing: 16) {
-                    Button(action: {
+                HStack(spacing: 12) {
+                    Button("Reset to Default") {
                         viewModel.systemMessage = "You are a helpful AI assistant."
-                    }) {
-                        Text("Reset to Default")
+                    }
+                    Button {
+                        isEditingSystemMessage = true
+                    } label: {
+                        Label("Edit", systemImage: "pencil")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+            }
+
+            Divider()
+
+            // Context window section
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Context Window")
+                    .font(.headline)
+
+                if let ctxTokens = viewModel.model.generationCapabilities.contextWindowTokens {
+                    Text("This model supports up to \(ctxTokens.formatted()) input tokens.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Message Limit")
+                            .font(.caption)
+                        TextField("Unlimited", value: Binding(
+                            get: { viewModel.conversationSettings.maxContextMessages },
+                            set: { viewModel.updateMaxContextMessages($0) }
+                        ), format: .number.grouping(.never))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
                     }
 
-                    Button(action: {
-                        isEditingSystemMessage = true
-                    }) {
-                        Label("Edit System Prompt", systemImage: "pencil")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Window %")
+                            .font(.caption)
+                        TextField("100", value: Binding(
+                            get: { viewModel.conversationSettings.contextWindowPercent },
+                            set: { viewModel.updateContextWindowPercent($0) }
+                        ), format: .number.grouping(.never))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 60)
                     }
-                    .keyboardShortcut("e", modifiers: [.command])
-                    .buttonStyle(.borderedProminent)
+
+                    Text("Leave empty for no limit.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
-                .padding(.top, 8)
+            }
+
+            Divider()
+
+            // Memory fields section
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Memory")
+                        .font(.headline)
+                    Spacer()
+                    Button {
+                        viewModel.addMemoryField(label: "", value: "")
+                    } label: {
+                        Label("Add", systemImage: "plus.circle")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Text("Custom information injected into the system prompt. Useful for names, preferences, project context, or any details you want the AI to remember.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                if viewModel.conversationSettings.memoryFields.isEmpty {
+                    Text("No memory fields. Add some to give the AI personal context.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.vertical, 8)
+                }
+
+                ForEach(viewModel.conversationSettings.memoryFields) { field in
+                    HStack(spacing: 8) {
+                        TextField("Label", text: Binding(
+                            get: { field.label },
+                            set: { viewModel.updateMemoryField(id: field.id, label: $0, value: field.value) }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 120)
+
+                        TextField("Value", text: Binding(
+                            get: { field.value },
+                            set: { viewModel.updateMemoryField(id: field.id, label: field.label, value: $0) }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+
+                        Button {
+                            viewModel.removeMemoryField(id: field.id)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
         }
     }
@@ -818,59 +960,55 @@ public struct ChatSettingsView: View {
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 24) {
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Max Tokens")
-                            .font(.headline)
-
-                        Text("Maximum number of tokens to generate in the response. Higher values allow for longer outputs, but may increase processing time.")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-
-                        HStack {
-                            TextField("", value: $viewModel.maxTokens, formatter: NumberFormatter())
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .frame(width: 80)
-
-                            Slider(value: Binding(
-                                get: { Double(viewModel.maxTokens) },
-                                set: { viewModel.maxTokens = Int($0) }
-                            ), in: 0...4096, step: 128)
-                            .frame(maxWidth: 400)
-
-                            Text("\(viewModel.maxTokens)")
-                                .monospacedDigit()
-                                .frame(width: 60)
-                        }
-                    }
+            GroupBox {
+                generationSettingsControls
                     .padding(8)
-                }
+            }
+        }
+    }
 
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Temperature")
-                            .font(.headline)
-
-                        Text("Controls randomness in the response. Higher values (closer to 1) produce more creative results, while lower values (closer to 0) are more focused and deterministic.")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-
-                        HStack {
-                            TextField("", value: $viewModel.temperature, formatter: NumberFormatter())
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .frame(width: 80)
-
-                            Slider(value: $viewModel.temperature, in: 0...1, step: 0.01)
-                            .frame(maxWidth: 400)
-
-                            Text(String(format: "%.2f", viewModel.temperature))
-                                .monospacedDigit()
-                                .frame(width: 60)
-                        }
-                    }
-                    .padding(8)
-                }
+    private var generationSettingsControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ChatGenerationSettingsView(
+                maxOutputTokens: Binding(
+                    get: { viewModel.generationSettings.maxOutputTokens },
+                    set: { viewModel.updateMaximumOutputTokens($0) }
+                ),
+                temperature: Binding(
+                    get: { viewModel.generationSettings.temperature },
+                    set: { viewModel.updateTemperature($0) }
+                ),
+                topP: Binding(
+                    get: { viewModel.generationSettings.topP },
+                    set: { viewModel.updateTopP($0) }
+                ),
+                frequencyPenalty: Binding(
+                    get: { viewModel.generationSettings.frequencyPenalty },
+                    set: { viewModel.updateFrequencyPenalty($0) }
+                ),
+                presencePenalty: Binding(
+                    get: { viewModel.generationSettings.presencePenalty },
+                    set: { viewModel.updatePresencePenalty($0) }
+                ),
+                topK: Binding(
+                    get: { viewModel.generationSettings.topK },
+                    set: { viewModel.updateTopK($0) }
+                ),
+                seed: Binding(
+                    get: { viewModel.generationSettings.seed },
+                    set: { viewModel.updateSeed($0) }
+                ),
+                stop: Binding(
+                    get: { viewModel.generationSettings.stop },
+                    set: { viewModel.updateStop($0) }
+                ),
+                capabilities: viewModel.model.generationCapabilities,
+                reset: viewModel.resetGenerationSettings
+            )
+            if let error = viewModel.generationSettingsError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(.red)
             }
         }
     }
@@ -975,6 +1113,13 @@ public struct ChatSettingsView: View {
         default:
             return "Selected model"
         }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func directAccessPrompts(enabled: Bool) -> some View {
+        if enabled { manageAccessPrompts(priority: 10) } else { self }
     }
 }
 
@@ -1107,25 +1252,32 @@ struct SystemMessageEditor: View {
 
 extension ChatSettingsView {
     @MainActor public class ViewModel: ObservableObject {
-        @Published var model: Model = UserDefaults.model {
+        public let modelSource: ChatModelSource?
+        public var isProxyContext: Bool { modelSource?.isProxy == true }
+
+        @Published public var model: Model = UserDefaults.model {
             didSet { UserDefaults.model = model }
         }
-        @Published var maxTokens = UserDefaults.maxTokens
-        @Published var temperature = UserDefaults.temperature
-        @Published var systemMessage = UserDefaults.systemMessage
+        @Published var generationSettings = ChatGenerationSettings.automatic
+        @Published var generationSettingsError: String?
+        @Published var conversationSettings = ChatConversationSettings.default
+        @Published var systemMessage = UserDefaults.systemMessage // legacy source compat
         @Published var codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
-        @Published var codexHelperToken = UserDefaults.codexHelperToken
+        @Published var codexHelperToken: String
         /// Raw helper token as last synced from a successful pairing.
         /// Compared against the form token to avoid overwriting in-progress edits.
-        var lastSyncedHelperTokenSnapshot: String = UserDefaults.codexHelperToken
+        var lastSyncedHelperTokenSnapshot: String
         /// Last URL loaded into the form; pairing must not overwrite an edit.
         var lastSyncedHelperURLSnapshot: String = UserDefaults.codexHelperBaseURL.absoluteString
         @Published var codexHelperTokenSaveError: String?
         @Published var toolSettings = ToolSettings.shared
         @Published public var toolManager = ToolManager.shared
-        public var accessManager = ProviderAccessManager.shared
+        public var accessManager: ProviderAccessManager
 
         let clearMessages: () -> Void
+        private let generationSettingsStore: ChatGenerationSettingsStoring
+        private let conversationSettingsStore: ChatConversationSettingsStoring
+        private let codexHelperTokenStore: CodexHelperTokenStore
 
         /// Callback to trigger WhisperKit preload (set by app)
         public var onPreloadWhisperKit: (() -> Void)?
@@ -1140,8 +1292,30 @@ extension ChatSettingsView {
         /// Retains subscriptions that relay nested ObservableObject changes.
         private var cancellables: Set<AnyCancellable> = []
 
-        public init(clearMessages: @escaping () -> Void) {
+        public init(
+            clearMessages: @escaping () -> Void,
+            modelSource: ChatModelSource? = nil,
+            generationSettingsStore: ChatGenerationSettingsStoring = ChatGenerationSettingsStore(),
+            conversationSettingsStore: ChatConversationSettingsStoring = ChatConversationSettingsStore(),
+            accessManager: ProviderAccessManager = .shared,
+            codexHelperTokenStore: CodexHelperTokenStore = CodexHelperTokenStore()
+        ) {
             self.clearMessages = clearMessages
+            self.modelSource = modelSource
+            self.generationSettingsStore = generationSettingsStore
+            self.conversationSettingsStore = conversationSettingsStore
+            self.accessManager = accessManager
+            self.codexHelperTokenStore = codexHelperTokenStore
+            let helperToken = codexHelperTokenStore.token()
+            self.codexHelperToken = helperToken
+            self.lastSyncedHelperTokenSnapshot = helperToken
+            modelSource?.$state.sink { [weak self] state in
+                guard let self else { return }
+                if case .ready(let models) = state, !models.contains(self.model), let first = models.first {
+                    self.model = first
+                }
+                self.objectWillChange.send()
+            }.store(in: &cancellables)
             // ToolManager is a nested ObservableObject. SwiftUI won't re-render this view
             // when ToolManager's @Published properties change unless we relay its
             // objectWillChange through our own.
@@ -1149,31 +1323,37 @@ extension ChatSettingsView {
                 .sink { [weak self] _ in self?.objectWillChange.send() }
                 .store(in: &cancellables)
 
-            ProviderAccessManager.shared.objectWillChange
+            accessManager.objectWillChange
                 .sink { [weak self] _ in self?.objectWillChange.send() }
                 .store(in: &cancellables)
         }
 
-        var availableModels: [Model] {
+        public var availableModels: [Model] {
+            if let modelSource, modelSource.isProxy { return modelSource.models }
             let available = accessManager.availableChatModels()
             guard model.apiService == .ollama, !available.contains(model) else { return available }
             return [model] + available
         }
 
         func loadSettings() {
-            accessManager.refresh()
-            model = accessManager.validateSelectedModel(UserDefaults.model)
-            maxTokens = UserDefaults.maxTokens
-            temperature = UserDefaults.temperature
-            systemMessage = UserDefaults.systemMessage
+            if let modelSource, modelSource.isProxy {
+                model = modelSource.reconciledSelection(UserDefaults.model)
+            } else {
+                accessManager.refresh()
+                model = accessManager.validateSelectedModel(UserDefaults.model)
+            }
+            generationSettings = generationSettingsStore.load()
+            generationSettingsError = nil
+            conversationSettings = conversationSettingsStore.load()
+            systemMessage = conversationSettings.systemPrompt
             codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
-            codexHelperToken = UserDefaults.codexHelperToken
+            codexHelperToken = codexHelperTokenStore.token()
             lastSyncedHelperURLSnapshot = codexHelperBaseURLString
             lastSyncedHelperTokenSnapshot = codexHelperToken
         }
 
         var canManageAccess: Bool {
-            model.apiService != .ollama
+            !isProxyContext && model.apiService != .ollama
         }
 
         var providerAccessStates: [ProviderAccessState] {
@@ -1194,16 +1374,25 @@ extension ChatSettingsView {
         }
 
         func saveSettings() {
-            UserDefaults.model = accessManager.validateSelectedModel(model)
-            UserDefaults.maxTokens = maxTokens
-            UserDefaults.temperature = temperature
-            UserDefaults.systemMessage = systemMessage
+            UserDefaults.model = isProxyContext ? (modelSource?.reconciledSelection(model) ?? model) : accessManager.validateSelectedModel(model)
+            generationSettingsStore.save(generationSettings)
+            generationSettingsError = nil
+            var cs = conversationSettings
+            cs = ChatConversationSettings(
+                systemPrompt: systemMessage,
+                maxContextMessages: cs.maxContextMessages,
+                contextWindowPercent: cs.contextWindowPercent,
+                memoryFields: cs.memoryFields
+            )
+            conversationSettingsStore.save(cs)
+            UserDefaults.systemMessage = systemMessage // legacy compat
+            guard !isProxyContext else { return }
             if let url = URL(string: codexHelperBaseURLString), url.scheme?.isEmpty == false {
                 UserDefaults.codexHelperBaseURL = url
                 lastSyncedHelperURLSnapshot = codexHelperBaseURLString
             }
             do {
-                try CodexHelperTokenStore().setToken(codexHelperToken.trimmingCharacters(in: .whitespacesAndNewlines))
+                try codexHelperTokenStore.setToken(codexHelperToken.trimmingCharacters(in: .whitespacesAndNewlines))
                 codexHelperTokenSaveError = nil
             } catch {
                 // Surface Keychain persistence failures instead of silently
@@ -1212,7 +1401,198 @@ extension ChatSettingsView {
             }
         }
 
+        func updateMaximumOutputTokens(_ value: Int?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: value,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateTemperature(_ value: Double?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: value,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateTopP(_ value: Double?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: value,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateFrequencyPenalty(_ value: Double?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: value,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updatePresencePenalty(_ value: Double?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: value,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateTopK(_ value: Int?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: value,
+                    seed: settings.seed,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateSeed(_ value: Int?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: value,
+                    stop: settings.stop
+                )
+            }
+        }
+
+        func updateStop(_ value: [String]?) {
+            updateGenerationSettings { settings in
+                try ChatGenerationSettings(
+                    maxOutputTokens: settings.maxOutputTokens,
+                    temperature: settings.temperature,
+                    topP: settings.topP,
+                    frequencyPenalty: settings.frequencyPenalty,
+                    presencePenalty: settings.presencePenalty,
+                    topK: settings.topK,
+                    seed: settings.seed,
+                    stop: value
+                )
+            }
+        }
+
+        func resetGenerationSettings() {
+            generationSettingsStore.reset()
+            generationSettings = .automatic
+            generationSettingsError = nil
+        }
+
+        // MARK: - Conversation settings
+
+        func updateMaxContextMessages(_ value: Int?) {
+            conversationSettings = ChatConversationSettings(
+                systemPrompt: conversationSettings.systemPrompt,
+                maxContextMessages: value,
+                contextWindowPercent: conversationSettings.contextWindowPercent,
+                memoryFields: conversationSettings.memoryFields
+            )
+        }
+
+        func updateContextWindowPercent(_ value: Int?) {
+            conversationSettings = ChatConversationSettings(
+                systemPrompt: conversationSettings.systemPrompt,
+                maxContextMessages: conversationSettings.maxContextMessages,
+                contextWindowPercent: value,
+                memoryFields: conversationSettings.memoryFields
+            )
+        }
+
+        func addMemoryField(label: String, value: String) {
+            var fields = conversationSettings.memoryFields
+            fields.append(.init(label: label, value: value))
+            conversationSettings = ChatConversationSettings(
+                systemPrompt: conversationSettings.systemPrompt,
+                maxContextMessages: conversationSettings.maxContextMessages,
+                contextWindowPercent: conversationSettings.contextWindowPercent,
+                memoryFields: fields
+            )
+        }
+
+        func updateMemoryField(id: UUID, label: String, value: String) {
+            var fields = conversationSettings.memoryFields
+            if let idx = fields.firstIndex(where: { $0.id == id }) {
+                fields[idx] = .init(id: id, label: label, value: value)
+            }
+            conversationSettings = ChatConversationSettings(
+                systemPrompt: conversationSettings.systemPrompt,
+                maxContextMessages: conversationSettings.maxContextMessages,
+                contextWindowPercent: conversationSettings.contextWindowPercent,
+                memoryFields: fields
+            )
+        }
+
+        func removeMemoryField(id: UUID) {
+            var fields = conversationSettings.memoryFields
+            fields.removeAll { $0.id == id }
+            conversationSettings = ChatConversationSettings(
+                systemPrompt: conversationSettings.systemPrompt,
+                maxContextMessages: conversationSettings.maxContextMessages,
+                contextWindowPercent: conversationSettings.contextWindowPercent,
+                memoryFields: fields
+            )
+        }
+
+        private func updateGenerationSettings(transform: (ChatGenerationSettings) throws -> ChatGenerationSettings) {
+            do {
+                generationSettings = try transform(generationSettings)
+                generationSettingsError = nil
+            } catch {
+                generationSettingsError = error.localizedDescription
+            }
+        }
+
         func presentManageAccess(for destination: AccessDestination? = nil) {
+            guard !isProxyContext else { return }
             let targetDestination = destination ?? AccessDestination.destination(for: model)
             AuthPresentationCoordinator.shared.present(preferredDestination: targetDestination)
         }
@@ -1221,7 +1601,7 @@ extension ChatSettingsView {
         /// already in progress in the Settings form.
         func applyHydratedHelperConfigurationIfTokenUnedited(port: Int) {
             guard codexHelperToken == lastSyncedHelperTokenSnapshot else { return }
-            let persistedToken = UserDefaults.codexHelperToken
+            let persistedToken = codexHelperTokenStore.token()
             codexHelperToken = persistedToken
             lastSyncedHelperTokenSnapshot = persistedToken
             if codexHelperBaseURLString == lastSyncedHelperURLSnapshot {
@@ -1239,6 +1619,7 @@ extension ChatSettingsView {
         }
 
         func modelPickerTitle(for model: Model) -> String {
+            if isProxyContext { return model.rawValue }
             if model.apiService == .ollama,
                !accessManager.availableChatModels().contains(model) {
                 return "\(model.rawValue) — Unavailable on current Ollama server"
@@ -1345,6 +1726,70 @@ extension ChatSettingsView {
                     }
                     .padding(8)
                 }
+
+                Divider()
+
+                // Tool execution settings
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Tool Execution")
+                        .font(.headline)
+
+                    HStack(spacing: 16) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Max Iterations")
+                                .font(.caption)
+                            TextField("Unlimited", value: Binding(
+                                get: { viewModel.toolSettings.maxToolIterations },
+                                set: { viewModel.toolSettings.maxToolIterations = $0 }
+                            ), format: .number.grouping(.never))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Timeout (s) — stored only")
+                                .font(.caption)
+                            TextField("None", value: Binding(
+                                get: { viewModel.toolSettings.toolTimeoutSeconds },
+                                set: { viewModel.toolSettings.toolTimeoutSeconds = $0 }
+                            ), format: .number.grouping(.never))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                        }
+                    }
+                    .padding(.bottom, 4)
+
+                    Toggle("Auto-Retry Failed Tools", isOn: $viewModel.toolSettings.autoRetryFailedTools)
+                        .toggleStyle(.checkbox)
+                    Text("Automatically retry a failed tool call once before reporting the error. (UI only — execution wiring coming soon)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.top, 8)
+
+                Divider()
+
+                // Agent model override
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Agent Model")
+                        .font(.headline)
+
+                    Text("Override the conversation model for agent execution. Leave as 'Conversation Model' to use the currently selected model.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Picker("Agent Model Override", selection: Binding(
+                        get: { viewModel.toolSettings.agentModelOverride },
+                        set: { viewModel.toolSettings.agentModelOverride = $0 }
+                    )) {
+                        Text("Conversation Model").tag(nil as Model?)
+                        ForEach(viewModel.availableModels, id: \.self) { model in
+                            Text(model.rawValue).tag(model as Model?)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+                .padding(.top, 8)
 
                 // Reset button
                 Button(action: {
