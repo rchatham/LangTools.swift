@@ -9,11 +9,55 @@ import XCTest
 @MainActor
 final class MessageServiceConversationTests: XCTestCase {
 
+    private var ambientPreferences: ToolSettingsAmbientSnapshot?
+
     override func setUp() {
         super.setUp()
-        // Pin safe defaults so a dirty UserDefaults from a prior crashed run
-        // never leaks into history-dependent tests.
+        pinHistoryDefaultForFixture()
+    }
+
+    override func tearDown() {
+        restoreAmbientPreferences()
+        super.tearDown()
+    }
+
+    /// Pin safe defaults so a dirty UserDefaults from a prior crashed run
+    /// never leaks into history-dependent tests. The ambient state captured
+    /// here is restored in `tearDown`.
+    private func pinHistoryDefaultForFixture() {
+        ambientPreferences = ToolSettingsAmbientSnapshot()
         ToolSettings.shared.keepsToolCallsInHistory = true
+    }
+
+    private func restoreAmbientPreferences() {
+        ambientPreferences?.restore()
+        ambientPreferences = nil
+    }
+
+    func testFixtureLifecycleRestoresAmbientHistoryPreferenceAndPersistedKey() throws {
+        let defaults = UserDefaults.standard
+        let previousValue = ToolSettings.shared.keepsToolCallsInHistory
+        let previousKey = defaults.object(forKey: "keepsToolCallsInHistory")
+        defer {
+            ToolSettings.shared.keepsToolCallsInHistory = previousValue
+            if let previousKey {
+                defaults.set(previousKey, forKey: "keepsToolCallsInHistory")
+            } else {
+                defaults.removeObject(forKey: "keepsToolCallsInHistory")
+            }
+        }
+
+        // Seed a non-default ambient state whose persisted key is absent.
+        ToolSettings.shared.keepsToolCallsInHistory = false
+        defaults.removeObject(forKey: "keepsToolCallsInHistory")
+
+        // Exercise the same pin/restore lifecycle setUp/tearDown apply per test.
+        pinHistoryDefaultForFixture()
+        XCTAssertEqual(ToolSettings.shared.keepsToolCallsInHistory, true)
+        XCTAssertNotNil(defaults.object(forKey: "keepsToolCallsInHistory"))
+        restoreAmbientPreferences()
+        XCTAssertEqual(ToolSettings.shared.keepsToolCallsInHistory, false, "Ambient in-memory value must be restored")
+        XCTAssertNil(defaults.object(forKey: "keepsToolCallsInHistory"), "Originally absent persisted key must stay absent")
     }
 
     func testSendsReuseConversationAndClearRotatesBeforeCleanup() async throws {

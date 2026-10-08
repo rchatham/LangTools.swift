@@ -29,13 +29,57 @@ private struct SampleCard: StructuredOutput {
 @MainActor
 final class RichToolAgentResultsTests: XCTestCase {
 
+    private var ambientPreferences: ToolSettingsAmbientSnapshot?
+
     override func setUp() {
         super.setUp()
-        // Pin safe defaults so a dirty UserDefaults from a prior crashed run
-        // (e.g. keepsToolCallsInHistory=false leaked into com.apple.dt.xctest.tool)
-        // never corrupts history-dependent tests. Tests that need a different
-        // value snapshot + restore within their own body.
+        pinHistoryDefaultForFixture()
+    }
+
+    override func tearDown() {
+        restoreAmbientPreferences()
+        super.tearDown()
+    }
+
+    /// Pin safe defaults so a dirty UserDefaults from a prior crashed run
+    /// (e.g. keepsToolCallsInHistory=false leaked into com.apple.dt.xctest.tool)
+    /// never corrupts history-dependent tests. Tests that need a different
+    /// value snapshot + restore within their own body. The ambient state
+    /// captured here is restored in `tearDown`.
+    private func pinHistoryDefaultForFixture() {
+        ambientPreferences = ToolSettingsAmbientSnapshot()
         ToolSettings.shared.keepsToolCallsInHistory = true
+    }
+
+    private func restoreAmbientPreferences() {
+        ambientPreferences?.restore()
+        ambientPreferences = nil
+    }
+
+    func testFixtureLifecycleRestoresAmbientHistoryPreferenceAndPersistedKey() throws {
+        let defaults = UserDefaults.standard
+        let previousValue = ToolSettings.shared.keepsToolCallsInHistory
+        let previousKey = defaults.object(forKey: "keepsToolCallsInHistory")
+        defer {
+            ToolSettings.shared.keepsToolCallsInHistory = previousValue
+            if let previousKey {
+                defaults.set(previousKey, forKey: "keepsToolCallsInHistory")
+            } else {
+                defaults.removeObject(forKey: "keepsToolCallsInHistory")
+            }
+        }
+
+        // Seed a non-default ambient state whose persisted key is absent.
+        ToolSettings.shared.keepsToolCallsInHistory = false
+        defaults.removeObject(forKey: "keepsToolCallsInHistory")
+
+        // Exercise the same pin/restore lifecycle setUp/tearDown apply per test.
+        pinHistoryDefaultForFixture()
+        XCTAssertEqual(ToolSettings.shared.keepsToolCallsInHistory, true)
+        XCTAssertNotNil(defaults.object(forKey: "keepsToolCallsInHistory"))
+        restoreAmbientPreferences()
+        XCTAssertEqual(ToolSettings.shared.keepsToolCallsInHistory, false, "Ambient in-memory value must be restored")
+        XCTAssertNil(defaults.object(forKey: "keepsToolCallsInHistory"), "Originally absent persisted key must stay absent")
     }
 
     // MARK: - Tool display content mapping
