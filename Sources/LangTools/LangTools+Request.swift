@@ -192,6 +192,12 @@ public struct LangToolsRequestInfo {
     public var langTool: any LangTools
     public var model: any RawRepresentable
     public var messages: [any LangToolsMessage]
+
+    public init(langTool: any LangTools, model: any RawRepresentable, messages: [any LangToolsMessage]) {
+        self.langTool = langTool
+        self.model = model
+        self.messages = messages
+    }
 }
 
 extension LangToolsToolCallingRequest {
@@ -241,16 +247,18 @@ extension LangToolsToolCallingRequest {
     }
 }
 
-public enum LangToolsRequestError: Error {
+public enum LangToolsRequestError: LocalizedError {
     case failedToDecodeFunctionArguments(String)
     case missingRequiredFunctionArguments(String)
     case multipleChoiceIndexOutOfBounds(Int)
+    case toolIterationLimitReached
 
-    var localizedDescription: String {
+    public var errorDescription: String? {
         switch self {
         case .failedToDecodeFunctionArguments(let str): return "Failed to decode function arguments: " + str
         case .missingRequiredFunctionArguments(let str): return "Missing required function arguments: " + str
         case .multipleChoiceIndexOutOfBounds(let int): return "Multiple choice index out of bounds: \(int)"
+        case .toolIterationLimitReached: return "Tool iteration limit reached."
         }
     }
 }
