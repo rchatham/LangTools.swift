@@ -45,7 +45,7 @@ public class OllamaService: ObservableObject {
     private var refreshGeneration: UInt = 0
     private var refreshTask: Task<Void, Never>?
 
-    var configuredBaseURL: URL? { ollama?.configuration.baseURL }
+    @MainActor var configuredBaseURL: URL? { ollama?.configuration.baseURL }
 
     init(
         userDefaults: UserDefaults = .standard,

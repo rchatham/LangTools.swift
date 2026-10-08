@@ -75,7 +75,7 @@ final class OllamaEndpointPolicyTests: XCTestCase {
         }
     }
 
-    func testOllamaServiceColdStartUsesPersistedEndpoint() {
+    @MainActor func testOllamaServiceColdStartUsesPersistedEndpoint() {
         defaults.set("http://127.0.0.1:22445/custom", forKey: OllamaEndpointPolicy.userDefaultsKey)
 
         let service = OllamaService(userDefaults: defaults)
@@ -84,7 +84,7 @@ final class OllamaEndpointPolicyTests: XCTestCase {
         XCTAssertNil(service.error)
     }
 
-    func testOllamaServiceColdStartRetainsInvalidEndpointError() async {
+    @MainActor func testOllamaServiceColdStartRetainsInvalidEndpointError() async {
         defaults.set("http://remote.example.com:11434", forKey: OllamaEndpointPolicy.userDefaultsKey)
 
         let service = OllamaService(userDefaults: defaults)
