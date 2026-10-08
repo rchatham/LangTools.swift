@@ -265,12 +265,13 @@ private final class SendEventBuffer: @unchecked Sendable {
 @Observable
 public class MessageService {
     public let networkClient: NetworkClientProtocol
+    @ObservationIgnored private let toolSettings: ToolSettings
     public var messages: [Message] = [] {
         didSet {
             if let last = messages.last {
                 notifyMessageUpdated(
                     last,
-                    keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory
+                    keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory
                 )
             }
         }
@@ -322,7 +323,8 @@ public class MessageService {
         return result
     }
 
-    public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [any Agent]? = nil, tools: [Tool]? = nil) {
+    public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [any Agent]? = nil, tools: [Tool]? = nil, toolSettings: ToolSettings = .shared) {
+        self.toolSettings = toolSettings
         self.networkClient = networkClient
         self.agents = agents ?? []
         self.tools = tools
@@ -359,7 +361,7 @@ public class MessageService {
     public func markResponseStopped(messageID: UUID) {
         guard let message = messages.first(where: { $0.uuid == messageID && $0.isUser }) else { return }
         message.wasResponseStopped = true
-        notifyMessageUpdated(message, keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory)
+        notifyMessageUpdated(message, keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory)
     }
 
     private func makeSendOperation(
@@ -371,7 +373,7 @@ public class MessageService {
         let establishment = SendEstablishment()
         let eventNotifications = eventBuffer.register(sendID)
         let requestSnapshot = requestMessages(
-            keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory
+            keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory
         )
 
         let completion = Task { @MainActor in
@@ -424,8 +426,8 @@ public class MessageService {
         var assistantMessageIDs: Set<UUID> = []
         var generatedMessageIDs: Set<UUID> = []
         var toolBreakOccurred = false
-        let toolCallTracker = RequestToolCallTracker(maxIterations: ToolSettings.shared.maxToolIterations)
-        let keepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
+        let toolCallTracker = RequestToolCallTracker(maxIterations: toolSettings.maxToolIterations)
+        let keepsToolCallsInHistory = toolSettings.keepsToolCallsInHistory
         let selectedModel = UserDefaults.model
         let replayService = selectedModel.apiService
 
@@ -728,7 +730,7 @@ extension MessageService {
             anchorMessageID: &anchorMessageID,
             toolBreakOccurred: &toolBreakOccurred,
             generatedMessageIDs: &generatedMessageIDs,
-            keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory,
+            keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory,
             replayService: UserDefaults.model.apiService
         )
     }

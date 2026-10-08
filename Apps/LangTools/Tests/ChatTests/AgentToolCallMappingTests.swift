@@ -16,7 +16,15 @@ import XCTest
 @MainActor
 final class AgentToolCallMappingTests: XCTestCase {
 
-    func testAgentStartedToolCallCompletedAndAgentCompleted() {
+    private func makeService(keepsToolCallsInHistory: Bool = true) throws -> MessageService {
+        let suiteName = "AgentToolCallMappingTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(keepsToolCallsInHistory, forKey: "keepsToolCallsInHistory")
+        return MessageService(networkClient: AgentEventNetworkStub(), toolSettings: ToolSettings(defaults: defaults))
+    }
+
+    func testAgentStartedToolCallCompletedAndAgentCompleted() throws {
         var calls: [ChatToolCall] = []
 
         // .started(Research, parent: nil, task: "find weather")
@@ -34,20 +42,20 @@ final class AgentToolCallMappingTests: XCTestCase {
         MessageService.setAgentStatus("Research", status: .success, result: "42", in: &calls)
 
         XCTAssertEqual(calls.count, 1)
-        let agent = calls[0]
+        let agent = (try calls.mappingElement(at: 0))
         XCTAssertEqual(agent.kind, .agent)
         XCTAssertEqual(agent.name, "Research")
         XCTAssertEqual(agent.status, .success)
         XCTAssertEqual(agent.result, "42")
         XCTAssertEqual(agent.children.count, 1)
-        let tool = agent.children[0]
+        let tool = (try agent.children.mappingElement(at: 0))
         XCTAssertEqual(tool.kind, .tool)
         XCTAssertEqual(tool.name, "calculate")
         XCTAssertEqual(tool.status, .success)
         XCTAssertEqual(tool.result, "42")
     }
 
-    func testAgentDelegationNestsAsAgentChild() {
+    func testAgentDelegationNestsAsAgentChild() throws {
         var calls: [ChatToolCall] = []
         calls.append(ChatToolCall(id: "main", name: "Main", kind: .agent, status: .pending, details: "started: task"))
 
@@ -57,26 +65,26 @@ final class AgentToolCallMappingTests: XCTestCase {
             toAgent: "Main", in: &calls)
 
         XCTAssertEqual(calls.count, 1)
-        XCTAssertEqual(calls[0].children.count, 1)
-        let sub = calls[0].children[0]
+        XCTAssertEqual((try calls.mappingElement(at: 0)).children.count, 1)
+        let sub = (try calls.mappingElement(at: 0).children.mappingElement(at: 0))
         XCTAssertEqual(sub.kind, .agent)
         XCTAssertEqual(sub.name, "Research")
         XCTAssertEqual(sub.details, "delegated: because")
     }
 
-    func testSetAgentStatusOnlyAffectsMatchingAgent() {
+    func testSetAgentStatusOnlyAffectsMatchingAgent() throws {
         var calls: [ChatToolCall] = [
             ChatToolCall(id: "a", name: "A", kind: .agent, status: .pending),
             ChatToolCall(id: "b", name: "B", kind: .agent, status: .pending)
         ]
         MessageService.setAgentStatus("B", status: .failure, result: "oops", in: &calls)
-        XCTAssertEqual(calls[0].status, .pending)
-        XCTAssertEqual(calls[1].status, .failure)
-        XCTAssertEqual(calls[1].result, "oops")
+        XCTAssertEqual((try calls.mappingElement(at: 0)).status, .pending)
+        XCTAssertEqual((try calls.mappingElement(at: 1)).status, .failure)
+        XCTAssertEqual((try calls.mappingElement(at: 1)).result, "oops")
     }
 
     func testAgentOnlyEventsWithoutPreambleCreateAssistantCard() throws {
-        let service = MessageService(networkClient: AgentEventNetworkStub())
+        let service = try makeService(keepsToolCallsInHistory: true)
 
         service.handleAgentEvent(.started(agent: "Research", parent: nil, task: "find weather"))
         service.handleAgentEvent(.completed(agent: "Research", result: "sunny"))
@@ -86,15 +94,15 @@ final class AgentToolCallMappingTests: XCTestCase {
         XCTAssertTrue(message.isAssistant)
         XCTAssertNil(message.text)
         XCTAssertEqual(message.toolCalls.count, 1)
-        XCTAssertEqual(message.toolCalls[0].name, "Research")
-        XCTAssertEqual(message.toolCalls[0].status, .success)
-        XCTAssertEqual(message.toolCalls[0].result, "sunny")
+        XCTAssertEqual((try message.toolCalls.mappingElement(at: 0)).name, "Research")
+        XCTAssertEqual((try message.toolCalls.mappingElement(at: 0)).status, .success)
+        XCTAssertEqual((try message.toolCalls.mappingElement(at: 0)).result, "sunny")
     }
 
     func testAgentEventLifecyclePreservesReplayReasonsAcrossProviders() throws {
         let rootReason = "Find the \"quoted\" detail\non the next line"
         let delegatedReason = "Verify the \"source\"\nwithout changing it"
-        let service = MessageService(networkClient: AgentEventNetworkStub())
+        let service = try makeService(keepsToolCallsInHistory: true)
 
         [
             AgentEvent.started(agent: "Research", parent: nil, task: rootReason),
@@ -109,7 +117,7 @@ final class AgentToolCallMappingTests: XCTestCase {
         let rootCall = try XCTUnwrap(message.toolCalls.first)
         XCTAssertEqual(try replayReason(in: rootCall.arguments), rootReason)
         XCTAssertEqual(rootCall.children.count, 1, "Delegation and started events must share one child card")
-        XCTAssertEqual(try replayReason(in: rootCall.children[0].arguments), delegatedReason)
+        XCTAssertEqual(try replayReason(in: (try rootCall.children.mappingElement(at: 0)).arguments), delegatedReason)
 
         let openAIMessages = [message].toOpenAIMessages()
         XCTAssertEqual(
@@ -133,7 +141,7 @@ final class AgentToolCallMappingTests: XCTestCase {
     }
 
     func testIncrementalDelegationLifecyclePreservesNestedChronology() throws {
-        let service = MessageService(networkClient: AgentEventNetworkStub())
+        let service = try makeService(keepsToolCallsInHistory: true)
 
         service.handleAgentEvent(.started(agent: "Main", parent: nil, task: "coordinate"))
         service.drainAgentEvents()
@@ -146,7 +154,7 @@ final class AgentToolCallMappingTests: XCTestCase {
         service.drainAgentEvents()
         root = try XCTUnwrap(service.messages.first?.toolCalls.first)
         XCTAssertEqual(root.children.count, 1)
-        var delegated = root.children[0]
+        var delegated = (try root.children.mappingElement(at: 0))
         XCTAssertEqual(delegated.name, "Research")
         XCTAssertEqual(delegated.status, .pending)
 
@@ -154,13 +162,13 @@ final class AgentToolCallMappingTests: XCTestCase {
         service.drainAgentEvents()
         delegated = try XCTUnwrap(service.messages.first?.toolCalls.first?.children.first)
         XCTAssertEqual(delegated.children.map(\.name), ["search"])
-        XCTAssertEqual(delegated.children[0].status, .pending)
+        XCTAssertEqual((try delegated.children.mappingElement(at: 0)).status, .pending)
 
         service.handleAgentEvent(.toolCompleted(agent: "Research", result: "source found"))
         service.drainAgentEvents()
         delegated = try XCTUnwrap(service.messages.first?.toolCalls.first?.children.first)
-        XCTAssertEqual(delegated.children[0].status, .success)
-        XCTAssertEqual(delegated.children[0].result, "source found")
+        XCTAssertEqual((try delegated.children.mappingElement(at: 0)).status, .success)
+        XCTAssertEqual((try delegated.children.mappingElement(at: 0)).result, "source found")
 
         service.handleAgentEvent(.toolCalled(agent: "Research", tool: "verify", arguments: "{}"))
         service.handleAgentEvent(.error(agent: "Research", message: "verification failed"))
@@ -168,14 +176,14 @@ final class AgentToolCallMappingTests: XCTestCase {
         delegated = try XCTUnwrap(service.messages.first?.toolCalls.first?.children.first)
         XCTAssertEqual(delegated.status, .pending, "A tool error must not complete its owning agent")
         XCTAssertEqual(delegated.children.map(\.status), [.success, .failure])
-        XCTAssertEqual(delegated.children[1].result, "verification failed")
+        XCTAssertEqual((try delegated.children.mappingElement(at: 1)).result, "verification failed")
 
         service.handleAgentEvent(.completed(agent: "Research", result: "partial result"))
         service.drainAgentEvents()
         root = try XCTUnwrap(service.messages.first?.toolCalls.first)
         XCTAssertEqual(root.status, .pending)
-        XCTAssertEqual(root.children[0].status, .success)
-        XCTAssertEqual(root.children[0].result, "partial result")
+        XCTAssertEqual((try root.children.mappingElement(at: 0)).status, .success)
+        XCTAssertEqual((try root.children.mappingElement(at: 0)).result, "partial result")
 
         service.handleAgentEvent(.completed(agent: "Main", result: "final output"))
         service.drainAgentEvents()
@@ -183,17 +191,13 @@ final class AgentToolCallMappingTests: XCTestCase {
         XCTAssertEqual(root.status, .success)
         XCTAssertEqual(root.result, "final output")
         XCTAssertEqual(root.children.count, 1)
-        XCTAssertEqual(root.children[0].name, "Research")
-        XCTAssertEqual(root.children[0].status, .success)
+        XCTAssertEqual((try root.children.mappingElement(at: 0)).name, "Research")
+        XCTAssertEqual((try root.children.mappingElement(at: 0)).status, .success)
     }
 
     func testStructuredAgentResultIsHiddenFromCardAndRetainedForReplay() throws {
-        let previousKeepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
-        ToolSettings.shared.keepsToolCallsInHistory = true
-        defer { ToolSettings.shared.keepsToolCallsInHistory = previousKeepsToolCallsInHistory }
-
         let rawResult = #"{"items":[{"title":"Result"}]}"#
-        let service = MessageService(networkClient: AgentEventNetworkStub())
+        let service = try makeService(keepsToolCallsInHistory: true)
         service.agentResultParser = { _, _ in Message(text: "Rendered cards", role: .assistant) }
 
         service.handleAgentEvent(.started(agent: "Research", parent: nil, task: "find data"))
@@ -201,22 +205,18 @@ final class AgentToolCallMappingTests: XCTestCase {
         service.drainAgentEvents()
 
         XCTAssertEqual(service.messages.count, 2)
-        let eventMessage = service.messages[0]
+        let eventMessage = (try service.messages.mappingElement(at: 0))
         let call = try XCTUnwrap(eventMessage.toolCalls.first)
         XCTAssertNil(call.result)
         XCTAssertEqual(eventMessage.providerToolResults[call.id], rawResult)
-        XCTAssertEqual(service.messages[1].text, "Rendered cards")
+        XCTAssertEqual((try service.messages.mappingElement(at: 1)).text, "Rendered cards")
     }
 
     func testEveryHistoryDisabledPersistenceCallbackSanitizesRawAgentResults() throws {
-        let previousKeepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
-        ToolSettings.shared.keepsToolCallsInHistory = false
-        defer { ToolSettings.shared.keepsToolCallsInHistory = previousKeepsToolCallsInHistory }
-
         let emptyCardResult = #"{"private":"EMPTY_CARD_SENTINEL"}"#
         let parserNilResult = #"{"private":"PARSER_NIL_SENTINEL"}"#
         let errorResult = #"{"private":"ERROR_RESULT_SENTINEL"}"#
-        let service = MessageService(networkClient: AgentEventNetworkStub())
+        let service = try makeService(keepsToolCallsInHistory: false)
         service.messages = [Message(text: "Visible preamble", role: .assistant)]
         service.agentResultParser = { result, _ in
             guard result == emptyCardResult else { return nil }
@@ -274,14 +274,14 @@ final class AgentToolCallMappingTests: XCTestCase {
         XCTAssertEqual(liveCalls.map(\.name), completions.map(\.agent))
         XCTAssertEqual(liveCalls.map(\.result), [nil, parserNilResult, errorResult])
         XCTAssertTrue(service.messages.allSatisfy(\.providerToolResults.isEmpty))
-        guard case .contentCards(let content) = service.messages[1].contentType else {
+        guard case .contentCards(let content) = (try service.messages.mappingElement(at: 1)).contentType else {
             return XCTFail("Expected the empty-card parser branch to append its content-card message")
         }
         XCTAssertEqual(content.cardCount, 0)
     }
 
     func testMixedToolAndAgentEventsPreserveFIFOOrder() throws {
-        let service = MessageService(networkClient: AgentEventNetworkStub())
+        let service = try makeService(keepsToolCallsInHistory: true)
         service.enqueueToolEvent(.toolCalled(TestSelection(id: "tool-1", name: "calculate", arguments: "{}")))
         service.handleAgentEvent(.started(agent: "Research", parent: nil, task: "find weather"))
         service.enqueueToolEvent(.toolCompleted(TestResult(tool_selection_id: "tool-1", result: "42")))
@@ -290,36 +290,36 @@ final class AgentToolCallMappingTests: XCTestCase {
 
         let calls = try XCTUnwrap(service.messages.first).toolCalls
         XCTAssertEqual(calls.map(\.name), ["calculate", "Research"])
-        XCTAssertEqual(calls[0].status, .success)
-        XCTAssertEqual(calls[0].result, "42")
-        XCTAssertEqual(calls[1].status, .pending)
+        XCTAssertEqual((try calls.mappingElement(at: 0)).status, .success)
+        XCTAssertEqual((try calls.mappingElement(at: 0)).result, "42")
+        XCTAssertEqual((try calls.mappingElement(at: 1)).status, .pending)
     }
 
-    func testNilResultToolCompletionStillCompletesChild() {
+    func testNilResultToolCompletionStillCompletesChild() throws {
         // toolCompleted may fire with a nil result; the child must still complete.
         var calls: [ChatToolCall] = [ChatToolCall(id: "a", name: "A", kind: .agent, status: .pending)]
         MessageService.appendChild(ChatToolCall(id: "t", name: "tool", kind: .tool, status: .pending), toAgent: "A", in: &calls)
         MessageService.completePendingChild(ofAgent: "A", result: "", status: .success, in: &calls)
-        XCTAssertEqual(calls[0].children[0].status, .success)
-        XCTAssertEqual(calls[0].children[0].result, "")
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 0)).status, .success)
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 0)).result, "")
     }
 
-    func testConcurrentToolCallsCompleteInCallOrder() {
+    func testConcurrentToolCallsCompleteInCallOrder() throws {
         // toolCompleted carries no tool name, so completions match in call order (FIFO).
         var calls: [ChatToolCall] = [ChatToolCall(id: "a", name: "A", kind: .agent, status: .pending)]
         MessageService.appendChild(ChatToolCall(id: "t1", name: "toolA", kind: .tool, status: .pending), toAgent: "A", in: &calls)
         MessageService.appendChild(ChatToolCall(id: "t2", name: "toolB", kind: .tool, status: .pending), toAgent: "A", in: &calls)
         MessageService.completePendingChild(ofAgent: "A", result: "resA", status: .success, in: &calls)
         MessageService.completePendingChild(ofAgent: "A", result: "resB", status: .success, in: &calls)
-        XCTAssertEqual(calls[0].children[0].name, "toolA")
-        XCTAssertEqual(calls[0].children[0].result, "resA")
-        XCTAssertEqual(calls[0].children[0].status, .success)
-        XCTAssertEqual(calls[0].children[1].name, "toolB")
-        XCTAssertEqual(calls[0].children[1].result, "resB")
-        XCTAssertEqual(calls[0].children[1].status, .success)
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 0)).name, "toolA")
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 0)).result, "resA")
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 0)).status, .success)
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 1)).name, "toolB")
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 1)).result, "resB")
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 1)).status, .success)
     }
 
-    func testDelegationDoesNotDuplicateAgentCard() {
+    func testDelegationDoesNotDuplicateAgentCard() throws {
         // agentTransfer then started(to, parent) must produce a single sub-agent card.
         var calls: [ChatToolCall] = [ChatToolCall(id: "main", name: "Main", kind: .agent, status: .pending)]
         // .agentTransfer(Main, to: Research, reason)
@@ -327,24 +327,24 @@ final class AgentToolCallMappingTests: XCTestCase {
         // .started(Research, parent: Main, task) -> should update existing, not duplicate
         let updated = MessageService.updateAgentChildDetails("Research", parent: "Main", append: "started: find", in: &calls)
         XCTAssertTrue(updated)
-        XCTAssertEqual(calls[0].children.count, 1)
-        XCTAssertEqual(calls[0].children[0].name, "Research")
-        XCTAssertTrue(calls[0].children[0].details?.contains("delegated") == true)
-        XCTAssertTrue(calls[0].children[0].details?.contains("started") == true)
+        XCTAssertEqual((try calls.mappingElement(at: 0)).children.count, 1)
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 0)).name, "Research")
+        XCTAssertTrue((try calls.mappingElement(at: 0).children.mappingElement(at: 0)).details?.contains("delegated") == true)
+        XCTAssertTrue((try calls.mappingElement(at: 0).children.mappingElement(at: 0)).details?.contains("started") == true)
     }
 
-    func testToolErrorCompletesPendingToolWithoutCompletingAgentChild() {
+    func testToolErrorCompletesPendingToolWithoutCompletingAgentChild() throws {
         var calls: [ChatToolCall] = [ChatToolCall(id: "a", name: "A", kind: .agent, status: .pending)]
         MessageService.appendChild(ChatToolCall(id: "sub", name: "Delegate", kind: .agent, status: .pending), toAgent: "A", in: &calls)
         MessageService.appendChild(ChatToolCall(id: "t", name: "tool", kind: .tool, status: .pending), toAgent: "A", in: &calls)
         MessageService.completePendingChild(ofAgent: "A", result: "boom", status: .failure, in: &calls)
-        XCTAssertEqual(calls[0].children[0].status, .pending)
-        XCTAssertNil(calls[0].children[0].result)
-        XCTAssertEqual(calls[0].children[1].status, .failure)
-        XCTAssertEqual(calls[0].children[1].result, "boom")
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 0)).status, .pending)
+        XCTAssertNil((try calls.mappingElement(at: 0).children.mappingElement(at: 0)).result)
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 1)).status, .failure)
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 1)).result, "boom")
     }
 
-    func testCompleteRemainingPendingClearsStuckChildrenAndPreservesFailures() {
+    func testCompleteRemainingPendingClearsStuckChildrenAndPreservesFailures() throws {
         var calls: [ChatToolCall] = [ChatToolCall(id: "a", name: "A", kind: .agent, status: .pending, children: [
             ChatToolCall(id: "c1", name: "subagent", kind: .agent, status: .pending, children: [
                 ChatToolCall(id: "g1", name: "failedTool", kind: .tool, status: .failure, result: "boom"),
@@ -353,19 +353,19 @@ final class AgentToolCallMappingTests: XCTestCase {
             ChatToolCall(id: "c2", name: "toolB", kind: .tool, status: .success, result: "ok")
         ])]
         MessageService.completeRemainingPending(ofAgent: "A", status: .success, in: &calls)
-        XCTAssertEqual(calls[0].children[0].status, .success)
-        XCTAssertEqual(calls[0].children[0].children[0].status, .failure)
-        XCTAssertEqual(calls[0].children[0].children[1].status, .success)
-        XCTAssertEqual(calls[0].children[1].status, .success)
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 0)).status, .success)
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 0).children.mappingElement(at: 0)).status, .failure)
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 0).children.mappingElement(at: 1)).status, .success)
+        XCTAssertEqual((try calls.mappingElement(at: 0).children.mappingElement(at: 1)).status, .success)
     }
 
     func testFailedCalendarReadRetrySucceedsAsSeparateInvocation() throws {
-        let calls = runCalendarReadRetry(secondAttemptFails: false)
+        let calls = try runCalendarReadRetry(secondAttemptFails: false)
         try assertCalendarReadRetry(calls, expectedRetryStatus: .success)
     }
 
     func testFailedCalendarReadRetryFailsAsSeparateInvocation() throws {
-        let calls = runCalendarReadRetry(secondAttemptFails: true)
+        let calls = try runCalendarReadRetry(secondAttemptFails: true)
         try assertCalendarReadRetry(calls, expectedRetryStatus: .failure)
     }
 
@@ -375,8 +375,8 @@ final class AgentToolCallMappingTests: XCTestCase {
         return try XCTUnwrap(decoded["reason"])
     }
 
-    private func runCalendarReadRetry(secondAttemptFails: Bool) -> [ChatToolCall] {
-        let service = MessageService(networkClient: AgentEventNetworkStub())
+    private func runCalendarReadRetry(secondAttemptFails: Bool) throws -> [ChatToolCall] {
+        let service = try makeService(keepsToolCallsInHistory: true)
         service.messages = [Message(role: .assistant, contentType: .null)]
         var events: [AgentEvent] = [
             .started(agent: "calendarAgent", parent: nil, task: "check calendars"),
@@ -401,7 +401,7 @@ final class AgentToolCallMappingTests: XCTestCase {
 
         events.forEach(service.handleAgentEvent)
         service.drainAgentEvents()
-        return service.messages[0].toolCalls
+        return (try service.messages.mappingElement(at: 0)).toolCalls
     }
 
     private func assertCalendarReadRetry(
@@ -413,14 +413,26 @@ final class AgentToolCallMappingTests: XCTestCase {
         let root = try XCTUnwrap(calls.first, file: file, line: line)
         let reads = root.children.filter { $0.kind == .agent && $0.name == "calendarReadAgent" }
         XCTAssertEqual(reads.count, 2, file: file, line: line)
-        XCTAssertEqual(reads[0].status, .failure, file: file, line: line)
-        XCTAssertEqual(reads[0].result, "first attempt failed", file: file, line: line)
-        XCTAssertEqual(try replayReason(in: reads[0].arguments), "read calendar", file: file, line: line)
-        XCTAssertEqual(reads[1].status, expectedRetryStatus, file: file, line: line)
-        XCTAssertEqual(reads[1].result, expectedRetryStatus == .success ? "event found" : "retry failed", file: file, line: line)
-        XCTAssertEqual(try replayReason(in: reads[1].arguments), "retry calendar read", file: file, line: line)
+        XCTAssertEqual((try reads.mappingElement(at: 0)).status, .failure, file: file, line: line)
+        XCTAssertEqual((try reads.mappingElement(at: 0)).result, "first attempt failed", file: file, line: line)
+        XCTAssertEqual(try replayReason(in: (try reads.mappingElement(at: 0)).arguments), "read calendar", file: file, line: line)
+        XCTAssertEqual((try reads.mappingElement(at: 1)).status, expectedRetryStatus, file: file, line: line)
+        XCTAssertEqual((try reads.mappingElement(at: 1)).result, expectedRetryStatus == .success ? "event found" : "retry failed", file: file, line: line)
+        XCTAssertEqual(try replayReason(in: (try reads.mappingElement(at: 1)).arguments), "retry calendar read", file: file, line: line)
         XCTAssertFalse(calls.flattened().contains { $0.name == "agent_transfer" }, file: file, line: line)
         XCTAssertFalse(calls.flattened().contains { $0.status == .pending }, file: file, line: line)
+    }
+}
+
+private extension Array {
+    /// Report a failed prerequisite through XCTest instead of trapping on an index.
+    func mappingElement(at index: Int, file: StaticString = #filePath, line: UInt = #line) throws -> Element {
+        try XCTUnwrap(
+            indices.contains(index) ? self[index] : nil,
+            "Expected element at index \(index), but found \(count) elements",
+            file: file,
+            line: line
+        )
     }
 }
 
