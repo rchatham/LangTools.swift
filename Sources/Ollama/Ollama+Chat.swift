@@ -5,17 +5,13 @@ import OpenAI
 extension Ollama {
     public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
         guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
-        // Ollama does not support structured output; responseSchema is ignored.
-        #if DEBUG
-        if responseSchema != nil {
-            print("[LangTools] ⚠️ Ollama does not support structured output. The responseSchema parameter will be ignored.")
-        }
-        #endif
         let providerMessages = messages.map { ($0 as? Message) ?? Message($0) }
-        return Ollama.ChatRequest(model: model, messages: providerMessages, tools: tools?.map { OpenAI.Tool($0) }, toolEventHandler: toolEventHandler)
+        var request = Ollama.ChatRequest(model: model, messages: providerMessages, tools: tools?.map { OpenAI.Tool($0) }, toolEventHandler: toolEventHandler)
+        request.responseSchema = responseSchema
+        return request
     }
 
-    public struct ChatRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest {
+    public struct ChatRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest, LangToolsStructuredOutputRequest {
         public typealias Response = ChatResponse
         public typealias LangTool = Ollama
         public static var endpoint: String { "api/chat" }
@@ -25,7 +21,7 @@ extension Ollama {
         public var messages: [Message]
 
         // Optional parameters
-        public let format: GenerateFormat?
+        public var format: GenerateFormat?
         public let options: GenerateOptions?
         public var stream: Bool?
         public let keep_alive: String?
@@ -34,10 +30,51 @@ extension Ollama {
         @CodableIgnored
         public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
 
+        // MARK: - LangToolsStructuredOutputRequest
+
+        /// The response schema for structured output. Stored as
+        /// ``GenerateFormat/jsonSchema(_:)`` for full schemas or recovered
+        /// semantically from legacy ``GenerateFormat/schema(_:)`` for simple
+        /// object schemas without extra constraints.
+        public var responseSchema: JSONSchema? {
+            get {
+                switch format {
+                case .jsonSchema(let schema):
+                    return schema
+                case .schema(let schemaFormat):
+                    // Recover semantically from legacy flat format:
+                    // convert simplified {type, description} properties
+                    // back to a JSONSchema object.
+                    var properties: [String: JSONSchema] = [:]
+                    for (key, prop) in schemaFormat.properties {
+                        let schemaType = JSONSchema.SchemaType(rawValue: prop.type) ?? .string
+                        properties[key] = JSONSchema(
+                            type: schemaType,
+                            description: prop.description.isEmpty ? nil : prop.description
+                        )
+                    }
+                    return JSONSchema(
+                        type: .object,
+                        properties: properties.isEmpty ? nil : properties,
+                        required: schemaFormat.required
+                    )
+                default:
+                    return nil
+                }
+            }
+            set {
+                if let schema = newValue {
+                    format = .jsonSchema(schema)
+                } else {
+                    // Only clear if currently using jsonSchema; leave plain json untouched
+                    if case .jsonSchema = format { format = nil }
+                }
+            }
+        }
+
         public init(model: Ollama.Model, messages: [any LangToolsMessage]) {
             self.model = model
             self.messages = messages.map { Message($0) }
-
             format = nil
             options = nil
             stream = nil
@@ -66,7 +103,7 @@ extension Ollama {
         }
     }
 
-    public struct ChatResponse: Codable, LangToolsStreamableResponse, LangToolsToolCallingResponse {
+    public struct ChatResponse: Codable, LangToolsStreamableResponse, LangToolsToolCallingResponse, LangToolsStructuredOutputResponse {
         public typealias Delta = ChatDelta
         public typealias Message = Ollama.Message
         public typealias ToolSelection = Message.ToolSelection
@@ -84,6 +121,11 @@ extension Ollama {
         public let eval_duration: Int64?
 
         public var delta: ChatDelta? { nil }
+
+        /// The raw JSON string from the message content, used by `structuredOutput(as:)`.
+        public var jsonContent: String? {
+            message?.content.text
+        }
 
         public static var empty: ChatResponse {
             return ChatResponse(

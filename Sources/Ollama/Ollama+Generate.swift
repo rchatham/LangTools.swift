@@ -1,4 +1,5 @@
 import Foundation
+import JSON
 import LangTools
 
 extension Ollama {
@@ -109,18 +110,31 @@ extension Ollama {
         public let context: [Int]?
     }
     
-    public enum GenerateFormat: Codable {
+    public enum GenerateFormat: Codable, Equatable {
         case json
         case schema(SchemaFormat)
+        case jsonSchema(JSONSchema)
         
-        public struct SchemaFormat: Codable {
+        public struct SchemaFormat: Codable, Equatable {
             public let type: String
             public let properties: [String: PropertyFormat]
             public let required: [String]?
-            
-            public struct PropertyFormat: Codable {
+
+            public init(type: String, properties: [String: PropertyFormat], required: [String]?) {
+                self.type = type
+                self.properties = properties
+                self.required = required
+            }
+
+            public struct PropertyFormat: Codable, Equatable {
                 public let type: String
                 public let description: String
+
+                public init(type: String, description: String) {
+                    self.type = type
+                    self.description = description
+                }
+
                 enum CodingKeys: String, CodingKey {
                     case type, description
                 }
@@ -134,17 +148,43 @@ extension Ollama {
                 try container.encode("json")
             case .schema(let schema):
                 try container.encode(schema)
+            case .jsonSchema(let schema):
+                try container.encode(schema)
             }
         }
-        
+
         public init(from decoder: Decoder) throws {
             let container = try decoder.singleValueContainer()
+
+            // Plain json string
             if let stringValue = try? container.decode(String.self),
                stringValue == "json" {
                 self = .json
-            } else {
-                self = .schema(try container.decode(SchemaFormat.self))
+                return
             }
+
+            // Decode as generic JSON tree so we can compare structural equality
+            let rawJSON = try container.decode(JSON.self)
+            let rawData = try JSONEncoder().encode(rawJSON)
+
+            // Try legacy SchemaFormat first: only use it when the raw JSON
+            // has no extra fields beyond what SchemaFormat encodes (type,
+            // properties with type+description, required). If the schema
+            // contains items, anyOf, additionalProperties, enum, min/max,
+            // or any other JSONSchema field, those would be silently lost
+            // by SchemaFormat, so we fall through to jsonSchema.
+            if let schemaFormat = try? JSONDecoder().decode(SchemaFormat.self, from: rawData) {
+                let schemaData = try JSONEncoder().encode(schemaFormat)
+                let schemaJSON = try JSONDecoder().decode(JSON.self, from: schemaData)
+                if schemaJSON == rawJSON {
+                    self = .schema(schemaFormat)
+                    return
+                }
+            }
+
+            // Full JSONSchema (handles nested objects, arrays, anyOf, enums,
+            // constraints, additionalProperties, and all other features).
+            self = .jsonSchema(try JSONDecoder().decode(JSONSchema.self, from: rawData))
         }
     }
     

@@ -568,4 +568,671 @@ class OllamaTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - Structured Output Tests (lossless JSONSchema)
+
+    func testChatRequestFactoryEncodesSchemaLosslessly() throws {
+        let schema = JSONSchema.object(
+            properties: [
+                "name": .string(description: "The person's name"),
+                "age": .integer(description: "The person's age")
+            ],
+            required: ["name", "age"],
+            additionalProperties: .bool(false)
+        )
+
+        let request = try Ollama.chatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: [Ollama.Message(role: .user, content: "Hello")],
+            tools: nil,
+            responseSchema: schema,
+            toolEventHandler: { _ in }
+        )
+
+        let chatRequest = try XCTUnwrap(request as? Ollama.ChatRequest)
+        guard case .jsonSchema(let stored) = chatRequest.format else {
+            XCTFail("Expected .jsonSchema format, got \(String(describing: chatRequest.format))")
+            return
+        }
+        // Lossless: full JSONSchema equality
+        XCTAssertEqual(stored, schema)
+    }
+
+    func testResponseSchemaRoundtripIdentity() throws {
+        let schema = JSONSchema.object(
+            properties: [
+                "city": .string(description: "City name"),
+                "temp": .number(description: "Temperature", minimum: -100, maximum: 60)
+            ],
+            required: ["city"],
+            additionalProperties: .bool(false)
+        )
+
+        var request = Ollama.ChatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: [Ollama.Message(role: .user, content: "Weather?")],
+            format: nil
+        )
+        request.responseSchema = schema
+        let roundtripped = try XCTUnwrap(request.responseSchema)
+        XCTAssertEqual(roundtripped, schema, "Full schema must survive roundtrip identically")
+    }
+
+    func testNestedObjectSchemaPreserved() throws {
+        let schema = JSONSchema.object(
+            properties: [
+                "event": .object(
+                    properties: [
+                        "title": .string(),
+                        "location": .object(
+                            properties: [
+                                "lat": .number(),
+                                "lng": .number()
+                            ],
+                            required: ["lat", "lng"]
+                        )
+                    ],
+                    required: ["title", "location"]
+                )
+            ],
+            required: ["event"]
+        )
+
+        var request = Ollama.ChatRequest(
+            model: OllamaModel(rawValue: "llama3.2")!,
+            messages: [Ollama.Message(role: .user, content: "Event?")],
+            format: nil
+        )
+        request.responseSchema = schema
+
+        // Roundtrip
+        let roundtripped = try XCTUnwrap(request.responseSchema)
+        XCTAssertEqual(roundtripped, schema)
+
+        // Verify nested structure survived
+        let eventSchema = try XCTUnwrap(roundtripped.properties?["event"])
+        XCTAssertEqual(eventSchema.type, .object)
+        let locationSchema = try XCTUnwrap(eventSchema.properties?["location"])
+        XCTAssertEqual(locationSchema.type, .object)
+        XCTAssertEqual(locationSchema.required, ["lat", "lng"])
+    }
+
+    func testArrayWithItemsSchemaPreserved() throws {
+        let schema = JSONSchema.object(
+            properties: [
+                "attendees": .array(
+                    items: .object(
+                        properties: [
+                            "name": .string(),
+                            "email": .string(format: .email)
+                        ],
+                        required: ["name"]
+                    )
+                )
+            ],
+            required: ["attendees"]
+        )
+
+        var request = Ollama.ChatRequest(
+            model: OllamaModel(rawValue: "llama3.2")!,
+            messages: [Ollama.Message(role: .user, content: "Attendees?")],
+            format: nil
+        )
+        request.responseSchema = schema
+
+        let roundtripped = try XCTUnwrap(request.responseSchema)
+        XCTAssertEqual(roundtripped, schema)
+
+        let attendeesSchema = try XCTUnwrap(roundtripped.properties?["attendees"])
+        XCTAssertEqual(attendeesSchema.type, .array)
+        let itemSchema = try XCTUnwrap(attendeesSchema.items)
+        XCTAssertEqual(itemSchema.type, .object)
+        XCTAssertEqual(itemSchema.required, ["name"])
+        XCTAssertEqual(itemSchema.properties?["email"]?.format, .email)
+    }
+
+    func testAnyOfNullableSchemaPreserved() throws {
+        let schema = JSONSchema.object(
+            properties: [
+                "description": .anyOf([.string(), .null()], description: "Optional description")
+            ],
+            required: []
+        )
+
+        var request = Ollama.ChatRequest(
+            model: OllamaModel(rawValue: "llama3.2")!,
+            messages: [Ollama.Message(role: .user, content: "Test")],
+            format: nil
+        )
+        request.responseSchema = schema
+
+        let roundtripped = try XCTUnwrap(request.responseSchema)
+        XCTAssertEqual(roundtripped, schema)
+
+        let desc = try XCTUnwrap(roundtripped.properties?["description"])
+        XCTAssertNil(desc.type, "anyOf schemas have nil type")
+        XCTAssertEqual(desc.anyOf?.count, 2)
+        XCTAssertEqual(desc.anyOf?[0].type, .string)
+        XCTAssertEqual(desc.anyOf?[1].type, .null)
+    }
+
+    func testEnumAndConstraintsSchemaPreserved() throws {
+        let schema = JSONSchema.object(
+            properties: [
+                "role": .string(enumValues: ["admin", "user", "guest"]),
+                "score": .integer(minimum: 0, maximum: 100),
+                "email": .string(description: nil, enumValues: nil, minLength: 5, maxLength: 254, pattern: "^.+@.+$", format: .email)
+            ],
+            required: ["role", "score"]
+        )
+
+        var request = Ollama.ChatRequest(
+            model: OllamaModel(rawValue: "llama3.2")!,
+            messages: [Ollama.Message(role: .user, content: "Test")],
+            format: nil
+        )
+        request.responseSchema = schema
+
+        let roundtripped = try XCTUnwrap(request.responseSchema)
+        XCTAssertEqual(roundtripped, schema)
+
+        // Verify constraints survived
+        let roleSchema = try XCTUnwrap(roundtripped.properties?["role"])
+        XCTAssertEqual(roleSchema.enumValues, ["admin", "user", "guest"])
+
+        let scoreSchema = try XCTUnwrap(roundtripped.properties?["score"])
+        XCTAssertEqual(scoreSchema.minimum, 0)
+        XCTAssertEqual(scoreSchema.maximum, 100)
+
+        let emailSchema = try XCTUnwrap(roundtripped.properties?["email"])
+        XCTAssertEqual(emailSchema.format, .email)
+        XCTAssertEqual(emailSchema.minLength, 5)
+        XCTAssertEqual(emailSchema.maxLength, 254)
+        XCTAssertEqual(emailSchema.pattern, "^.+@.+$")
+    }
+
+    func testAdditionalPropertiesFalsePreserved() throws {
+        let schema = JSONSchema.object(
+            properties: ["name": .string()],
+            required: ["name"],
+            additionalProperties: .bool(false)
+        )
+
+        var request = Ollama.ChatRequest(
+            model: OllamaModel(rawValue: "llama3.2")!,
+            messages: [Ollama.Message(role: .user, content: "Test")],
+            format: nil
+        )
+        request.responseSchema = schema
+
+        let roundtripped = try XCTUnwrap(request.responseSchema)
+        XCTAssertEqual(roundtripped.additionalProperties, .bool(false))
+        XCTAssertEqual(roundtripped, schema)
+    }
+
+    func testEncodeDecodeEqualityPreservesFullSchema() throws {
+        let schema = JSONSchema.object(
+            properties: [
+                "items": .array(
+                    items: .object(
+                        properties: [
+                            "id": .integer(),
+                            "tags": .array(items: .string(), minItems: 1, uniqueItems: true),
+                            "meta": .anyOf([.object(properties: ["key": .string()]), .null()])
+                        ],
+                        required: ["id"]
+                    )
+                )
+            ],
+            required: ["items"],
+            additionalProperties: .bool(false)
+        )
+
+        var request = Ollama.ChatRequest(
+            model: OllamaModel(rawValue: "llama3.2")!,
+            messages: [Ollama.Message(role: .user, content: "Complex")],
+            format: nil
+        )
+        request.responseSchema = schema
+
+        // Encode → decode → verify equality
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(request)
+        let decoder = JSONDecoder()
+        let decoded = try decoder.decode(Ollama.ChatRequest.self, from: data)
+
+        let recovered = try XCTUnwrap(decoded.responseSchema)
+        XCTAssertEqual(recovered, schema, "Full schema must survive encode→decode identically")
+    }
+
+    func testToolContinuationRetainsFullSchema() throws {
+        let schema = JSONSchema.object(
+            properties: [
+                "results": .array(
+                    items: .object(
+                        properties: [
+                            "title": .string(),
+                            "confidence": .number(minimum: 0, maximum: 1)
+                        ],
+                        required: ["title"]
+                    )
+                )
+            ],
+            required: ["results"],
+            additionalProperties: .bool(false)
+        )
+
+        let tools: [OpenAI.Tool] = [.init(
+            name: "search",
+            description: "Search",
+            tool_schema: .init(properties: ["q": .init(type: "string", description: "Query")], required: ["q"])
+        )]
+
+        let request = try Ollama.chatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: [Ollama.Message(role: .user, content: "Find")],
+            tools: tools.map { $0 as any LangToolsTool },
+            responseSchema: schema,
+            toolEventHandler: { _ in }
+        )
+
+        let chatRequest = try XCTUnwrap(request as? Ollama.ChatRequest)
+        XCTAssertNotNil(chatRequest.tools)
+        guard case .jsonSchema(let stored) = chatRequest.format else {
+            XCTFail("Full schema must survive alongside tools")
+            return
+        }
+        XCTAssertEqual(stored, schema)
+        let recovered = try XCTUnwrap(chatRequest.responseSchema)
+        XCTAssertEqual(recovered, schema)
+    }
+
+    func testResponseSchemaClearingLeavesPlainJsonUntouched() throws {
+        var request = Ollama.ChatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: [Ollama.Message(role: .user, content: "Hi")],
+            format: .json
+        )
+        XCTAssertEqual(request.format, .json)
+        request.responseSchema = nil
+        XCTAssertEqual(request.format, .json, "Plain json format should survive nil responseSchema")
+    }
+
+    func testResponseSchemaSetThenClear() throws {
+        let schema = JSONSchema.object(properties: ["x": .integer()])
+        var request = Ollama.ChatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: [Ollama.Message(role: .user, content: "Hi")],
+            format: nil
+        )
+        request.responseSchema = schema
+        XCTAssertNotNil(request.responseSchema)
+        request.responseSchema = nil
+        XCTAssertNil(request.responseSchema)
+        XCTAssertNil(request.format)
+    }
+
+    func testPlainJsonFormatBackwardCompatible() throws {
+        var request = Ollama.ChatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: [Ollama.Message(role: .user, content: "Hi")],
+            format: .json
+        )
+        XCTAssertNil(request.responseSchema)
+        let schema = JSONSchema.object(properties: ["x": .integer()])
+        request.responseSchema = schema
+        guard case .jsonSchema = request.format else {
+            XCTFail("Should switch to jsonSchema format")
+            return
+        }
+    }
+
+    func testChatRequestWithoutSchemaHasNilResponseSchema() throws {
+        let request = Ollama.ChatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: [Ollama.Message(role: .user, content: "Hi")],
+            format: nil
+        )
+        XCTAssertNil(request.responseSchema)
+        XCTAssertNil(request.format)
+    }
+
+    func testPerformTypedDecode() async throws {
+        struct Person: StructuredOutput, Equatable {
+            let name: String
+            let age: Int
+            static var jsonSchema: JSONSchema {
+                .object(properties: ["name": .string(), "age": .integer()], required: ["name", "age"])
+            }
+        }
+        let responseJSON = #"{"name":"Alice","age":30}"#
+        let chatResponse = Ollama.ChatResponse(
+            model: "llama3.2", created_at: "2025-01-01T00:00:00Z",
+            message: Ollama.Message(role: .assistant, content: responseJSON),
+            done: true, done_reason: "stop",
+            total_duration: nil, load_duration: nil, prompt_eval_count: nil,
+            prompt_eval_duration: nil, eval_count: nil, eval_duration: nil
+        )
+        let person: Person = try chatResponse.structuredOutput()
+        XCTAssertEqual(person.name, "Alice")
+        XCTAssertEqual(person.age, 30)
+    }
+
+    func testPerformTypedDecodeWithInvalidJSONThrows() {
+        let chatResponse = Ollama.ChatResponse(
+            model: "llama3.2", created_at: "2025-01-01T00:00:00Z",
+            message: Ollama.Message(role: .assistant, content: "not json"),
+            done: true, done_reason: "stop",
+            total_duration: nil, load_duration: nil, prompt_eval_count: nil,
+            prompt_eval_duration: nil, eval_count: nil, eval_duration: nil
+        )
+        struct Person: StructuredOutput, Equatable {
+            let name: String; let age: Int
+            static var jsonSchema: JSONSchema {
+                .object(properties: ["name": .string(), "age": .integer()], required: ["name", "age"])
+            }
+        }
+        XCTAssertThrowsError(try chatResponse.structuredOutput(as: Person.self))
+    }
+
+    func testJsonContentReturnsNilForMissingMessage() {
+        let response = Ollama.ChatResponse(
+            model: "llama3.2", created_at: "2025-01-01T00:00:00Z",
+            message: nil, done: true, done_reason: nil,
+            total_duration: nil, load_duration: nil, prompt_eval_count: nil,
+            prompt_eval_duration: nil, eval_count: nil, eval_duration: nil
+        )
+        XCTAssertNil(response.jsonContent)
+    }
+
+    func testJsonContentReturnsMessageText() {
+        let response = Ollama.ChatResponse(
+            model: "llama3.2", created_at: "2025-01-01T00:00:00Z",
+            message: Ollama.Message(role: .assistant, content: #"{"key":"value"}"#),
+            done: true, done_reason: "stop",
+            total_duration: nil, load_duration: nil, prompt_eval_count: nil,
+            prompt_eval_duration: nil, eval_count: nil, eval_duration: nil
+        )
+        XCTAssertEqual(response.jsonContent, #"{"key":"value"}"#)
+    }
+
+    func testLocalModelSchemaAcceptedByFactory() throws {
+        // Schema is accepted client-side for local models; server decides
+        // actual structured-output support.
+        let schema = JSONSchema.object(properties: ["result": .string()])
+        let request = try Ollama.chatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: [Ollama.Message(role: .user, content: "Test")],
+            tools: nil,
+            responseSchema: schema,
+            toolEventHandler: { _ in }
+        )
+        let chatRequest = try XCTUnwrap(request as? Ollama.ChatRequest)
+        XCTAssertNotNil(chatRequest.responseSchema, "Local model should accept schema client-side")
+    }
+
+    func testCloudModelSchemaAcceptedByFactory() throws {
+        // Cloud models go through the same factory without artificial guard.
+        let schema = JSONSchema.object(properties: ["result": .string()])
+        let request = try Ollama.chatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "glm-5.2:cloud")),
+            messages: [Ollama.Message(role: .user, content: "Test")],
+            tools: nil,
+            responseSchema: schema,
+            toolEventHandler: { _ in }
+        )
+        let chatRequest = try XCTUnwrap(request as? Ollama.ChatRequest)
+        XCTAssertTrue(chatRequest.model.isCloudModel)
+        XCTAssertNotNil(chatRequest.responseSchema, "Cloud model should accept schema; server decides support")
+    }
+
+    func testWireFormatEncodesFullJSONSchema() throws {
+        let schema = JSONSchema.object(
+            properties: [
+                "events": .array(
+                    items: .object(
+                        properties: [
+                            "title": .string(),
+                            "recurring": .boolean()
+                        ],
+                        required: ["title"]
+                    )
+                )
+            ],
+            required: ["events"],
+            additionalProperties: .bool(false)
+        )
+        var request = Ollama.ChatRequest(
+            model: OllamaModel(rawValue: "llama3.2")!,
+            messages: [Ollama.Message(role: .user, content: "Events")],
+            format: nil
+        )
+        request.responseSchema = schema
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(request)
+        let json: [String: Any] = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let format: [String: Any] = try XCTUnwrap(json["format"] as? [String: Any])
+
+        // Top-level shape
+        XCTAssertEqual(format["type"] as? String, "object")
+        XCTAssertEqual(format["additionalProperties"] as? Bool, false)
+
+        // Nested array→items survives
+        let props: [String: [String: Any]] = try XCTUnwrap(format["properties"] as? [String: [String: Any]])
+        let events: [String: Any] = try XCTUnwrap(props["events"])
+        XCTAssertEqual(events["type"] as? String, "array")
+        let items: [String: Any] = try XCTUnwrap(events["items"] as? [String: Any])
+        XCTAssertEqual(items["type"] as? String, "object")
+        XCTAssertEqual(items["required"] as? [String], ["title"])
+    }
+
+    func testPlainJsonRequestEncodesAsString() throws {
+        var request = Ollama.ChatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: [Ollama.Message(role: .user, content: "Hi")],
+            format: .json
+        )
+        request.responseSchema = nil
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(request)
+        let json: [String: Any] = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["format"] as? String, "json")
+    }
+
+    // MARK: - Legacy .schema(SchemaFormat) backward compatibility
+
+    func testLegacySchemaFormatSurvivesEncodeDecodeIdentity() throws {
+        // Construct a simple schema using legacy .schema(SchemaFormat).
+        // After encode→decode it MUST remain .schema(SchemaFormat),
+        // not be normalized to .jsonSchema.
+        let format = Ollama.GenerateFormat.schema(.init(
+            type: "object",
+            properties: [
+                "name": .init(type: "string", description: "The name"),
+                "count": .init(type: "integer", description: "Item count")
+            ],
+            required: ["name"]
+        ))
+        var request = Ollama.ChatRequest(
+            model: OllamaModel(rawValue: "llama3.2")!,
+            messages: [Ollama.Message(role: .user, content: "Hi")],
+            format: format
+        )
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(request)
+        let decoded = try JSONDecoder().decode(Ollama.ChatRequest.self, from: data)
+
+        // Must still be .schema after roundtrip
+        guard case .schema(let recovered) = decoded.format else {
+            XCTFail("Legacy .schema format must survive encode→decode as .schema, got \(String(describing: decoded.format))")
+            return
+        }
+        XCTAssertEqual(recovered.type, "object")
+        XCTAssertEqual(recovered.properties["name"]?.type, "string")
+        XCTAssertEqual(recovered.properties["count"]?.type, "integer")
+        XCTAssertEqual(recovered.required, ["name"])
+
+        // responseSchema getter should recover semantically from .schema
+        let recoveredSchema = try XCTUnwrap(decoded.responseSchema)
+        XCTAssertEqual(recoveredSchema.type, .object)
+        XCTAssertEqual(recoveredSchema.required, ["name"])
+        XCTAssertEqual(recoveredSchema.properties?["name"]?.type, .string)
+    }
+
+    func testLegacySchemaWithSimpleDescriptionDecodesAsSchema() throws {
+        // A JSON object with only type+properties+required (and property
+        // values having only type+description) must decode as .schema.
+        let rawJSON = """
+        {"type":"object","properties":{"x":{"type":"integer","description":"A number"}},"required":["x"]}
+        """
+        let data = Data(rawJSON.utf8)
+        let format = try JSONDecoder().decode(Ollama.GenerateFormat.self, from: data)
+        guard case .schema(let sf) = format else {
+            XCTFail("Simple flat schema must decode as .schema, got \(format)")
+            return
+        }
+        XCTAssertEqual(sf.type, "object")
+        XCTAssertEqual(sf.properties["x"]?.type, "integer")
+    }
+
+    func testLegacyFirstNeverStripsExtras() throws {
+        // A flat schema with an extra field (additionalProperties)
+        // that SchemaFormat doesn't know about MUST decode as .jsonSchema
+        // so the extra constraint is preserved.
+        let rawJSON = """
+        {"type":"object","properties":{"x":{"type":"integer","description":"A number"}},"required":["x"],"additionalProperties":false}
+        """
+        let data = Data(rawJSON.utf8)
+        let format = try JSONDecoder().decode(Ollama.GenerateFormat.self, from: data)
+        guard case .jsonSchema(let schema) = format else {
+            XCTFail("Schema with additionalProperties must decode as .jsonSchema, got \(format)")
+            return
+        }
+        XCTAssertEqual(schema.additionalProperties, .bool(false))
+        XCTAssertEqual(schema.properties?["x"]?.type, .integer)
+    }
+
+    func testFlatSchemaWithEnumPropertyDecodesAsJsonSchema() throws {
+        // A flat schema whose property has an enum (unknown to PropertyFormat)
+        // must decode as .jsonSchema to preserve the enum constraint.
+        let rawJSON = """
+        {"type":"object","properties":{"role":{"type":"string","description":"User role","enum":["admin","user"]}},"required":["role"]}
+        """
+        let data = Data(rawJSON.utf8)
+        let format = try JSONDecoder().decode(Ollama.GenerateFormat.self, from: data)
+        guard case .jsonSchema(let schema) = format else {
+            XCTFail("Schema with enum property must decode as .jsonSchema, got \(format)")
+            return
+        }
+        XCTAssertEqual(schema.properties?["role"]?.enumValues, ["admin", "user"])
+    }
+
+    // MARK: - Live schema smoke test (opt-in, requires running local Ollama)
+
+    func testLiveSchemaSmokeWithLocalModel() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["LANGTOOLS_RUN_LIVE_SCHEMA_TESTS"] == "1" else {
+            throw XCTSkip("Set LANGTOOLS_RUN_LIVE_SCHEMA_TESTS=1 to run live schema smoke")
+        }
+
+        let modelName = (environment["LANGTOOLS_LIVE_SCHEMA_MODEL"] ?? "llama3.2:latest")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !modelName.isEmpty, let model = OllamaModel(rawValue: modelName) else {
+            XCTFail("LANGTOOLS_LIVE_SCHEMA_MODEL must be a valid model name")
+            return
+        }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 60
+        config.timeoutIntervalForResource = 90
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        let liveAPI = Ollama(configuration: .init(baseURL: URL(string: "http://localhost:11434")!, session: session))
+
+        // Construct a schema with nested arrays, required fields, additionalProperties:false
+        let schema = JSONSchema.object(
+            properties: [
+                "summary": .string(description: "One-line summary"),
+                "items": .array(
+                    items: .object(
+                        properties: [
+                            "name": .string(description: "Item name"),
+                            "quantity": .integer(description: "Quantity", minimum: 1, maximum: 99),
+                            "tags": .array(
+                                items: .string(),
+                                description: "Optional tags",
+                                minItems: 0
+                            )
+                        ],
+                        required: ["name", "quantity"]
+                    ),
+                    description: "List of items"
+                )
+            ],
+            required: ["summary", "items"],
+            additionalProperties: .bool(false)
+        )
+
+        // Build request through the factory (exercises responseSchema wiring)
+        let genericRequest = try Ollama.chatRequest(
+            model: model,
+            messages: [Ollama.Message(role: .user, content: "List 2 fruits with name, quantity, and tags. JSON only.")],
+            tools: nil,
+            responseSchema: schema,
+            toolEventHandler: { _ in }
+        )
+        var chatRequest = try XCTUnwrap(genericRequest as? Ollama.ChatRequest)
+        chatRequest.stream = false
+
+        // Verify format is set losslessly
+        guard case .jsonSchema(let storedSchema) = chatRequest.format else {
+            XCTFail("Format must be .jsonSchema, got \(String(describing: chatRequest.format))")
+            return
+        }
+        XCTAssertEqual(storedSchema, schema, "Schema must survive factory unchanged")
+
+        // Send live request
+        let response: Ollama.ChatResponse
+        do {
+            response = try await liveAPI.perform(request: chatRequest)
+        } catch {
+            XCTFail("Live chat request failed: \(error)")
+            return
+        }
+
+        XCTAssertTrue(response.done, "Response should be complete")
+        let content = try XCTUnwrap(response.message?.content.text, "Response should have content")
+        XCTAssertFalse(content.isEmpty, "Content should not be empty")
+
+        // Validate returned JSON against schema
+        guard let contentData = content.data(using: .utf8) else {
+            XCTFail("Response content is not valid UTF-8")
+            return
+        }
+        let json: JSON
+        do {
+            json = try JSON(data: contentData)
+        } catch {
+            XCTFail("Response is not valid JSON: \(content.prefix(200))")
+            return
+        }
+        do {
+            try json.validate(against: schema)
+        } catch {
+            XCTFail("Response failed schema validation: \(error)\nJSON: \(content.prefix(500))")
+            return
+        }
+
+        // Verify required fields present
+        XCTAssertNotNil(json["summary"]?.stringValue, "summary required")
+        let items = try XCTUnwrap(json["items"]?.arrayValue, "items required")
+        XCTAssertGreaterThan(items.count, 0, "items should be non-empty")
+        for item in items {
+            XCTAssertNotNil(item["name"]?.stringValue, "item.name required")
+            XCTAssertNotNil(item["quantity"]?.intValue, "item.quantity required")
+        }
+    }
 }
