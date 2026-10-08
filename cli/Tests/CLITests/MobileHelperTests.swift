@@ -2,7 +2,6 @@ import XCTest
 import Foundation
 import Security
 import Network
-import Darwin
 import HelperLink
 @testable import HelperCore
 
@@ -224,6 +223,129 @@ final class MobileHelperTests: XCTestCase {
         XCTAssertLessThanOrEqual(received, MobileOllamaServer.maximumNDJSONLineBytes)
     }
 
+    func testRelayProductionByteLimitsRemainUnchanged() {
+        XCTAssertEqual(MobileOllamaServer.maximumJSONBytes, 16 * 1_048_576)
+        XCTAssertEqual(MobileOllamaServer.maximumStreamBytes, 256 * 1_048_576)
+        XCTAssertEqual(MobileOllamaServer.maximumNDJSONLineBytes, 1_048_576)
+        XCTAssertEqual(MobileOllamaServer.ResponseByteLimits.production.jsonBytes, 16 * 1_048_576)
+        XCTAssertEqual(MobileOllamaServer.ResponseByteLimits.production.streamBytes, 256 * 1_048_576)
+    }
+
+    func testJSONAggregateByteLimitBelowExactAndOneOver() async throws {
+        let limit = 4200
+        // The smaller stream ceiling proves JSON selects its own aggregate policy.
+        let limits = MobileOllamaServer.ResponseByteLimits(jsonBytes: limit, streamBytes: 1024)
+        for count in [limit - 1, limit, limit + 1] {
+            let payload = mobileBoundaryJSON(byteCount: count)
+            XCTAssertEqual(payload.count, count)
+            let completes = count <= limit
+            var chunks = [Data(payload.prefix(4096))]
+            if completes { chunks.append(Data(payload.dropFirst(4096))) }
+            try await assertBoundaryRelay(payload: payload, ndjson: false, limits: limits,
+                                          expectedChunks: chunks, completes: completes)
+        }
+    }
+
+    func testNDJSONAggregateByteLimitIncludesNewlinesAndDoneRecord() async throws {
+        let limit = 4200
+        // Each line is far below the unchanged 1 MiB line ceiling. The JSON ceiling must not apply.
+        let limits = MobileOllamaServer.ResponseByteLimits(jsonBytes: 1024, streamBytes: limit)
+        let done = Data("{\"done\":true}\n".utf8)
+        XCTAssertEqual(done.count, 14)
+        for count in [limit - 1, limit, limit + 1] {
+            let record = mobileBoundaryJSON(byteCount: count - done.count, trailingNewline: true)
+            let payload = record + done
+            XCTAssertEqual(payload.count, count, "Both newlines and the terminal NDJSON record count toward the ceiling.")
+            let completes = count <= limit
+            var chunks = [Data(record.prefix(4096)), Data(record.dropFirst(4096))]
+            if completes { chunks.append(done) }
+            // One-over crosses the ceiling on the done record's newline: that record must not flush.
+            try await assertBoundaryRelay(payload: payload, ndjson: true, limits: limits,
+                                          expectedChunks: chunks, completes: completes)
+        }
+    }
+
+    func testJSONRelayFlushAndTailAt4095Through4097Bytes() async throws {
+        for count in [4095, 4096, 4097] {
+            let payload = mobileBoundaryJSON(byteCount: count)
+            let chunks = count <= 4096 ? [payload] : [Data(payload.prefix(4096)), Data(payload.suffix(1))]
+            try await assertBoundaryRelay(payload: payload, ndjson: false, limits: .production,
+                                          expectedChunks: chunks, completes: true)
+        }
+    }
+
+    func testNDJSONRelayNewlineFlushAndUnterminatedTailAt4095Through4097Bytes() async throws {
+        for trailingNewline in [false, true] {
+            for count in [4095, 4096, 4097] {
+                let payload = mobileBoundaryJSON(byteCount: count, trailingNewline: trailingNewline)
+                let chunks = count <= 4096 ? [payload] : [Data(payload.prefix(4096)), Data(payload.suffix(1))]
+                try await assertBoundaryRelay(payload: payload, ndjson: true, limits: .production,
+                                              expectedChunks: chunks, completes: true)
+            }
+        }
+    }
+
+    private func assertBoundaryRelay(payload: Data, ndjson: Bool, limits: MobileOllamaServer.ResponseByteLimits,
+                                     expectedChunks: [Data], completes: Bool,
+                                     file: StaticString = #filePath, line: UInt = #line) async throws {
+        let fixture = try await MobileBoundaryFixture(payload: payload, ndjson: ndjson)
+        defer { fixture.stop() }
+        let harness = try await MobileHarness(upstream: fixture.origin, responseByteLimits: limits)
+        defer { harness.stop() }
+        let pair = try await harness.pair()
+        let connection = try await mobileRawPinnedConnection(harness)
+        defer { connection.cancel() }
+        let response = Task { await mobileBoundaryRawResponse(connection) }
+        defer { response.cancel() }
+        let request = "POST /v1/ollama/api/generate HTTP/1.1\r\nHost: \(harness.host):\(harness.port)\r\nAuthorization: Bearer \(pair.token)\r\nContent-Length: 2\r\n\r\n{}"
+        try await mobileRawSend(connection, Data(request.utf8))
+        await fulfillment(of: [fixture.payloadProduced], timeout: 5)
+        XCTAssertFalse(fixture.terminalAttempted, "The producer's completion is explicitly gated.", file: file, line: line)
+        if completes {
+            fixture.complete()
+        } else {
+            // Leave the upstream open. Only relay cancellation can satisfy this expectation.
+            await fulfillment(of: [fixture.upstreamDisconnected], timeout: 5)
+            XCTAssertFalse(fixture.completionReleased, "Disconnect is observed before releasing the terminal gate.", file: file, line: line)
+            XCTAssertFalse(fixture.terminalAttempted, "The aggregate ceiling cancels a still-open upstream.", file: file, line: line)
+        }
+        let wire = await response.value
+        XCTAssertFalse(wire.timedOut, "Relay must close without the test's read deadline.", file: file, line: line)
+        guard let separator = wire.data.range(of: Data("\r\n\r\n".utf8)) else {
+            XCTFail("Missing response headers", file: file, line: line); return
+        }
+        let header = String(decoding: wire.data[..<separator.lowerBound], as: UTF8.self)
+        XCTAssertTrue(header.hasPrefix("HTTP/1.1 200 "), file: file, line: line)
+        XCTAssertTrue(header.contains("Transfer-Encoding: chunked"), file: file, line: line)
+        XCTAssertTrue(header.contains("Content-Type: \(ndjson ? "application/x-ndjson" : "application/json")"), file: file, line: line)
+        let body = Data(wire.data[separator.upperBound...])
+        let terminal = Data("0\r\n\r\n".utf8)
+        var expected = Data()
+        for chunk in expectedChunks {
+            // Independent wire oracle, not the production HTTPResponseEncoder.
+            expected.append(Data("\(String(chunk.count, radix: 16))\r\n".utf8))
+            expected.append(chunk)
+            expected.append(Data("\r\n".utf8))
+        }
+        if completes { expected.append(terminal) }
+        XCTAssertEqual(body, expected, "Exact chunk sizes, payload bytes and tail must match.", file: file, line: line)
+        XCTAssertEqual(body.suffix(terminal.count) == terminal, completes, file: file, line: line)
+        if completes {
+            XCTAssertEqual(expectedChunks.reduce(into: Data()) { $0.append($1) }, payload, file: file, line: line)
+            XCTAssertTrue(fixture.terminalAttempted, file: file, line: line)
+        } else if ndjson {
+            XCTAssertFalse(body.range(of: Data("{\"done\":true}".utf8)) != nil, file: file, line: line)
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while harness.server.activeConnectionCount != 0, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(harness.server.activeConnectionCount, 0, "Completed and aborted relays release their slot.", file: file, line: line)
+        let next = try await harness.request("/v1/ollama/api/tags", token: pair.token)
+        XCTAssertEqual(next.0, 200, "A subsequent authenticated Ollama relay can use the released slot.", file: file, line: line)
+        XCTAssertEqual(next.1, Data("{\"models\":[]}".utf8), file: file, line: line)
+    }
+
     func testUpstreamStatusRedirectAndUnavailable() async throws {
         let fixture = try await MobileUpstreamFixture()
         defer { fixture.stop() }
@@ -268,14 +390,15 @@ private final class MobileHarness: @unchecked Sendable {
     private let task: Task<Void, Error>
 
     init(identity: MobileTLSIdentity? = nil, upstream: URL = URL(string: "http://127.0.0.1:11434")!,
-         relayLifetime: Duration = MobileOllamaServer.relayLifetime, sendTimeout: Duration = MobileOllamaServer.sendTimeout) async throws {
+         relayLifetime: Duration = MobileOllamaServer.relayLifetime, sendTimeout: Duration = MobileOllamaServer.sendTimeout,
+         responseByteLimits: MobileOllamaServer.ResponseByteLimits = .production) async throws {
         guard let interface = MobileLANInterface.available().first else { throw XCTSkip("No active private IPv4 interface available for a real LAN-bound TLS test.") }
         self.host = interface.address
         self.identity = try identity ?? MobileTLSIdentity.ephemeral()
         directory = try makeDirectory()
         store = try MobileDeviceStore(helperID: self.identity.helperID, fileURL: directory.appendingPathComponent("devices.json"))
         let ready = MobileTestPort()
-        server = MobileOllamaServer(host: host, port: try mobileFreePort(host), identity: self.identity, devices: store, upstream: upstream, relayLifetime: relayLifetime, sendTimeout: sendTimeout, onReady: { ready.resolve(.success($0)) })
+        server = MobileOllamaServer(host: host, port: 0, identity: self.identity, devices: store, upstream: upstream, relayLifetime: relayLifetime, sendTimeout: sendTimeout, responseByteLimits: responseByteLimits, onReady: { ready.resolve(.success($0)) })
         let server = self.server
         task = Task { do { try await server.run() } catch { ready.resolve(.failure(error)); throw error } }
         port = try await ready.wait()
@@ -332,7 +455,8 @@ private final class MobileTestPin: NSObject, URLSessionDelegate, URLSessionTaskD
 }
 
 private final class MobileUpstreamFixture: @unchecked Sendable {
-    let origin: URL
+    private var port: UInt16 = 0
+    var origin: URL { URL(string: "http://127.0.0.1:\(port)")! }
     private let listener: NWListener
     private let queue = DispatchQueue(label: "MobileUpstreamFixture")
     private let lock = NSLock()
@@ -352,10 +476,8 @@ private final class MobileUpstreamFixture: @unchecked Sendable {
 
     init() async throws {
         let parameters = NWParameters.tcp
-        let selectedPort = try mobileFreePort("127.0.0.1")
-        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: selectedPort)!)
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         listener = try NWListener(using: parameters)
-        origin = URL(string: "http://127.0.0.1:\(selectedPort)")!
         let ready = MobileTestPort()
         listener.stateUpdateHandler = { [listener] state in
             switch state {
@@ -366,7 +488,7 @@ private final class MobileUpstreamFixture: @unchecked Sendable {
         }
         listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
         listener.start(queue: queue)
-        _ = try await ready.wait()
+        port = try await ready.wait()
     }
     func stop() {
         listener.cancel()
@@ -458,6 +580,173 @@ private final class MobileUpstreamFixture: @unchecked Sendable {
     }
 }
 
+/// Small bodies exercise the production byte loop; producer EOF is controlled, never timed by a sleep.
+private final class MobileBoundaryFixture: @unchecked Sendable {
+    let payloadProduced = XCTestExpectation(description: "Boundary upstream sent its complete payload")
+    let upstreamDisconnected = XCTestExpectation(description: "Relay cancelled the still-open boundary upstream")
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "MobileBoundaryFixture")
+    private let lock = NSLock()
+    private let completion = MobileBoundaryGate()
+    private let payload: Data
+    private let ndjson: Bool
+    private var port: UInt16 = 0
+    private var connections: [NWConnection] = []
+    private var tasks: [Task<Void, Never>] = []
+    private var disconnected = false
+    private var attemptedTerminal = false
+    var origin: URL { URL(string: "http://127.0.0.1:\(port)")! }
+    var terminalAttempted: Bool { lock.withLock { attemptedTerminal } }
+    var completionReleased: Bool { completion.isOpen }
+
+    init(payload: Data, ndjson: Bool) async throws {
+        self.payload = payload; self.ndjson = ndjson
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        listener = try NWListener(using: parameters)
+        let ready = MobileTestPort()
+        listener.stateUpdateHandler = { [listener] state in
+            switch state {
+            case .ready: ready.resolve(.success(listener.port!.rawValue))
+            case .failed(let error): ready.resolve(.failure(error))
+            default: break
+            }
+        }
+        listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { connection.cancel(); return }
+            self.lock.withLock { self.connections.append(connection) }
+            connection.start(queue: self.queue)
+            self.receive(connection, accumulated: Data())
+        }
+        listener.start(queue: queue)
+        port = try await ready.wait()
+    }
+
+    func complete() { completion.open() }
+    func stop() {
+        listener.cancel()
+        let snapshot = lock.withLock { (connections, tasks) }
+        snapshot.1.forEach { $0.cancel() }
+        snapshot.0.forEach { $0.cancel() }
+        completion.open()
+    }
+
+    private func receive(_ connection: NWConnection, accumulated: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, complete, error in
+            guard let self, error == nil, !complete else { connection.cancel(); return }
+            let accumulated = accumulated + (data ?? Data())
+            switch HTTPRequest.parse(from: accumulated) {
+            case .incomplete: self.receive(connection, accumulated: accumulated)
+            case .failure: connection.cancel()
+            case .request(let request):
+                let task = Task { await self.respond(connection, path: request.path) }
+                self.lock.withLock { self.tasks.append(task) }
+            }
+        }
+    }
+
+    private func respond(_ connection: NWConnection, path: String) async {
+        do {
+            if path == "/api/tags" {
+                try await mobileRawSend(connection, HTTPResponseEncoder.fixed(status: .ok, body: "{\"models\":[]}"))
+                connection.cancel()
+                return
+            }
+            // No fixture close/EOF occurs before the explicit completion gate or relay cancellation.
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { [weak self] _, _, complete, error in
+                guard let self, complete || error != nil else { return }
+                let first = self.lock.withLock { () -> Bool in
+                    guard !self.disconnected else { return false }
+                    self.disconnected = true
+                    return true
+                }
+                if first { self.upstreamDisconnected.fulfill() }
+            }
+            let type = ndjson ? "application/x-ndjson" : "application/json"
+            let header = "HTTP/1.1 200 OK\r\nContent-Type: \(type)\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+            try await mobileRawSend(connection, Data(header.utf8))
+            try await mobileRawSend(connection, HTTPResponseEncoder.chunk(payload))
+            payloadProduced.fulfill()
+            await completion.wait()
+            try Task.checkCancellation()
+            let canComplete = lock.withLock { () -> Bool in
+                guard !disconnected else { return false }
+                attemptedTerminal = true
+                return true
+            }
+            guard canComplete else { return }
+            try await mobileRawSend(connection, HTTPResponseEncoder.terminalChunk)
+            connection.cancel()
+        } catch {
+            // Retain unexpected producer failures as test failures; shutdown/cancellation is intentional.
+            if !Task.isCancelled, !lock.withLock({ disconnected }) {
+                XCTFail("Boundary fixture failed: \(error)")
+            }
+            connection.cancel()
+        }
+    }
+}
+
+private final class MobileBoundaryGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var opened = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    var isOpen: Bool { lock.withLock { opened } }
+    func open() {
+        let continuation = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            opened = true
+            defer { self.continuation = nil }
+            return self.continuation
+        }
+        continuation?.resume()
+    }
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let alreadyOpen = lock.withLock {
+                if opened { return true }
+                self.continuation = continuation
+                return false
+            }
+            if alreadyOpen { continuation.resume() }
+        }
+    }
+}
+
+private func mobileBoundaryJSON(byteCount: Int, trailingNewline: Bool = false) -> Data {
+    // A multibyte scalar makes these byte boundaries, not String character-count boundaries.
+    let prefix = Data("{\"response\":\"é".utf8)
+    let suffix = Data(("\"}" + (trailingNewline ? "\n" : "")).utf8)
+    return prefix + Data(repeating: 120, count: byteCount - prefix.count - suffix.count) + suffix
+}
+
+private func mobileBoundaryRawResponse(_ connection: NWConnection) async -> (data: Data, timedOut: Bool) {
+    let timeout = MobileBoundaryGate()
+    let deadline = Task {
+        do {
+            try await Task.sleep(for: .seconds(5))
+            timeout.open()
+            connection.cancel()
+        } catch { /* The bounded read completed before its safety deadline. */ }
+    }
+    defer { deadline.cancel() }
+    var accumulated = Data()
+    while true {
+        let (data, complete, error) = await withCheckedContinuation { continuation in
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 32 * 1024) { data, _, complete, error in
+                continuation.resume(returning: (data, complete, error))
+            }
+        }
+        if let data { accumulated.append(data) }
+        // NWConnection may close with EOF or a transport error. Exact wire assertions distinguish success/abort.
+        if complete || error != nil { return (accumulated, timeout.isOpen) }
+        if accumulated.count > 32 * 1024 {
+            XCTFail("Boundary response exceeded the small fixture's bounded wire budget.")
+            connection.cancel()
+            return (accumulated, timeout.isOpen)
+        }
+    }
+}
+
 private final class MobileTestPort: @unchecked Sendable {
     private let lock = NSLock()
     private var result: Result<UInt16, Error>?
@@ -518,23 +807,6 @@ private func mobileRawSend(_ connection: NWConnection, _ data: Data) async throw
             if let error { continuation.resume(throwing: error) } else { continuation.resume() }
         })
     }
-}
-
-private func mobileFreePort(_ host: String) throws -> UInt16 {
-    let fd = socket(AF_INET, SOCK_STREAM, 0)
-    guard fd >= 0 else { throw MobileHelperError.invalidInterface }
-    defer { close(fd) }
-    var address = sockaddr_in()
-    address.sin_family = sa_family_t(AF_INET)
-    address.sin_addr.s_addr = inet_addr(host)
-    guard withUnsafePointer(to: &address, { pointer in
-        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
-    }) == 0 else { throw MobileHelperError.invalidInterface }
-    var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-    guard withUnsafeMutablePointer(to: &address, { pointer in
-        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
-    }) == 0 else { throw MobileHelperError.invalidInterface }
-    return UInt16(bigEndian: address.sin_port)
 }
 
 private func makeDirectory() throws -> URL {

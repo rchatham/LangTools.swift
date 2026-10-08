@@ -18,6 +18,16 @@ public final class MobileOllamaServer: @unchecked Sendable {
     private let upstream: URL
     private let relayLifetime: Duration
     private let sendTimeout: Duration
+    private let responseByteLimits: ResponseByteLimits
+
+    /// Internal injection keeps boundary tests on the real relay loop without allocating production-sized bodies.
+    struct ResponseByteLimits: Sendable {
+        let jsonBytes: Int
+        let streamBytes: Int
+        static let production = ResponseByteLimits(jsonBytes: MobileOllamaServer.maximumJSONBytes,
+                                                  streamBytes: MobileOllamaServer.maximumStreamBytes)
+    }
+
     var activeConnectionCount: Int { limiter.activeCount }
     private let onReady: @Sendable (UInt16) -> Void
     private let queue = DispatchQueue(label: "LangToolsHelper.MobileTLS")
@@ -33,10 +43,12 @@ public final class MobileOllamaServer: @unchecked Sendable {
     /// Injection is internal and only used by tests; mobile requests cannot choose an upstream.
     init(host: String, port: UInt16, identity: MobileTLSIdentity, devices: MobileDeviceStore,
          upstream: URL, relayLifetime: Duration = MobileOllamaServer.relayLifetime,
-         sendTimeout: Duration = MobileOllamaServer.sendTimeout, onReady: @escaping @Sendable (UInt16) -> Void) {
+         sendTimeout: Duration = MobileOllamaServer.sendTimeout,
+         responseByteLimits: ResponseByteLimits = .production, onReady: @escaping @Sendable (UInt16) -> Void) {
         self.host = host; self.port = port; self.identity = identity; self.devices = devices
         self.upstream = upstream; self.onReady = onReady
         self.relayLifetime = relayLifetime; self.sendTimeout = sendTimeout
+        self.responseByteLimits = responseByteLimits
     }
 
     public func run() async throws {
@@ -193,7 +205,7 @@ public final class MobileOllamaServer: @unchecked Sendable {
             else { throw MobileHelperError.upstreamRejected }
             let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "application/json").lowercased()
             let ndjson = contentType.contains("ndjson") || contentType.contains("jsonl")
-            let limit = ndjson ? Self.maximumStreamBytes : Self.maximumJSONBytes
+            let limit = ndjson ? responseByteLimits.streamBytes : responseByteLimits.jsonBytes
             let header = "HTTP/1.1 \(http.statusCode) \(HTTPURLResponse.localizedString(forStatusCode: http.statusCode))\r\nContent-Type: \(ndjson ? "application/x-ndjson" : "application/json")\r\nCache-Control: no-store\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
             try await session.send(Data(header.utf8))
             sentHeaders = true
