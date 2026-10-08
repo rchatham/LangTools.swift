@@ -1760,7 +1760,9 @@ extension ChatSettingsView {
                     .padding(.bottom, 4)
 
                     Toggle("Auto-Retry Failed Tools", isOn: $viewModel.toolSettings.autoRetryFailedTools)
+                        #if os(macOS)
                         .toggleStyle(.checkbox)
+                        #endif
                     Text("Automatically retry a failed tool call once before reporting the error. (UI only — execution wiring coming soon)")
                         .font(.caption)
                         .foregroundColor(.secondary)
