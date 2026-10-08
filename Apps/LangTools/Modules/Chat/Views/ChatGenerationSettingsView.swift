@@ -373,6 +373,32 @@ public struct ChatGenerationSettingsView: View {
         step: Double,
         format: String
     ) -> some View {
+#if os(iOS)
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: isOn) {
+                Text(label)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityIdentifier("generation.\(label.lowercased().replacingOccurrences(of: " ", with: ".")).toggle")
+            .toggleStyle(.switch)
+
+            if isOn.wrappedValue {
+                HStack(spacing: 8) {
+                    Slider(value: value, in: range, step: step)
+                        .frame(maxWidth: .infinity)
+
+                    Text(String(format: format, value.wrappedValue))
+                        .monospacedDigit()
+                        .frame(width: 46, alignment: .trailing)
+                        .font(.caption)
+                }
+            } else {
+                Text("Automatic")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+#else
         HStack(spacing: 8) {
             Toggle(isOn: isOn) {
                 Text(label).frame(width: labelWidth - 20, alignment: .leading)
@@ -400,6 +426,7 @@ public struct ChatGenerationSettingsView: View {
 
             Spacer()
         }
+#endif
     }
 
     private func checkboxStepperRow(
@@ -408,6 +435,29 @@ public struct ChatGenerationSettingsView: View {
         value: Binding<Int>,
         range: ClosedRange<Int>
     ) -> some View {
+#if os(iOS)
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: isOn) {
+                Text(label)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityIdentifier("generation.\(label.lowercased().replacingOccurrences(of: " ", with: ".")).toggle")
+            .toggleStyle(.switch)
+
+            if isOn.wrappedValue {
+                Stepper(value: value, in: range) {
+                    Text("\(value.wrappedValue)")
+                        .monospacedDigit()
+                        .frame(minWidth: 30, alignment: .trailing)
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                Text("Automatic")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+#else
         HStack(spacing: 8) {
             Toggle(isOn: isOn) {
                 Text(label).frame(width: labelWidth - 20, alignment: .leading)
@@ -434,12 +484,43 @@ public struct ChatGenerationSettingsView: View {
 
             Spacer()
         }
+#endif
     }
 
     private func checkboxSeedRow(
         isOn: Binding<Bool>,
         value: Binding<Int>
     ) -> some View {
+#if os(iOS)
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: isOn) {
+                Text("Seed")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityIdentifier("generation.seed.toggle")
+            .toggleStyle(.switch)
+
+            if isOn.wrappedValue {
+                HStack(spacing: 8) {
+                    TextField("", value: value, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: .infinity)
+                        .monospacedDigit()
+
+                    Button("Random") {
+                        seed = Int.random(in: 0...Int.max)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+            } else {
+                Text("Automatic")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+#else
         HStack(spacing: 8) {
             Toggle(isOn: isOn) {
                 Text("Seed").frame(width: labelWidth - 20, alignment: .leading)
@@ -470,6 +551,7 @@ public struct ChatGenerationSettingsView: View {
 
             Spacer()
         }
+#endif
     }
 
     // MARK: - Helpers

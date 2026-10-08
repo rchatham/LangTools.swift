@@ -45,6 +45,20 @@ final class ChatGenerationSettingsTests: XCTestCase {
         XCTAssertEqual(store.load().temperature, 0)
     }
 
+    func testLongSeedPersistsExactlyAndResetsToAutomatic() throws {
+        let seed = 1_234_567_890_123_456_789
+        let settings = try ChatGenerationSettings(seed: seed)
+        store.save(settings)
+
+        let reopenedStore = ChatGenerationSettingsStore(userDefaults: defaults)
+        XCTAssertEqual(reopenedStore.load(), settings)
+        XCTAssertEqual(reopenedStore.load().seed, seed)
+
+        reopenedStore.reset()
+        XCTAssertEqual(store.load(), .automatic)
+        XCTAssertNil(store.load().seed)
+    }
+
     func testValidRepresentativeValues() throws {
         XCTAssertNoThrow(try ChatGenerationSettings(maxOutputTokens: 1, temperature: 0))
         XCTAssertNoThrow(try ChatGenerationSettings(maxOutputTokens: 16_384, temperature: 1))
