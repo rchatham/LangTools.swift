@@ -25,13 +25,37 @@ import ToolKit
 struct LangToolsApp: App {
     // Use @StateObject so SwiftUI observes voiceInputHandler.objectWillChange
     // This enables instant UI updates when settings change
-    @StateObject private var voiceInputHandler = VoiceInputHandlerAdapter(settings: ToolSettings.shared)
+    @StateObject private var voiceInputHandler: VoiceInputHandlerAdapter
 
     init() {
+        let fixtureActive = ChatUITestEnvironment.isFixtureActive
+        if fixtureActive {
+            // Validation precedes all settings/credential singletons. Reset only
+            // the dedicated fixture domain, never the ordinary app's defaults.
+            UserDefaults.standard.removePersistentDomain(
+                forName: ChatUITestEnvironment.fixtureBundleIdentifier
+            )
+        }
+
+        // When a validated fixture is active, suppress real audio providers,
+        // permission requests, and settings-change callbacks that would
+        // re-activate real providers.
+        let adapter = VoiceInputHandlerAdapter(
+            sttService: .shared,
+            settings: ToolSettings.shared,
+            startupRealProvidersEnabled: !fixtureActive
+        )
+        _voiceInputHandler = StateObject(wrappedValue: adapter)
+
         configureUITestDefaults()
         registerToolConfigurations()
         registerCardTypes()
-        initializeOllama()
+
+        // Ollama model refresh probes the local Ollama server — suppress in
+        // fixture mode so no real network or process interaction occurs.
+        if !fixtureActive {
+            initializeOllama()
+        }
     }
 
     var body: some Scene {
@@ -41,7 +65,8 @@ struct LangToolsApp: App {
                 .onOpenURL { url in
                     handleIncomingURL(url)
                 }
-                .codexHelperPairingAlert()
+                .fixtureConditionalPairingAlert()
+                .mobileHelperPairingPresentation()
         }
         #else
         WindowGroup {
@@ -49,16 +74,24 @@ struct LangToolsApp: App {
                 .onOpenURL { url in
                     handleIncomingURL(url)
                 }
-                .codexHelperPairingAlert()
+                .fixtureConditionalPairingAlert()
+                .mobileHelperPairingPresentation()
         }
         #endif
     }
 
-    /// Routes incoming custom-scheme URLs to their owning flow: Codex helper
-    /// pairing URLs to `CodexHelperPairingCoordinator`, everything else to the
-    /// account login coordinator.
+    /// Routes incoming custom-scheme URLs to their owning flow: mobile helper
+    /// pairing URLs to `MobileHelperPairingCoordinator`, Codex helper pairing
+    /// URLs to `CodexHelperPairingCoordinator`, everything else to the account
+    /// login coordinator.
+    ///
+    /// In fixture mode all URL handling is suppressed — no pairing or account
+    /// redirect callbacks fire.
     private func handleIncomingURL(_ url: URL) {
-        if CodexHelperPairingCoordinator.isPairingURL(url) {
+        guard !ChatUITestEnvironment.isFixtureActive else { return }
+        if MobileHelperPairingCoordinator.isPairingURL(url) {
+            MobileHelperPairingCoordinator.shared.handle(url)
+        } else if CodexHelperPairingCoordinator.isPairingURL(url) {
             CodexHelperPairingCoordinator.shared.handle(url)
         } else {
             AccountLoginCoordinator.shared.handleRedirect(url)
@@ -115,6 +148,8 @@ struct LangToolsApp: App {
     }
 
     func initializeOllama() {
+        _ = OllamaEndpointConfiguration.shared
+        _ = OllamaService.shared
         Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             await MainActor.run {
@@ -124,8 +159,15 @@ struct LangToolsApp: App {
     }
 
     func configureUITestDefaults() {
-        guard UITestMode.current != nil else { return }
-        UserDefaults.model = .codex(.gpt5_5)
+        guard let mode = ChatUITestEnvironment.current else { return }
+        // The validated fixture bundle owns UserDefaults.standard. Preserve the
+        // existing Codex scenarios; Advanced settings need known OpenAI capabilities.
+        switch mode {
+        case .standard:
+            UserDefaults.model = .openAI(.gpt4o_mini)
+        case .codexSuccess, .codexNotLoggedIn:
+            UserDefaults.model = .codex(.gpt5_5)
+        }
     }
 }
 
@@ -134,17 +176,30 @@ struct ChatContainerView: View {
     @ObservedObject var voiceInputHandler: VoiceInputHandlerAdapter
 
     init(voiceInputHandler: VoiceInputHandlerAdapter) {
-        let agents: [Agent] = [
+        let fixtureActive = ChatUITestEnvironment.isFixtureActive
+
+        // Fixture mode: no real agents, no real network.
+        let agents: [Agent] = fixtureActive ? [] : [
             CalendarAgent(),
             ReminderAgent(),
             ResearchAgent()
         ]
-        let service = if let uiTestMode = UITestMode.current {
-            MessageService(networkClient: UITestNetworkClient(mode: uiTestMode), agents: agents)
+        let service: MessageService
+        if let fixtureEnv = ChatUITestEnvironment.current {
+            // Fixture: reuse the existing UITestNetworkClient (same canned
+            // responses as legacy UITestMode), extended with the fixture mode.
+            service = MessageService(
+                networkClient: UITestNetworkClient(mode: fixtureEnv.legacyUITestMode),
+                agents: agents
+            )
+        } else if let uiTestMode = UITestMode.current {
+            service = MessageService(networkClient: UITestNetworkClient(mode: uiTestMode), agents: agents)
         } else {
-            MessageService(agents: agents)
+            service = MessageService(agents: agents)
         }
-        service.agentResultParser = ContentCardRegistry.shared.agentResultParser
+        if !fixtureActive {
+            service.agentResultParser = ContentCardRegistry.shared.agentResultParser
+        }
         _messageService = StateObject(wrappedValue: service)
         self.voiceInputHandler = voiceInputHandler
     }
@@ -164,11 +219,21 @@ struct ChatContainerView: View {
                 }
             )
         }
-        .manageAccessPrompts()
+        .fixtureConditionalAccessPrompts()
     }
 
     private var chatSettingsView: AnyView {
-        let viewModel = ChatSettingsView.ViewModel(clearMessages: messageService.clearMessages)
+        let fixtureActive = ChatUITestEnvironment.isFixtureActive
+        // Fixture mode: inject a mock ProviderAccessManager so the settings
+        // view never reads real Keychain credentials or refreshes real
+        // provider state.
+        let accessManager: ProviderAccessManager = fixtureActive
+            ? ProviderAccessManager(keychainService: KeychainService.shared)
+            : ProviderAccessManager.shared
+        let viewModel = ChatSettingsView.ViewModel(
+            clearMessages: messageService.clearMessages,
+            accessManager: accessManager
+        )
 
         viewModel.onPreloadWhisperKit = { [weak voiceInputHandler] in
             voiceInputHandler?.preloadWhisperKit()
@@ -196,6 +261,15 @@ extension MessageService: @retroactive ChatMessageService {
     public typealias ChatMessage = Message
 
     public func handleError(error: any Error) -> ChatAlertInfo? {
+        if error is MobileHelperError {
+            return ChatAlertInfo(title: "Paired Helper", message: error.localizedDescription)
+        }
+        if UserDefaults.model.apiService == .ollama, OllamaEndpointConfiguration.shared.snapshot().isHelper {
+            let actionable = OllamaEndpointConfiguration.shared.snapshot().actionableError(error)
+            if actionable is MobileHelperError {
+                return ChatAlertInfo(title: "Paired Helper", message: actionable.localizedDescription)
+            }
+        }
         switch error {
         case let error as LangToolsError:
             switch error {
@@ -338,22 +412,52 @@ extension Message: @retroactive ChatMessageInfo {
     public var childChatMessages: [Message] { childMessages }
 }
 
+/// Legacy UITestMode — the original, pre-fixture mechanism. Only active in
+/// Debug + macOS; Release and non-macOS builds ignore the env var entirely.
 private enum UITestMode: String {
     case codexSuccess
     case codexNotLoggedIn
 
     static var current: UITestMode? {
+        #if DEBUG && os(macOS)
         guard let rawValue = ProcessInfo.processInfo.environment["LANGTOOLS_UI_TEST_MODE"] else {
             return nil
         }
         return UITestMode(rawValue: rawValue)
+        #else
+        return nil
+        #endif
     }
 }
 
+// MARK: - ChatUITestEnvironment → UITestMode bridge
+
+extension ChatUITestEnvironment {
+    /// Maps fixture environment modes to the legacy UITestMode so the existing
+    /// `UITestNetworkClient` can serve both paths.
+    fileprivate var legacyUITestMode: UITestMode {
+        switch self {
+        case .codexSuccess, .standard:
+            return .codexSuccess
+        case .codexNotLoggedIn:
+            return .codexNotLoggedIn
+        }
+    }
+}
+
+/// Mock network client used by both the legacy `UITestMode` and the validated
+/// `ChatUITestEnvironment` fixture. All methods are canned — no real network,
+/// no credential access, no provider activation.
 private struct UITestNetworkClient: NetworkClientProtocol {
     static var shared: NetworkClientProtocol { Self(mode: .codexSuccess) }
 
     let mode: UITestMode
+
+    /// Convenience init that accepts a legacy `UITestMode` directly (for the
+    /// `ChatUITestEnvironment` bridge path).
+    init(mode: UITestMode) {
+        self.mode = mode
+    }
 
     func performChatCompletionRequest(messages: [Message], model: Model, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) async throws -> Message {
         switch mode {
@@ -486,7 +590,28 @@ private struct CodexHelperPairingAlert: ViewModifier {
 }
 
 private extension View {
-    func codexHelperPairingAlert() -> some View {
-        modifier(CodexHelperPairingAlert())
+    /// On normal app runs, presents the full Codex helper pairing alert.
+    /// In fixture mode, the alert is unconditionally suppressed — no pairing or
+    /// account callbacks fire.
+    /// Presents the Codex helper pairing alert on normal runs; suppressed in
+    /// fixture mode so no pairing or account callbacks fire.
+    @ViewBuilder
+    func fixtureConditionalPairingAlert() -> some View {
+        if ChatUITestEnvironment.isFixtureActive {
+            self
+        } else {
+            modifier(CodexHelperPairingAlert())
+        }
+    }
+
+    /// Presents manage-access prompts on normal runs; suppressed in fixture
+    /// mode so AuthSheet never fires against real `NetworkClient.shared`.
+    @ViewBuilder
+    func fixtureConditionalAccessPrompts() -> some View {
+        if ChatUITestEnvironment.isFixtureActive {
+            self
+        } else {
+            manageAccessPrompts()
+        }
     }
 }

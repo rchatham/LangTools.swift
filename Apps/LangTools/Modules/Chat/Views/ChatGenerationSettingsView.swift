@@ -1,5 +1,64 @@
 import SwiftUI
 
+/// Blank rows are editing drafts, not persisted stop sequences. Row identities stay
+/// stable across edits so a delayed TextField write cannot target a different row.
+struct StopSequenceEditing {
+    struct Row: Identifiable, Equatable {
+        let id = UUID()
+        var text: String
+    }
+
+    private(set) var isEnabled: Bool
+    private(set) var rows: [Row]
+    private var lastBindingValue: [String]?
+
+    init(value: [String]?) {
+        isEnabled = value != nil
+        rows = (value ?? []).filter { !$0.isEmpty }.map { Row(text: $0) }
+        lastBindingValue = value
+    }
+
+    var value: [String]? {
+        isEnabled ? rows.map(\.text).filter { !$0.isEmpty } : nil
+    }
+
+    /// An echo of our own publication must not discard drafts or replace row IDs.
+    mutating func synchronize(with value: [String]?, discardingDrafts: Bool = false) {
+        guard discardingDrafts || value != lastBindingValue else { return }
+        self = Self(value: value)
+    }
+
+    mutating func valueForPublishing() -> [String]? {
+        lastBindingValue = value
+        return value
+    }
+
+    mutating func setEnabled(_ enabled: Bool) {
+        isEnabled = enabled
+        if !enabled { rows.removeAll() }
+    }
+
+    mutating func add() {
+        guard isEnabled else { return }
+        rows.append(Row(text: ""))
+    }
+
+    @discardableResult
+    mutating func updateText(_ text: String, for id: Row.ID) -> Bool {
+        guard let index = rows.firstIndex(where: { $0.id == id }) else { return false }
+        rows[index].text = text
+        return true
+    }
+
+    @discardableResult
+    mutating func remove(id: Row.ID) -> Bool {
+        guard let index = rows.firstIndex(where: { $0.id == id }) else { return false }
+        rows.remove(at: index)
+        if rows.isEmpty { isEnabled = false }
+        return true
+    }
+}
+
 public struct ChatGenerationSettingsView: View {
     enum MaximumOutputSelection: Hashable {
         case automatic
@@ -15,6 +74,7 @@ public struct ChatGenerationSettingsView: View {
     @Binding private var topK: Int?
     @Binding private var seed: Int?
     @Binding private var stop: [String]?
+    @State private var stopEditing: StopSequenceEditing
     private let capabilities: ChatGenerationCapabilities
     private let reset: () -> Void
 
@@ -38,6 +98,7 @@ public struct ChatGenerationSettingsView: View {
         _topK = topK
         _seed = seed
         _stop = stop
+        _stopEditing = State(initialValue: StopSequenceEditing(value: stop.wrappedValue))
         self.capabilities = capabilities
         self.reset = reset
     }
@@ -68,10 +129,23 @@ public struct ChatGenerationSettingsView: View {
 
             HStack {
                 Spacer()
-                Button("Reset to Automatic", action: reset)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                Button("Reset to Automatic") {
+                    stopEditing.synchronize(with: nil, discardingDrafts: true)
+                    reset()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
+        }
+        .onAppear {
+            stopEditing.synchronize(with: stop, discardingDrafts: true)
+        }
+        .onChange(of: stop) { value in
+            stopEditing.synchronize(with: value)
+        }
+        .onChange(of: capabilities) { _ in
+            // Capabilities are the available model-change signal, not model identity.
+            stopEditing.synchronize(with: stop, discardingDrafts: true)
         }
     }
 
@@ -175,8 +249,15 @@ public struct ChatGenerationSettingsView: View {
 
     private var maximumOutputRow: some View {
         HStack(spacing: 8) {
-            Text("Max Tokens")
-                .frame(width: labelWidth, alignment: .leading)
+            if capabilities.maximumOutputField != nil {
+                Toggle(isOn: maximumOutputToggle) {
+                    Text("Max Tokens").frame(width: labelWidth - 20, alignment: .leading)
+                }
+                .checkboxToggleStyle()
+            } else {
+                Text("Max Tokens")
+                    .frame(width: labelWidth, alignment: .leading)
+            }
 
             if isMaximumOutputActive, let maxOutputTokens {
                 Picker(selection: Binding(
@@ -211,22 +292,43 @@ public struct ChatGenerationSettingsView: View {
         }
     }
 
+    /// Toggling on enables an override (falling back to a safe default when the
+    /// model has no known token bound); toggling off clears it.
+    private var maximumOutputToggle: Binding<Bool> {
+        Binding(
+            get: { maxOutputTokens != nil },
+            set: { enabled in
+                maxOutputTokens = enabled
+                    ? Self.maximumOutputValueWhenEnabled(
+                        savedValue: maxOutputTokens,
+                        maximumOutputTokenBound: capabilities.maximumOutputTokenBound
+                    ) ?? Self.defaultMaximumOutputTokens(maximumOutputTokenBound: capabilities.maximumOutputTokenBound)
+                    : nil
+            }
+        )
+    }
+
     private var stopRow: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Toggle(isOn: Binding(
-                    get: { stop != nil },
-                    set: { stop = $0 ? (stop ?? []) : nil }
+                    get: { stopEditing.isEnabled },
+                    set: { enabled in
+                        editStopSequences {
+                            $0.setEnabled(enabled)
+                            return true
+                        }
+                    }
                 )) {
                     overrideToggleLabel("Stop Sequences")
                 }
-#if os(macOS)
-                .toggleStyle(.checkbox)
-#else
-                .frame(minHeight: 44)
+                .accessibilityIdentifier("generation.stop.toggle")
+                .checkboxToggleStyle()
+#if os(iOS)
+                .toggleStyle(.switch)
 #endif
 
-                if stop == nil {
+                if !stopEditing.isEnabled {
                     Text("Automatic")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -234,46 +336,53 @@ public struct ChatGenerationSettingsView: View {
                 Spacer()
             }
 
-            if let stopSequences = stop {
+            if stopEditing.isEnabled {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(stopSequences.indices, id: \.self) { index in
+                    ForEach(Array(stopEditing.rows.enumerated()), id: \.element.id) { index, row in
                         HStack(spacing: 4) {
                             TextField("sequence", text: Binding(
-                                get: { stopSequences.indices.contains(index) ? stopSequences[index] : "" },
+                                get: { stopEditing.rows.first(where: { $0.id == row.id })?.text ?? "" },
                                 set: { newValue in
-                                    guard stopSequences.indices.contains(index) else { return }
-                                    if newValue.isEmpty {
-                                        stop?.remove(at: index)
-                                        if stop?.isEmpty == true { stop = nil }
-                                    } else {
-                                        stop?[index] = newValue
-                                    }
+                                    editStopSequences { $0.updateText(newValue, for: row.id) }
                                 }
                             ))
                             .textFieldStyle(.roundedBorder)
+                            .accessibilityIdentifier("generation.stop.sequence.\(index)")
                             .frame(width: 160)
 
                             Button {
-                                stop?.remove(at: index)
-                                if stop?.isEmpty == true { stop = nil }
+                                editStopSequences { $0.remove(id: row.id) }
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundColor(.secondary)
                             }
+                            .accessibilityIdentifier("generation.stop.remove.\(index)")
                             .buttonStyle(.plain)
                         }
                     }
                     Button {
-                        stop?.append("")
+                        editStopSequences {
+                            $0.add()
+                            return true
+                        }
                     } label: {
                         Label("Add", systemImage: "plus.circle")
                             .font(.caption)
                     }
+                    .accessibilityIdentifier("generation.stop.add")
                     .buttonStyle(.plain)
                 }
                 .padding(.leading, labelWidth + 8)
             }
         }
+    }
+
+    private func editStopSequences(_ edit: (inout StopSequenceEditing) -> Bool) {
+        // Reconcile before handling events too: a stale field may write before the
+        // binding's onChange callback has delivered an external reset/update.
+        stopEditing.synchronize(with: stop)
+        guard edit(&stopEditing) else { return }
+        stop = stopEditing.valueForPublishing()
     }
 
     // MARK: - Reusable row builders
@@ -286,15 +395,38 @@ public struct ChatGenerationSettingsView: View {
         step: Double,
         format: String
     ) -> some View {
+#if os(iOS)
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: isOn) {
+                Text(label)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityIdentifier("generation.\(label.lowercased().replacingOccurrences(of: " ", with: ".")).toggle")
+            .toggleStyle(.switch)
+
+            if isOn.wrappedValue {
+                HStack(spacing: 8) {
+                    Slider(value: value, in: range, step: step)
+                        .frame(maxWidth: .infinity)
+
+                    Text(String(format: format, value.wrappedValue))
+                        .monospacedDigit()
+                        .frame(width: 46, alignment: .trailing)
+                        .font(.caption)
+                }
+            } else {
+                Text("Automatic")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+#else
         HStack(spacing: 8) {
             Toggle(isOn: isOn) {
                 overrideToggleLabel(label)
             }
-#if os(macOS)
-            .toggleStyle(.checkbox)
-#else
-            .frame(minHeight: 44)
-#endif
+            .accessibilityIdentifier("generation.\(label.lowercased().replacingOccurrences(of: " ", with: ".")).toggle")
+            .checkboxToggleStyle()
 
             if isOn.wrappedValue {
                 Slider(value: value, in: range, step: step)
@@ -312,6 +444,7 @@ public struct ChatGenerationSettingsView: View {
 
             Spacer()
         }
+#endif
     }
 
     private func checkboxStepperRow(
@@ -320,15 +453,35 @@ public struct ChatGenerationSettingsView: View {
         value: Binding<Int>,
         range: ClosedRange<Int>
     ) -> some View {
+#if os(iOS)
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: isOn) {
+                Text(label)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityIdentifier("generation.\(label.lowercased().replacingOccurrences(of: " ", with: ".")).toggle")
+            .toggleStyle(.switch)
+
+            if isOn.wrappedValue {
+                Stepper(value: value, in: range) {
+                    Text("\(value.wrappedValue)")
+                        .monospacedDigit()
+                        .frame(minWidth: 30, alignment: .trailing)
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                Text("Automatic")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+#else
         HStack(spacing: 8) {
             Toggle(isOn: isOn) {
                 overrideToggleLabel(label)
             }
-#if os(macOS)
-            .toggleStyle(.checkbox)
-#else
-            .frame(minHeight: 44)
-#endif
+            .accessibilityIdentifier("generation.\(label.lowercased().replacingOccurrences(of: " ", with: ".")).toggle")
+            .checkboxToggleStyle()
 
             if isOn.wrappedValue {
                 Stepper(value: value, in: range) {
@@ -345,21 +498,49 @@ public struct ChatGenerationSettingsView: View {
 
             Spacer()
         }
+#endif
     }
 
     private func checkboxSeedRow(
         isOn: Binding<Bool>,
         value: Binding<Int>
     ) -> some View {
+#if os(iOS)
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: isOn) {
+                Text("Seed")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityIdentifier("generation.seed.toggle")
+            .toggleStyle(.switch)
+
+            if isOn.wrappedValue {
+                HStack(spacing: 8) {
+                    TextField("", value: value, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: .infinity)
+                        .monospacedDigit()
+
+                    Button("Random") {
+                        seed = Int.random(in: 0...Int.max)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+            } else {
+                Text("Automatic")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+#else
         HStack(spacing: 8) {
             Toggle(isOn: isOn) {
                 overrideToggleLabel("Seed")
             }
-#if os(macOS)
-            .toggleStyle(.checkbox)
-#else
-            .frame(minHeight: 44)
-#endif
+            .accessibilityIdentifier("generation.seed.toggle")
+            .checkboxToggleStyle()
 
             if isOn.wrappedValue {
                 TextField("", value: value, format: .number)
@@ -380,6 +561,7 @@ public struct ChatGenerationSettingsView: View {
 
             Spacer()
         }
+#endif
     }
 
     // MARK: - Helpers
@@ -422,6 +604,7 @@ public struct ChatGenerationSettingsView: View {
     }
 
     private var isMaximumOutputActive: Bool {
+        guard capabilities.maximumOutputField != nil else { return false }
         guard case .value = Self.maximumOutputSelection(
             savedValue: maxOutputTokens, maximumOutputTokenBound: capabilities.maximumOutputTokenBound
         ) else { return false }
@@ -444,7 +627,9 @@ public struct ChatGenerationSettingsView: View {
         maximumOutputTokenBound: Int?
     ) -> MaximumOutputSelection {
         guard let savedValue else { return .automatic }
-        guard let bound = maximumOutputTokenBound, savedValue <= bound else {
+        // A missing bound is unconstrained, not inactive: the saved value still
+        // applies. Only a known bound can rule a value out.
+        if let bound = maximumOutputTokenBound, savedValue > bound {
             return .inactive(savedValue: savedValue)
         }
         return .value(savedValue)
@@ -468,13 +653,17 @@ public struct ChatGenerationSettingsView: View {
     }
 
     static func tokenChoices(savedValue: Int?, maximumOutputTokenBound: Int?) -> [Int] {
-        guard let bound = maximumOutputTokenBound else { return [] }
-        var choices = ChatGenerationSettings.tokenPresets.filter { $0 <= bound }
-        if !choices.contains(bound) { choices.append(bound) }
-        if let savedValue, savedValue <= bound, !choices.contains(savedValue) {
+        var choices = ChatGenerationSettings.tokenPresets
+        if let bound = maximumOutputTokenBound {
+            choices = choices.filter { $0 <= bound }
+            if !choices.contains(bound) { choices.append(bound) }
+        }
+        if let savedValue,
+           maximumOutputTokenBound.map({ savedValue <= $0 }) ?? true,
+           !choices.contains(savedValue) {
             choices.append(savedValue)
         }
-        if choices.isEmpty { choices.append(bound) }
+        if choices.isEmpty { choices.append(4_096) }
         return choices.sorted()
     }
 

@@ -37,19 +37,8 @@ private struct PendingToolCallIdentity {
 private final class RequestToolCallTracker {
     private var pendingCalls: [PendingToolCallIdentity] = []
     private var toolAnchorMessageIDs: [UUID] = []
-    private var toolCallCount = 0
-    let maxIterations: Int?
 
-    init(maxIterations: Int? = nil) {
-        self.maxIterations = maxIterations
-    }
-
-    var isAtLimit: Bool {
-        guard let max = maxIterations else { return false }
-        return toolCallCount >= max
-    }
-
-    func incrementCount() { toolCallCount += 1 }
+    init() {}
 
     func append(
         selectionID: String?,
@@ -265,12 +254,13 @@ private final class SendEventBuffer: @unchecked Sendable {
 @Observable
 public class MessageService {
     public let networkClient: NetworkClientProtocol
+    @ObservationIgnored private let toolSettings: ToolSettings
     public var messages: [Message] = [] {
         didSet {
             if let last = messages.last {
                 notifyMessageUpdated(
                     last,
-                    keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory
+                    keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory
                 )
             }
         }
@@ -322,7 +312,8 @@ public class MessageService {
         return result
     }
 
-    public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [any Agent]? = nil, tools: [Tool]? = nil) {
+    public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [any Agent]? = nil, tools: [Tool]? = nil, toolSettings: ToolSettings = .shared) {
+        self.toolSettings = toolSettings
         self.networkClient = networkClient
         self.agents = agents ?? []
         self.tools = tools
@@ -359,7 +350,7 @@ public class MessageService {
     public func markResponseStopped(messageID: UUID) {
         guard let message = messages.first(where: { $0.uuid == messageID && $0.isUser }) else { return }
         message.wasResponseStopped = true
-        notifyMessageUpdated(message, keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory)
+        notifyMessageUpdated(message, keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory)
     }
 
     private func makeSendOperation(
@@ -371,7 +362,7 @@ public class MessageService {
         let establishment = SendEstablishment()
         let eventNotifications = eventBuffer.register(sendID)
         let requestSnapshot = requestMessages(
-            keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory
+            keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory
         )
 
         let completion = Task { @MainActor in
@@ -424,8 +415,11 @@ public class MessageService {
         var assistantMessageIDs: Set<UUID> = []
         var generatedMessageIDs: Set<UUID> = []
         var toolBreakOccurred = false
-        let toolCallTracker = RequestToolCallTracker(maxIterations: ToolSettings.shared.maxToolIterations)
-        let keepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
+        let toolCallTracker = RequestToolCallTracker()
+        // Enforce the configured iteration budget before callbacks run so
+        // over-limit calls fail fast instead of executing.
+        let toolBudget = ToolIterationBudget(maxIterations: toolSettings.maxToolIterations)
+        let keepsToolCallsInHistory = toolSettings.keepsToolCallsInHistory
         let selectedModel = UserDefaults.model
         let replayService = selectedModel.apiService
 
@@ -433,7 +427,7 @@ public class MessageService {
             var currentMessages = requestSnapshot
             currentMessages.insert(Message(text: systemMessage(), role: .system), at: 0)
 
-            let activeTools = filteredTools(for: sendID)
+            let activeTools = budgetedTools(filteredTools(for: sendID), budget: toolBudget)
             let agentToolNames = Set(agents.map(\.name))
             let toolEventHandler: (LangToolsToolEvent) -> Void = { [weak self] event in
                 self?.enqueueToolEvent(event, for: sendID, agentToolNames: agentToolNames)
@@ -728,7 +722,7 @@ extension MessageService {
             anchorMessageID: &anchorMessageID,
             toolBreakOccurred: &toolBreakOccurred,
             generatedMessageIDs: &generatedMessageIDs,
-            keepsToolCallsInHistory: ToolSettings.shared.keepsToolCallsInHistory,
+            keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory,
             replayService: UserDefaults.model.apiService
         )
     }
@@ -757,23 +751,14 @@ extension MessageService {
                     generatedMessageIDs: &generatedMessageIDs
                 )
                 anchor.applyToolEvent(.toolCalled(selection))
-                if let tracker = toolCallTracker {
-                    if tracker.isAtLimit {
-                        // Cap reached — immediately fail this tool call
-                        if let idx = anchor.toolCalls.indices.last {
-                            anchor.toolCalls[idx].status = .failure
-                            anchor.toolCalls[idx].result = "Tool iteration limit reached."
-                        }
-                    } else {
-                        tracker.incrementCount()
-                        tracker.append(
-                            selectionID: selection.id,
-                            anchorMessageID: anchor.uuid,
-                            uiCallID: anchor.toolCalls.last?.id ?? "",
-                            name: selection.name,
-                            arguments: selection.arguments.isEmpty ? nil : selection.arguments
-                        )
-                    }
+                if let toolCallTracker {
+                    toolCallTracker.append(
+                        selectionID: selection.id,
+                        anchorMessageID: anchor.uuid,
+                        uiCallID: anchor.toolCalls.last?.id ?? "",
+                        name: selection.name,
+                        arguments: selection.arguments.isEmpty ? nil : selection.arguments
+                    )
                 }
                 updatedMessage = anchor
 

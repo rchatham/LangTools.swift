@@ -77,6 +77,23 @@ final class ChatSettingsViewModelTests: XCTestCase {
         )
     }
 
+    func testMissingBoundTreatsSavedValueAsActive() {
+        XCTAssertEqual(
+            ChatGenerationSettingsView.maximumOutputSelection(
+                savedValue: 4_096,
+                maximumOutputTokenBound: nil
+            ),
+            .value(4_096)
+        )
+        XCTAssertFalse(
+            ChatGenerationSettingsView.tokenChoices(
+                savedValue: nil,
+                maximumOutputTokenBound: nil
+            ).isEmpty,
+            "Models without a known bound should still offer preset choices"
+        )
+    }
+
     func testEnablingOverboundMaximumOutputChoosesValidValue() {
         XCTAssertEqual(
             ChatGenerationSettingsView.maximumOutputValueWhenEnabled(

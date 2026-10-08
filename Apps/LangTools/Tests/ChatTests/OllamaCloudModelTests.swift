@@ -3,20 +3,20 @@ import Ollama
 @testable import Chat
 
 final class OllamaCloudModelTests: XCTestCase {
-    private var previousLocalModels: Any?
     private var previousCloudModels: Any?
+    private var previousModelsByEndpoint: Any?
 
     override func setUp() {
         super.setUp()
-        previousLocalModels = UserDefaults.standard.object(forKey: "ollamaModels")
         previousCloudModels = UserDefaults.standard.object(forKey: "ollamaCloudModels")
-        UserDefaults.standard.removeObject(forKey: "ollamaModels")
+        previousModelsByEndpoint = UserDefaults.standard.object(forKey: "ollamaModelsByEndpoint")
         UserDefaults.standard.removeObject(forKey: "ollamaCloudModels")
+        UserDefaults.standard.removeObject(forKey: "ollamaModelsByEndpoint")
     }
 
     override func tearDown() {
-        restore(previousLocalModels, forKey: "ollamaModels")
         restore(previousCloudModels, forKey: "ollamaCloudModels")
+        restore(previousModelsByEndpoint, forKey: "ollamaModelsByEndpoint")
         super.tearDown()
     }
 
@@ -50,17 +50,28 @@ final class OllamaCloudModelTests: XCTestCase {
     }
 
     func testCloudCatalogIsNormalizedAndIndependentFromLocalCatalog() throws {
+        let suiteName = "OllamaCloudModelTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
         let localModel = try XCTUnwrap(Ollama.Model(rawValue: "local-model:cloud"))
         let cloudModel = try XCTUnwrap(Ollama.Model(rawValue: "hosted-model:cloud"))
-        Model.updateCachedOllamaModels([localModel])
+
+        // Local daemon models are stored in the endpoint-scoped cache; they must
+        // not leak into the standalone Cloud catalog and must survive its updates.
+        let endpointConfiguration = OllamaEndpointConfiguration(userDefaults: defaults)
+        let snapshot = endpointConfiguration.snapshot()
+        XCTAssertTrue(endpointConfiguration.storeModels([localModel], for: snapshot))
+
         Model.updateCachedOllamaCloudModels([cloudModel, cloudModel])
 
-        XCTAssertEqual(Model.cachedOllamaModels.map(\.rawValue), ["local-model:cloud"])
+        XCTAssertEqual(endpointConfiguration.cachedModels().map(\.rawValue), ["local-model:cloud"])
         XCTAssertEqual(Model.cachedOllamaCloudModels.map(\.rawValue), ["hosted-model"])
         XCTAssertEqual(
             UserDefaults.standard.stringArray(forKey: "ollamaCloudModels"),
             ["hosted-model"]
         )
+        XCTAssertNil((defaults.dictionary(forKey: "ollamaModelsByEndpoint") as? [String: Any])?["hosted-model"])
     }
 
     private func restore(_ value: Any?, forKey key: String) {

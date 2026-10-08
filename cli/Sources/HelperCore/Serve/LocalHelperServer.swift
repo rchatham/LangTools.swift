@@ -1,7 +1,7 @@
 import Foundation
 import Network
 
-public struct LocalHelperServer {
+public struct LocalHelperServer: Sendable {
     let host: String
     let port: UInt16
     let bearerToken: String
@@ -437,7 +437,7 @@ public enum HTTPRequestParseResult {
     case failure(HTTPStatus, String)
 }
 
-public struct HTTPRequest {
+public struct HTTPRequest: Sendable {
     public let method: String
     public let path: String
     public let headers: [String: String]

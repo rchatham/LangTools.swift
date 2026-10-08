@@ -17,15 +17,19 @@ public final class ProviderAccessManager: ObservableObject {
     private let sessionStore: AuthSessionStore
     private let defaultOllamaCloudAccessEligibility: OllamaCloudAccessEligibility
     private var ollamaCloudAccessEligibilityOverride: OllamaCloudAccessEligibility?
+    private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
     private let stateLock = NSLock()
+    private var refreshGeneration: UInt64 = 0
 
     public init(
         keychainService: KeychainService = .shared,
         sessionStore: AuthSessionStore = .shared,
+        ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared,
         ollamaCloudAccessEligibility: OllamaCloudAccessEligibility? = nil
     ) {
         self.keychainService = keychainService
         self.sessionStore = sessionStore
+        self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
         self.defaultOllamaCloudAccessEligibility = {
             keychainService.getApiKey(for: .ollama)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -48,6 +52,12 @@ public final class ProviderAccessManager: ObservableObject {
     }
 
     public func refresh() {
+        stateLock.lock()
+        refreshGeneration &+= 1
+        let generation = refreshGeneration
+        let ollamaSnapshot = ollamaEndpointConfiguration.snapshot()
+        stateLock.unlock()
+
         var newStates: [APIService: ProviderAccessState] = [:]
         for service in APIService.allCases {
             let apiKey = keychainService.getApiKey(for: service)
@@ -57,14 +67,18 @@ public final class ProviderAccessManager: ObservableObject {
             newStates[service] = ProviderAccessState(
                 service: service,
                 authStatus: status,
-                availableModels: availableModels(for: service, apiKey: apiKey, session: session),
+                availableModels: availableModels(for: service, apiKey: apiKey, session: session, ollamaSnapshot: ollamaSnapshot),
                 accountIdentifier: session?.accountIdentifier
             )
         }
         let applyStates = {
             self.stateLock.lock()
+            defer { self.stateLock.unlock() }
+            // Background refreshes must not restore an older catalog after a
+            // newer refresh, server switch, repair, or helper disconnect.
+            guard generation == self.refreshGeneration,
+                  self.ollamaEndpointConfiguration.isCurrent(ollamaSnapshot) else { return }
             self.states = newStates
-            self.stateLock.unlock()
         }
         if Thread.isMainThread {
             applyStates()
@@ -116,7 +130,7 @@ public final class ProviderAccessManager: ObservableObject {
     public func validateSelectedModel(_ model: Model) -> Model {
         let cloudAccessEligible = isOllamaCloudAccessEligible()
         let available = availableChatModels(ollamaCloudAccessEligible: cloudAccessEligible)
-        if available.contains(model) {
+        if available.contains(model) || model.apiService == .ollama {
             return model
         }
         if case .ollamaCloud = model, cloudAccessEligible == false {
@@ -238,9 +252,14 @@ public final class ProviderAccessManager: ObservableObject {
         }
     }
 
-    private func availableModels(for service: APIService, apiKey: String?, session: AccountSession?) -> [Model] {
+    private func availableModels(
+        for service: APIService,
+        apiKey: String?,
+        session: AccountSession?,
+        ollamaSnapshot: OllamaEndpointConfiguration.Snapshot
+    ) -> [Model] {
         if service == .ollama {
-            return Model.cachedOllamaModels.map { .ollama($0) }
+            return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
         }
 
         let hasAPIKey = apiKey?.isEmpty == false
@@ -284,7 +303,7 @@ public final class ProviderAccessManager: ObservableObject {
             case .gemini:
                 return Gemini.Model.allCases.map { .gemini($0) }
             case .ollama:
-                return Model.cachedOllamaModels.map { .ollama($0) }
+                return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
             case .serper:
                 return []
             }
@@ -307,6 +326,30 @@ public final class AuthPresentationCoordinator: ObservableObject {
 
     @Published public var isPresented = false
     @Published public var preferredDestination: AccessDestination?
+    @Published private(set) var presentationOwner: UUID?
+    private var presenters: [UUID: (priority: Int, order: UInt64)] = [:]
+    private var registrationOrder: UInt64 = 0
+
+    /// Settings sheets/windows own their own prompts while visible. The chat
+    /// root stays registered as a fallback, not a second simultaneous presenter.
+    func registerPresenter(_ id: UUID, priority: Int) {
+        registrationOrder &+= 1
+        presenters[id] = (priority, registrationOrder)
+        updatePresentationOwner()
+    }
+
+    func unregisterPresenter(_ id: UUID) {
+        presenters.removeValue(forKey: id)
+        updatePresentationOwner()
+    }
+
+    private func updatePresentationOwner() {
+        let owner = presenters.max {
+            if $0.value.priority == $1.value.priority { return $0.value.order < $1.value.order }
+            return $0.value.priority < $1.value.priority
+        }?.key
+        if owner != presentationOwner { presentationOwner = owner }
+    }
 
     public func present(preferredDestination: AccessDestination? = nil) {
         self.preferredDestination = preferredDestination

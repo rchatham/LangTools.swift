@@ -1,7 +1,15 @@
 import XCTest
+import KeychainAccess
 import Ollama
 @testable import Chat
 
+/// `OllamaEndpointPolicy` is the fail-closed endpoint policy used by Botsworth's
+/// startup discovery and backend routing. The shared app stack (OllamaService,
+/// OllamaSettingsView, NetworkClient) now routes through OllamaEndpointConfiguration
+/// (upstream main semantics: invalid persisted values reset to the default
+/// endpoint); its behavior is covered by OllamaEndpointConfigurationTests,
+/// OllamaEndpointRoutingTests, and OllamaAppRegressionTests. This suite pins the
+/// policy itself plus the settings view's never-echo-secrets guarantee.
 final class OllamaEndpointPolicyTests: XCTestCase {
     private var defaults: UserDefaults!
     private var suiteName: String!
@@ -75,577 +83,68 @@ final class OllamaEndpointPolicyTests: XCTestCase {
         }
     }
 
-    @MainActor func testOllamaServiceColdStartUsesPersistedEndpoint() {
-        defaults.set("http://127.0.0.1:22445/custom", forKey: OllamaEndpointPolicy.userDefaultsKey)
-
-        let service = OllamaService(userDefaults: defaults)
-
-        XCTAssertEqual(service.configuredBaseURL, URL(string: "http://127.0.0.1:22445/custom"))
-        XCTAssertNil(service.error)
-    }
-
-    @MainActor func testOllamaServiceColdStartRetainsInvalidEndpointError() async {
-        defaults.set("http://remote.example.com:11434", forKey: OllamaEndpointPolicy.userDefaultsKey)
-
-        let service = OllamaService(userDefaults: defaults)
-
-        XCTAssertNil(service.configuredBaseURL)
-        XCTAssertTrue(service.error is OllamaEndpointError)
-        do {
-            _ = try await service.checkConnection()
-            XCTFail("Expected invalid endpoint error")
-        } catch {
-            XCTAssertTrue(error is OllamaEndpointError)
-        }
-    }
-
     @MainActor
-    func testSettingsShowsDefaultAndValidSavedEndpointUnchanged() {
-        let service = OllamaService(userDefaults: defaults)
-        let defaultSettings = OllamaSettingsView.ViewModel(
-            ollamaService: service, userDefaults: defaults, checksConnectionOnInit: false
+    func testSettingsDisplayCanonicalEndpointAndNeverEchoInvalidLegacySecrets() throws {
+        // A valid persisted endpoint displays unchanged.
+        defaults.set("https://ollama.example.com", forKey: OllamaEndpointConfiguration.endpointKey)
+        let keychain = Keychain(service: "OllamaEndpointPolicyTests.\(UUID().uuidString)")
+        let manager = ProviderAccessManager(
+            keychainService: KeychainService(keychain: keychain),
+            sessionStore: AuthSessionStore(keychain: keychain)
         )
-        XCTAssertEqual(defaultSettings.serverUrl, OllamaEndpointPolicy.defaultURL.absoluteString)
-        XCTAssertEqual(defaultSettings.editingServerUrl, defaultSettings.serverUrl)
-
-        let savedURL = "https://ollama.example.com/custom/path"
-        defaults.set(savedURL, forKey: OllamaEndpointPolicy.userDefaultsKey)
-        let savedSettings = OllamaSettingsView.ViewModel(
-            ollamaService: service, userDefaults: defaults, checksConnectionOnInit: false
+        let service = OllamaService(
+            endpointConfiguration: OllamaEndpointConfiguration(userDefaults: defaults),
+            providerAccessManager: manager
         )
-        XCTAssertEqual(savedSettings.serverUrl, savedURL)
-        XCTAssertEqual(savedSettings.editingServerUrl, savedURL)
-        savedSettings.resetEditingServerUrl()
-        XCTAssertEqual(savedSettings.editingServerUrl, savedURL)
-        XCTAssertNil(savedSettings.connectionError)
-    }
+        let settings = OllamaSettingsView.ViewModel(ollamaService: service)
+        XCTAssertEqual(settings.serverUrl, "https://ollama.example.com")
+        XCTAssertEqual(settings.editingServerUrl, "https://ollama.example.com")
 
-    @MainActor
-    func testSettingsDoNotDisplayInvalidLegacyEndpointSecrets() {
+        // Invalid legacy secret-bearing values follow the upstream shared-stack
+        // semantics: they reset to the default endpoint and are never echoed in
+        // published UI state or validation errors.
         let invalidValues = [
             "https://user:secret@ollama.example.com/path",
             "https://ollama.example.com/path?token=secret",
             "https://ollama.example.com/path#secret",
             "secret://ollama.example.com/path",
-            "http://secret.example.com:11434",
         ]
 
         for value in invalidValues {
-            defaults.set(value, forKey: OllamaEndpointPolicy.userDefaultsKey)
-            let service = OllamaService(userDefaults: defaults, dependencies: .init(
-                availableModels: { _ in [] },
-                runningModels: { _ in [] },
-                checkConnection: { _ in },
-                cacheModels: { _ in }
-            ))
-            let settings = OllamaSettingsView.ViewModel(
-                ollamaService: service, userDefaults: defaults
-            )
-
-            XCTAssertEqual(settings.serverUrl, "Invalid saved URL")
-            XCTAssertEqual(settings.editingServerUrl, "")
+            defaults.set(value, forKey: OllamaEndpointConfiguration.endpointKey)
+            let configuration = OllamaEndpointConfiguration(userDefaults: defaults)
             XCTAssertEqual(
-                settings.connectionError,
-                "Saved Ollama server URL is invalid. Enter a new URL to reconnect."
+                configuration.directBaseURL,
+                OllamaEndpointConfiguration.defaultBaseURL,
+                "invalid persisted value must reset to the default endpoint: \(value)"
             )
-            XCTAssertFalse(settings.isCheckingConnection)
-            XCTAssertFalse(settings.isConnected)
-            XCTAssertNotNil(service.error)
-            XCTAssertFalse(service.error?.localizedDescription.contains("secret") ?? true)
-            XCTAssertEqual(defaults.string(forKey: OllamaEndpointPolicy.userDefaultsKey), value)
+            XCTAssertEqual(
+                defaults.string(forKey: OllamaEndpointConfiguration.endpointKey),
+                OllamaEndpointConfiguration.defaultBaseURL.absoluteString,
+                "the reset must be persisted so the legacy value is discarded: \(value)"
+            )
 
-            settings.resetEditingServerUrl() // Both settings Edit buttons seed this field.
-            XCTAssertEqual(settings.editingServerUrl, "")
+            let settings = OllamaSettingsView.ViewModel(ollamaService: OllamaService(
+                endpointConfiguration: configuration,
+                providerAccessManager: manager
+            ))
+            XCTAssertEqual(settings.serverUrl, OllamaEndpointConfiguration.defaultBaseURL.absoluteString, value)
+            XCTAssertEqual(settings.editingServerUrl, OllamaEndpointConfiguration.defaultBaseURL.absoluteString, value)
+
+            settings.editingServerUrl = value
+            XCTAssertFalse(settings.updateServerUrl(), value)
+            let validationError = try XCTUnwrap(settings.endpointValidationError, value)
+            XCTAssertFalse(validationError.contains("secret"), value)
+
             settings.editingServerUrl = "http://127.0.0.1:11434"
-            _ = settings.updateServerUrl()
+            XCTAssertTrue(settings.updateServerUrl())
             XCTAssertEqual(settings.serverUrl, "http://127.0.0.1:11434")
-            XCTAssertEqual(settings.editingServerUrl, settings.serverUrl)
-            XCTAssertEqual(defaults.string(forKey: OllamaEndpointPolicy.userDefaultsKey), settings.serverUrl)
-        }
-    }
-
-    @MainActor
-    func testEndpointSaveSynchronouslyUpdatesServiceAndInjectedDefaults() throws {
-        let service = OllamaService(userDefaults: defaults)
-        let savedURL = try service.updateBaseUrl("https://ollama.example.com/custom/path")
-
-        XCTAssertEqual(savedURL, URL(string: "https://ollama.example.com/custom/path"))
-        XCTAssertEqual(service.configuredBaseURL, savedURL)
-        XCTAssertEqual(
-            defaults.string(forKey: OllamaEndpointPolicy.userDefaultsKey),
-            savedURL.absoluteString
-        )
-    }
-
-    @MainActor
-    func testInvalidEndpointSaveMutatesNeitherPublishedStateNorInFlightRefresh() async throws {
-        let originalValue = "http://127.0.0.1:22445/custom"
-        defaults.set(originalValue, forKey: OllamaEndpointPolicy.userDefaultsKey)
-        let firstGate = AsyncResultGate<[Ollama.Model]>()
-        let secondGate = AsyncResultGate<[Ollama.Model]>()
-        let requests = SequencedAsyncResults(first: firstGate, second: secondGate)
-        let oldRunningModel = try runningModel("old-model")
-        let cacheRecorder = ModelCacheRecorder()
-        let dependencies = OllamaService.Dependencies(
-            availableModels: { _ in try await requests.next() },
-            runningModels: { _ in [oldRunningModel] },
-            checkConnection: { _ in },
-            cacheModels: cacheRecorder.record
-        )
-        let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
-
-        let initialRefresh = service.refreshModels()
-        await firstGate.waitUntilStarted()
-        await firstGate.succeed([model("old-model")])
-        await initialRefresh.value
-        let inFlightRefresh = service.refreshModels()
-        await secondGate.waitUntilStarted()
-
-        XCTAssertThrowsError(try service.updateBaseUrl("https://ollama.example.com/path?"))
-        XCTAssertEqual(service.configuredBaseURL, URL(string: originalValue))
-        XCTAssertEqual(defaults.string(forKey: OllamaEndpointPolicy.userDefaultsKey), originalValue)
-        XCTAssertEqual(service.availableModels.map(\.rawValue), ["old-model"])
-        XCTAssertEqual(service.runningModels.map(\.model), ["old-model"])
-        XCTAssertEqual(cacheRecorder.values, [["old-model"]])
-        XCTAssertTrue(service.isLoading)
-
-        await secondGate.succeed([model("new-model")])
-        await inFlightRefresh.value
-        XCTAssertEqual(service.availableModels.map(\.rawValue), ["new-model"])
-        XCTAssertEqual(cacheRecorder.values, [["old-model"], ["new-model"]])
-    }
-
-    @MainActor
-    func testSameEndpointSavePreservesPublishedStateAndInFlightRefresh() async throws {
-        let endpoint = OllamaEndpointPolicy.defaultURL.absoluteString
-        let firstGate = AsyncResultGate<[Ollama.Model]>()
-        let secondGate = AsyncResultGate<[Ollama.Model]>()
-        let requests = SequencedAsyncResults(first: firstGate, second: secondGate)
-        let oldRunningModel = try runningModel("old-model")
-        let cacheRecorder = ModelCacheRecorder()
-        let dependencies = OllamaService.Dependencies(
-            availableModels: { _ in try await requests.next() },
-            runningModels: { _ in [oldRunningModel] },
-            checkConnection: { _ in },
-            cacheModels: cacheRecorder.record
-        )
-        let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
-
-        let initialRefresh = service.refreshModels()
-        await firstGate.waitUntilStarted()
-        await firstGate.succeed([model("old-model")])
-        await initialRefresh.value
-        let inFlightRefresh = service.refreshModels()
-        await secondGate.waitUntilStarted()
-
-        try service.updateBaseUrl(endpoint)
-
-        XCTAssertEqual(service.availableModels.map(\.rawValue), ["old-model"])
-        XCTAssertEqual(service.runningModels.map(\.model), ["old-model"])
-        XCTAssertEqual(cacheRecorder.values, [["old-model"]])
-        XCTAssertTrue(service.isLoading)
-
-        await secondGate.succeed([model("new-model")])
-        await inFlightRefresh.value
-        XCTAssertEqual(service.availableModels.map(\.rawValue), ["new-model"])
-        XCTAssertEqual(cacheRecorder.values, [["old-model"], ["new-model"]])
-    }
-
-    @MainActor
-    func testActualEndpointSaveClearsCompletedModelsRunningModelsAndCache() async throws {
-        let oldRunningModel = try runningModel("old-model")
-        let cacheRecorder = ModelCacheRecorder()
-        let dependencies = OllamaService.Dependencies(
-            availableModels: { _ in [self.model("old-model")] },
-            runningModels: { _ in [oldRunningModel] },
-            checkConnection: { _ in },
-            cacheModels: cacheRecorder.record
-        )
-        let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
-
-        await service.refreshModels().value
-        XCTAssertEqual(service.availableModels.map(\.rawValue), ["old-model"])
-        XCTAssertEqual(service.runningModels.map(\.model), ["old-model"])
-        XCTAssertEqual(cacheRecorder.values, [["old-model"]])
-
-        try service.updateBaseUrl("http://localhost:22445/custom")
-
-        XCTAssertTrue(service.availableModels.isEmpty)
-        XCTAssertTrue(service.runningModels.isEmpty)
-        XCTAssertEqual(cacheRecorder.values, [["old-model"], []])
-        XCTAssertFalse(service.isLoading)
-    }
-
-    @MainActor
-    func testOldEndpointRefreshCannotPublishAfterEndpointSave() async throws {
-        let oldGate = AsyncResultGate<[Ollama.Model]>()
-        let newGate = AsyncResultGate<[Ollama.Model]>()
-        let cacheRecorder = ModelCacheRecorder()
-        let dependencies = OllamaService.Dependencies(
-            availableModels: { ollama in
-                if ollama.configuration.baseURL.port == 11434 {
-                    return try await oldGate.wait()
-                }
-                return try await newGate.wait()
-            },
-            runningModels: { _ in [] },
-            checkConnection: { _ in },
-            cacheModels: cacheRecorder.record
-        )
-        let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
-
-        let oldRefresh = service.refreshModels()
-        await oldGate.waitUntilStarted()
-        try service.updateBaseUrl("http://localhost:22445/custom")
-        let newRefresh = service.refreshModels()
-        await newGate.waitUntilStarted()
-        await newGate.succeed([model("new-model")])
-        await newRefresh.value
-        await oldGate.succeed([model("stale-model")])
-        await oldRefresh.value
-
-        XCTAssertEqual(service.availableModels.map(\.rawValue), ["new-model"])
-        XCTAssertEqual(cacheRecorder.values, [[], ["new-model"]])
-        XCTAssertNil(service.error)
-        XCTAssertFalse(service.isLoading)
-    }
-
-    @MainActor
-    func testOlderSameEndpointRefreshErrorCannotOverwriteLatestRefresh() async {
-        let firstGate = AsyncResultGate<[Ollama.Model]>()
-        let secondGate = AsyncResultGate<[Ollama.Model]>()
-        let requests = SequencedAsyncResults(first: firstGate, second: secondGate)
-        let cacheRecorder = ModelCacheRecorder()
-        let dependencies = OllamaService.Dependencies(
-            availableModels: { _ in try await requests.next() },
-            runningModels: { _ in [] },
-            checkConnection: { _ in },
-            cacheModels: cacheRecorder.record
-        )
-        let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
-
-        let firstRefresh = service.refreshModels()
-        await firstGate.waitUntilStarted()
-        let secondRefresh = service.refreshModels()
-        await secondGate.waitUntilStarted()
-        await secondGate.succeed([model("latest-model")])
-        await secondRefresh.value
-        await firstGate.fail(TestFailure.expected)
-        await firstRefresh.value
-
-        XCTAssertEqual(service.availableModels.map(\.rawValue), ["latest-model"])
-        XCTAssertEqual(cacheRecorder.values, [["latest-model"]])
-        XCTAssertNil(service.error)
-        XCTAssertFalse(service.isLoading)
-    }
-
-    @MainActor
-    func testEndpointChangeCancelsStaleConnectionProbe() async throws {
-        let probeGate = AsyncResultGate<Void>()
-        let dependencies = OllamaService.Dependencies(
-            availableModels: { _ in [] },
-            runningModels: { _ in [] },
-            checkConnection: { _ in try await probeGate.wait() },
-            cacheModels: { _ in }
-        )
-        let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
-        let probe = Task { try await service.checkConnection() }
-        await probeGate.waitUntilStarted()
-
-        try service.updateBaseUrl("http://localhost:22445/custom")
-        await probeGate.succeed(())
-
-        do {
-            _ = try await probe.value
-            XCTFail("Expected stale probe cancellation")
-        } catch is CancellationError {
-        } catch {
-            XCTFail("Expected CancellationError, got \(error)")
-        }
-    }
-
-    @MainActor
-    func testSettingsSaveResetsStatusAndDiscoversNewEndpointModelsAfterProbe() async throws {
-        let probeGate = AsyncResultGate<Void>()
-        let modelGate = AsyncResultGate<[Ollama.Model]>()
-        let cacheRecorder = ModelCacheRecorder()
-        let dependencies = OllamaService.Dependencies(
-            availableModels: { _ in try await modelGate.wait() },
-            runningModels: { _ in [] },
-            checkConnection: { _ in try await probeGate.wait() },
-            cacheModels: cacheRecorder.record
-        )
-        let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
-        let viewModel = OllamaSettingsView.ViewModel(
-            ollamaService: service,
-            userDefaults: defaults,
-            checksConnectionOnInit: false
-        )
-        viewModel.isConnected = true
-        viewModel.editingServerUrl = "http://localhost:22445/custom"
-
-        let saveTask = try XCTUnwrap(viewModel.updateServerUrl())
-
-        XCTAssertFalse(viewModel.isConnected)
-        XCTAssertTrue(viewModel.isCheckingConnection)
-        await probeGate.waitUntilStarted()
-        await probeGate.succeed(())
-        await modelGate.waitUntilStarted()
-        XCTAssertTrue(viewModel.isConnected)
-        XCTAssertFalse(viewModel.isCheckingConnection)
-
-        await modelGate.succeed([model("new-endpoint-model")])
-        await saveTask.value
-
-        XCTAssertEqual(service.availableModels.map(\.rawValue), ["new-endpoint-model"])
-        XCTAssertEqual(cacheRecorder.values, [[], ["new-endpoint-model"]])
-        XCTAssertNil(viewModel.connectionError)
-    }
-
-    @MainActor
-    func testSettingsIgnoresObsoleteSameEndpointProbeCompletion() async {
-        let firstGate = AsyncResultGate<Void>()
-        let secondGate = AsyncResultGate<Void>()
-        let probes = SequencedAsyncResults(first: firstGate, second: secondGate)
-        let dependencies = OllamaService.Dependencies(
-            availableModels: { _ in [] },
-            runningModels: { _ in [] },
-            checkConnection: { _ in try await probes.next() },
-            cacheModels: { _ in }
-        )
-        let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
-        let viewModel = OllamaSettingsView.ViewModel(
-            ollamaService: service,
-            userDefaults: defaults,
-            checksConnectionOnInit: false
-        )
-
-        let firstProbe = viewModel.checkConnection()
-        await firstGate.waitUntilStarted()
-        let secondProbe = viewModel.checkConnection()
-        await secondGate.waitUntilStarted()
-        await secondGate.succeed(())
-        await secondProbe.value
-        await firstGate.fail(TestFailure.expected)
-        await firstProbe.value
-
-        XCTAssertTrue(viewModel.isConnected)
-        XCTAssertFalse(viewModel.isCheckingConnection)
-        XCTAssertNil(viewModel.connectionError)
-    }
-
-    @MainActor
-    func testRefreshModelsColdStartUnsafeHTTPHostPublishesErrorAndClearsLoading() async {
-        defaults.set("http://remote.example.com:11434", forKey: OllamaEndpointPolicy.userDefaultsKey)
-
-        let counter = DependencyCallCounter()
-        let dependencies = OllamaService.Dependencies(
-            availableModels: { _ in counter.record(.availableModels); throw TestFailure.expected },
-            runningModels: { _ in counter.record(.runningModels); throw TestFailure.expected },
-            checkConnection: { _ in counter.record(.checkConnection); throw TestFailure.expected },
-            cacheModels: { _ in counter.record(.cacheModels) }
-        )
-        let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
-
-        XCTAssertNil(service.configuredBaseURL)
-        XCTAssertEqual(service.error as? OllamaEndpointError, .unsafeHTTPHost("remote.example.com"))
-        XCTAssertTrue(service.availableModels.isEmpty)
-        XCTAssertTrue(service.runningModels.isEmpty)
-
-        let refresh = service.refreshModels()
-
-        XCTAssertTrue(service.isLoading)
-        XCTAssertNil(service.error)
-        await refresh.value
-
-        XCTAssertFalse(service.isLoading)
-        XCTAssertEqual(service.error as? OllamaEndpointError, .unsafeHTTPHost("remote.example.com"))
-        XCTAssertNil(service.configuredBaseURL)
-        XCTAssertTrue(service.availableModels.isEmpty)
-        XCTAssertTrue(service.runningModels.isEmpty)
-        XCTAssertTrue(counter.calls.isEmpty, "Expected no discovery or cache calls, got \(counter.calls)")
-    }
-
-    @MainActor
-    func testPullModelColdStartUnsafeHTTPHostThrowsBeforeTransport() async {
-        defaults.set("http://remote.example.com:11434", forKey: OllamaEndpointPolicy.userDefaultsKey)
-
-        let counter = DependencyCallCounter()
-        let dependencies = OllamaService.Dependencies(
-            availableModels: { _ in counter.record(.availableModels); throw TestFailure.expected },
-            runningModels: { _ in counter.record(.runningModels); throw TestFailure.expected },
-            checkConnection: { _ in counter.record(.checkConnection); throw TestFailure.expected },
-            cacheModels: { _ in counter.record(.cacheModels) }
-        )
-        let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
-
-        XCTAssertNil(service.configuredBaseURL)
-        XCTAssertEqual(service.error as? OllamaEndpointError, .unsafeHTTPHost("remote.example.com"))
-        XCTAssertFalse(service.isLoading)
-
-        var progressCalled = false
-        do {
-            try await service.pullModel("test-model") { _ in
-                progressCalled = true
-            }
-            XCTFail("Expected pullModel to throw")
-        } catch {
-            XCTAssertEqual(error as? OllamaEndpointError, .unsafeHTTPHost("remote.example.com"))
+            XCTAssertEqual(
+                defaults.string(forKey: OllamaEndpointConfiguration.endpointKey),
+                "http://127.0.0.1:11434"
+            )
         }
 
-        XCTAssertFalse(progressCalled)
-        XCTAssertFalse(service.isLoading)
-        XCTAssertTrue(service.availableModels.isEmpty)
-        XCTAssertTrue(service.runningModels.isEmpty)
-        XCTAssertNil(service.configuredBaseURL)
-        XCTAssertTrue(counter.calls.isEmpty, "Expected no discovery or cache calls, got \(counter.calls)")
-    }
-
-    @MainActor
-    func testLoadModelColdStartUnsafeHTTPHostThrowsBeforeTransport() async {
-        defaults.set("http://remote.example.com:11434", forKey: OllamaEndpointPolicy.userDefaultsKey)
-
-        let counter = DependencyCallCounter()
-        let dependencies = OllamaService.Dependencies(
-            availableModels: { _ in counter.record(.availableModels); throw TestFailure.expected },
-            runningModels: { _ in counter.record(.runningModels); throw TestFailure.expected },
-            checkConnection: { _ in counter.record(.checkConnection); throw TestFailure.expected },
-            cacheModels: { _ in counter.record(.cacheModels) }
-        )
-        let service = OllamaService(userDefaults: defaults, dependencies: dependencies)
-
-        XCTAssertNil(service.configuredBaseURL)
-        XCTAssertEqual(service.error as? OllamaEndpointError, .unsafeHTTPHost("remote.example.com"))
-        XCTAssertFalse(service.isLoading)
-
-        let testModel = Ollama.Model(rawValue: "test-model")!
-        do {
-            try await service.loadModel(testModel)
-            XCTFail("Expected loadModel to throw")
-        } catch {
-            XCTAssertEqual(error as? OllamaEndpointError, .unsafeHTTPHost("remote.example.com"))
-        }
-
-        XCTAssertFalse(service.isLoading)
-        XCTAssertTrue(service.availableModels.isEmpty)
-        XCTAssertTrue(service.runningModels.isEmpty)
-        XCTAssertNil(service.configuredBaseURL)
-        XCTAssertTrue(counter.calls.isEmpty, "Expected no discovery or cache calls, got \(counter.calls)")
-    }
-
-    private func model(_ name: String) -> Ollama.Model {
-        Ollama.Model(rawValue: name)!
-    }
-
-    private func runningModel(
-        _ name: String
-    ) throws -> Ollama.ListRunningModelsResponse.RunningModelInfo {
-        let json = """
-        {
-          "name": "\(name)",
-          "model": "\(name)",
-          "size": 1,
-          "digest": "digest",
-          "details": {},
-          "expires_at": "2026-10-01T00:00:00Z",
-          "size_vram": 1
-        }
-        """
-        return try JSONDecoder().decode(
-            Ollama.ListRunningModelsResponse.RunningModelInfo.self,
-            from: Data(json.utf8)
-        )
-    }
-}
-
-private enum TestFailure: Error {
-    case expected
-}
-
-private actor AsyncResultGate<Value> {
-    private var continuation: CheckedContinuation<Value, Error>?
-    private var started = false
-
-    func wait() async throws -> Value {
-        started = true
-        return try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
-        }
-    }
-
-    func waitUntilStarted() async {
-        while !started {
-            await Task.yield()
-        }
-    }
-
-    func succeed(_ value: Value) {
-        continuation?.resume(returning: value)
-        continuation = nil
-    }
-
-    func fail(_ error: Error) {
-        continuation?.resume(throwing: error)
-        continuation = nil
-    }
-}
-
-private actor SequencedAsyncResults<Value> {
-    private let first: AsyncResultGate<Value>
-    private let second: AsyncResultGate<Value>
-    private var requestCount = 0
-
-    init(first: AsyncResultGate<Value>, second: AsyncResultGate<Value>) {
-        self.first = first
-        self.second = second
-    }
-
-    func next() async throws -> Value {
-        requestCount += 1
-        if requestCount == 1 {
-            return try await first.wait()
-        }
-        return try await second.wait()
-    }
-}
-
-private final class DependencyCallCounter {
-    enum Call: String {
-        case availableModels
-        case runningModels
-        case checkConnection
-        case cacheModels
-    }
-
-    private let lock = NSLock()
-    private var _calls: [Call] = []
-
-    var calls: [Call] {
-        lock.lock()
-        defer { lock.unlock() }
-        return _calls
-    }
-
-    func record(_ call: Call) {
-        lock.lock()
-        defer { lock.unlock() }
-        _calls.append(call)
-    }
-}
-
-private final class ModelCacheRecorder {
-    private let lock = NSLock()
-    private var recordedValues: [[String]] = []
-
-    var values: [[String]] {
-        lock.lock()
-        defer { lock.unlock() }
-        return recordedValues
-    }
-
-    func record(_ models: [Ollama.Model]) {
-        lock.lock()
-        defer { lock.unlock() }
-        recordedValues.append(models.map(\.rawValue))
+        try? keychain.removeAll()
     }
 }

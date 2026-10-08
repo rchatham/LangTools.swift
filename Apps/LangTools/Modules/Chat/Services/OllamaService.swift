@@ -9,188 +9,134 @@ import Foundation
 import LangTools
 import Ollama
 
-public class OllamaService: ObservableObject {
+@MainActor
+public final class OllamaService: ObservableObject {
     public static let shared = OllamaService()
-
-    struct Dependencies {
-        var availableModels: (Ollama) async throws -> [Ollama.Model]
-        var runningModels: (Ollama) async throws -> [Ollama.ListRunningModelsResponse.RunningModelInfo]
-        var checkConnection: (Ollama) async throws -> Void
-        var cacheModels: ([Ollama.Model]) -> Void
-
-        static let live = Dependencies(
-            availableModels: { ollama in
-                try await ollama.listModels().models.compactMap { Ollama.Model(rawValue: $0.name) }
-            },
-            runningModels: { ollama in
-                try await ollama.listRunningModels().models
-            },
-            checkConnection: { ollama in
-                _ = try await ollama.version()
-            },
-            cacheModels: Model.updateCachedOllamaModels
-        )
-    }
 
     @Published public var availableModels: [Ollama.Model] = []
     @Published var runningModels: [Ollama.ListRunningModelsResponse.RunningModelInfo] = []
     @Published var isLoading = false
     @Published public var error: Error?
+    @Published public private(set) var transportRevision: UInt64 = 0
 
-    private let userDefaults: UserDefaults
-    private let dependencies: Dependencies
-    private var ollama: Ollama?
-    private var endpointError: Error?
-    private var endpointGeneration: UInt = 0
-    private var refreshGeneration: UInt = 0
-    private var refreshTask: Task<Void, Never>?
+    public let endpointConfiguration: OllamaEndpointConfiguration
+    private let session: URLSession
+    private let providerAccessManager: ProviderAccessManager
+    private var refreshGeneration: UInt64 = 0
 
-    @MainActor var configuredBaseURL: URL? { ollama?.configuration.baseURL }
-
-    init(
-        userDefaults: UserDefaults = .standard,
-        dependencies: Dependencies = .live
+    public init(
+        endpointConfiguration: OllamaEndpointConfiguration = .shared,
+        session: URLSession = .shared,
+        providerAccessManager: ProviderAccessManager = .shared
     ) {
-        self.userDefaults = userDefaults
-        self.dependencies = dependencies
-        do {
-            ollama = try OllamaEndpointPolicy.makeOllama(userDefaults: userDefaults)
-        } catch {
-            endpointError = error
-            self.error = error
-        }
+        self.endpointConfiguration = endpointConfiguration
+        self.session = session
+        self.providerAccessManager = providerAccessManager
+        availableModels = endpointConfiguration.cachedModels()
+        transportRevision = endpointConfiguration.snapshot().revision
     }
 
-    @MainActor
-    private func configuredOllama() throws -> Ollama {
-        if let endpointError {
-            throw endpointError
-        }
-        guard let ollama else {
-            throw OllamaEndpointError.malformed("Missing Ollama client")
-        }
-        return ollama
-    }
-
-    @MainActor
-    @discardableResult
-    public func refreshModels() -> Task<Void, Never> {
-        refreshTask?.cancel()
+    public func refreshModels() {
+        let snapshot = endpointConfiguration.snapshot()
         refreshGeneration &+= 1
-        let operationGeneration = refreshGeneration
-        let operationEndpointGeneration = endpointGeneration
+        let generation = refreshGeneration
         isLoading = true
         error = nil
 
-        let task = Task { [weak self] in
-            guard let self else { return }
+        Task {
             do {
-                let ollama = try self.configuredOllama()
-                let models = try await self.dependencies.availableModels(ollama)
-                let runningModels = (try? await self.dependencies.runningModels(ollama)) ?? []
+                let provider = try provider(for: snapshot)
+                let response = try await provider.listModels()
+                let models = response.models.compactMap { Ollama.Model(rawValue: $0.name) }
+                let runningResponse = try? await provider.listRunningModels()
+                let discoveredRunningModels = runningResponse?.models ?? []
 
-                await MainActor.run {
-                    guard self.isCurrentRefresh(
-                        operationGeneration,
-                        endpointGeneration: operationEndpointGeneration
-                    ) else { return }
-                    self.availableModels = models
-                    self.runningModels = runningModels
-                    self.dependencies.cacheModels(models)
-                    self.isLoading = false
+                guard endpointConfiguration.isCurrent(snapshot), generation == refreshGeneration else { return }
+                availableModels = models
+                runningModels = discoveredRunningModels
+                isLoading = false
+                if endpointConfiguration.storeModels(models, for: snapshot) {
+                    providerAccessManager.refresh()
                 }
             } catch {
-                await MainActor.run {
-                    guard self.isCurrentRefresh(
-                        operationGeneration,
-                        endpointGeneration: operationEndpointGeneration
-                    ) else { return }
-                    self.error = error
-                    self.isLoading = false
-                }
+                guard endpointConfiguration.isCurrent(snapshot), generation == refreshGeneration else { return }
+                self.error = snapshot.isHelper ? MobileHelperError.actionable(error, session: snapshot.helper?.session) : error
+                isLoading = false
             }
         }
-        refreshTask = task
-        return task
     }
 
-    @MainActor
-    private func isCurrentRefresh(_ refreshGeneration: UInt, endpointGeneration: UInt) -> Bool {
-        self.refreshGeneration == refreshGeneration && self.endpointGeneration == endpointGeneration
+    @discardableResult
+    public func updateEndpoint(_ value: String) throws -> OllamaEndpointConfiguration.Snapshot {
+        let snapshot = try endpointConfiguration.update(value)
+        transportRevision = snapshot.revision
+        refreshGeneration &+= 1
+        availableModels = []
+        runningModels = []
+        isLoading = false
+        error = nil
+        providerAccessManager.refresh()
+        refreshModels()
+        return snapshot
     }
 
-    @MainActor
-    func pullModel(_ modelName: String, progressHandler: @escaping (Double) -> Void) async throws {
-        let ollama = try configuredOllama()
-        for try await response in ollama.streamPullModel(modelName) {
-            if let total = response.total, let completed = response.completed {
-                let progress = Double(completed) / Double(total)
-                await MainActor.run {
-                    progressHandler(progress)
-                }
+    func pullModel(
+        _ modelName: String,
+        for snapshot: OllamaEndpointConfiguration.Snapshot? = nil,
+        progressHandler: @escaping (Double) -> Void
+    ) async throws {
+        let capturedSnapshot = snapshot ?? endpointConfiguration.snapshot()
+        let provider = try provider(for: capturedSnapshot)
+        for try await response in provider.streamPullModel(modelName) {
+            if let total = response.total, let completed = response.completed, total > 0 {
+                progressHandler(Double(completed) / Double(total))
             }
         }
 
-        _ = refreshModels()
+        if endpointConfiguration.isCurrent(capturedSnapshot) {
+            refreshModels()
+        }
     }
 
-    @MainActor
-    func loadModel(_ model: Ollama.Model) async throws {
-        let ollama = try configuredOllama()
-        _ = try await ollama.chat(
+    func loadModel(
+        _ model: Ollama.Model,
+        for snapshot: OllamaEndpointConfiguration.Snapshot? = nil
+    ) async throws {
+        let capturedSnapshot = snapshot ?? endpointConfiguration.snapshot()
+        let provider = try provider(for: capturedSnapshot)
+        _ = try await provider.chat(
             model: model,
             messages: [Ollama.Message(role: .user, content: "Hello")]
         )
 
-        _ = refreshModels()
-    }
-
-    @MainActor
-    @discardableResult
-    func updateBaseUrl(_ urlString: String) throws -> URL {
-        let url = try OllamaEndpointPolicy.validate(urlString)
-        let updatedOllama = try OllamaEndpointPolicy.makeOllama(baseURL: url)
-
-        // This operation has no suspension point. When it returns, the persisted endpoint used
-        // by chat dispatch and the in-memory endpoint used for discovery are guaranteed to match.
-        userDefaults.set(url.absoluteString, forKey: OllamaEndpointPolicy.userDefaultsKey)
-        if configuredBaseURL != url || endpointError != nil {
-            endpointGeneration &+= 1
-            refreshGeneration &+= 1
-            refreshTask?.cancel()
-            refreshTask = nil
-            availableModels = []
-            runningModels = []
-            dependencies.cacheModels([])
-            isLoading = false
+        if endpointConfiguration.isCurrent(capturedSnapshot) {
+            refreshModels()
         }
-        ollama = updatedOllama
-        endpointError = nil
-        error = nil
-        return url
     }
 
-    @MainActor
-    public func checkConnection() async throws -> Bool {
-        let operationEndpointGeneration = endpointGeneration
-        let ollama = try configuredOllama()
+    public func checkConnection(
+        for snapshot: OllamaEndpointConfiguration.Snapshot? = nil
+    ) async throws {
+        let capturedSnapshot = snapshot ?? endpointConfiguration.snapshot()
         do {
-            try await dependencies.checkConnection(ollama)
-            try validateProbe(endpointGeneration: operationEndpointGeneration)
-            return true
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            try validateProbe(endpointGeneration: operationEndpointGeneration)
-            return false
-        }
+            if let helper = capturedSnapshot.helper {
+                try await MobileHelperPairingClient.verifyHealth(credential: helper.credential, session: helper.session)
+            }
+            _ = try await provider(for: capturedSnapshot).version()
+        } catch { throw capturedSnapshot.isHelper ? MobileHelperError.actionable(error, session: capturedSnapshot.helper?.session) : error }
     }
 
-    @MainActor
-    private func validateProbe(endpointGeneration: UInt) throws {
-        try Task.checkCancellation()
-        guard self.endpointGeneration == endpointGeneration else {
-            throw CancellationError()
-        }
+    public func transportDidChange() {
+        transportRevision = endpointConfiguration.snapshot().revision
+        refreshGeneration &+= 1
+        availableModels = endpointConfiguration.cachedModels()
+        runningModels = []
+        error = nil
+        providerAccessManager.refresh()
+        refreshModels()
+    }
+
+    private func provider(for snapshot: OllamaEndpointConfiguration.Snapshot) throws -> Ollama {
+        try snapshot.provider(directSession: session)
     }
 }

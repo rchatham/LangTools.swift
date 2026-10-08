@@ -9,7 +9,9 @@ final class ProviderAccessManagerTests: XCTestCase {
     private var keychainService: KeychainService!
     private var sessionStore: AuthSessionStore!
     private var accessManager: ProviderAccessManager!
-    private var previousLocalModels: Any?
+    private var endpointDefaults: UserDefaults!
+    private var endpointSuiteName: String!
+    private var endpointConfiguration: OllamaEndpointConfiguration!
     private var previousCloudModels: Any?
 
     override func setUp() {
@@ -17,18 +19,32 @@ final class ProviderAccessManagerTests: XCTestCase {
         keychain = Keychain(service: "ProviderAccessManagerTests.\(UUID().uuidString)")
         keychainService = KeychainService(keychain: keychain)
         sessionStore = AuthSessionStore(keychain: keychain)
-        previousLocalModels = UserDefaults.standard.object(forKey: "ollamaModels")
+        endpointSuiteName = "ProviderAccessManagerTests.\(UUID().uuidString)"
+        endpointDefaults = UserDefaults(suiteName: endpointSuiteName)!
+        endpointDefaults.removePersistentDomain(forName: endpointSuiteName)
+        endpointConfiguration = OllamaEndpointConfiguration(userDefaults: endpointDefaults)
         previousCloudModels = UserDefaults.standard.object(forKey: "ollamaCloudModels")
-        UserDefaults.standard.removeObject(forKey: "ollamaModels")
         UserDefaults.standard.removeObject(forKey: "ollamaCloudModels")
-        accessManager = ProviderAccessManager(keychainService: keychainService, sessionStore: sessionStore)
+        accessManager = ProviderAccessManager(
+            keychainService: keychainService,
+            sessionStore: sessionStore,
+            ollamaEndpointConfiguration: endpointConfiguration
+        )
     }
 
     override func tearDown() {
         try? keychain.removeAll()
-        restore(previousLocalModels, forKey: "ollamaModels")
+        endpointDefaults.removePersistentDomain(forName: endpointSuiteName)
         restore(previousCloudModels, forKey: "ollamaCloudModels")
         super.tearDown()
+    }
+
+    /// Seeds local daemon models into the manager's endpoint-scoped cache and
+    /// refreshes access state so the models are visible to `availableChatModels`.
+    private func seedLocalModels(_ models: [Ollama.Model]) {
+        let snapshot = endpointConfiguration.snapshot()
+        XCTAssertTrue(endpointConfiguration.storeModels(models, for: snapshot))
+        accessManager.refresh()
     }
 
     func testNoCredentialsDoesNotOfferOrSelectOllamaCloudFallback() {
@@ -89,8 +105,7 @@ final class ProviderAccessManagerTests: XCTestCase {
     func testTemporarilyIneligibleSelectedCloudModelIsPreservedInsteadOfUsingFallback() throws {
         let selected = try XCTUnwrap(Model(rawValue: "ollama-cloud/glm-5.2"))
         let localFallback = try XCTUnwrap(Ollama.Model(rawValue: "local-fallback"))
-        Model.updateCachedOllamaModels([localFallback])
-        accessManager.refresh()
+        seedLocalModels([localFallback])
 
         XCTAssertEqual(accessManager.validateSelectedModel(selected), selected)
     }
@@ -98,7 +113,7 @@ final class ProviderAccessManagerTests: XCTestCase {
     func testSelectedModelValidationUsesSingleEligibilitySnapshot() throws {
         let selected = try XCTUnwrap(Model(rawValue: "ollama-cloud/glm-5.2"))
         let localFallback = try XCTUnwrap(Ollama.Model(rawValue: "local-fallback"))
-        Model.updateCachedOllamaModels([localFallback])
+        seedLocalModels([localFallback])
         var evaluationCount = 0
         accessManager.configureOllamaCloudAccessEligibilityOverride {
             evaluationCount += 1
@@ -111,8 +126,7 @@ final class ProviderAccessManagerTests: XCTestCase {
 
     func testLocalOllamaModelsRemainAvailableWithoutCloudEligibility() throws {
         let localModel = try XCTUnwrap(Ollama.Model(rawValue: "glm-5.2:cloud"))
-        Model.updateCachedOllamaModels([localModel])
-        accessManager.refresh()
+        seedLocalModels([localModel])
 
         let modelIDs = accessManager.availableChatModels().map(\.rawValue)
         XCTAssertTrue(modelIDs.contains("ollama/glm-5.2:cloud"))

@@ -1,5 +1,6 @@
 import XCTest
 import OpenAI
+import Ollama
 import KeychainAccess
 @testable import Chat
 
@@ -76,6 +77,58 @@ final class ChatModelSourceTests: XCTestCase {
         viewModel.saveSettings()
         XCTAssertEqual(UserDefaults.model, .openAI(.gpt4o_mini))
         XCTAssertEqual(viewModel.availableModels, [])
+    }
+
+    func testProxyOllamaCatalogAndTitlesIgnoreDirectEndpointAvailability() throws {
+        let suiteName = "ChatModelSourceTests.proxy.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let keychain = Keychain(service: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let keys = KeychainService(keychain: keychain)
+        let endpoint = OllamaEndpointConfiguration(
+            userDefaults: defaults,
+            credentialStore: MobileHelperCredentialStore(keychain: keychain)
+        )
+        let access = ProviderAccessManager(
+            keychainService: keys,
+            sessionStore: AuthSessionStore(keychain: keychain),
+            ollamaEndpointConfiguration: endpoint
+        )
+        let proxyModel = Model.ollama(try XCTUnwrap(Ollama.Model(rawValue: "server-only-model")))
+        let directModel = try XCTUnwrap(Ollama.Model(rawValue: "local-only-model"))
+        let source = ChatModelSource(state: .ready([proxyModel]))
+        let viewModel = ChatSettingsView.ViewModel(
+            clearMessages: {},
+            modelSource: source,
+            generationSettingsStore: FakeGenSettingsStore(),
+            conversationSettingsStore: ChatConversationSettingsStore(userDefaults: defaults),
+            accessManager: access,
+            codexHelperTokenStore: CodexHelperTokenStore(defaults: defaults, keychain: keys)
+        )
+
+        XCTAssertTrue(viewModel.isProxyContext)
+        XCTAssertFalse(viewModel.canManageAccess)
+        XCTAssertEqual(viewModel.availableModels, [proxyModel])
+        XCTAssertEqual(viewModel.model, proxyModel)
+        XCTAssertFalse(access.availableChatModels().contains(proxyModel))
+        XCTAssertEqual(viewModel.modelPickerTitle(for: proxyModel), proxyModel.rawValue)
+
+        let snapshot = try endpoint.update("http://local-fixture.local:11434")
+        XCTAssertTrue(endpoint.storeModels([directModel], for: snapshot))
+        access.refresh()
+        XCTAssertTrue(access.availableChatModels().contains(.ollama(directModel)))
+        XCTAssertEqual(viewModel.availableModels, [proxyModel], "Local discovery must not enter the server catalog")
+        XCTAssertEqual(viewModel.modelPickerTitle(for: proxyModel), proxyModel.rawValue)
+
+        source.update(.failed("catalog fixture"))
+        XCTAssertEqual(viewModel.availableModels, [])
+        XCTAssertEqual(viewModel.model, proxyModel, "Catalog failures preserve the server selection")
+        XCTAssertEqual(viewModel.modelPickerTitle(for: proxyModel), proxyModel.rawValue)
+
+        source.update(.direct)
+        XCTAssertTrue(viewModel.availableModels.contains(.ollama(directModel)))
+        XCTAssertEqual(viewModel.modelPickerTitle(for: proxyModel),
+                       "\(proxyModel.rawValue) — Unavailable on current Ollama server")
     }
 
     func testLoadSettingsReconcilesProxyModelAndLoadsGenerationSettings() throws {

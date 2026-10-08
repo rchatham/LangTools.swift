@@ -44,6 +44,35 @@ final class LangToolsTests: XCTestCase {
         XCTAssertEqual(content, "success")
     }
 
+    func testStreamCompletionValidationDefaultsToNoOp() throws {
+        // Existing response conformers do not need to implement the new hook.
+        try MockResponse.empty.validateStreamCompletion()
+    }
+
+    func testEmptySSEStreamStillCompletesWithoutProviderOptIn() async throws {
+        MockURLProtocol.setHandler(for: MockRequest.endpoint) { _ in
+            (.success(Data()), 200)
+        }
+        var count = 0
+        for try await _ in api.stream(request: MockRequest(stream: true)) {
+            count += 1
+        }
+        XCTAssertEqual(count, 0)
+    }
+
+    func testSSEStreamDoesNotRequireDoneSentinel() async throws {
+        // Preserve existing SSE behavior; EOF validation is provider opt-in only.
+        let body = try MockResponse.success.streamData()
+        MockURLProtocol.setHandler(for: MockRequest.endpoint) { _ in
+            (.success(body), 200)
+        }
+        var results: [MockResponse] = []
+        for try await response in api.stream(request: MockRequest(stream: true)) {
+            results.append(response)
+        }
+        XCTAssertEqual(results.map(\.status), ["success"])
+    }
+
     func testCancellingStreamConsumerCancelsURLSessionProducer() async {
         BlockingStreamingURLProtocol.reset()
         let configuration = URLSessionConfiguration.ephemeral
@@ -266,6 +295,11 @@ final class LangToolsTests: XCTestCase {
     }
 
     // MARK: - LangToolsError Tests
+
+    func testLangToolsErrorIncompleteStreamDescription() {
+        XCTAssertEqual(LangToolsError.incompleteStream.errorDescription,
+                       "Stream ended before the provider's terminal response")
+    }
 
     func testLangToolsErrorInvalidData() {
         let error = LangToolsError.invalidData
