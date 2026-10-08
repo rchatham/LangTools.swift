@@ -165,6 +165,49 @@ final class NetworkClientAuthTests: XCTestCase {
         }
     }
 
+    func testOllamaCloudStreamRefusesBeforeTransport() throws {
+        // Model access is eligible without touching a credential store.
+        // Refusal must come from the unsupported route, not missing credentials.
+        accessManager.configureOllamaCloudAccessEligibilityOverride { true }
+
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager
+        )
+        let cloudModel = try XCTUnwrap(Ollama.Model(rawValue: "glm-5.2"))
+
+        XCTAssertThrowsError(try client.streamChatCompletionRequest(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .ollamaCloud(cloudModel)
+        )) { error in
+            XCTAssertEqual(error as? NetworkClient.NetworkError, .ollamaCloudTransportUnavailable)
+        }
+    }
+
+    func testOllamaCloudAgentContextRefusesBeforeToolchain() throws {
+        // Model access is eligible without touching a credential store.
+        // Refusal must come from the unsupported route, not missing credentials.
+        accessManager.configureOllamaCloudAccessEligibilityOverride { true }
+
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager
+        )
+        let cloudModel = try XCTUnwrap(Ollama.Model(rawValue: "glm-5.2"))
+
+        XCTAssertThrowsError(try client.agentContext(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .ollamaCloud(cloudModel),
+            eventHandler: { _ in }
+        )) { error in
+            XCTAssertEqual(error as? NetworkClient.NetworkError, .ollamaCloudTransportUnavailable)
+        }
+    }
+
     func testGeminiRequestEncodesToolsAndToolChoiceAndWiresHandler() throws {
         let client = NetworkClient(
             keychainService: keychainService,
