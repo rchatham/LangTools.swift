@@ -66,7 +66,7 @@ jobs:
         set -euo pipefail
         swift test --package-path cli --jobs 2 --no-parallel \
           --filter 'MobileHelperTests|MobilePairingControllerTests' 2>&1 | tee "$RUNNER_TEMP/helper-mobile-tests.log"
-        if ! rg -q 'Executed [1-9][0-9]* tests?' "$RUNNER_TEMP/helper-mobile-tests.log"; then
+        if ! grep -Eq 'Executed [1-9][0-9]* tests?' "$RUNNER_TEMP/helper-mobile-tests.log"; then
           echo 'Expected focused helper XCTest cases to execute.' >&2
           exit 1
         fi
@@ -78,7 +78,7 @@ jobs:
           echo '### Helper mobile verification'
           echo 'Real LAN-bound tests explicitly skip if no active private IPv4 interface is available. Skips do not verify LAN acceptance.'
           if test -f "$RUNNER_TEMP/helper-mobile-tests.log"; then
-            if ! rg 'Executed [0-9]+ tests?|skipped|XCTSkip|Test Suite.*(passed|failed)' "$RUNNER_TEMP/helper-mobile-tests.log"; then
+            if ! grep -E 'Executed [0-9]+ tests?|skipped|XCTSkip|Test Suite.*(passed|failed)' "$RUNNER_TEMP/helper-mobile-tests.log"; then
               echo 'No XCTest summary found; inspect the preceding step for the failure.'
             fi
           else
@@ -106,7 +106,7 @@ jobs:
         swift test --package-path Apps/LangTools --jobs 2 --no-parallel \
           --filter 'MobileHelper|OllamaEndpoint|ProviderAccessManagerTests|ProviderAccessRefreshRegressionTests|OllamaSettingsErrorRegressionTests|ChatGenerationSettingsTests|ModelGenerationCapabilitiesTests|ChatModelSourceTests/testProxyOllamaCatalogAndTitlesIgnoreDirectEndpointAvailability|ChatModelSourceTests/testDefaultAndDirectCatalogUseExistingProviderAccessManager' \
           2>&1 | tee "$RUNNER_TEMP/app-helper-tests.log"
-        if ! rg -q 'Executed [1-9][0-9]* tests?' "$RUNNER_TEMP/app-helper-tests.log"; then
+        if ! grep -Eq 'Executed [1-9][0-9]* tests?' "$RUNNER_TEMP/app-helper-tests.log"; then
           echo 'Expected focused app XCTest cases to execute.' >&2
           exit 1
         fi
@@ -118,7 +118,7 @@ jobs:
           echo '### App helper verification'
           echo 'Focused macOS package tests do not replace iOS UI or physical-device acceptance.'
           if test -f "$RUNNER_TEMP/app-helper-tests.log"; then
-            if ! rg 'Executed [0-9]+ tests?|skipped|XCTSkip|Test Suite.*(passed|failed)' "$RUNNER_TEMP/app-helper-tests.log"; then
+            if ! grep -E 'Executed [0-9]+ tests?|skipped|XCTSkip|Test Suite.*(passed|failed)' "$RUNNER_TEMP/app-helper-tests.log"; then
               echo 'No XCTest summary found; inspect the preceding step for the failure.'
             fi
           else
