@@ -66,8 +66,11 @@ extension Ollama {
                 if let schema = newValue {
                     format = .jsonSchema(schema)
                 } else {
-                    // Only clear if currently using jsonSchema; leave plain json untouched
-                    if case .jsonSchema = format { format = nil }
+                    // Clear either schema representation; leave plain json untouched
+                    switch format {
+                    case .jsonSchema, .schema: format = nil
+                    default: break
+                    }
                 }
             }
         }

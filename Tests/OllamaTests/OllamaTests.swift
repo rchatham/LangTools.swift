@@ -872,6 +872,37 @@ class OllamaTests: XCTestCase {
         XCTAssertNil(request.format)
     }
 
+    func testResponseSchemaNilClearsLegacySchemaFormat() throws {
+        // Simulate a request decoded from persisted JSON carrying the legacy
+        // flat .schema(SchemaFormat) representation.
+        let legacy = Ollama.ChatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: [Ollama.Message(role: .user, content: "Hi")],
+            format: .schema(.init(
+                type: "object",
+                properties: ["x": .init(type: "integer", description: "A number")],
+                required: ["x"]
+            ))
+        )
+        var request = try JSONDecoder().decode(
+            Ollama.ChatRequest.self,
+            from: JSONEncoder().encode(legacy)
+        )
+        guard case .schema = request.format else {
+            XCTFail("Roundtrip must preserve the legacy .schema format")
+            return
+        }
+        XCTAssertNotNil(request.responseSchema, "Legacy .schema format must expose a response schema")
+
+        request.responseSchema = nil
+
+        XCTAssertNil(request.responseSchema, "Nil responseSchema must clear a legacy .schema format")
+        XCTAssertNil(request.format)
+        let data = try JSONEncoder().encode(request)
+        let json: [String: Any] = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(json["format"], "Cleared schema must be omitted from the encoded request")
+    }
+
     func testPlainJsonFormatBackwardCompatible() throws {
         var request = Ollama.ChatRequest(
             model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
