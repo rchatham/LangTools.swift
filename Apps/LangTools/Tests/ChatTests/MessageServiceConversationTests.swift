@@ -8,61 +8,51 @@ import XCTest
 
 @MainActor
 final class MessageServiceConversationTests: XCTestCase {
-
-    private var ambientPreferences: ToolSettingsAmbientSnapshot?
-
-    override func setUp() {
-        super.setUp()
-        pinHistoryDefaultForFixture()
+    private func makeService(
+        networkClient: NetworkClientProtocol,
+        keepsToolCallsInHistory: Bool = true
+    ) throws -> MessageService {
+        let suiteName = "MessageServiceConversationTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(keepsToolCallsInHistory, forKey: "keepsToolCallsInHistory")
+        return MessageService(networkClient: networkClient, toolSettings: ToolSettings(defaults: defaults))
     }
 
-    override func tearDown() {
-        restoreAmbientPreferences()
-        super.tearDown()
-    }
-
-    /// Pin safe defaults so a dirty UserDefaults from a prior crashed run
-    /// never leaks into history-dependent tests. The ambient state captured
-    /// here is restored in `tearDown`.
-    private func pinHistoryDefaultForFixture() {
-        ambientPreferences = ToolSettingsAmbientSnapshot()
-        ToolSettings.shared.keepsToolCallsInHistory = true
-    }
-
-    private func restoreAmbientPreferences() {
-        ambientPreferences?.restore()
-        ambientPreferences = nil
-    }
-
-    func testFixtureLifecycleRestoresAmbientHistoryPreferenceAndPersistedKey() throws {
-        let defaults = UserDefaults.standard
-        let previousValue = ToolSettings.shared.keepsToolCallsInHistory
-        let previousKey = defaults.object(forKey: "keepsToolCallsInHistory")
-        defer {
-            ToolSettings.shared.keepsToolCallsInHistory = previousValue
-            if let previousKey {
-                defaults.set(previousKey, forKey: "keepsToolCallsInHistory")
-            } else {
-                defaults.removeObject(forKey: "keepsToolCallsInHistory")
-            }
+    func testOpposingRetentionSettingsRemainIsolatedAcrossServiceInstances() async throws {
+        let retained = try makeService(
+            networkClient: ToolEventNetworkStub(completesTool: true, responseBeforeFinish: "follow-up", finishError: nil),
+            keepsToolCallsInHistory: true
+        )
+        let discarded = try makeService(
+            networkClient: ToolEventNetworkStub(completesTool: true, responseBeforeFinish: "follow-up", finishError: nil),
+            keepsToolCallsInHistory: false
+        )
+        var retainedStatuses: [ChatToolCall.Status] = []
+        var discardedSnapshots: [Message] = []
+        retained.messageUpdatedCallback = { message in
+            retainedStatuses.append(contentsOf: message.toolCalls.map(\.status))
         }
+        discarded.messageUpdatedCallback = { discardedSnapshots.append($0) }
 
-        // Seed a non-default ambient state whose persisted key is absent.
-        ToolSettings.shared.keepsToolCallsInHistory = false
-        defaults.removeObject(forKey: "keepsToolCallsInHistory")
+        // Constructing and using the opposing instance must not alter this one.
+        try await retained.send(message: "retain first")
+        try await discarded.send(message: "discard")
+        try await retained.send(message: "retain again")
 
-        // Exercise the same pin/restore lifecycle setUp/tearDown apply per test.
-        pinHistoryDefaultForFixture()
-        XCTAssertEqual(ToolSettings.shared.keepsToolCallsInHistory, true)
-        XCTAssertNotNil(defaults.object(forKey: "keepsToolCallsInHistory"))
-        restoreAmbientPreferences()
-        XCTAssertEqual(ToolSettings.shared.keepsToolCallsInHistory, false, "Ambient in-memory value must be restored")
-        XCTAssertNil(defaults.object(forKey: "keepsToolCallsInHistory"), "Originally absent persisted key must stay absent")
+        let retainedCalls = retained.messages.flatMap(\.toolCalls)
+        XCTAssertEqual(retainedCalls.map(\.status), [.success, .success])
+        XCTAssertEqual(retainedCalls.map(\.result), ["completed result", "completed result"])
+        XCTAssertEqual(retainedStatuses, [.pending, .success, .pending, .success])
+        XCTAssertTrue(discarded.messages.flatMap(\.toolCalls).isEmpty)
+        XCTAssertFalse(discardedSnapshots.isEmpty)
+        XCTAssertTrue(discardedSnapshots.allSatisfy { $0.toolCalls.isEmpty && $0.providerToolResults.isEmpty })
+        XCTAssertEqual(discarded.messages.map(\.text), ["discard", "follow-up"])
     }
 
     func testSendsReuseConversationAndClearRotatesBeforeCleanup() async throws {
         let client = ConversationNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
 
         try await service.send(message: "first")
         try await service.send(message: "second")
@@ -83,7 +73,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testClearCancelsAndDrainsAllOldSendsBeforeEndingConversation() async throws {
         let client = DelayedConversationNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let firstOldSend = Task { try await service.send(message: "old-1") }
         let secondOldSend = Task { try await service.send(message: "old-2") }
 
@@ -113,9 +103,9 @@ final class MessageServiceConversationTests: XCTestCase {
         XCTAssertEqual(service.messages.map(\.text), ["fresh", "fresh-response"])
     }
 
-    func testFailedFollowupPreservesCompletedToolEvents() async {
+    func testFailedFollowupPreservesCompletedToolEvents() async throws {
         let client = ToolEventNetworkStub(completesTool: true)
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
 
         do {
             try await service.send(message: "use a tool")
@@ -132,9 +122,9 @@ final class MessageServiceConversationTests: XCTestCase {
         XCTAssertEqual(assistant?.toolCalls.first?.result, "completed result")
     }
 
-    func testFailedFollowupMarksIncompleteToolCallFailed() async {
+    func testFailedFollowupMarksIncompleteToolCallFailed() async throws {
         let client = ToolEventNetworkStub(completesTool: false)
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         var persistedStatusSnapshots: [[ChatToolCall.Status]] = []
         service.messageUpdatedCallback = { message in
             let statuses = message.toolCalls.filter { $0.name == "test_tool" }.map(\.status)
@@ -158,7 +148,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testSuccessfulStreamMarksIncompleteToolCallFailed() async throws {
         let client = ToolEventNetworkStub(completesTool: false, finishError: nil)
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         var persistedStatusSnapshots: [[ChatToolCall.Status]] = []
         service.messageUpdatedCallback = { message in
             let statuses = message.toolCalls.filter { $0.name == "test_tool" }.map(\.status)
@@ -173,13 +163,13 @@ final class MessageServiceConversationTests: XCTestCase {
         XCTAssertEqual(persistedStatusSnapshots, [[.pending], [.failure]])
     }
 
-    func testCompletionWithoutResultPreservesItsImmediateFailureOnEarlierSplitMessage() async {
+    func testCompletionWithoutResultPreservesItsImmediateFailureOnEarlierSplitMessage() async throws {
         let client = ToolEventNetworkStub(
             completesTool: false,
             emitsCompletionWithoutResult: true,
             responseBeforeFinish: "partial follow-up"
         )
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
 
         do {
             try await service.send(message: "use a tool")
@@ -198,7 +188,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testConcurrentSendsRouteToolEventsToSeparateMessages() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let first = Task { try await service.send(message: "first") }
         let second = Task { try await service.send(message: "second") }
 
@@ -226,7 +216,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testOrphanCompletionDoesNotAttachToAnotherConcurrentSendsToolAnchor() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let first = Task { try await service.send(message: "first orphan") }
         let second = Task { try await service.send(message: "second tool") }
 
@@ -287,7 +277,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testToolStartIsVisibleBeforeAnyResponseChunk() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let send = Task { try await service.send(message: "pending") }
 
         for _ in 0..<100 where client.registeredRequestCount < 1 {
@@ -310,7 +300,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testToolCompletionUpdatesVisibleCallBeforeAnyResponseChunk() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let send = Task { try await service.send(message: "success") }
 
         for _ in 0..<100 where client.registeredRequestCount < 1 {
@@ -338,7 +328,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testToolFailureUpdatesVisibleCallBeforeAnyResponseChunk() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let send = Task { try await service.send(message: "failure") }
 
         for _ in 0..<100 where client.registeredRequestCount < 1 {
@@ -366,7 +356,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testToolCompletionUpdatesOriginalCardAfterResponseAnchorChanges() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let send = Task { try await service.send(message: "interleaved") }
 
         for _ in 0..<100 where client.registeredRequestCount < 1 {
@@ -396,9 +386,9 @@ final class MessageServiceConversationTests: XCTestCase {
 
         let calls = service.messages.flatMap(\.toolCalls)
         XCTAssertEqual(calls.count, 1)
-        XCTAssertEqual(calls[0].id, originalCallID)
-        XCTAssertEqual(calls[0].status, .success)
-        XCTAssertEqual(calls[0].result, "tool result")
+        XCTAssertEqual((try calls.conversationElement(at: 0)).id, originalCallID)
+        XCTAssertEqual((try calls.conversationElement(at: 0)).status, .success)
+        XCTAssertEqual((try calls.conversationElement(at: 0)).result, "tool result")
 
         let finalAnchorIndex = try XCTUnwrap(service.messages.firstIndex(where: { $0.uuid == originalAnchorID }))
         XCTAssertEqual(service.messages[finalAnchorIndex].uuid, originalAnchorID)
@@ -407,7 +397,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testEarlierToolCompletionDoesNotSplitNewerStreamedTextAnchor() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let send = Task { try await service.send(message: "completion between chunks") }
 
         for _ in 0..<100 where client.registeredRequestCount < 1 {
@@ -451,7 +441,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testIDLessToolCompletionsUpdateOriginalCardsInFIFOOrderAfterResponseAnchorChanges() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let send = Task { try await service.send(message: "id-less interleaved") }
 
         for _ in 0..<100 where client.registeredRequestCount < 1 {
@@ -495,7 +485,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testCompletionWithoutResultImmediatelyFailsEarliestPendingCallWithoutSplittingText() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let request = "missing completion result"
         let send = Task { try await service.send(message: request) }
 
@@ -520,13 +510,13 @@ final class MessageServiceConversationTests: XCTestCase {
         }
 
         var calls = service.messages.flatMap(\.toolCalls)
-        XCTAssertEqual(calls[0].status, .failure)
-        XCTAssertEqual(calls[0].result, "Tool call ended without a completion result.")
-        XCTAssertEqual(calls[1].status, .pending)
-        XCTAssertNil(calls[1].result)
+        XCTAssertEqual((try calls.conversationElement(at: 0)).status, .failure)
+        XCTAssertEqual((try calls.conversationElement(at: 0)).result, "Tool call ended without a completion result.")
+        XCTAssertEqual((try calls.conversationElement(at: 1)).status, .pending)
+        XCTAssertNil((try calls.conversationElement(at: 1)).result)
 
         client.emitToolCompleted(for: request, result: "second result", selectionID: "")
-        for _ in 0..<100 where service.messages.flatMap(\.toolCalls)[1].status != .success {
+        for _ in 0..<100 where service.messages.flatMap(\.toolCalls).dropFirst().first?.status != .success {
             try await Task.sleep(for: .milliseconds(5))
         }
         client.yieldResponse("second", for: request)
@@ -534,8 +524,8 @@ final class MessageServiceConversationTests: XCTestCase {
         try await send.value
 
         calls = service.messages.flatMap(\.toolCalls)
-        XCTAssertEqual(calls[1].status, .success)
-        XCTAssertEqual(calls[1].result, "second result")
+        XCTAssertEqual((try calls.conversationElement(at: 1)).status, .success)
+        XCTAssertEqual((try calls.conversationElement(at: 1)).result, "second result")
         let textMessages = service.messages.filter { $0.isAssistant && $0.isStringContent }
         XCTAssertEqual(textMessages.count, 1)
         XCTAssertEqual(textMessages.first?.uuid, textAnchorID)
@@ -544,7 +534,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testEmptyCompletionsPreferIDLessCallsThenMatchIdentifiedCallsInFIFOOrder() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let request = "empty completion mixed queue"
         let send = Task { try await service.send(message: request) }
 
@@ -559,15 +549,15 @@ final class MessageServiceConversationTests: XCTestCase {
         }
 
         client.emitToolCompleted(for: request, result: "id-less result", selectionID: "")
-        for _ in 0..<100 where service.messages.flatMap(\.toolCalls)[1].status != .success {
+        for _ in 0..<100 where service.messages.flatMap(\.toolCalls).dropFirst().first?.status != .success {
             try await Task.sleep(for: .milliseconds(5))
         }
         var calls = service.messages.flatMap(\.toolCalls)
         XCTAssertEqual(calls.map(\.status), [.pending, .success, .pending])
-        XCTAssertEqual(calls[1].result, "id-less result")
+        XCTAssertEqual((try calls.conversationElement(at: 1)).result, "id-less result")
 
         client.emitToolCompleted(for: request, result: "first result", selectionID: "")
-        for _ in 0..<100 where service.messages.flatMap(\.toolCalls)[0].status != .success {
+        for _ in 0..<100 where service.messages.flatMap(\.toolCalls).first?.status != .success {
             try await Task.sleep(for: .milliseconds(5))
         }
         client.emitToolCompleted(for: request, result: "second result", selectionID: "")
@@ -581,7 +571,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testUnmatchedIdentifiedCompletionDoesNotConsumeIDLessPendingCall() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let send = Task { try await service.send(message: "mixed selection ids") }
 
         for _ in 0..<100 where client.registeredRequestCount < 1 {
@@ -623,7 +613,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testBackToBackToolCallbacksPublishPendingBeforeSuccess() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         var observedStatuses: [ChatToolCall.Status] = []
         service.messageUpdatedCallback = { message in
             if let call = message.toolCalls.first(where: { $0.name == "immediate_tool" }) {
@@ -651,7 +641,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testUnresolvableTrackedCompletionDoesNotConsumeAnotherPendingCall() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let send = Task { try await service.send(message: "missing tracked call") }
 
         for _ in 0..<100 where client.registeredRequestCount < 1 {
@@ -711,7 +701,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testRemovedOnlyToolAnchorPlacesOrphanBeforeLiveTextWithoutSplittingStream() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let request = "removed only anchor"
         let send = Task { try await service.send(message: request) }
 
@@ -756,7 +746,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testRepeatedProviderSelectionIDsCompleteCallsInFIFOOrder() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let send = Task { try await service.send(message: "repeated") }
 
         for _ in 0..<100 where client.registeredRequestCount < 1 {
@@ -773,7 +763,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
         let originalCalls = service.messages.flatMap(\.toolCalls)
         XCTAssertEqual(originalCalls.count, 2)
-        XCTAssertNotEqual(originalCalls[0].id, originalCalls[1].id)
+        XCTAssertNotEqual((try originalCalls.conversationElement(at: 0)).id, (try originalCalls.conversationElement(at: 1)).id)
 
         client.emitToolCompleted(for: "repeated", result: "first result", selectionID: "ollama")
         for _ in 0..<100 where service.messages.flatMap(\.toolCalls).first?.status != .success {
@@ -793,7 +783,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testResponseObservedBeforeToolCallbackIsAppliedFirst() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let requestRegistered = expectation(description: "request registered")
         let responseUpdateDelivered = expectation(description: "response update delivered")
         let releaseResponse = AsyncTestGate()
@@ -847,7 +837,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testToolActivityPrecedesCombinedStreamedParentOutput() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let send = Task { try await service.send(message: "ordered") }
 
         for _ in 0..<100 where client.registeredRequestCount < 1 {
@@ -891,7 +881,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testOverlappingSendsKeepToolCallbacksAttachedToTheirRequestAndDiscardLateCallbacks() async throws {
         let client = OverlappingNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
 
         let firstSend = Task { try await service.send(message: "first") }
         for _ in 0..<100 where client.requestCount < 1 {
@@ -903,19 +893,19 @@ final class MessageServiceConversationTests: XCTestCase {
         }
         XCTAssertEqual(client.requestCount, 2)
 
-        client.yield("first-preamble", request: 0)
-        client.yield("second-preamble", request: 1)
+        try client.yield("first-preamble", request: 0)
+        try client.yield("second-preamble", request: 1)
         for _ in 0..<100 where service.messages.filter(\.isAssistant).count < 2 {
             try await Task.sleep(for: .milliseconds(5))
         }
 
-        client.emitToolLifecycle(request: 0, name: "first_tool", result: "first-result")
-        client.emitToolLifecycle(request: 1, name: "second_tool", result: "second-result")
+        try client.emitToolLifecycle(request: 0, name: "first_tool", result: "first-result")
+        try client.emitToolLifecycle(request: 1, name: "second_tool", result: "second-result")
         for _ in 0..<100 where service.messages.filter({ !$0.toolCalls.isEmpty }).count < 2 {
             try await Task.sleep(for: .milliseconds(5))
         }
-        client.finish(request: 1)
-        client.finish(request: 0)
+        try client.finish(request: 1)
+        try client.finish(request: 0)
         try await firstSend.value
         try await secondSend.value
 
@@ -928,7 +918,7 @@ final class MessageServiceConversationTests: XCTestCase {
         XCTAssertEqual(cardMessages.flatMap(\.toolCalls).map(\.name).sorted(), ["first_tool", "second_tool"])
         for message in cardMessages {
             XCTAssertEqual(message.toolCalls.count, 1)
-            let call = message.toolCalls[0]
+            let call = (try message.toolCalls.conversationElement(at: 0))
             let isFirstRequest = call.name == "first_tool"
             XCTAssertEqual(call.result, isFirstRequest ? "first-result" : "second-result")
             XCTAssertEqual(message.text, isFirstRequest ? "first-preamble" : "second-preamble")
@@ -936,7 +926,7 @@ final class MessageServiceConversationTests: XCTestCase {
         }
 
         XCTAssertEqual(service.bufferedEventCountForTesting, 0)
-        client.emitToolLifecycle(request: 0, name: "late_tool", result: "late-result")
+        try client.emitToolLifecycle(request: 0, name: "late_tool", result: "late-result")
         XCTAssertEqual(
             service.bufferedEventCountForTesting,
             0,
@@ -945,12 +935,8 @@ final class MessageServiceConversationTests: XCTestCase {
     }
 
     func testClearingToolHistoryNotifiesPersistenceForAnchorMessage() async throws {
-        let previousKeepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
-        ToolSettings.shared.keepsToolCallsInHistory = false
-        defer { ToolSettings.shared.keepsToolCallsInHistory = previousKeepsToolCallsInHistory }
-
         let client = OverlappingNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client, keepsToolCallsInHistory: false)
         var persistedToolCallNames: [UUID: [String]] = [:]
         var persistedProviderResults: [UUID: [String: String]] = [:]
         service.messageUpdatedCallback = { message in
@@ -964,14 +950,14 @@ final class MessageServiceConversationTests: XCTestCase {
         }
         XCTAssertEqual(client.requestCount, 1)
 
-        client.yield("preamble", request: 0)
+        try client.yield("preamble", request: 0)
         for _ in 0..<100 where service.messages.first(where: \.isAssistant) == nil {
             try await Task.sleep(for: .milliseconds(5))
         }
         let anchor = try XCTUnwrap(service.messages.first(where: \.isAssistant))
         anchor.providerToolResults = ["history_tool-id": "raw-result"]
 
-        client.emitToolLifecycle(request: 0, name: "history_tool", result: "visible-result")
+        try client.emitToolLifecycle(request: 0, name: "history_tool", result: "visible-result")
         for _ in 0..<100 where anchor.toolCalls.isEmpty {
             try await Task.sleep(for: .milliseconds(5))
         }
@@ -980,8 +966,8 @@ final class MessageServiceConversationTests: XCTestCase {
         XCTAssertEqual(anchor.providerToolResults, [:])
         XCTAssertEqual(persistedProviderResults[anchor.uuid], [:])
 
-        client.yield("follow-up", request: 0)
-        client.finish(request: 0)
+        try client.yield("follow-up", request: 0)
+        try client.finish(request: 0)
         try await send.value
 
         XCTAssertEqual(anchor.toolCalls, [])
@@ -991,24 +977,20 @@ final class MessageServiceConversationTests: XCTestCase {
     }
 
     func testHistoryDisabledClearsToolCardsWhenStreamFinishesWithoutFollowUp() async throws {
-        let previousKeepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
-        ToolSettings.shared.keepsToolCallsInHistory = false
-        defer { ToolSettings.shared.keepsToolCallsInHistory = previousKeepsToolCallsInHistory }
-
         let client = OverlappingNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client, keepsToolCallsInHistory: false)
         let send = Task { try await service.send(message: "no follow-up") }
         for _ in 0..<100 where client.requestCount < 1 {
             try await Task.sleep(for: .milliseconds(5))
         }
 
-        client.yield("preamble", request: 0)
+        try client.yield("preamble", request: 0)
         for _ in 0..<100 where service.messages.first(where: \.isAssistant) == nil {
             try await Task.sleep(for: .milliseconds(5))
         }
         let anchor = try XCTUnwrap(service.messages.first(where: \.isAssistant))
-        client.emitToolLifecycle(request: 0, name: "private_tool", result: "private-result")
-        client.finish(request: 0)
+        try client.emitToolLifecycle(request: 0, name: "private_tool", result: "private-result")
+        try client.finish(request: 0)
         try await send.value
 
         XCTAssertEqual(anchor.text, "preamble")
@@ -1017,18 +999,14 @@ final class MessageServiceConversationTests: XCTestCase {
     }
 
     func testHistoryDisabledKeepsCardsLiveUntilTerminalSend() async throws {
-        let previousKeepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
-        ToolSettings.shared.keepsToolCallsInHistory = false
-        defer { ToolSettings.shared.keepsToolCallsInHistory = previousKeepsToolCallsInHistory }
-
         let client = OverlappingNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client, keepsToolCallsInHistory: false)
         let send = Task { try await service.send(message: "empty follow-up") }
         for _ in 0..<100 where client.requestCount < 1 {
             try await Task.sleep(for: .milliseconds(5))
         }
 
-        client.emitToolLifecycle(request: 0, name: "private_tool", result: "private-result")
+        try client.emitToolLifecycle(request: 0, name: "private_tool", result: "private-result")
         for _ in 0..<100 where service.messages.first(where: { !$0.toolCalls.isEmpty }) == nil {
             try await Task.sleep(for: .milliseconds(5))
         }
@@ -1036,7 +1014,7 @@ final class MessageServiceConversationTests: XCTestCase {
         XCTAssertEqual(anchor.toolCalls.map(\.name), ["private_tool"])
         XCTAssertTrue(anchor.providerToolResults.isEmpty)
 
-        client.finish(request: 0)
+        try client.finish(request: 0)
         try await send.value
 
         XCTAssertTrue(anchor.toolCalls.isEmpty)
@@ -1046,25 +1024,21 @@ final class MessageServiceConversationTests: XCTestCase {
     }
 
     func testHistoryDisabledClearsLiveCardsWhenStreamThrows() async throws {
-        let previousKeepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
-        ToolSettings.shared.keepsToolCallsInHistory = false
-        defer { ToolSettings.shared.keepsToolCallsInHistory = previousKeepsToolCallsInHistory }
-
         let client = OverlappingNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client, keepsToolCallsInHistory: false)
         let send = Task { try await service.send(message: "error") }
         for _ in 0..<100 where client.requestCount < 1 {
             try await Task.sleep(for: .milliseconds(5))
         }
 
-        client.emitToolLifecycle(request: 0, name: "private_tool", result: "private-result")
+        try client.emitToolLifecycle(request: 0, name: "private_tool", result: "private-result")
         for _ in 0..<100 where service.messages.first(where: { !$0.toolCalls.isEmpty }) == nil {
             try await Task.sleep(for: .milliseconds(5))
         }
         let anchor = try XCTUnwrap(service.messages.first(where: { !$0.toolCalls.isEmpty }))
         XCTAssertEqual(anchor.toolCalls.map(\.name), ["private_tool"])
 
-        client.fail(request: 0)
+        try client.fail(request: 0)
         do {
             try await send.value
             XCTFail("Expected stream failure")
@@ -1077,18 +1051,14 @@ final class MessageServiceConversationTests: XCTestCase {
     }
 
     func testHistoryDisabledOverlappingSendSnapshotExcludesLiveToolCards() async throws {
-        let previousKeepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
-        ToolSettings.shared.keepsToolCallsInHistory = false
-        defer { ToolSettings.shared.keepsToolCallsInHistory = previousKeepsToolCallsInHistory }
-
         let client = OverlappingNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client, keepsToolCallsInHistory: false)
         let firstSend = Task { try await service.send(message: "first") }
         for _ in 0..<100 where client.requestCount < 1 {
             try await Task.sleep(for: .milliseconds(5))
         }
 
-        client.emitToolLifecycle(request: 0, name: "private_tool", result: "private-result")
+        try client.emitToolLifecycle(request: 0, name: "private_tool", result: "private-result")
         for _ in 0..<100 where service.messages.first(where: { !$0.toolCalls.isEmpty }) == nil {
             try await Task.sleep(for: .milliseconds(5))
         }
@@ -1110,20 +1080,20 @@ final class MessageServiceConversationTests: XCTestCase {
         }
 
         XCTAssertEqual(liveAnchor.toolCalls.map(\.name), ["private_tool"], "Taking a request snapshot must not hide the live card")
-        XCTAssertTrue(client.toolCallNamesSent(request: 1).isEmpty)
-        XCTAssertTrue(client.providerToolResultsSent(request: 1).isEmpty)
-        XCTAssertEqual(client.messageRolesSent(request: 1), [.system, .user, .assistant, .user])
+        XCTAssertTrue(try client.toolCallNamesSent(request: 1).isEmpty)
+        XCTAssertTrue(try client.providerToolResultsSent(request: 1).isEmpty)
+        XCTAssertEqual(try client.messageRolesSent(request: 1), [.system, .user, .assistant, .user])
         XCTAssertEqual(
-            Array(client.messageTextsSent(request: 1).suffix(3)),
+            Array(try client.messageTextsSent(request: 1).suffix(3)),
             ["first", "cards summary", "second"],
             "The empty tool anchor must be omitted while content-card messages remain in the request"
         )
-        guard case .contentCards = client.messageContentTypesSent(request: 1)[2] else {
+        guard case .contentCards = (try client.messageContentTypesSent(request: 1).conversationElement(at: 2)) else {
             return XCTFail("Expected the content-card message to retain its semantic content type")
         }
 
-        client.finish(request: 1)
-        client.finish(request: 0)
+        try client.finish(request: 1)
+        try client.finish(request: 0)
         try await secondSend.value
         try await firstSend.value
         XCTAssertTrue(liveAnchor.toolCalls.isEmpty)
@@ -1131,7 +1101,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testOperationAppendsUserSynchronouslyAndEstablishesAtStreamCreation() async throws {
         let client = OverlappingNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
 
         let operation = service.sendOperation(message: "prompt", stream: true)
         XCTAssertEqual(service.messages.map(\.text), ["prompt"])
@@ -1139,13 +1109,13 @@ final class MessageServiceConversationTests: XCTestCase {
 
         try await operation.waitUntilEstablished()
         XCTAssertEqual(client.requestCount, 1)
-        client.finish(request: 0)
+        try client.finish(request: 0)
         try await operation.waitForCompletion()
     }
 
     func testStreamCreationFailureFailsEstablishmentAndRetainsPrompt() async throws {
         let client = LegacyNetworkStub(failsStreamCreation: true)
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let operation = service.sendOperation(message: "cannot establish", stream: true)
 
         do {
@@ -1171,7 +1141,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testPreEstablishmentCancellationDoesNotCreateStreamOrFailure() async throws {
         let client = OverlappingNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let operation = service.sendOperation(message: "cancel before establishment", stream: true)
 
         operation.cancel()
@@ -1196,7 +1166,7 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testCancellationPersistsPendingToolCallFailureOnce() async throws {
         let client = ControlledToolEventNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         var persistedStatusSnapshots: [[ChatToolCall.Status]] = []
         service.messageUpdatedCallback = { message in
             let statuses = message.toolCalls.filter { $0.name == "pending_tool" }.map(\.status)
@@ -1228,20 +1198,20 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testOperationCancellationIsScopedAndPreservesPartialWithoutFailure() async throws {
         let client = OverlappingNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let first = service.sendOperation(message: "first", stream: true)
         let second = service.sendOperation(message: "second", stream: true)
 
         try await first.waitUntilEstablished()
         try await second.waitUntilEstablished()
-        client.yield("first partial", request: 0)
+        try client.yield("first partial", request: 0)
         for _ in 0..<100 where !service.messages.contains(where: { $0.text == "first partial" }) {
             try await Task.sleep(for: .milliseconds(5))
         }
 
         first.cancel()
-        client.yield("second response", request: 1)
-        client.finish(request: 1)
+        try client.yield("second response", request: 1)
+        try client.finish(request: 1)
 
         do {
             try await first.waitForCompletion()
@@ -1260,12 +1230,12 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testUserStopMarksOriginalPromptAndPreservesPartialResponseWithoutProviderToken() async throws {
         let client = OverlappingNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         let operation = service.sendOperation(message: "stop this response", stream: true)
         let messageID = try XCTUnwrap(operation.messageID)
 
         try await operation.waitUntilEstablished()
-        client.yield("unfinished answer", request: 0)
+        try client.yield("unfinished answer", request: 0)
         for _ in 0..<100 where !service.messages.contains(where: { $0.text == "unfinished answer" }) {
             try await Task.sleep(for: .milliseconds(5))
         }
@@ -1292,16 +1262,16 @@ final class MessageServiceConversationTests: XCTestCase {
         let next = service.sendOperation(message: "next prompt", stream: true)
         try await next.waitUntilEstablished()
         XCTAssertEqual(
-            client.messageTextsSent(request: 1),
+            try client.messageTextsSent(request: 1),
             [service.systemMessage(), "stop this response", "unfinished answer", "next prompt"]
         )
-        client.finish(request: 1)
+        try client.finish(request: 1)
         try await next.waitForCompletion()
     }
 
     func testFailureIsRetainedExcludedFromHistoryAndRetryCleansOnlyOwnedMessages() async throws {
         let client = OverlappingNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
         service.agentResultParser = { _, _ in
             .contentCards(
                 ContentCardsContent(
@@ -1324,7 +1294,7 @@ final class MessageServiceConversationTests: XCTestCase {
             .completed(agent: "RetryAgent", result: #"{"result":"card"}"#),
             for: failedOperation.id
         )
-        client.yield("failed partial", request: 0)
+        try client.yield("failed partial", request: 0)
         for _ in 0..<100 where !service.messages.contains(where: { $0.text == "failed partial" }) {
             try await Task.sleep(for: .milliseconds(5))
         }
@@ -1340,7 +1310,7 @@ final class MessageServiceConversationTests: XCTestCase {
         let ownedPartialID = try XCTUnwrap(
             service.messages.first(where: { $0.text == "failed partial" })?.uuid
         )
-        client.fail(request: 0)
+        try client.fail(request: 0)
         do {
             try await failedOperation.waitForCompletion()
             XCTFail("Expected failure")
@@ -1355,14 +1325,14 @@ final class MessageServiceConversationTests: XCTestCase {
         let nextOperation = service.sendOperation(message: "next prompt", stream: true)
         try await nextOperation.waitUntilEstablished()
         XCTAssertEqual(
-            Array(client.messageTextsSent(request: 1).compactMap { $0 }.suffix(1)),
+            Array(try client.messageTextsSent(request: 1).compactMap { $0 }.suffix(1)),
             ["next prompt"],
             "Failed attempts must remain visible without entering provider history"
         )
-        XCTAssertFalse(client.messageTextsSent(request: 1).contains("failed prompt"))
-        XCTAssertFalse(client.messageTextsSent(request: 1).contains("failed partial"))
-        client.yield("next response", request: 1)
-        client.finish(request: 1)
+        XCTAssertFalse(try client.messageTextsSent(request: 1).contains("failed prompt"))
+        XCTAssertFalse(try client.messageTextsSent(request: 1).contains("failed partial"))
+        try client.yield("next response", request: 1)
+        try client.finish(request: 1)
         try await nextOperation.waitForCompletion()
 
         let retryOperation = try service.retryOperation(messageID: failedMessageID, stream: true)
@@ -1380,19 +1350,19 @@ final class MessageServiceConversationTests: XCTestCase {
 
         try await retryOperation.waitUntilEstablished()
         XCTAssertEqual(
-            client.messageRolesSent(request: 2),
+            try client.messageRolesSent(request: 2),
             [.system, .user, .assistant, .user]
         )
         XCTAssertEqual(
-            client.messageTextsSent(request: 2),
+            try client.messageTextsSent(request: 2),
             [service.systemMessage(), "next prompt", "next response", "failed prompt"]
         )
         XCTAssertEqual(
-            client.messageTextsSent(request: 2).filter { $0 == "failed prompt" }.count,
+            try client.messageTextsSent(request: 2).filter { $0 == "failed prompt" }.count,
             1
         )
-        client.yield("retry response", request: 2)
-        client.finish(request: 2)
+        try client.yield("retry response", request: 2)
+        try client.finish(request: 2)
         try await retryOperation.waitForCompletion()
 
         XCTAssertEqual(service.messages.filter { $0.text == "failed prompt" }.count, 1)
@@ -1402,11 +1372,11 @@ final class MessageServiceConversationTests: XCTestCase {
         let finalOperation = service.sendOperation(message: "final prompt", stream: true)
         try await finalOperation.waitUntilEstablished()
         XCTAssertEqual(
-            client.messageRolesSent(request: 3),
+            try client.messageRolesSent(request: 3),
             [.system, .user, .assistant, .user, .assistant, .user]
         )
         XCTAssertEqual(
-            client.messageTextsSent(request: 3),
+            try client.messageTextsSent(request: 3),
             [
                 service.systemMessage(),
                 "next prompt",
@@ -1417,7 +1387,7 @@ final class MessageServiceConversationTests: XCTestCase {
             ]
         )
         XCTAssertEqual(
-            client.messageTextsSent(request: 3).compactMap { $0 }.reduce(into: [:]) { counts, text in
+            try client.messageTextsSent(request: 3).compactMap { $0 }.reduce(into: [:]) { counts, text in
                 counts[text, default: 0] += 1
             },
             [
@@ -1429,8 +1399,8 @@ final class MessageServiceConversationTests: XCTestCase {
                 "final prompt": 1
             ]
         )
-        client.yield("final response", request: 3)
-        client.finish(request: 3)
+        try client.yield("final response", request: 3)
+        try client.finish(request: 3)
         try await finalOperation.waitForCompletion()
 
         XCTAssertEqual(
@@ -1441,8 +1411,8 @@ final class MessageServiceConversationTests: XCTestCase {
             service.messages.map(\.text),
             ["next prompt", "next response", "failed prompt", "retry response", "final prompt", "final response"]
         )
-        XCTAssertTrue(service.messages[2] === failedUser)
-        XCTAssertEqual(service.messages[2].uuid, failedMessageID)
+        XCTAssertTrue((try service.messages.conversationElement(at: 2)) === failedUser)
+        XCTAssertEqual((try service.messages.conversationElement(at: 2)).uuid, failedMessageID)
     }
 
     func testSendFailureIsTransientAcrossCoding() throws {
@@ -1457,11 +1427,23 @@ final class MessageServiceConversationTests: XCTestCase {
 
     func testLegacyNetworkClientUsesCompatibilityPath() async throws {
         let client = LegacyNetworkStub()
-        let service = MessageService(networkClient: client)
+        let service = try makeService(networkClient: client)
 
         try await service.send(message: "legacy")
 
         XCTAssertEqual(client.streamRequestCount, 1)
+    }
+}
+
+private extension Array {
+    /// Report a failed prerequisite through XCTest instead of trapping on an index.
+    func conversationElement(at index: Int, file: StaticString = #filePath, line: UInt = #line) throws -> Element {
+        try XCTUnwrap(
+            indices.contains(index) ? self[index] : nil,
+            "Expected element at index \(index), but found \(count) elements",
+            file: file,
+            line: line
+        )
     }
 }
 
@@ -1485,46 +1467,46 @@ private final class OverlappingNetworkStub: NetworkClientProtocol, @unchecked Se
         lock.withLock { requests.count }
     }
 
-    func emitToolLifecycle(request index: Int, name: String, result: String) {
-        let handler = lock.withLock { requests[index].eventHandler }
+    func emitToolLifecycle(request index: Int, name: String, result: String) throws {
+        let handler = try lock.withLock { try requests.conversationElement(at: index).eventHandler }
         let id = "\(name)-id"
         handler(.toolCalled(OverlapSelection(id: id, name: name, arguments: "{}")))
         handler(.toolCompleted(OverlapResult(tool_selection_id: id, result: result)))
     }
 
-    func yield(_ chunk: String, request index: Int) {
-        let continuation = lock.withLock { requests[index].continuation }
+    func yield(_ chunk: String, request index: Int) throws {
+        let continuation = try lock.withLock { try requests.conversationElement(at: index).continuation }
         continuation.yield(chunk)
     }
 
-    func finish(request index: Int) {
-        let continuation = lock.withLock { requests[index].continuation }
+    func finish(request index: Int) throws {
+        let continuation = try lock.withLock { try requests.conversationElement(at: index).continuation }
         continuation.finish()
     }
 
-    func fail(request index: Int) {
-        let continuation = lock.withLock { requests[index].continuation }
+    func fail(request index: Int) throws {
+        let continuation = try lock.withLock { try requests.conversationElement(at: index).continuation }
         continuation.finish(throwing: OverlappingStubError.failed)
     }
 
-    func toolCallNamesSent(request index: Int) -> [String] {
-        lock.withLock { requests[index].toolCallNames }
+    func toolCallNamesSent(request index: Int) throws -> [String] {
+        try lock.withLock { try requests.conversationElement(at: index).toolCallNames }
     }
 
-    func providerToolResultsSent(request index: Int) -> [String: String] {
-        lock.withLock { requests[index].providerToolResults }
+    func providerToolResultsSent(request index: Int) throws -> [String: String] {
+        try lock.withLock { try requests.conversationElement(at: index).providerToolResults }
     }
 
-    func messageRolesSent(request index: Int) -> [Role] {
-        lock.withLock { requests[index].messageRoles }
+    func messageRolesSent(request index: Int) throws -> [Role] {
+        try lock.withLock { try requests.conversationElement(at: index).messageRoles }
     }
 
-    func messageTextsSent(request index: Int) -> [String?] {
-        lock.withLock { requests[index].messageTexts }
+    func messageTextsSent(request index: Int) throws -> [String?] {
+        try lock.withLock { try requests.conversationElement(at: index).messageTexts }
     }
 
-    func messageContentTypesSent(request index: Int) -> [ContentType] {
-        lock.withLock { requests[index].messageContentTypes }
+    func messageContentTypesSent(request index: Int) throws -> [ContentType] {
+        try lock.withLock { try requests.conversationElement(at: index).messageContentTypes }
     }
 
     func performChatCompletionRequest(messages: [Message], model: Model, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) async throws -> Message {

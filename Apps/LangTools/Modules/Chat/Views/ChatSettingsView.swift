@@ -322,6 +322,7 @@ public struct ChatSettingsView: View {
             if !viewModel.isProxyContext {
             Section(header: Text("Local Models")) {
                 Button(action: {
+                    guard !ChatUITestEnvironment.isFixtureActive else { return }
                     showingOllamaSettings = true
                 }) {
                     HStack {
@@ -332,6 +333,7 @@ public struct ChatSettingsView: View {
                             .foregroundColor(.gray)
                     }
                 }
+                .disabled(ChatUITestEnvironment.isFixtureActive)
             }
             }
             #endif
@@ -1072,6 +1074,7 @@ public struct ChatSettingsView: View {
 
                 #if !os(watchOS) && !os(tvOS)
                 Button(action: {
+                    guard !ChatUITestEnvironment.isFixtureActive else { return }
                     showingOllamaSettings = true
                 }) {
                     HStack {
@@ -1092,6 +1095,7 @@ public struct ChatSettingsView: View {
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
+                .disabled(ChatUITestEnvironment.isFixtureActive)
                 #else
                 Text("Local models are not available on this platform.")
                     .font(.callout)
@@ -1159,7 +1163,11 @@ public struct ChatSettingsView: View {
 private extension View {
     @ViewBuilder
     func directAccessPrompts(enabled: Bool) -> some View {
-        if enabled { manageAccessPrompts(priority: 10) } else { self }
+        if enabled && !ChatUITestEnvironment.isFixtureActive {
+            manageAccessPrompts(priority: 10)
+        } else {
+            self
+        }
     }
 }
 
@@ -1800,6 +1808,7 @@ extension ChatSettingsView {
                     .padding(.bottom, 4)
 
                     Toggle("Auto-Retry Failed Tools", isOn: $viewModel.toolSettings.autoRetryFailedTools)
+                        .accessibilityIdentifier("settings.tools.autoRetryFailedTools.toggle")
                         .checkboxToggleStyle()
                     Text("Automatically retry a failed tool call once before reporting the error. (UI only — execution wiring coming soon)")
                         .font(.caption)

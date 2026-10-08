@@ -114,7 +114,77 @@ final class LangToolsAppUITests: XCTestCase {
         }
         takeScreenshot(settingsWindow, name: "advanced_params_active")
 
-        settingsWindow.buttons[XCUIIdentifierCloseWindow].click()
+        let stopToggle = settingsWindow.checkBoxes["generation.stop.toggle"]
+        XCTAssertTrue(stopToggle.waitForExistence(timeout: 5))
+        stopToggle.click()
+        XCTAssertEqual(checkboxValue(stopToggle), 1)
+
+        let addStop = settingsWindow.buttons["generation.stop.add"]
+        XCTAssertTrue(addStop.waitForExistence(timeout: 5))
+        addStop.click()
+        let stopField = settingsWindow.textFields["generation.stop.sequence.0"]
+        XCTAssertTrue(stopField.waitForExistence(timeout: 5))
+        XCTAssertEqual(stopField.value as? String, "")
+        stopField.click()
+        XCTAssertTrue(stopField.exists, "Focusing an Add-created blank draft must not remove it")
+        XCTAssertEqual(checkboxValue(stopToggle), 1)
+        takeScreenshot(settingsWindow, name: "advanced_stop_blank_focused")
+
+        stopField.typeText("END")
+        XCTAssertEqual(stopField.value as? String, "END")
+        stopField.typeKey("a", modifierFlags: .command)
+        stopField.typeKey(.delete, modifierFlags: [])
+        XCTAssertTrue(stopField.exists, "Clearing a stop sequence must retain its editing row")
+        XCTAssertEqual(stopField.value as? String, "")
+        XCTAssertEqual(checkboxValue(stopToggle), 1)
+        stopField.typeText("END")
+        XCTAssertEqual(stopField.value as? String, "END")
+        takeScreenshot(settingsWindow, name: "advanced_stop_retyped")
+
+        // Settings is a navigation destination in the chat's sole window.
+        // Closing the window would terminate the fixture rather than exercise persistence.
+        print("Settings navigation hierarchy before Back:\n\(settingsWindow.debugDescription)")
+        let backButton = settingsWindow.toolbars.firstMatch.buttons["Back"]
+        guard backButton.waitForExistence(timeout: 5) else {
+            XCTFail("Expected the settings navigation Back toolbar control")
+            return
+        }
+        XCTAssertTrue(backButton.isHittable)
+        backButton.click()
+        let sidebarGone = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: settingsWindow.outlines.firstMatch
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [sidebarGone], timeout: 5), .completed)
+        let chatSettingsButton = chatWindow.toolbars.firstMatch.buttons["Settings"].firstMatch
+        XCTAssertTrue(chatSettingsButton.waitForExistence(timeout: 5))
+        let settingsReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isHittable == true"),
+            object: chatSettingsButton
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [settingsReady], timeout: 5), .completed)
+        chatSettingsButton.click()
+        let reopenedWindow = app.windows.allElementsBoundByIndex.last!
+        XCTAssertTrue(reopenedWindow.waitForExistence(timeout: 5))
+        let reopenedAdvanced = reopenedWindow.outlines.firstMatch
+            .descendants(matching: .button)
+            .matching(NSPredicate(format: "label == 'Advanced'"))
+            .firstMatch
+        XCTAssertTrue(reopenedAdvanced.waitForExistence(timeout: 5))
+        reopenedAdvanced.click()
+        let reopenedStop = reopenedWindow.textFields["generation.stop.sequence.0"]
+        XCTAssertTrue(reopenedStop.waitForExistence(timeout: 5))
+        XCTAssertEqual(reopenedStop.value as? String, "END", "Committed stop must persist on reopen")
+        takeScreenshot(reopenedWindow, name: "advanced_stop_reopened")
+
+        let reset = reopenedWindow.buttons["Reset to Automatic"]
+        XCTAssertTrue(reset.waitForExistence(timeout: 5))
+        reset.click()
+        XCTAssertEqual(checkboxValue(reopenedWindow.checkBoxes["generation.stop.toggle"]), 0)
+        XCTAssertFalse(reopenedStop.exists)
+        XCTAssertFalse(reopenedWindow.buttons["generation.stop.add"].exists)
+        takeScreenshot(reopenedWindow, name: "advanced_stop_reset_automatic")
+        reopenedWindow.buttons[XCUIIdentifierCloseWindow].click()
     }
 
     @MainActor
@@ -159,6 +229,18 @@ final class LangToolsAppUITests: XCTestCase {
         takeScreenshot(settingsWindow, name: "tool_settings_active")
 
         settingsWindow.buttons[XCUIIdentifierCloseWindow].click()
+    }
+
+    private func checkboxValue(_ element: XCUIElement) -> Int? {
+        if let number = element.value as? NSNumber {
+            if number == NSNumber(value: 0) { return 0 }
+            if number == NSNumber(value: 1) { return 1 }
+            return nil
+        }
+        if let string = element.value as? String, let value = Int(string), value == 0 || value == 1 {
+            return value
+        }
+        return nil
     }
 
     private func takeScreenshot(_ element: XCUIElement, name: String) {
