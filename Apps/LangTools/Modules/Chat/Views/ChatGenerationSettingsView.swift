@@ -1,5 +1,64 @@
 import SwiftUI
 
+/// Blank rows are editing drafts, not persisted stop sequences. Row identities stay
+/// stable across edits so a delayed TextField write cannot target a different row.
+struct StopSequenceEditing {
+    struct Row: Identifiable, Equatable {
+        let id = UUID()
+        var text: String
+    }
+
+    private(set) var isEnabled: Bool
+    private(set) var rows: [Row]
+    private var lastBindingValue: [String]?
+
+    init(value: [String]?) {
+        isEnabled = value != nil
+        rows = (value ?? []).filter { !$0.isEmpty }.map { Row(text: $0) }
+        lastBindingValue = value
+    }
+
+    var value: [String]? {
+        isEnabled ? rows.map(\.text).filter { !$0.isEmpty } : nil
+    }
+
+    /// An echo of our own publication must not discard drafts or replace row IDs.
+    mutating func synchronize(with value: [String]?, discardingDrafts: Bool = false) {
+        guard discardingDrafts || value != lastBindingValue else { return }
+        self = Self(value: value)
+    }
+
+    mutating func valueForPublishing() -> [String]? {
+        lastBindingValue = value
+        return value
+    }
+
+    mutating func setEnabled(_ enabled: Bool) {
+        isEnabled = enabled
+        if !enabled { rows.removeAll() }
+    }
+
+    mutating func add() {
+        guard isEnabled else { return }
+        rows.append(Row(text: ""))
+    }
+
+    @discardableResult
+    mutating func updateText(_ text: String, for id: Row.ID) -> Bool {
+        guard let index = rows.firstIndex(where: { $0.id == id }) else { return false }
+        rows[index].text = text
+        return true
+    }
+
+    @discardableResult
+    mutating func remove(id: Row.ID) -> Bool {
+        guard let index = rows.firstIndex(where: { $0.id == id }) else { return false }
+        rows.remove(at: index)
+        if rows.isEmpty { isEnabled = false }
+        return true
+    }
+}
+
 public struct ChatGenerationSettingsView: View {
     enum MaximumOutputSelection: Hashable {
         case automatic
@@ -15,6 +74,7 @@ public struct ChatGenerationSettingsView: View {
     @Binding private var topK: Int?
     @Binding private var seed: Int?
     @Binding private var stop: [String]?
+    @State private var stopEditing: StopSequenceEditing
     private let capabilities: ChatGenerationCapabilities
     private let reset: () -> Void
 
@@ -38,6 +98,7 @@ public struct ChatGenerationSettingsView: View {
         _topK = topK
         _seed = seed
         _stop = stop
+        _stopEditing = State(initialValue: StopSequenceEditing(value: stop.wrappedValue))
         self.capabilities = capabilities
         self.reset = reset
     }
@@ -68,10 +129,23 @@ public struct ChatGenerationSettingsView: View {
 
             HStack {
                 Spacer()
-                Button("Reset to Automatic", action: reset)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                Button("Reset to Automatic") {
+                    stopEditing.synchronize(with: nil, discardingDrafts: true)
+                    reset()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
+        }
+        .onAppear {
+            stopEditing.synchronize(with: stop, discardingDrafts: true)
+        }
+        .onChange(of: stop) { value in
+            stopEditing.synchronize(with: value)
+        }
+        .onChange(of: capabilities) { _ in
+            // Capabilities are the available model-change signal, not model identity.
+            stopEditing.synchronize(with: stop, discardingDrafts: true)
         }
     }
 
@@ -215,8 +289,13 @@ public struct ChatGenerationSettingsView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Toggle(isOn: Binding(
-                    get: { stop != nil },
-                    set: { stop = $0 ? (stop ?? []) : nil }
+                    get: { stopEditing.isEnabled },
+                    set: { enabled in
+                        editStopSequences {
+                            $0.setEnabled(enabled)
+                            return true
+                        }
+                    }
                 )) {
                     Text("Stop Sequences").frame(width: labelWidth - 20, alignment: .leading)
                 }
@@ -227,7 +306,7 @@ public struct ChatGenerationSettingsView: View {
                 .toggleStyle(.switch)
 #endif
 
-                if stop == nil {
+                if !stopEditing.isEnabled {
                     Text("Automatic")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -235,20 +314,14 @@ public struct ChatGenerationSettingsView: View {
                 Spacer()
             }
 
-            if let stopSequences = stop {
+            if stopEditing.isEnabled {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(stopSequences.indices, id: \.self) { index in
+                    ForEach(Array(stopEditing.rows.enumerated()), id: \.element.id) { index, row in
                         HStack(spacing: 4) {
                             TextField("sequence", text: Binding(
-                                get: { stopSequences.indices.contains(index) ? stopSequences[index] : "" },
+                                get: { stopEditing.rows.first(where: { $0.id == row.id })?.text ?? "" },
                                 set: { newValue in
-                                    guard stopSequences.indices.contains(index) else { return }
-                                    if newValue.isEmpty {
-                                        stop?.remove(at: index)
-                                        if stop?.isEmpty == true { stop = nil }
-                                    } else {
-                                        stop?[index] = newValue
-                                    }
+                                    editStopSequences { $0.updateText(newValue, for: row.id) }
                                 }
                             ))
                             .textFieldStyle(.roundedBorder)
@@ -256,17 +329,20 @@ public struct ChatGenerationSettingsView: View {
                             .frame(width: 160)
 
                             Button {
-                                stop?.remove(at: index)
-                                if stop?.isEmpty == true { stop = nil }
+                                editStopSequences { $0.remove(id: row.id) }
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundColor(.secondary)
                             }
+                            .accessibilityIdentifier("generation.stop.remove.\(index)")
                             .buttonStyle(.plain)
                         }
                     }
                     Button {
-                        stop?.append("")
+                        editStopSequences {
+                            $0.add()
+                            return true
+                        }
                     } label: {
                         Label("Add", systemImage: "plus.circle")
                             .font(.caption)
@@ -277,6 +353,14 @@ public struct ChatGenerationSettingsView: View {
                 .padding(.leading, labelWidth + 8)
             }
         }
+    }
+
+    private func editStopSequences(_ edit: (inout StopSequenceEditing) -> Bool) {
+        // Reconcile before handling events too: a stale field may write before the
+        // binding's onChange callback has delivered an external reset/update.
+        stopEditing.synchronize(with: stop)
+        guard edit(&stopEditing) else { return }
+        stop = stopEditing.valueForPublishing()
     }
 
     // MARK: - Reusable row builders
