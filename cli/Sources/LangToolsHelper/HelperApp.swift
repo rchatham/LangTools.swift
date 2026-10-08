@@ -31,6 +31,7 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let tokenController: TokenFileController
     private let pairingRegistry = PairingCodeRegistry()
+    private let mobilePairing = MobilePairingController()
     private let host: String
     private let port: UInt16
     private var bearerToken: String?
@@ -59,9 +60,12 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate {
         configureStatusItem()
         rebuildMenu()
         startServer()
+        // Opens only the opt-in UI, never enables a listener or creates an active QR automatically.
+        if CommandLine.arguments.contains("--connect-iphone") { mobilePairing.show() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        mobilePairing.shutdown()
         serverTask?.cancel()
     }
 
@@ -118,6 +122,10 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate {
         pairItem.target = self
         pairItem.isEnabled = isRunning
         menu.addItem(pairItem)
+
+        let mobilePairItem = NSMenuItem(title: "Connect iPhone…", action: #selector(connectIPhone), keyEquivalent: "")
+        mobilePairItem.target = self
+        menu.addItem(mobilePairItem)
 
         let copyItem = NSMenuItem(
             title: "Copy Token",
@@ -236,6 +244,10 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func connectIPhone() {
+        mobilePairing.show()
+    }
+
     @objc private func copyToken() {
         guard let token = bearerToken else { return }
         let pasteboard = NSPasteboard.general
@@ -244,6 +256,7 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quit() {
+        mobilePairing.shutdown()
         serverTask?.cancel()
         isUserStop = true
         Task.detached {

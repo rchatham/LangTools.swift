@@ -130,6 +130,11 @@ extension Ollama {
             message?.content.text
         }
 
+        /// Ollama chat streams must end with a decoded `done: true` response.
+        public func validateStreamCompletion() throws {
+            guard done else { throw LangToolsError.incompleteStream }
+        }
+
         public static var empty: ChatResponse {
             return ChatResponse(
                 model: "",

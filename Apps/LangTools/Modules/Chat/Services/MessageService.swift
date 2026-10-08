@@ -38,6 +38,8 @@ private final class RequestToolCallTracker {
     private var pendingCalls: [PendingToolCallIdentity] = []
     private var toolAnchorMessageIDs: [UUID] = []
 
+    init() {}
+
     func append(
         selectionID: String?,
         anchorMessageID: UUID,
@@ -418,9 +420,10 @@ public class MessageService {
         var assistantMessageIDs: Set<UUID> = []
         var generatedMessageIDs: Set<UUID> = []
         var toolBreakOccurred = false
-        // Track actual pending calls only. The persisted iteration setting is not
-        // an execution budget and must not manufacture failures for callbacks that run.
         let toolCallTracker = RequestToolCallTracker()
+        // Enforce the configured iteration budget before callbacks run so
+        // over-limit calls fail fast instead of executing.
+        let toolBudget = ToolIterationBudget(maxIterations: ToolSettings.shared.maxToolIterations)
         let keepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
         let selectedModel = UserDefaults.model
         let replayService = selectedModel.apiService
@@ -429,7 +432,7 @@ public class MessageService {
             var currentMessages = requestSnapshot
             currentMessages.insert(Message(text: systemMessage(), role: .system), at: 0)
 
-            let activeTools = filteredTools(for: sendID)
+            let activeTools = budgetedTools(filteredTools(for: sendID), budget: toolBudget)
             let agentToolNames = Set(agents.map(\.name))
             let toolEventHandler: (LangToolsToolEvent) -> Void = { [weak self] event in
                 self?.enqueueToolEvent(event, for: sendID, agentToolNames: agentToolNames)
@@ -753,8 +756,8 @@ extension MessageService {
                     generatedMessageIDs: &generatedMessageIDs
                 )
                 anchor.applyToolEvent(.toolCalled(selection))
-                if let tracker = toolCallTracker {
-                    tracker.append(
+                if let toolCallTracker {
+                    toolCallTracker.append(
                         selectionID: selection.id,
                         anchorMessageID: anchor.uuid,
                         uiCallID: anchor.toolCalls.last?.id ?? "",

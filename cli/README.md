@@ -53,6 +53,7 @@ The menu offers:
 - a status line (`Running at http://127.0.0.1:8765` / `Stopped`),
 - **Start/Stop Helper** (stopping cancels the server cleanly, so it can be restarted),
 - **Pair with LangTools Example…** (enabled while running),
+- **Connect iPhone…** (separate opt-in encrypted Ollama relay),
 - **Copy Token** and **Quit**.
 
 ### One-click pairing
@@ -64,6 +65,26 @@ langtools-example-auth://codex-helper/pair?port=8765&code=<64 hex chars>
 ```
 
 LangTools_Example shows a confirmation alert before saving anything; on confirm it exchanges the single-use code for the bearer token over a loopback `POST /v1/pairing/exchange`, stores the token, and verifies the helper with a `/health` check. Then **Settings → Model Access → Codex Subscription** shows the paired status. Manual URL/token entry remains available as a fallback. The helper server only accepts requests whose `Host` header resolves to `127.0.0.1`, `::1`, or `localhost` — anything else is rejected with `400 Unexpected Host header.`
+
+### iPhone Ollama pairing (opt-in LAN)
+
+Choose **Connect iPhone…**, select an active private IPv4 interface, then explicitly enable **Allow encrypted iPhone access on this network**. The separate TLS listener binds only that selected address on port8086. It never exposes the loopback account/Codex routes or desktop token. LAN access is off at every helper launch; stopping the desktop loopback listener does not change the independently controlled LAN toggle.
+
+Scan the five-minute single-use QR with iPhone Camera and confirm the named Mac plus **Ollama** capability in LangTools. Refresh invalidates the previous QR; cancel/close/expiry invalidates pairing without revoking existing devices. **Revoke** removes a device and interrupts its in-flight requests. Disable LAN or quit the helper to stop all phone traffic. Interface disappearance/address changes stop LAN rather than silently switching interfaces. Direct Ollama remains an explicit app alternative, never a failover from helper TLS.
+
+The helper creates a persistent self-signed identity using `/usr/bin/openssl` in a mode0700 temporary directory with mode0600 files, imports via Security, and stores private material only in the macOS login Keychain (`com.langtools.helper.mobile-identity.v1`). Phones trust only the exact QR-pinned SHA256 leaf plus a valid anchored basic X.509 evaluation: trust follows helper identity, not a changing numeric IP. Never approve arbitrary certificates or substitute plaintext. Device metadata/token hashes persist atomically in mode0600 `~/.langtools/mobile/devices-v1.json`; reusable tokens and active QR codes are not stored there.
+
+The mobile HTTP allowlist is `POST /v1/mobile/pair`, authenticated `GET /v1/mobile/health`, `GET /v1/ollama/api/{version,tags,ps}`, and `POST /v1/ollama/api/{chat,generate,pull}`. Only the fixed upstream `http://127.0.0.1:11434` is contacted, with no forwarded mobile Authorization or redirects. Bounds:8 concurrent connections,32KiB request headers,4MiB request bodies,1MiB NDJSON lines,16MiB non-NDJSON/256MiB streamed response total,10s request-read/15s downstream-send/300s total route deadlines. Responses stream incrementally; disconnect/revocation cancels the local upstream. A failed response after headers closes the stream without a fabricated completion event (Foundation can surface this as EOF; clients require final `done: true` for chat/generate and final `status: "success"` for model pulls).
+
+For UI verification without automatically enabling LAN:
+
+```bash
+cd cli
+swift build --product LangToolsHelper
+.build/debug/LangToolsHelper --connect-iphone
+```
+
+Capture LAN-off, QR-cancelled/expired, and paired-device/revocation states. **Never share an active QR or its URL**: capture only after cancel/expiry, or redact the full QR region before sharing and discard the unredacted image. Physically scanning the QR and iPhone LAN/TLS/relaunch behavior still require real-device acceptance; a Mac integration test is not a substitute.
 
 ## Authentication
 

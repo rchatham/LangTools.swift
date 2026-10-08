@@ -224,6 +224,11 @@ extension Ollama {
 
         public var delta: PullDelta? { nil }
 
+        /// Ollama pull streams must end with a decoded `status: "success"` response.
+        public func validateStreamCompletion() throws {
+            guard status == "success" else { throw LangToolsError.incompleteStream }
+        }
+
         public static var empty: PullModelResponse {
             return PullModelResponse(status: "", digest: nil, total: nil, completed: nil)
         }

@@ -12,15 +12,27 @@ private struct ManageAccessPromptModifier: ViewModifier {
     @State private var showResultAlert = false
     @State private var resultMessage = ""
 
+    @State private var presenterID = UUID()
     private let networkClient: NetworkClientProtocol
+    private let priority: Int
 
-    init(networkClient: NetworkClientProtocol = NetworkClient.shared) {
+    init(networkClient: NetworkClientProtocol = NetworkClient.shared, priority: Int) {
         self.networkClient = networkClient
+        self.priority = priority
+    }
+
+    private var ownsPresentation: Bool { coordinator.presentationOwner == presenterID }
+    private var presentation: Binding<Bool> {
+        Binding(get: { ownsPresentation && coordinator.isPresented }, set: {
+            if ownsPresentation { coordinator.isPresented = $0 }
+        })
     }
 
     func body(content: Content) -> some View {
         content
-            .confirmationDialog(dialogTitle, isPresented: $coordinator.isPresented, titleVisibility: .visible) {
+            .onAppear { coordinator.registerPresenter(presenterID, priority: priority) }
+            .onDisappear { coordinator.unregisterPresenter(presenterID) }
+            .confirmationDialog(dialogTitle, isPresented: presentation, titleVisibility: .visible) {
                 actionButtons(for: currentService)
             } message: {
                 Text(dialogMessage(for: currentService))
@@ -45,7 +57,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
                 Text(errorMessage)
             }
             .overlay(alignment: .center) {
-                if loginCoordinator.isAuthenticating {
+                if ownsPresentation && loginCoordinator.isAuthenticating {
                     ZStack {
                         RoundedRectangle(cornerRadius: 12)
                             .fill(.ultraThinMaterial)
@@ -324,7 +336,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
 }
 
 public extension View {
-    func manageAccessPrompts(networkClient: NetworkClientProtocol = NetworkClient.shared) -> some View {
-        modifier(ManageAccessPromptModifier(networkClient: networkClient))
+    func manageAccessPrompts(networkClient: NetworkClientProtocol = NetworkClient.shared, priority: Int = 0) -> some View {
+        modifier(ManageAccessPromptModifier(networkClient: networkClient, priority: priority))
     }
 }

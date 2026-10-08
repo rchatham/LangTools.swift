@@ -42,6 +42,7 @@ struct LangToolsApp: App {
                     handleIncomingURL(url)
                 }
                 .codexHelperPairingAlert()
+                .mobileHelperPairingPresentation()
         }
         #else
         WindowGroup {
@@ -50,6 +51,7 @@ struct LangToolsApp: App {
                     handleIncomingURL(url)
                 }
                 .codexHelperPairingAlert()
+                .mobileHelperPairingPresentation()
         }
         #endif
     }
@@ -58,7 +60,9 @@ struct LangToolsApp: App {
     /// pairing URLs to `CodexHelperPairingCoordinator`, everything else to the
     /// account login coordinator.
     private func handleIncomingURL(_ url: URL) {
-        if CodexHelperPairingCoordinator.isPairingURL(url) {
+        if MobileHelperPairingCoordinator.isPairingURL(url) {
+            MobileHelperPairingCoordinator.shared.handle(url)
+        } else if CodexHelperPairingCoordinator.isPairingURL(url) {
             CodexHelperPairingCoordinator.shared.handle(url)
         } else {
             AccountLoginCoordinator.shared.handleRedirect(url)
@@ -115,6 +119,8 @@ struct LangToolsApp: App {
     }
 
     func initializeOllama() {
+        _ = OllamaEndpointConfiguration.shared
+        _ = OllamaService.shared
         Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             await MainActor.run {
@@ -203,6 +209,15 @@ extension MessageService: @retroactive ChatMessageService {
     public typealias ChatMessage = Message
 
     public func handleError(error: any Error) -> ChatAlertInfo? {
+        if error is MobileHelperError {
+            return ChatAlertInfo(title: "Paired Helper", message: error.localizedDescription)
+        }
+        if UserDefaults.model.apiService == .ollama, OllamaEndpointConfiguration.shared.snapshot().isHelper {
+            let actionable = OllamaEndpointConfiguration.shared.snapshot().actionableError(error)
+            if actionable is MobileHelperError {
+                return ChatAlertInfo(title: "Paired Helper", message: actionable.localizedDescription)
+            }
+        }
         switch error {
         case let error as LangToolsError:
             switch error {
