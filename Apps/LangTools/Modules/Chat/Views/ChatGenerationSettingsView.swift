@@ -220,7 +220,9 @@ public struct ChatGenerationSettingsView: View {
                 )) {
                     Text("Stop Sequences").frame(width: labelWidth - 20, alignment: .leading)
                 }
+                #if os(macOS)
                 .toggleStyle(.checkbox)
+                #endif
 
                 if stop == nil {
                     Text("Automatic")
@@ -286,7 +288,9 @@ public struct ChatGenerationSettingsView: View {
             Toggle(isOn: isOn) {
                 Text(label).frame(width: labelWidth - 20, alignment: .leading)
             }
+            #if os(macOS)
             .toggleStyle(.checkbox)
+            #endif
 
             if isOn.wrappedValue {
                 Slider(value: value, in: range, step: step)
@@ -316,7 +320,9 @@ public struct ChatGenerationSettingsView: View {
             Toggle(isOn: isOn) {
                 Text(label).frame(width: labelWidth - 20, alignment: .leading)
             }
+            #if os(macOS)
             .toggleStyle(.checkbox)
+            #endif
 
             if isOn.wrappedValue {
                 Stepper(value: value, in: range) {
@@ -343,7 +349,9 @@ public struct ChatGenerationSettingsView: View {
             Toggle(isOn: isOn) {
                 Text("Seed").frame(width: labelWidth - 20, alignment: .leading)
             }
+            #if os(macOS)
             .toggleStyle(.checkbox)
+            #endif
 
             if isOn.wrappedValue {
                 TextField("", value: value, format: .number)

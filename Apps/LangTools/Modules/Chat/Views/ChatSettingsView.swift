@@ -1119,7 +1119,7 @@ public struct ChatSettingsView: View {
 private extension View {
     @ViewBuilder
     func directAccessPrompts(enabled: Bool) -> some View {
-        if enabled { manageAccessPrompts() } else { self }
+        if enabled { manageAccessPrompts(priority: 10) } else { self }
     }
 }
 
@@ -1263,20 +1263,21 @@ extension ChatSettingsView {
         @Published var conversationSettings = ChatConversationSettings.default
         @Published var systemMessage = UserDefaults.systemMessage // legacy source compat
         @Published var codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
-        @Published var codexHelperToken = UserDefaults.codexHelperToken
+        @Published var codexHelperToken: String
         /// Raw helper token as last synced from a successful pairing.
         /// Compared against the form token to avoid overwriting in-progress edits.
-        var lastSyncedHelperTokenSnapshot: String = UserDefaults.codexHelperToken
+        var lastSyncedHelperTokenSnapshot: String
         /// Last URL loaded into the form; pairing must not overwrite an edit.
         var lastSyncedHelperURLSnapshot: String = UserDefaults.codexHelperBaseURL.absoluteString
         @Published var codexHelperTokenSaveError: String?
         @Published var toolSettings = ToolSettings.shared
         @Published public var toolManager = ToolManager.shared
-        public var accessManager = ProviderAccessManager.shared
+        public var accessManager: ProviderAccessManager
 
         let clearMessages: () -> Void
         private let generationSettingsStore: ChatGenerationSettingsStoring
         private let conversationSettingsStore: ChatConversationSettingsStoring
+        private let codexHelperTokenStore: CodexHelperTokenStore
 
         /// Callback to trigger WhisperKit preload (set by app)
         public var onPreloadWhisperKit: (() -> Void)?
@@ -1295,12 +1296,19 @@ extension ChatSettingsView {
             clearMessages: @escaping () -> Void,
             modelSource: ChatModelSource? = nil,
             generationSettingsStore: ChatGenerationSettingsStoring = ChatGenerationSettingsStore(),
-            conversationSettingsStore: ChatConversationSettingsStoring = ChatConversationSettingsStore()
+            conversationSettingsStore: ChatConversationSettingsStoring = ChatConversationSettingsStore(),
+            accessManager: ProviderAccessManager = .shared,
+            codexHelperTokenStore: CodexHelperTokenStore = CodexHelperTokenStore()
         ) {
             self.clearMessages = clearMessages
             self.modelSource = modelSource
             self.generationSettingsStore = generationSettingsStore
             self.conversationSettingsStore = conversationSettingsStore
+            self.accessManager = accessManager
+            self.codexHelperTokenStore = codexHelperTokenStore
+            let helperToken = codexHelperTokenStore.token()
+            self.codexHelperToken = helperToken
+            self.lastSyncedHelperTokenSnapshot = helperToken
             modelSource?.$state.sink { [weak self] state in
                 guard let self else { return }
                 if case .ready(let models) = state, !models.contains(self.model), let first = models.first {
@@ -1315,14 +1323,16 @@ extension ChatSettingsView {
                 .sink { [weak self] _ in self?.objectWillChange.send() }
                 .store(in: &cancellables)
 
-            ProviderAccessManager.shared.objectWillChange
+            accessManager.objectWillChange
                 .sink { [weak self] _ in self?.objectWillChange.send() }
                 .store(in: &cancellables)
         }
 
         public var availableModels: [Model] {
             if let modelSource, modelSource.isProxy { return modelSource.models }
-            return accessManager.availableChatModels()
+            let available = accessManager.availableChatModels()
+            guard model.apiService == .ollama, !available.contains(model) else { return available }
+            return [model] + available
         }
 
         func loadSettings() {
@@ -1337,7 +1347,7 @@ extension ChatSettingsView {
             conversationSettings = conversationSettingsStore.load()
             systemMessage = conversationSettings.systemPrompt
             codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
-            codexHelperToken = UserDefaults.codexHelperToken
+            codexHelperToken = codexHelperTokenStore.token()
             lastSyncedHelperURLSnapshot = codexHelperBaseURLString
             lastSyncedHelperTokenSnapshot = codexHelperToken
         }
@@ -1382,7 +1392,7 @@ extension ChatSettingsView {
                 lastSyncedHelperURLSnapshot = codexHelperBaseURLString
             }
             do {
-                try CodexHelperTokenStore().setToken(codexHelperToken.trimmingCharacters(in: .whitespacesAndNewlines))
+                try codexHelperTokenStore.setToken(codexHelperToken.trimmingCharacters(in: .whitespacesAndNewlines))
                 codexHelperTokenSaveError = nil
             } catch {
                 // Surface Keychain persistence failures instead of silently
@@ -1591,7 +1601,7 @@ extension ChatSettingsView {
         /// already in progress in the Settings form.
         func applyHydratedHelperConfigurationIfTokenUnedited(port: Int) {
             guard codexHelperToken == lastSyncedHelperTokenSnapshot else { return }
-            let persistedToken = UserDefaults.codexHelperToken
+            let persistedToken = codexHelperTokenStore.token()
             codexHelperToken = persistedToken
             lastSyncedHelperTokenSnapshot = persistedToken
             if codexHelperBaseURLString == lastSyncedHelperURLSnapshot {
@@ -1609,7 +1619,12 @@ extension ChatSettingsView {
         }
 
         func modelPickerTitle(for model: Model) -> String {
-            model.rawValue
+            if isProxyContext { return model.rawValue }
+            if model.apiService == .ollama,
+               !accessManager.availableChatModels().contains(model) {
+                return "\(model.rawValue) — Unavailable on current Ollama server"
+            }
+            return model.rawValue
         }
 
         /// Trigger WhisperKit preload
@@ -1745,7 +1760,9 @@ extension ChatSettingsView {
                     .padding(.bottom, 4)
 
                     Toggle("Auto-Retry Failed Tools", isOn: $viewModel.toolSettings.autoRetryFailedTools)
+                        #if os(macOS)
                         .toggleStyle(.checkbox)
+                        #endif
                     Text("Automatically retry a failed tool call once before reporting the error. (UI only — execution wiring coming soon)")
                         .font(.caption)
                         .foregroundColor(.secondary)

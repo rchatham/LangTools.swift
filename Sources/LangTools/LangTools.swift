@@ -57,7 +57,14 @@ extension LangTools {
     }
 
     private func perform<Response: Decodable>(request: URLRequest) async throws -> Response {
+        #if canImport(Darwin)
+        let (data, response) = try await session.data(
+            for: request,
+            delegate: session.delegate as? any URLSessionTaskDelegate
+        )
+        #else
         let (data, response) = try await session.data(for: request)
+        #endif
         guard let httpResponse = response as? HTTPURLResponse else { throw LangToolsError.requestFailed }
         guard httpResponse.statusCode == 200 else { throw LangToolsError.responseUnsuccessful(statusCode: httpResponse.statusCode, Self.decodeError(data: data)) }
         if let audioResponseType = Response.self as? any LangToolsAudioResponse.Type { return try audioResponseType.init(audioData: data) as! Response } else { return try Self.decodeResponse(data: data) }
@@ -83,7 +90,17 @@ extension LangTools {
                 do {
                     try Task.checkCancellation()
                     log?.debug("Calling session.bytes(for:)...")
+                    #if canImport(Darwin)
+                    // Async byte tasks need the configured task delegate explicitly so
+                    // injected certificate pinning and redirect policies are preserved.
+                    let (bytes, response) = try await session.bytes(
+                        for: httpRequest,
+                        delegate: session.delegate as? any URLSessionTaskDelegate
+                    )
+                    #else
+                    // FoundationNetworking uses the package's compatibility shim.
                     let (bytes, response) = try await session.bytes(for: httpRequest)
+                    #endif
                     log?.debug("Got response from server")
 
                     guard let httpResponse = response as? HTTPURLResponse else {
@@ -147,9 +164,13 @@ extension LangTools {
                         }
                     }
 
+                    try Task.checkCancellation()
                     if let errorBuffer, !buffer.isEmpty {
                         throw LangToolsError.failedToDecodeStream(buffer: buffer, error: errorBuffer)
                     }
+                    // Clean transport EOF is not necessarily provider completion.
+                    // Validate each HTTP stream before executing accumulated tool calls.
+                    try combinedResponse.validateStreamCompletion()
 
                     log?.debug("Processed \(lineCount) lines from stream")
 
@@ -268,11 +289,13 @@ public enum LangToolsError: Error, LocalizedError {
     case responseUnsuccessful(statusCode: Int, Error?)
     case apiError(Codable & Error)
     case failedToDecodeStream(buffer: String, error: Error)
+    case incompleteStream
 
     public var errorDescription: String? {
         switch self {
         case .invalidData:                          return "Invalid data"
         case .streamParsingFailure:                 return "Stream parsing failure"
+        case .incompleteStream:                     return "Stream ended before the provider's terminal response"
         case .invalidURL:                           return "Invalid URL"
         case .requestFailed:                        return "Request failed"
         case .invalidContentType:                   return "Invalid content type"
