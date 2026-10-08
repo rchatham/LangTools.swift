@@ -86,7 +86,26 @@ public final class CodexHelperTokenStore {
 }
 
 public class KeychainService: KeychainSecretStoring {
-    public static let shared = KeychainService()
+    /// Returns the shared instance. When a validated fixture environment is
+    /// active the instance uses the fixture-isolated Keychain service;
+    /// otherwise it uses the ordinary app service.
+    public static var shared: KeychainService {
+        if ChatUITestEnvironment.isFixtureActive {
+            return fixtureInstance
+        }
+        return ordinaryInstance
+    }
+
+    /// The ordinary app Keychain service — never changed by fixture state.
+    private static let ordinaryInstance = KeychainService(
+        keychain: Keychain(service: "com.reidchatham.LangTools_Example")
+    )
+
+    /// The fixture-isolated Keychain service. Lazily created so the fixture
+    /// namespace is never touched during normal app runs.
+    private static let fixtureInstance = KeychainService(
+        keychain: Keychain(service: ChatUITestEnvironment.fixtureKeychainService)
+    )
 
     let keychain: Keychain
 

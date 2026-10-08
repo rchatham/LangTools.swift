@@ -2,7 +2,25 @@ import Foundation
 import KeychainAccess
 
 public final class AuthSessionStore {
-    public static let shared = AuthSessionStore()
+    /// Returns the shared instance. When a validated fixture environment is
+    /// active the instance uses the fixture-isolated Keychain service;
+    /// otherwise it uses the ordinary app service.
+    public static var shared: AuthSessionStore {
+        if ChatUITestEnvironment.isFixtureActive {
+            return fixtureInstance
+        }
+        return ordinaryInstance
+    }
+
+    /// The ordinary app Keychain service.
+    private static let ordinaryInstance = AuthSessionStore(
+        keychain: Keychain(service: "com.reidchatham.LangTools_Example")
+    )
+
+    /// The fixture-isolated Keychain service.
+    private static let fixtureInstance = AuthSessionStore(
+        keychain: Keychain(service: ChatUITestEnvironment.fixtureKeychainService)
+    )
 
     private let keychain: Keychain
     private let encoder = JSONEncoder()

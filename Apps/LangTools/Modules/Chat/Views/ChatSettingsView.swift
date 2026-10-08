@@ -290,6 +290,7 @@ public struct ChatSettingsView: View {
             if !viewModel.isProxyContext {
             Section(header: Text("Local Models")) {
                 Button(action: {
+                    guard !ChatUITestEnvironment.isFixtureActive else { return }
                     showingOllamaSettings = true
                 }) {
                     HStack {
@@ -300,6 +301,7 @@ public struct ChatSettingsView: View {
                             .foregroundColor(.gray)
                     }
                 }
+                .disabled(ChatUITestEnvironment.isFixtureActive)
             }
             }
             #endif
@@ -1032,6 +1034,7 @@ public struct ChatSettingsView: View {
 
                 #if !os(watchOS) && !os(tvOS)
                 Button(action: {
+                    guard !ChatUITestEnvironment.isFixtureActive else { return }
                     showingOllamaSettings = true
                 }) {
                     HStack {
@@ -1052,6 +1055,7 @@ public struct ChatSettingsView: View {
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
+                .disabled(ChatUITestEnvironment.isFixtureActive)
                 #else
                 Text("Local models are not available on this platform.")
                     .font(.callout)
@@ -1119,7 +1123,11 @@ public struct ChatSettingsView: View {
 private extension View {
     @ViewBuilder
     func directAccessPrompts(enabled: Bool) -> some View {
-        if enabled { manageAccessPrompts() } else { self }
+        if enabled && !ChatUITestEnvironment.isFixtureActive {
+            manageAccessPrompts()
+        } else {
+            self
+        }
     }
 }
 
@@ -1272,7 +1280,7 @@ extension ChatSettingsView {
         @Published var codexHelperTokenSaveError: String?
         @Published var toolSettings = ToolSettings.shared
         @Published public var toolManager = ToolManager.shared
-        public var accessManager = ProviderAccessManager.shared
+        public var accessManager: ProviderAccessManager
 
         let clearMessages: () -> Void
         private let generationSettingsStore: ChatGenerationSettingsStoring
@@ -1294,11 +1302,13 @@ extension ChatSettingsView {
         public init(
             clearMessages: @escaping () -> Void,
             modelSource: ChatModelSource? = nil,
+            accessManager: ProviderAccessManager = .shared,
             generationSettingsStore: ChatGenerationSettingsStoring = ChatGenerationSettingsStore(),
             conversationSettingsStore: ChatConversationSettingsStoring = ChatConversationSettingsStore()
         ) {
             self.clearMessages = clearMessages
             self.modelSource = modelSource
+            self.accessManager = accessManager
             self.generationSettingsStore = generationSettingsStore
             self.conversationSettingsStore = conversationSettingsStore
             modelSource?.$state.sink { [weak self] state in
@@ -1315,7 +1325,7 @@ extension ChatSettingsView {
                 .sink { [weak self] _ in self?.objectWillChange.send() }
                 .store(in: &cancellables)
 
-            ProviderAccessManager.shared.objectWillChange
+            accessManager.objectWillChange
                 .sink { [weak self] _ in self?.objectWillChange.send() }
                 .store(in: &cancellables)
         }

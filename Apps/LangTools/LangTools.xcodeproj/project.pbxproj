@@ -550,13 +550,14 @@
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LANGTOOLS_APP_BUNDLE_IDENTIFIER = "com.reidchatham.LangTools-Example";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.reidchatham.LangTools-Example";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(LANGTOOLS_APP_BUNDLE_IDENTIFIER)";
 				PRODUCT_MODULE_NAME = LangToolsApp;
 				PRODUCT_NAME = LangTools;
 				REGISTER_APP_GROUPS = NO;
@@ -606,13 +607,14 @@
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LANGTOOLS_APP_BUNDLE_IDENTIFIER = "com.reidchatham.LangTools-Example";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.reidchatham.LangTools-Example";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(LANGTOOLS_APP_BUNDLE_IDENTIFIER)";
 				PRODUCT_MODULE_NAME = LangToolsApp;
 				PRODUCT_NAME = LangTools;
 				REGISTER_APP_GROUPS = NO;

@@ -88,6 +88,12 @@ let package = Package(
             ],
             path: "Tests/ToolKitTests"),
         .testTarget(
+            name: "AudioTests",
+            dependencies: [
+                "Audio",
+            ],
+            path: "Tests/AudioTests"),
+        .testTarget(
             name: "ChatTests",
             dependencies: [
                 "Chat",
