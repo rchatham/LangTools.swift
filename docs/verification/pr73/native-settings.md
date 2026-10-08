@@ -52,9 +52,23 @@ xcodebuild -project Apps/LangTools/LangTools.xcodeproj \
   -resultBundlePath "$RUN/native-ui.xcresult" test-without-building
 ```
 
+## Current iOS layout verification (canonical b079258)
+
+The approved iOS-only layout (`b079258`) separates each switch/title into its own row with full-width slider/stepper/seed controls below; macOS/other-platform source is byte-identical, and control IDs/ranges/capability semantics are unchanged. It was verified end-to-end through the Botsworth consumer fixture app (which renders this shared view) at `native-canonical-20261008T051936Z-vwbodk49`: `xcodebuild test-without-building` exit 0, **all six scenarios passed / 0 failed / 0 skipped** on the exact fixture bundle and owned iPhone 17 Pro simulator, with read-only prelaunch identity/signature/source checks. Fixture startup isolation suppressed real agents and microphone/speech permission requests; no live provider, tool execution or desktop capture was involved. These are Botsworth fixture-app simulator captures (1206 × 2622) with synthetic data only, inspected by the image-capable verification worker; they verify the approved local-JSON consumer graph plus this published SDK, not a normally published consumer dependency graph.
+
+| ### Temperature vertical row (0.70) | ### Long Seed fully readable | ### END stop sequence |
+| --- | --- | --- |
+| ![Temperature switch/title on its own row with a full-width slider and 0.70 readout.](images/ios-temperature-enabled.png) | ![A 19-digit Seed value fully visible with a separate Random button.](images/ios-seed-long-value.png) | ![Stop sequence field containing END with Add/remove affordances.](images/ios-stop-sequence-end.png) |
+
+| ### END persisted after reopen | ### Reset to Automatic | ### Tools/Display after reopen |
+| --- | --- | --- |
+| ![END remains configured after navigating away and reopening settings.](images/ios-stop-persisted-reopen.png) | ![Generation overrides all return to Automatic with no sequence row.](images/ios-reset-automatic.png) | ![Tools master switch on with Display switches persisted after reopen.](images/ios-tools-display-persisted.png) |
+
+The previously reported Temperature-switch/label overlap and long-Seed truncation are fixed in these states. Enabled penalty-slider values, other devices/viewports/themes were not exercised. Backend macOS matching-pin verification passed 66 tests on this exact published graph; the current Backend Linux run remains a separate consumer-side gate.
+
 ## Scope limits
 
-The first three captures are historical settings evidence; the separate four-image table verifies the current Mac Stop editor. Neither establishes current canonical iOS/all-six-consumer verification, General settings, live provider/tool execution, or a dynamic privacy audit. Ordinary App Release verification is tracked separately from Debug UI success. This document does not declare PR73 or its consumer merge-ready; published artifact links belong in the PR description/comments.
+The first three captures are historical settings evidence; the separate four-image table verifies the current Mac Stop editor at `1be7de7`, and the iOS tables verify the `b079258` layout through the consumer fixture app. Neither establishes General settings, live provider/tool execution, or a dynamic privacy audit. Ordinary App Release verification is tracked separately from Debug UI success. This document does not declare PR73 or its consumer merge-ready; published artifact links belong in the PR description/comments.
 
 ## Image integrity (SHA-256)
 
@@ -69,3 +83,11 @@ All copies are byte-identical to the approved sources; all dimensions are 1800 �
 | `images/stop-retyped.png` | `41e389a7bd9c49d0c1052997915ad538f2c97f5b39cb84e0f37dbca2550e4bfe` |
 | `images/stop-reopened.png` | `3b5a95ca10a77301cbbc70916de098ff2c7acad8c9c9fcf4ed8b9419a2d337b8` |
 | `images/stop-reset-automatic.png` | `62d32d873de64b09e29c968d7795761deaee7a3fbd1bcb9bb0e58dcdf37416d7` |
+| `images/ios-temperature-enabled.png` | `20555caf388b77796ce5fbbb280f1f8f1d0016f749d6bc6b8d86a04d03cb55f9` |
+| `images/ios-seed-long-value.png` | `12cd406d269925cb318a1d067f6613e2d418394f51e35b2d12b8f03349c72b77` |
+| `images/ios-stop-sequence-end.png` | `2c50e002df1e06e1ce5b97ae69b4a1eb956c319210d159314c0b70772d3e36d5` |
+| `images/ios-stop-persisted-reopen.png` | `2c50e002df1e06e1ce5b97ae69b4a1eb956c319210d159314c0b70772d3e36d5` |
+| `images/ios-reset-automatic.png` | `c39cad3ffad042fd25e4518bce80942c95de717b698cc3f45c3ed82007d059b1` |
+| `images/ios-tools-display-persisted.png` | `b61d794e0609ffba954621350dc6b6632db402ee5c91e95e5a3ea95e9b03aa7f` |
+
+The iOS captures are byte-identical to the verified xcresult attachments (state-named manifest cross-checked); all dimensions are 1206 × 2622.
