@@ -71,7 +71,7 @@ public final class ContentCardRegistry: @unchecked Sendable {
         /// Converts raw agent result JSON → ContentCardsContent (for messaging / persistence).
         let parseResult: (String) -> ContentCardsContent?
         /// Converts a ContentCardsContent → type-erased SwiftUI view (for rendering).
-        let buildView: @MainActor @Sendable (ContentCardsContent) -> AnyView
+        let buildView: @MainActor @Sendable (ContentCardsContent, Bool) -> AnyView
     }
 
     private struct Storage {
@@ -116,7 +116,7 @@ public final class ContentCardRegistry: @unchecked Sendable {
                     cardCount: items.count
                 )
             },
-            buildView: { content in
+            buildView: { content, showsSummary in
                 guard let items = try? content.decodeCards(as: Item.self) else {
                     Self.logDecodeFailure(type: Item.self, cardType: cardType)
                     return AnyView(
@@ -127,6 +127,9 @@ public final class ContentCardRegistry: @unchecked Sendable {
                 }
                 return AnyView(
                     VStack(alignment: .leading, spacing: 12) {
+                        if showsSummary, let summary = Self.nonemptySummary(content.message) {
+                            Text(summary)
+                        }
                         render(items)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -138,6 +141,11 @@ public final class ContentCardRegistry: @unchecked Sendable {
             $0.byAgentKey[AnyHashable(agent)] = entry
             $0.byCardType[cardType] = entry
         }
+    }
+
+    private static func nonemptySummary(_ summary: String?) -> String? {
+        guard let summary, !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return summary
     }
 
     /// Non-fatal log for stale/corrupt persisted display payloads.
@@ -210,12 +218,20 @@ public final class ContentCardRegistry: @unchecked Sendable {
                 else { return nil }
                 return ContentCardsContent(cardType: cardType, message: message, cardsJSON: cardsJSON, cardCount: items.count)
             },
-            buildView: { content in
+            buildView: { content, showsSummary in
                 guard let items = try? content.decodeCards(as: Item.self) else {
                     Self.logDecodeFailure(type: Item.self, cardType: cardType)
                     return AnyView(Text("Could not display \(content.message ?? cardType + " card")").font(.subheadline).foregroundStyle(.secondary))
                 }
-                return AnyView(VStack(alignment: .leading, spacing: 12) { render(items) }.frame(maxWidth: .infinity, alignment: .leading))
+                return AnyView(
+                    VStack(alignment: .leading, spacing: 12) {
+                        if showsSummary, let summary = Self.nonemptySummary(content.message) {
+                            Text(summary)
+                        }
+                        render(items)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                )
             }
         )
         storage.withLock { $0.byToolName[AnyHashable(tool)] = entry; $0.byCardType[cardType] = entry }
@@ -254,25 +270,27 @@ public final class ContentCardRegistry: @unchecked Sendable {
 
     // MARK: - DisplayContent view path
 
-    /// Build a SwiftUI view for the given `DisplayContent`.
+    /// Build an attached result view, including its nonempty summary above the
+    /// decoded items. Decode failures and unknown types retain a single fallback.
     @MainActor @ViewBuilder
     public func view(for displayContent: ChatToolCall.DisplayContent) -> some View {
         let entry: Entry? = storage.withLock { $0.byCardType[displayContent.type] }
         if let entry {
             let content = ContentCardsContent(cardType: displayContent.type, message: displayContent.summary, cardsJSON: displayContent.json, cardCount: displayContent.itemCount)
-            entry.buildView(content)
+            entry.buildView(content, true)
         } else {
-            Text(displayContent.summary ?? "Unknown card type: \(displayContent.type)").font(.subheadline).foregroundStyle(.secondary)
+            Text(Self.nonemptySummary(displayContent.summary) ?? "Unknown card type: \(displayContent.type)").font(.subheadline).foregroundStyle(.secondary)
         }
     }
 
     // MARK: - View path
 
-    /// Build a SwiftUI view for the given content.
+    /// Build legacy standalone cards. Their summary is already presented by
+    /// `Message.text`, so do not repeat it in the registered item renderer.
     @MainActor @ViewBuilder
     public func view(for content: ContentCardsContent) -> some View {
         let entry: Entry? = storage.withLock { $0.byCardType[content.cardType] }
-        if let entry { entry.buildView(content) }
+        if let entry { entry.buildView(content, false) }
         else { Text(content.message ?? "Unknown card type: \(content.cardType)").font(.subheadline).foregroundStyle(.secondary) }
     }
 
