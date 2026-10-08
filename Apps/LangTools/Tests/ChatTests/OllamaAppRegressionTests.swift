@@ -126,6 +126,97 @@ final class ProviderAccessRefreshRegressionTests: XCTestCase {
     }
 }
 
+@MainActor
+final class OllamaSettingsErrorRegressionTests: XCTestCase {
+    func testLoadReportsTrustChangedForRecordedPinRejection() async throws {
+        try await assertOperationError(pull: false, rejectedTrust: true)
+    }
+
+    func testPullReportsTrustChangedForRecordedPinRejection() async throws {
+        try await assertOperationError(pull: true, rejectedTrust: true)
+    }
+
+    func testLoadPreservesActualSessionCancellation() async throws {
+        try await assertOperationError(pull: false, rejectedTrust: false)
+    }
+
+    func testPullPreservesActualSessionCancellation() async throws {
+        try await assertOperationError(pull: true, rejectedTrust: false)
+    }
+
+    private func assertOperationError(pull: Bool, rejectedTrust: Bool) async throws {
+        let suite = "OllamaSettingsErrorRegressionTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let configuration = OllamaEndpointConfiguration(userDefaults: defaults, credentialStore: RegressionHelperStore())
+        let credential = makeHelperConnection().credential
+        let delegate = MobileHelperSessionDelegate(fingerprint: credential.fingerprint, origin: credential.endpoint)
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [SettingsRegressionURLProtocol.self]
+        let session = URLSession(configuration: sessionConfiguration, delegate: delegate, delegateQueue: nil)
+        defer {
+            SettingsRegressionURLProtocol.onStart = nil
+            session.invalidateAndCancel()
+        }
+        try configuration.selectHelper(MobileHelperConnection(credential: credential, session: session))
+        if rejectedTrust {
+            // Simulate the delegate's recorded wrong-pin rejection without TLS fixtures.
+            // Foundation can report that rejected challenge as URLError.cancelled.
+            let space = URLProtectionSpace(host: credential.endpoint.host!, port: credential.endpoint.port!,
+                protocol: "https", realm: nil, authenticationMethod: NSURLAuthenticationMethodServerTrust)
+            let challenge = URLAuthenticationChallenge(protectionSpace: space, proposedCredential: nil,
+                previousFailureCount: 0, failureResponse: nil, error: nil, sender: RegressionChallengeSender())
+            delegate.urlSession(session, didReceive: challenge) { disposition, suppliedCredential in
+                XCTAssertEqual(disposition, .cancelAuthenticationChallenge)
+                XCTAssertNil(suppliedCredential)
+            }
+            XCTAssertTrue(delegate.hasRejectedTrust)
+            SettingsRegressionURLProtocol.onStart = { urlProtocol in
+                urlProtocol.client?.urlProtocol(urlProtocol, didFailWithError: URLError(.cancelled))
+            }
+        } else {
+            // Cancel the real URLSession request after it starts, not a fabricated error.
+            SettingsRegressionURLProtocol.onStart = { _ in
+                session.getAllTasks { tasks in tasks.forEach { $0.cancel() } }
+            }
+        }
+        let manager = ProviderAccessManager(keychainService: PausingRegressionKeychainService(),
+            sessionStore: AuthSessionStore(keychain: Keychain(service: suite)), ollamaEndpointConfiguration: configuration)
+        let service = OllamaService(endpointConfiguration: configuration, session: .shared, providerAccessManager: manager)
+        let viewModel = OllamaSettingsView.ViewModel(ollamaService: service, endpointConfiguration: configuration)
+        if pull {
+            viewModel.newModelName = "test-model"
+            viewModel.pullModel()
+        } else {
+            viewModel.toggleModel(try XCTUnwrap(Ollama.Model(rawValue: "test-model")))
+        }
+        let deadline = Date().addingTimeInterval(5)
+        while pull ? viewModel.isPulling : viewModel.loadingModelName != nil {
+            if Date() >= deadline { throw URLError(.timedOut) }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let expected: String
+        if rejectedTrust {
+            expected = MobileHelperError.trustChanged.localizedDescription
+        } else {
+            do {
+                _ = try await session.data(from: credential.endpoint)
+                XCTFail("The cancelled URLSession task must report cancellation")
+                return
+            } catch {
+                let cancellation = try XCTUnwrap(error as? URLError)
+                XCTAssertEqual(cancellation.code, .cancelled)
+                XCTAssertNil(configuration.snapshot().actionableError(error) as? MobileHelperError)
+                // Foundation supplies localized userInfo for actual cancellation;
+                // a freshly constructed URLError(-999) has a different description.
+                expected = cancellation.localizedDescription
+            }
+        }
+        XCTAssertEqual(pull ? viewModel.pullError : viewModel.connectionError, expected)
+        XCTAssertEqual(delegate.hasRejectedTrust, rejectedTrust)
+    }
+}
+
 /// Only the manager's lock-protected refresh entry point crosses the test queue.
 private struct RegressionBackgroundRefresh: @unchecked Sendable {
     let manager: ProviderAccessManager
@@ -168,4 +259,29 @@ private func makeHelperConnection() -> MobileHelperConnection {
     MobileHelperConnection(credential: MobileHelperCredential(endpoint: URL(string: "https://192.168.1.10:8086")!,
         helperID: UUID().uuidString, fingerprint: String(repeating: "a", count: 64), name: "Test Mac",
         deviceID: UUID().uuidString, token: String(repeating: "b", count: 64), capabilities: ["ollama"]))
+}
+
+private final class SettingsRegressionURLProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var storedOnStart: ((URLProtocol) -> Void)?
+    static var onStart: ((URLProtocol) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return storedOnStart }
+        set { lock.lock(); defer { lock.unlock() }; storedOnStart = newValue }
+    }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        guard let onStart = Self.onStart else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        onStart(self)
+    }
+    override func stopLoading() {}
+}
+
+private final class RegressionChallengeSender: NSObject, URLAuthenticationChallengeSender {
+    func use(_ credential: URLCredential, for challenge: URLAuthenticationChallenge) {}
+    func continueWithoutCredential(for challenge: URLAuthenticationChallenge) {}
+    func cancel(_ challenge: URLAuthenticationChallenge) {}
 }

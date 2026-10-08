@@ -728,7 +728,7 @@ extension OllamaSettingsView {
                     guard generation == loadGeneration,
                           endpointConfiguration.isCurrent(snapshot) else { return }
                     loadingModelName = nil
-                    connectionError = snapshot.isHelper ? MobileHelperError.actionable(error).localizedDescription : error.localizedDescription
+                    connectionError = snapshot.actionableError(error).localizedDescription
                 }
             }
         }
@@ -759,7 +759,7 @@ extension OllamaSettingsView {
                     guard generation == pullGeneration,
                           endpointConfiguration.isCurrent(snapshot) else { return }
                     isPulling = false
-                    pullError = snapshot.isHelper ? MobileHelperError.actionable(error).localizedDescription : error.localizedDescription
+                    pullError = snapshot.actionableError(error).localizedDescription
                 }
             }
         }
