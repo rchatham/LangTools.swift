@@ -880,7 +880,7 @@ public struct ChatSettingsView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Window %")
+                        Text("Window % — stored only")
                             .font(.caption)
                         TextField("100", value: Binding(
                             get: { viewModel.conversationSettings.contextWindowPercent },
@@ -890,7 +890,7 @@ public struct ChatSettingsView: View {
                         .frame(width: 60)
                     }
 
-                    Text("Leave empty for no limit.")
+                    Text("Only Message Limit is applied to requests; Window % is stored for future wiring.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -1760,9 +1760,7 @@ extension ChatSettingsView {
                     .padding(.bottom, 4)
 
                     Toggle("Auto-Retry Failed Tools", isOn: $viewModel.toolSettings.autoRetryFailedTools)
-                        #if os(macOS)
-                        .toggleStyle(.checkbox)
-                        #endif
+                        .checkboxToggleStyle()
                     Text("Automatically retry a failed tool call once before reporting the error. (UI only — execution wiring coming soon)")
                         .font(.caption)
                         .foregroundColor(.secondary)
