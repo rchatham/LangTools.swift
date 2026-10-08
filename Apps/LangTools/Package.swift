@@ -50,6 +50,7 @@ let package = Package(
                 .product(name: "XAI", package: "langtools.swift"),
                 .product(name: "Gemini", package: "langtools.swift"),
                 .product(name: "Ollama", package: "langtools.swift"),
+                .product(name: "HelperLink", package: "langtools.swift"),
                 .product(name: "ChatUI", package: "ChatUI"),
                 "ToolKit",
                 "KeychainAccess",
@@ -101,9 +102,11 @@ let package = Package(
                 .product(name: "OpenAI", package: "langtools.swift"),
                 .product(name: "Anthropic", package: "langtools.swift"),
                 .product(name: "Ollama", package: "langtools.swift"),
+                .product(name: "HelperLink", package: "langtools.swift"),
                 "KeychainAccess",
             ],
-            path: "Tests/ChatTests"),
+            path: "Tests/ChatTests",
+            resources: [.copy("Resources/HelperCertificates")]),
         .testTarget(
             name: "ExampleAgentsTests",
             dependencies: [

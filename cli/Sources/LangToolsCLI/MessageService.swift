@@ -264,6 +264,8 @@ class MessageService: ObservableObject {
             print("The model emitted malformed tool arguments.")
         case .missingRequiredFunctionArguments:
             print("The model omitted required tool arguments.")
+        case .toolIterationLimitReached:
+            print("Tool iteration limit reached.")
         }
     }
 

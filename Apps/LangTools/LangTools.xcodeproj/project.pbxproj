@@ -345,9 +345,9 @@
 				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/langtools.cstemp",
 				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/bun",
 				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/bun.cstemp",
-				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/CodexCLI/bin/codex",
-				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/CodexCLI/dist/cli.js",
-				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/CodexCLI/package.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/CodexCLI/bin/codex",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/CodexCLI/dist/cli.js",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/CodexCLI/package.json",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -540,6 +540,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = LangTools;
 				INFOPLIST_KEY_LSApplicationCategoryType = "";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Uses access to read and schedule events on the calendar.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "LangTools connects to the Ollama server you configure on your local network.";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "To let the AI give you directions and have more context about you for more relevant results.";
 				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "To let the AI give you directions and have more context about you for more relevant results.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "For voice transcription.";
@@ -597,6 +598,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = LangTools;
 				INFOPLIST_KEY_LSApplicationCategoryType = "";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Uses access to read and schedule events on the calendar.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "LangTools connects to the Ollama server you configure on your local network.";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "To let the AI give you directions and have more context about you for more relevant results.";
 				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "To let the AI give you directions and have more context about you for more relevant results.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "For voice transcription.";

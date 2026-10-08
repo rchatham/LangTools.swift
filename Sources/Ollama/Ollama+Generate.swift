@@ -64,6 +64,11 @@ extension Ollama {
         public let eval_duration: Int64?
         
         public var delta: GenerateDelta? { nil }
+
+        /// Ollama generate streams must end with a decoded `done: true` response.
+        public func validateStreamCompletion() throws {
+            guard done else { throw LangToolsError.incompleteStream }
+        }
         
         public static var empty: GenerateResponse {
             return GenerateResponse(

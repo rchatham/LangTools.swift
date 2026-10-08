@@ -249,8 +249,15 @@ public struct ChatGenerationSettingsView: View {
 
     private var maximumOutputRow: some View {
         HStack(spacing: 8) {
-            Text("Max Tokens")
-                .frame(width: labelWidth, alignment: .leading)
+            if capabilities.maximumOutputField != nil {
+                Toggle(isOn: maximumOutputToggle) {
+                    Text("Max Tokens").frame(width: labelWidth - 20, alignment: .leading)
+                }
+                .checkboxToggleStyle()
+            } else {
+                Text("Max Tokens")
+                    .frame(width: labelWidth, alignment: .leading)
+            }
 
             if isMaximumOutputActive, let maxOutputTokens {
                 Picker(selection: Binding(
@@ -285,6 +292,22 @@ public struct ChatGenerationSettingsView: View {
         }
     }
 
+    /// Toggling on enables an override (falling back to a safe default when the
+    /// model has no known token bound); toggling off clears it.
+    private var maximumOutputToggle: Binding<Bool> {
+        Binding(
+            get: { maxOutputTokens != nil },
+            set: { enabled in
+                maxOutputTokens = enabled
+                    ? Self.maximumOutputValueWhenEnabled(
+                        savedValue: maxOutputTokens,
+                        maximumOutputTokenBound: capabilities.maximumOutputTokenBound
+                    ) ?? Self.defaultMaximumOutputTokens(maximumOutputTokenBound: capabilities.maximumOutputTokenBound)
+                    : nil
+            }
+        )
+    }
+
     private var stopRow: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
@@ -300,9 +323,8 @@ public struct ChatGenerationSettingsView: View {
                     Text("Stop Sequences").frame(width: labelWidth - 20, alignment: .leading)
                 }
                 .accessibilityIdentifier("generation.stop.toggle")
-#if os(macOS)
-                .toggleStyle(.checkbox)
-#else
+                .checkboxToggleStyle()
+#if os(iOS)
                 .toggleStyle(.switch)
 #endif
 
@@ -404,11 +426,7 @@ public struct ChatGenerationSettingsView: View {
                 Text(label).frame(width: labelWidth - 20, alignment: .leading)
             }
             .accessibilityIdentifier("generation.\(label.lowercased().replacingOccurrences(of: " ", with: ".")).toggle")
-#if os(macOS)
-            .toggleStyle(.checkbox)
-#else
-            .toggleStyle(.switch)
-#endif
+            .checkboxToggleStyle()
 
             if isOn.wrappedValue {
                 Slider(value: value, in: range, step: step)
@@ -463,11 +481,7 @@ public struct ChatGenerationSettingsView: View {
                 Text(label).frame(width: labelWidth - 20, alignment: .leading)
             }
             .accessibilityIdentifier("generation.\(label.lowercased().replacingOccurrences(of: " ", with: ".")).toggle")
-#if os(macOS)
-            .toggleStyle(.checkbox)
-#else
-            .toggleStyle(.switch)
-#endif
+            .checkboxToggleStyle()
 
             if isOn.wrappedValue {
                 Stepper(value: value, in: range) {
@@ -526,11 +540,7 @@ public struct ChatGenerationSettingsView: View {
                 Text("Seed").frame(width: labelWidth - 20, alignment: .leading)
             }
             .accessibilityIdentifier("generation.seed.toggle")
-#if os(macOS)
-            .toggleStyle(.checkbox)
-#else
-            .toggleStyle(.switch)
-#endif
+            .checkboxToggleStyle()
 
             if isOn.wrappedValue {
                 TextField("", value: value, format: .number)
@@ -586,6 +596,7 @@ public struct ChatGenerationSettingsView: View {
     }
 
     private var isMaximumOutputActive: Bool {
+        guard capabilities.maximumOutputField != nil else { return false }
         guard case .value = Self.maximumOutputSelection(
             savedValue: maxOutputTokens, maximumOutputTokenBound: capabilities.maximumOutputTokenBound
         ) else { return false }
@@ -608,7 +619,9 @@ public struct ChatGenerationSettingsView: View {
         maximumOutputTokenBound: Int?
     ) -> MaximumOutputSelection {
         guard let savedValue else { return .automatic }
-        guard let bound = maximumOutputTokenBound, savedValue <= bound else {
+        // A missing bound is unconstrained, not inactive: the saved value still
+        // applies. Only a known bound can rule a value out.
+        if let bound = maximumOutputTokenBound, savedValue > bound {
             return .inactive(savedValue: savedValue)
         }
         return .value(savedValue)
@@ -632,13 +645,17 @@ public struct ChatGenerationSettingsView: View {
     }
 
     static func tokenChoices(savedValue: Int?, maximumOutputTokenBound: Int?) -> [Int] {
-        guard let bound = maximumOutputTokenBound else { return [] }
-        var choices = ChatGenerationSettings.tokenPresets.filter { $0 <= bound }
-        if !choices.contains(bound) { choices.append(bound) }
-        if let savedValue, savedValue <= bound, !choices.contains(savedValue) {
+        var choices = ChatGenerationSettings.tokenPresets
+        if let bound = maximumOutputTokenBound {
+            choices = choices.filter { $0 <= bound }
+            if !choices.contains(bound) { choices.append(bound) }
+        }
+        if let savedValue,
+           maximumOutputTokenBound.map({ savedValue <= $0 }) ?? true,
+           !choices.contains(savedValue) {
             choices.append(savedValue)
         }
-        if choices.isEmpty { choices.append(bound) }
+        if choices.isEmpty { choices.append(4_096) }
         return choices.sorted()
     }
 

@@ -882,7 +882,7 @@ public struct ChatSettingsView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Window %")
+                        Text("Window % — stored only")
                             .font(.caption)
                         TextField("100", value: Binding(
                             get: { viewModel.conversationSettings.contextWindowPercent },
@@ -892,7 +892,7 @@ public struct ChatSettingsView: View {
                         .frame(width: 60)
                     }
 
-                    Text("Leave empty for no limit.")
+                    Text("Only Message Limit is applied to requests; Window % is stored for future wiring.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -1124,7 +1124,7 @@ private extension View {
     @ViewBuilder
     func directAccessPrompts(enabled: Bool) -> some View {
         if enabled && !ChatUITestEnvironment.isFixtureActive {
-            manageAccessPrompts()
+            manageAccessPrompts(priority: 10)
         } else {
             self
         }
@@ -1271,10 +1271,10 @@ extension ChatSettingsView {
         @Published var conversationSettings = ChatConversationSettings.default
         @Published var systemMessage = UserDefaults.systemMessage // legacy source compat
         @Published var codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
-        @Published var codexHelperToken = UserDefaults.codexHelperToken
+        @Published var codexHelperToken: String
         /// Raw helper token as last synced from a successful pairing.
         /// Compared against the form token to avoid overwriting in-progress edits.
-        var lastSyncedHelperTokenSnapshot: String = UserDefaults.codexHelperToken
+        var lastSyncedHelperTokenSnapshot: String
         /// Last URL loaded into the form; pairing must not overwrite an edit.
         var lastSyncedHelperURLSnapshot: String = UserDefaults.codexHelperBaseURL.absoluteString
         @Published var codexHelperTokenSaveError: String?
@@ -1285,6 +1285,7 @@ extension ChatSettingsView {
         let clearMessages: () -> Void
         private let generationSettingsStore: ChatGenerationSettingsStoring
         private let conversationSettingsStore: ChatConversationSettingsStoring
+        private let codexHelperTokenStore: CodexHelperTokenStore
 
         /// Callback to trigger WhisperKit preload (set by app)
         public var onPreloadWhisperKit: (() -> Void)?
@@ -1302,15 +1303,20 @@ extension ChatSettingsView {
         public init(
             clearMessages: @escaping () -> Void,
             modelSource: ChatModelSource? = nil,
-            accessManager: ProviderAccessManager = .shared,
             generationSettingsStore: ChatGenerationSettingsStoring = ChatGenerationSettingsStore(),
-            conversationSettingsStore: ChatConversationSettingsStoring = ChatConversationSettingsStore()
+            conversationSettingsStore: ChatConversationSettingsStoring = ChatConversationSettingsStore(),
+            accessManager: ProviderAccessManager = .shared,
+            codexHelperTokenStore: CodexHelperTokenStore = CodexHelperTokenStore()
         ) {
             self.clearMessages = clearMessages
             self.modelSource = modelSource
-            self.accessManager = accessManager
             self.generationSettingsStore = generationSettingsStore
             self.conversationSettingsStore = conversationSettingsStore
+            self.accessManager = accessManager
+            self.codexHelperTokenStore = codexHelperTokenStore
+            let helperToken = codexHelperTokenStore.token()
+            self.codexHelperToken = helperToken
+            self.lastSyncedHelperTokenSnapshot = helperToken
             modelSource?.$state.sink { [weak self] state in
                 guard let self else { return }
                 if case .ready(let models) = state, !models.contains(self.model), let first = models.first {
@@ -1332,7 +1338,9 @@ extension ChatSettingsView {
 
         public var availableModels: [Model] {
             if let modelSource, modelSource.isProxy { return modelSource.models }
-            return accessManager.availableChatModels()
+            let available = accessManager.availableChatModels()
+            guard model.apiService == .ollama, !available.contains(model) else { return available }
+            return [model] + available
         }
 
         func loadSettings() {
@@ -1347,7 +1355,7 @@ extension ChatSettingsView {
             conversationSettings = conversationSettingsStore.load()
             systemMessage = conversationSettings.systemPrompt
             codexHelperBaseURLString = UserDefaults.codexHelperBaseURL.absoluteString
-            codexHelperToken = UserDefaults.codexHelperToken
+            codexHelperToken = codexHelperTokenStore.token()
             lastSyncedHelperURLSnapshot = codexHelperBaseURLString
             lastSyncedHelperTokenSnapshot = codexHelperToken
         }
@@ -1392,7 +1400,7 @@ extension ChatSettingsView {
                 lastSyncedHelperURLSnapshot = codexHelperBaseURLString
             }
             do {
-                try CodexHelperTokenStore().setToken(codexHelperToken.trimmingCharacters(in: .whitespacesAndNewlines))
+                try codexHelperTokenStore.setToken(codexHelperToken.trimmingCharacters(in: .whitespacesAndNewlines))
                 codexHelperTokenSaveError = nil
             } catch {
                 // Surface Keychain persistence failures instead of silently
@@ -1601,7 +1609,7 @@ extension ChatSettingsView {
         /// already in progress in the Settings form.
         func applyHydratedHelperConfigurationIfTokenUnedited(port: Int) {
             guard codexHelperToken == lastSyncedHelperTokenSnapshot else { return }
-            let persistedToken = UserDefaults.codexHelperToken
+            let persistedToken = codexHelperTokenStore.token()
             codexHelperToken = persistedToken
             lastSyncedHelperTokenSnapshot = persistedToken
             if codexHelperBaseURLString == lastSyncedHelperURLSnapshot {
@@ -1619,7 +1627,12 @@ extension ChatSettingsView {
         }
 
         func modelPickerTitle(for model: Model) -> String {
-            model.rawValue
+            if isProxyContext { return model.rawValue }
+            if model.apiService == .ollama,
+               !accessManager.availableChatModels().contains(model) {
+                return "\(model.rawValue) — Unavailable on current Ollama server"
+            }
+            return model.rawValue
         }
 
         /// Trigger WhisperKit preload
@@ -1756,11 +1769,7 @@ extension ChatSettingsView {
 
                     Toggle("Auto-Retry Failed Tools", isOn: $viewModel.toolSettings.autoRetryFailedTools)
                         .accessibilityIdentifier("settings.tools.autoRetryFailedTools.toggle")
-#if os(macOS)
-                        .toggleStyle(.checkbox)
-#else
-                        .toggleStyle(.switch)
-#endif
+                        .checkboxToggleStyle()
                     Text("Automatically retry a failed tool call once before reporting the error. (UI only — execution wiring coming soon)")
                         .font(.caption)
                         .foregroundColor(.secondary)

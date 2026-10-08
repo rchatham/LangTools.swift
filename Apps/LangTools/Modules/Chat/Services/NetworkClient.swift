@@ -69,9 +69,12 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     private let openAIAccountChatBridge: OpenAIAccountChatBridging
     private let generationSettingsProvider: @Sendable () -> ChatGenerationSettings
     public let providerAccessManager: ProviderAccessManager
+    private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
+    private let ollamaSession: URLSession
 
     private var userDefaults: UserDefaults { .standard }
     private var langToolchain = LangToolchain()
+    private let langToolchainLock = NSLock()
     private let conversationLock = NSLock()
     private var codexConversationIDs = Set<UUID>()
 
@@ -81,6 +84,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         accountProxyTransport: AccountProxyTransportProtocol = AccountProxyTransport(),
         openAIAccountChatBridge: OpenAIAccountChatBridging = CLIAccountSessionBridge(),
         providerAccessManager: ProviderAccessManager = .shared,
+        ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared,
+        ollamaSession: URLSession = .shared,
         generationSettingsProvider: @escaping @Sendable () -> ChatGenerationSettings = {
             ChatGenerationSettingsStore().load()
         }
@@ -90,15 +95,11 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         self.accountProxyTransport = accountProxyTransport
         self.openAIAccountChatBridge = openAIAccountChatBridge
         self.providerAccessManager = providerAccessManager
+        self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
+        self.ollamaSession = ollamaSession
         self.generationSettingsProvider = generationSettingsProvider
         super.init()
         APIService.llms.forEach { llm in keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) } }
-
-        // For Ollama, we don't need an API key
-        langToolchain.register(Ollama())
-
-        // Initialize Ollama service to start populating available models
-        _ = OllamaService.shared
         providerAccessManager.refresh()
     }
 
@@ -120,11 +121,13 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             )
         }
 
-        let response = try await langToolchain.perform(request: directRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler))
-        guard let text = response.content?.text else {
-            throw NetworkError.unexpectedResponseFormat
-        }
-        return Message(text: text, role: .assistant)
+        let endpoint = model.apiService == .ollama ? ollamaEndpointConfiguration.snapshot() : nil
+        let toolchain = try toolchain(for: model, endpoint: endpoint)
+        do {
+            let response = try await toolchain.perform(request: directRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler))
+            guard let text = response.content?.text else { throw NetworkError.unexpectedResponseFormat }
+            return Message(text: text, role: .assistant)
+        } catch { throw endpoint?.actionableError(error) ?? error }
     }
 
     public func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> AsyncThrowingStream<String, Error> {
@@ -159,7 +162,23 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             )
         }
 
-        return try langToolchain.stream(request: directRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)).compactMapAsyncThrowingStream { $0.content?.text }
+        let endpoint = model.apiService == .ollama ? ollamaEndpointConfiguration.snapshot() : nil
+        let toolchain = try toolchain(for: model, endpoint: endpoint)
+        let responses = try toolchain.stream(request: directRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler))
+        guard let endpoint, endpoint.isHelper else {
+            return responses.compactMapAsyncThrowingStream { $0.content?.text }
+        }
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await response in responses {
+                        if let text = response.content?.text { continuation.yield(text) }
+                    }
+                    continuation.finish()
+                } catch { continuation.finish(throwing: endpoint.actionableError(error)) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 
     public func performChatCompletionRequest(
@@ -241,7 +260,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
 
     public func playAudio(for text: String) async throws {
         let audioReq = OpenAI.AudioSpeechRequest(model: .tts_1_hd, input: text, voice: .alloy, responseFormat: .mp3, speed: 1.2)
-        let audioResponse: Data = try await langToolchain.perform(request: audioReq)
+        let toolchain = toolchainSnapshot()
+        let audioResponse: Data = try await toolchain.perform(request: audioReq)
         do { try AudioPlayer.shared.play(data: audioResponse) }
         catch { print(error.localizedDescription) }
     }
@@ -389,15 +409,34 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .gemini(let model): return AgentContext(langTool: try requiredLangTool(Gemini.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
         case .openAI(let model), .codex(let model): return AgentContext(langTool: try requiredLangTool(OpenAI.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
         case .xAI(let model): return AgentContext(langTool: try requiredLangTool(XAI.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
-        case .ollama(let model): return AgentContext(langTool: try requiredLangTool(Ollama.self), model: model, messages: replayMessages.toOllamaMessages(), eventHandler: eventHandler)
+        case .ollama(let model):
+            let snapshot = ollamaEndpointConfiguration.snapshot()
+            return AgentContext(langTool: try snapshot.provider(directSession: ollamaSession), model: model, messages: replayMessages.toOllamaMessages(), eventHandler: eventHandler)
         }
     }
 
     private func requiredLangTool<T: LangTools>(_ type: T.Type) throws -> T {
+        langToolchainLock.lock()
+        defer { langToolchainLock.unlock() }
         guard let tool = langToolchain.langTool(type) else {
             throw NetworkError.langToolNotRegistered(String(describing: type))
         }
         return tool
+    }
+
+    private func toolchain(for model: Model, endpoint: OllamaEndpointConfiguration.Snapshot? = nil) throws -> LangToolchain {
+        var snapshot = toolchainSnapshot()
+        if model.apiService == .ollama {
+            let endpoint = endpoint ?? ollamaEndpointConfiguration.snapshot()
+            snapshot.register(try endpoint.provider(directSession: ollamaSession))
+        }
+        return snapshot
+    }
+
+    private func toolchainSnapshot() -> LangToolchain {
+        langToolchainLock.lock()
+        defer { langToolchainLock.unlock() }
+        return langToolchain
     }
 
     public func updateApiKey(_ apiKey: String, for llm: APIService) throws {
@@ -469,7 +508,9 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
 
     func registerLangTool(_ apiKey: String, for llm: APIService) {
         if let langTool = langTool(for: llm, with: apiKey) {
+            langToolchainLock.lock()
             langToolchain.register(langTool)
+            langToolchainLock.unlock()
         }
     }
 
@@ -480,7 +521,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .openAI: return if let baseURL { OpenAI(baseURL: baseURL, apiKey: apiKey) } else { OpenAI(apiKey: apiKey) }
         case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
-        case .ollama: return Ollama()
+        case .ollama: return nil
         default: return nil
         }
     }
