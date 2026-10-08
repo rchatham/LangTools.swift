@@ -10,13 +10,34 @@ import Foundation
 /// redirects keeps the validated destination authoritative for the whole
 /// request lifecycle.
 public enum LoopbackURLSession {
-    public static let shared: URLSession = {
+    public static var shared: URLSession {
+        #if DEBUG
+        if let fixtureSession { return fixtureSession }
+        #endif
+        return defaultSession
+    }
+
+    #if DEBUG
+    private static var fixtureSession: URLSession?
+
+    /// Install before creating clients in an explicitly isolated test process.
+    /// The fixture can replace transport protocols, never redirect policy.
+    public static func installFixtureProtocols(_ protocols: [AnyClass]?) {
+        fixtureSession?.invalidateAndCancel()
+        fixtureSession = protocols.map { makeSession(protocols: $0) }
+    }
+    #endif
+
+    private static let defaultSession = makeSession(protocols: nil)
+
+    private static func makeSession(protocols: [AnyClass]?) -> URLSession {
         let configuration = URLSessionConfiguration.default
         configuration.httpShouldSetCookies = false
         configuration.httpCookieAcceptPolicy = .never
         configuration.timeoutIntervalForRequest = 60
+        if let protocols { configuration.protocolClasses = protocols }
         return URLSession(configuration: configuration, delegate: NoRedirectDelegate(), delegateQueue: nil)
-    }()
+    }
 }
 
 private final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
