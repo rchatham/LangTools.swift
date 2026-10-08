@@ -15,17 +15,32 @@ The helper provides an opt-in, encrypted, Ollama-only LAN transport. Direct Olla
 
 Post-merge checks retain upstream generation settings and authoritative proxy catalogs alongside captured helper credentials and effective agent-model routing. They do not constitute physical-iPhone acceptance or a completely green full application/CLI suite.
 
+## Review-fix verification (current source)
+
+- Local runs of the new CI commands passed: root `swift test --jobs 2` executed 370 tests (5 skipped, no failures); helper relay/lifecycle executed 14 (no skips/failures); focused app transport, routing, generation and proxy-isolation executed 100 (no skips/failures).
+- Five deterministic access-state regressions verify that queued refreshes cannot restore an old server/helper catalog, including endpoint revision changes and same-endpoint refresh ordering. Four load/pull regressions distinguish recorded pin rejection from actual task cancellation.
+- Thirteen real-TLS app tests passed, including production pairing redemption/authenticated health, persistence only after matching identity/capability, wrong-pin zero plaintext HTTP bytes, same/cross-origin redirect rejection, nonstream tags/chat, incremental streaming and incomplete EOF. Pairing maps trust diagnostics before invalidation releases the delegate.
+- Bounded macOS CI jobs now run the separate helper/app packages serially, reject empty test runs and report skips. Local shell checks verified success, nonzero failure propagation and zero-test rejection; remote execution is separate from this local evidence.
+- Independent code/security review found no new code findings in these fixes. This does not clear acceptance blockers.
+- The Mac helper was rebuilt from the merged PR configuration; strict ad-hoc signature and bundle fixture-exclusion checks passed. Its current LAN-off/Keychain-denied UI was rendered and inspected. No active QR, token or private key appears in that screenshot.
+- Clean detached-checkout iOS signed-build and simulator-UI attempts exited 65 at normal JSON macro validation, before tests (zero tests/screenshots). After synchronizing every approved source fix, the signed-build retry remained blocked. Final iOS signature/fixture checks and current iPhone screenshots therefore remain unverified.
+
 ## Known verification blockers
 
 - Physical iPhone Camera scan, Local Network permission, actual redemption, reconnect/relaunch, models/chat/agents, revocation, helper shutdown and interface/IP changes remain unverified.
 - Full app testing encountered an external Ollama E2E timeout and then a legacy real-account Keychain access permission wait. No Keychain ACL bypass was used.
 - Full CLI runs encountered existing Codex test failures/timeouts and a separately reproduced loopback-server restart connection-refused failure. The privileged loopback server was not changed for this feature.
-- The post-merge simulator UI rerun timed out after 600 seconds while compiling SwiftSyntax, before running the smoke test. The screenshots below come from the successful pre-merge UI run; refreshing visual evidence against the merged build remains a verification blocker.
+- An earlier post-merge simulator run timed out compiling SwiftSyntax. Latest clean-config attempts fail promptly because Xcode requires normal approval of `JSONMacroPlugin` at immutable JSON.swift revision `f80d29f5113b5a3ed0a47e6afa908eab07ef024c`. Local approval currently covers the identical-tree 1.0.4 merge commit `498270c44bb80c5cf5b8de8727ceb030f95c0777`; Xcode treats revision fingerprints separately. No trust metadata, dependencies or validation settings were changed. Use Xcode's normal **Trust & Enable** confirmation for the reviewed resolved macro, then rerun build/UI checks. Current iPhone visual evidence remains blocked.
+- The rebuilt helper needs normal login Keychain authorization for its existing mobile identity. Access was denied without entering a password or changing ACLs; LAN stayed off. Current LAN-on/QR evidence requires normal user authorization, not an automated permission bypass.
 - Screenshots do not show a verified physically paired/connected or revoked phone, or the merged proxy-catalog state. Do not treat the feature as merge-ready until acceptance and visual verification are completed.
 
 ## Inspected visual evidence
 
-Actual Mac UI, with LAN opt-in disabled by default; active QR is fully redacted:
+Current rebuilt Mac helper after normal Keychain identity access was denied: LAN remains **off**, QR controls are disabled, and no paired state is claimed. The visible security error is blocker evidence, not successful pairing:
+
+[Current Mac LAN-off/Keychain-denied screenshot](helper-ollama-screenshots/mac-current-keychain-denied.png)
+
+The following Mac QR and iPhone screenshots are explicitly **pre-merge** evidence; do not infer current iOS acceptance from them. Actual Mac UI, with LAN opt-in disabled by default; active QR is fully redacted:
 
 | LAN disabled | QR layout (redacted) |
 |---|---|
