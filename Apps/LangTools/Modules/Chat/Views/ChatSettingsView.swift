@@ -9,6 +9,32 @@ import ToolKit
 
 public struct ChatSettingsView: View {
     @ObservedObject public var viewModel: ViewModel
+    public let supportedSettings: SupportedSettings
+
+    /// Host transport support for the newly added controls. Legacy temperature
+    /// and output limits are intentionally unchanged; this is a presentation policy.
+    public struct SupportedSettings: Equatable, Sendable {
+        public let agentModelOverride: Bool
+        public let advancedGeneration: Bool
+
+        public init(agentModelOverride: Bool = true, advancedGeneration: Bool = true) {
+            self.agentModelOverride = agentModelOverride
+            self.advancedGeneration = advancedGeneration
+        }
+
+        func generationCapabilities(for model: Model) -> ChatGenerationCapabilities {
+            let capabilities = model.generationCapabilities
+            guard !advancedGeneration else { return capabilities }
+            return ChatGenerationCapabilities(
+                maximumOutputField: capabilities.maximumOutputField,
+                maximumOutputTokenBound: capabilities.maximumOutputTokenBound,
+                maximumOutputWarning: capabilities.maximumOutputWarning,
+                supportsTemperature: capabilities.supportsTemperature,
+                contextWindowTokens: capabilities.contextWindowTokens,
+                unsupportedReason: capabilities.unsupportedReason
+            )
+        }
+    }
     @State private var isEditingSystemMessage = false
     @State private var showingOllamaSettings = false
     @Environment(\.colorScheme) private var colorScheme
@@ -36,8 +62,14 @@ public struct ChatSettingsView: View {
         }
     }
 
+    // Retain the original initializer, including its function-reference signature.
     public init(viewModel: ViewModel) {
+        self.init(viewModel: viewModel, supportedSettings: SupportedSettings())
+    }
+
+    public init(viewModel: ViewModel, supportedSettings: SupportedSettings) {
         self.viewModel = viewModel
+        self.supportedSettings = supportedSettings
     }
 
     public var body: some View {
@@ -1002,8 +1034,16 @@ public struct ChatSettingsView: View {
                     get: { viewModel.generationSettings.stop },
                     set: { viewModel.updateStop($0) }
                 ),
-                capabilities: viewModel.model.generationCapabilities,
-                reset: viewModel.resetGenerationSettings
+                capabilities: supportedSettings.generationCapabilities(for: viewModel.model),
+                reset: {
+                    if supportedSettings.advancedGeneration {
+                        viewModel.resetGenerationSettings()
+                    } else {
+                        // Hidden preferences belong to other hosts; don't erase them.
+                        viewModel.updateMaximumOutputTokens(nil)
+                        viewModel.updateTemperature(nil)
+                    }
+                }
             )
             if let error = viewModel.generationSettingsError {
                 Text(error)
@@ -1741,29 +1781,31 @@ extension ChatSettingsView {
                 }
                 .padding(.top, 8)
 
-                Divider()
+                if supportedSettings.agentModelOverride {
+                    Divider()
 
-                // Agent model override
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Agent Model")
-                        .font(.headline)
+                    // Agent model override is available only on supporting hosts.
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Agent Model")
+                            .font(.headline)
 
-                    Text("Override the conversation model for agent execution. Leave as 'Conversation Model' to use the currently selected model.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        Text("Override the conversation model for agent execution. Leave as 'Conversation Model' to use the currently selected model.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
 
-                    Picker("Agent Model Override", selection: Binding(
-                        get: { viewModel.toolSettings.agentModelOverride },
-                        set: { viewModel.toolSettings.agentModelOverride = $0 }
-                    )) {
-                        Text("Conversation Model").tag(nil as Model?)
-                        ForEach(viewModel.availableModels, id: \.self) { model in
-                            Text(model.rawValue).tag(model as Model?)
+                        Picker("Agent Model Override", selection: Binding(
+                            get: { viewModel.toolSettings.agentModelOverride },
+                            set: { viewModel.toolSettings.agentModelOverride = $0 }
+                        )) {
+                            Text("Conversation Model").tag(nil as Model?)
+                            ForEach(viewModel.availableModels, id: \.self) { model in
+                                Text(model.rawValue).tag(model as Model?)
+                            }
                         }
+                        .pickerStyle(.menu)
                     }
-                    .pickerStyle(.menu)
+                    .padding(.top, 8)
                 }
-                .padding(.top, 8)
 
                 // Reset button
                 Button(action: {
