@@ -15,6 +15,7 @@ public final class ProviderAccessManager: ObservableObject {
     private let sessionStore: AuthSessionStore
     private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
     private let stateLock = NSLock()
+    private var refreshGeneration: UInt64 = 0
 
     public init(
         keychainService: KeychainService = .shared,
@@ -28,6 +29,12 @@ public final class ProviderAccessManager: ObservableObject {
     }
 
     public func refresh() {
+        stateLock.lock()
+        refreshGeneration &+= 1
+        let generation = refreshGeneration
+        let ollamaSnapshot = ollamaEndpointConfiguration.snapshot()
+        stateLock.unlock()
+
         var newStates: [APIService: ProviderAccessState] = [:]
         for service in APIService.allCases {
             let apiKey = keychainService.getApiKey(for: service)
@@ -37,14 +44,18 @@ public final class ProviderAccessManager: ObservableObject {
             newStates[service] = ProviderAccessState(
                 service: service,
                 authStatus: status,
-                availableModels: availableModels(for: service, apiKey: apiKey, session: session),
+                availableModels: availableModels(for: service, apiKey: apiKey, session: session, ollamaSnapshot: ollamaSnapshot),
                 accountIdentifier: session?.accountIdentifier
             )
         }
         let applyStates = {
             self.stateLock.lock()
+            defer { self.stateLock.unlock() }
+            // Background refreshes must not restore an older catalog after a
+            // newer refresh, server switch, repair, or helper disconnect.
+            guard generation == self.refreshGeneration,
+                  self.ollamaEndpointConfiguration.isCurrent(ollamaSnapshot) else { return }
             self.states = newStates
-            self.stateLock.unlock()
         }
         if Thread.isMainThread {
             applyStates()
@@ -197,9 +208,14 @@ public final class ProviderAccessManager: ObservableObject {
         }
     }
 
-    private func availableModels(for service: APIService, apiKey: String?, session: AccountSession?) -> [Model] {
+    private func availableModels(
+        for service: APIService,
+        apiKey: String?,
+        session: AccountSession?,
+        ollamaSnapshot: OllamaEndpointConfiguration.Snapshot
+    ) -> [Model] {
         if service == .ollama {
-            return ollamaEndpointConfiguration.cachedModels().map { .ollama($0) }
+            return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
         }
 
         let hasAPIKey = apiKey?.isEmpty == false
@@ -243,7 +259,7 @@ public final class ProviderAccessManager: ObservableObject {
             case .gemini:
                 return Gemini.Model.allCases.map { .gemini($0) }
             case .ollama:
-                return ollamaEndpointConfiguration.cachedModels().map { .ollama($0) }
+                return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
             case .serper:
                 return []
             }
