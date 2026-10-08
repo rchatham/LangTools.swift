@@ -42,6 +42,83 @@ final class MobileHelperTLSProviderTests: XCTestCase {
         XCTAssertTrue(fixture.requests.allSatisfy { $0.contains("Authorization: Bearer " + String(repeating: "c", count: 64)) })
     }
 
+    func testActivePinnedStreamKeepsLeaseUntilCompletionAfterProviderRelease() async throws {
+        try await assertStreamLifetime(cancelAfterFirstOutput: false)
+    }
+
+    func testCancelledPinnedStreamReleasesSessionAndDelegateAfterProviderRelease() async throws {
+        try await assertStreamLifetime(cancelAfterFirstOutput: true)
+    }
+
+    private func assertStreamLifetime(cancelAfterFirstOutput: Bool) async throws {
+        let fixture = try HelperTLSFixture(mode: .stream, holdTerminalChunk: true)
+        let endpoint = try await fixture.start()
+        defer { fixture.stop() }
+        var session: URLSession? = MobileHelperSessionDelegate.session(endpoint: endpoint, fingerprint: fixture.fingerprint)
+        weak var weakSession = session
+        weak var weakDelegate = session?.delegate
+        var snapshot: OllamaEndpointConfiguration.Snapshot? = makeSnapshot(endpoint: endpoint, session: session!, pin: fixture.fingerprint)
+        weak var weakLease = snapshot?.helper?.sessionLease
+        var provider: Ollama? = try snapshot!.provider(directSession: .shared)
+        weak var weakProvider = provider
+        snapshot = nil
+        var stream: AsyncThrowingStream<Ollama.ChatResponse, Error>? = provider!.streamChat(model: .init(rawValue: "fixture-model")!, messages: [])
+        session = nil
+        provider = nil
+        XCTAssertNotNil(weakSession)
+        XCTAssertNotNil(weakDelegate)
+        let content = try await consumeCapturedStream(stream!, fixture: fixture, cancelAfterFirstOutput: cancelAfterFirstOutput) {
+            XCTAssertNotNil(weakLease, "Active stream must retain retirement ownership")
+            XCTAssertNotNil(weakProvider)
+            XCTAssertNotNil(weakSession)
+            XCTAssertNotNil(weakDelegate)
+        }
+        XCTAssertEqual(content, cancelAfterFirstOutput ? "hel" : "hello")
+        stream = nil
+        let deadline = Date().addingTimeInterval(3)
+        while weakLease != nil || weakProvider != nil || weakDelegate != nil {
+            if Date() >= deadline { throw URLError(.timedOut) }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertNil(weakLease)
+        XCTAssertNil(weakProvider)
+        XCTAssertNil(weakDelegate)
+        // Darwin AsyncBytes may retain an invalidated session wrapper beyond
+        // producer completion. Its delegate must nevertheless be released.
+        XCTAssertNil(weakSession?.delegate)
+        XCTAssertEqual(fixture.requests.count, 1)
+    }
+
+    private func consumeCapturedStream(_ stream: AsyncThrowingStream<Ollama.ChatResponse, Error>, fixture: HelperTLSFixture,
+                                       cancelAfterFirstOutput: Bool, assertActive: () -> Void) async throws -> String {
+        let firstOutput = expectation(description: "Active pinned stream produced first output")
+        let consumer = Task { () throws -> String in
+            var content = ""
+            for try await response in stream {
+                if let text = response.message?.content.text, !text.isEmpty {
+                    if content.isEmpty { firstOutput.fulfill() }
+                    content += text
+                }
+            }
+            return content
+        }
+        defer { consumer.cancel() }
+        await fulfillment(of: [firstOutput], timeout: 3)
+        // Exceed the default fixture's 1.2-second completion delay deliberately.
+        // Only the explicit gate, not prompt test scheduling, keeps this active.
+        try await Task.sleep(nanoseconds: 1_400_000_000)
+        XCTAssertTrue(fixture.hasHeldTerminalChunk)
+        assertActive()
+        if cancelAfterFirstOutput {
+            consumer.cancel()
+            let content = try await consumer.value
+            fixture.releaseTerminalChunks()
+            return content
+        }
+        fixture.releaseTerminalChunks()
+        return try await consumer.value
+    }
+
     func testActualProviderCleanEOFFailsAfterYieldingPinnedTLSPartialOutput() async throws {
         try await assertCleanEOFIsIncomplete(mode: .cleanEOF)
     }
@@ -486,6 +563,9 @@ private final class HelperTLSFixture: @unchecked Sendable {
     private let mode: Mode
     private let host: String
     private let response: ((String) -> Response)?
+    private let holdTerminalChunk: Bool
+    private var terminalChunksReleased = false
+    private var heldTerminalChunks: [(NWConnection, String)] = []
     private var heldResponses: [(NWConnection, Response)] = []
     private let queue = DispatchQueue(label: "app.helper.tls.fixture")
     private let lock = NSLock()
@@ -495,9 +575,12 @@ private final class HelperTLSFixture: @unchecked Sendable {
     var requests: [String] { lock.lock(); defer { lock.unlock() }; return recordedRequests }
     var receivedHTTPByteCount: Int { lock.lock(); defer { lock.unlock() }; return httpByteCount }
 
-    init(mode: Mode, host: String = "127.0.0.1", response: ((String) -> Response)? = nil) throws {
+    var hasHeldTerminalChunk: Bool { queue.sync { !heldTerminalChunks.isEmpty } }
+
+    init(mode: Mode, host: String = "127.0.0.1", holdTerminalChunk: Bool = false, response: ((String) -> Response)? = nil) throws {
         self.mode = mode
         self.host = host
+        self.holdTerminalChunk = holdTerminalChunk
         self.response = response
         let url = try XCTUnwrap(Bundle.module.url(forResource: "fixture-identity", withExtension: "p12", subdirectory: "HelperCertificates"))
         let pkcs12 = try Data(contentsOf: url)
@@ -551,12 +634,20 @@ private final class HelperTLSFixture: @unchecked Sendable {
             connections.forEach { $0.cancel() }
             connections = []
             heldResponses = []
+            heldTerminalChunks = []
         }
     }
     func releaseResponses() {
         queue.sync {
             for (connection, response) in heldResponses { send(response, on: connection) }
             heldResponses = []
+        }
+    }
+    func releaseTerminalChunks() {
+        queue.sync {
+            terminalChunksReleased = true
+            for (connection, final) in heldTerminalChunks { sendTerminalChunk(final, on: connection) }
+            heldTerminalChunks = []
         }
     }
     private func receive(_ connection: NWConnection, data: Data) {
@@ -614,15 +705,23 @@ private final class HelperTLSFixture: @unchecked Sendable {
         let start = headers + chunk(first)
         connection.send(content: Data(start.utf8), completion: .contentProcessed { [weak self] error in
             guard let self, error == nil else { connection.cancel(); return }
-            self.queue.asyncAfter(deadline: .now() + 1.2) {
-                // A valid HTTP terminating chunk produces clean transport EOF, not
-                // a socket/reset error. The provider's terminal record is omitted.
-                let final = (self.mode == .cleanEOF || self.mode == .cleanEOFToolCall)
-                    ? "0\r\n\r\n" : self.chunk(last) + "0\r\n\r\n"
-                connection.send(content: Data(final.utf8), contentContext: .finalMessage, isComplete: true,
-                    completion: .contentProcessed { _ in connection.cancel() })
+            // A valid HTTP terminating chunk produces clean transport EOF, not
+            // a socket/reset error. The provider's terminal record is omitted.
+            let final = (self.mode == .cleanEOF || self.mode == .cleanEOFToolCall)
+                ? "0\r\n\r\n" : self.chunk(last) + "0\r\n\r\n"
+            if self.mode == .stream && self.holdTerminalChunk {
+                if self.terminalChunksReleased { self.sendTerminalChunk(final, on: connection) }
+                else { self.heldTerminalChunks.append((connection, final)) }
+            } else {
+                self.queue.asyncAfter(deadline: .now() + 1.2) {
+                    self.sendTerminalChunk(final, on: connection)
+                }
             }
         })
+    }
+    private func sendTerminalChunk(_ final: String, on connection: NWConnection) {
+        connection.send(content: Data(final.utf8), contentContext: .finalMessage, isComplete: true,
+            completion: .contentProcessed { _ in connection.cancel() })
     }
     private func chunk(_ value: String) -> String { String(value.utf8.count, radix: 16) + "\r\n" + value + "\r\n" }
     private enum FixtureError: Error { case identity, listener }

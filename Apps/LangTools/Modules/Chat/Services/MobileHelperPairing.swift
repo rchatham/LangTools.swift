@@ -101,6 +101,9 @@ public final class MobileHelperPairingCoordinator: ObservableObject {
         pairingTask = Task {
             do {
                 let connection = try await client.pair(payload, deviceName: deviceName)
+                // The connection's lease retires every discarded successful result,
+                // including stale consent/settings and failed credential persistence.
+                // Once selected, snapshots/providers keep that same lease alive.
                 guard !Task.isCancelled, generation == capturedGeneration else { return }
                 guard configuration.isCurrent(snapshot) else {
                     isPairing = false

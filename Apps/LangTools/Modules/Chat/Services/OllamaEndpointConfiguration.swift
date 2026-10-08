@@ -24,7 +24,7 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
         func provider(directSession: URLSession) throws -> Ollama {
             if let helperError { throw helperError }
             if let helper {
-                return Ollama(baseURL: baseURL, apiKey: helper.credential.token, session: helper.session)
+                return Ollama(baseURL: baseURL, apiKey: helper.credential.token, sessionLease: helper.sessionLease)
             }
             guard !isHelper else { throw MobileHelperError.disconnected }
             return Ollama(baseURL: baseURL, session: directSession)

@@ -175,11 +175,13 @@ final class MobileHelperSessionDelegate: NSObject, URLSessionDelegate, URLSessio
 /// Snapshot owns credentials/session; changing settings never retargets an in-flight operation.
 final class MobileHelperConnection: @unchecked Sendable {
     let credential: MobileHelperCredential
-    let session: URLSession
+    let sessionLease: LangToolsSessionLease
+    var session: URLSession { sessionLease.session }
     init(credential: MobileHelperCredential, session: URLSession? = nil) {
         self.credential = credential
-        self.session = session ?? MobileHelperSessionDelegate.session(endpoint: credential.endpoint, fingerprint: credential.fingerprint)
+        sessionLease = LangToolsSessionLease(session: session ?? MobileHelperSessionDelegate.session(
+            endpoint: credential.endpoint, fingerprint: credential.fingerprint))
     }
-    // Do not invalidate on selection changes: Ollama/AgentContext may still own
-    // this session after this wrapper is released (including a not-yet-read stream).
+    // Snapshots and captured providers share retirement ownership. An unselected
+    // successful pairing retires here; selection changes never cancel consumers.
 }
