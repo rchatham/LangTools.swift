@@ -5,6 +5,27 @@ public enum MobileHelperLinkError: Error, LocalizedError {
     public var errorDescription: String? { "Invalid or unsupported mobile helper pairing link." }
 }
 
+/// Capabilities a paired device may be granted. Raw values are the wire spelling;
+/// they travel only in pairing responses and health, never in the QR payload.
+public enum MobileHelperCapability: String, CaseIterable, Sendable {
+    case ollama, codex, claude
+}
+
+/// Strict capability-set rule shared identically by helper and app: a set must
+/// be non-empty, duplicate-free, contain only known raw values, and appear in
+/// canonical sorted order.
+public enum MobileHelperCapabilities {
+    public static func isValid(_ values: [String]) -> Bool {
+        guard !values.isEmpty, values == values.sorted() else { return false }
+        let known = Set(MobileHelperCapability.allCases.map(\.rawValue))
+        var seen = Set<String>()
+        for value in values {
+            guard known.contains(value), seen.insert(value).inserted else { return false }
+        }
+        return true
+    }
+}
+
 /// The QR is an explicit identity bootstrap, not a reusable device credential.
 public struct MobileHelperPairingPayload: Codable, Equatable, Sendable {
     public let version: Int
@@ -155,7 +176,7 @@ public struct MobileHelperPairingResponse: Codable, Equatable, Sendable {
     }
     public func validate() throws {
         guard version == 1, UUID(uuidString: helperID) != nil, UUID(uuidString: deviceID) != nil,
-              MobileHelperPairingPayload.isHexSecret(token), capabilities == ["ollama"] else {
+              MobileHelperPairingPayload.isHexSecret(token), MobileHelperCapabilities.isValid(capabilities) else {
             throw MobileHelperLinkError.invalidPayload
         }
     }
@@ -178,7 +199,7 @@ public struct MobileHelperHealthResponse: Codable, Equatable, Sendable {
         try validate()
     }
     public func validate() throws {
-        guard version == 1, UUID(uuidString: helperID) != nil, capabilities == ["ollama"] else {
+        guard version == 1, UUID(uuidString: helperID) != nil, MobileHelperCapabilities.isValid(capabilities) else {
             throw MobileHelperLinkError.invalidPayload
         }
     }

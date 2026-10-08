@@ -74,4 +74,60 @@ final class MobileHelperModelsTests: XCTestCase {
         XCTAssertEqual(response.capabilities, ["ollama"])
         XCTAssertEqual(try JSONDecoder().decode(MobileHelperPairingResponse.self, from: JSONEncoder().encode(response)), response)
     }
+
+    func testCapabilitySetValidationRules() {
+        XCTAssertTrue(MobileHelperCapabilities.isValid(["ollama"]))
+        XCTAssertTrue(MobileHelperCapabilities.isValid(["claude"]))
+        XCTAssertTrue(MobileHelperCapabilities.isValid(["codex", "ollama"]))
+        XCTAssertTrue(MobileHelperCapabilities.isValid(["claude", "codex", "ollama"]))
+        for invalid in [[String](), ["ollama", "ollama"], ["ollama", "account"], ["ollama", "claude"],
+                        ["claude", "claude", "codex"], ["Ollama"], ["ollama", "codex"]] {
+            XCTAssertFalse(MobileHelperCapabilities.isValid(invalid), "\(invalid)")
+        }
+        XCTAssertEqual(MobileHelperCapability.allCases.map(\.rawValue).sorted(), ["claude", "codex", "ollama"])
+    }
+
+    func testPairingAndHealthRoundTripWithGeneralizedCapabilitySets() throws {
+        let granted = ["claude", "codex", "ollama"]
+        let response = MobileHelperPairingResponse(helperID: UUID().uuidString, deviceID: UUID().uuidString,
+            token: String(repeating: "c", count: 64), capabilities: granted)
+        XCTAssertEqual(response.capabilities, granted)
+        XCTAssertEqual(try JSONDecoder().decode(MobileHelperPairingResponse.self, from: JSONEncoder().encode(response)), response)
+        let health = MobileHelperHealthResponse(helperID: UUID().uuidString, capabilities: granted)
+        XCTAssertEqual(try JSONDecoder().decode(MobileHelperHealthResponse.self, from: JSONEncoder().encode(health)), health)
+        // Version skew: the pre-generalization validate() rejected every set beyond ["ollama"],
+        // so helpers keep advertising only the capabilities they actually serve.
+        XCTAssertEqual(MobileHelperPairingResponse(helperID: UUID().uuidString, deviceID: UUID().uuidString,
+            token: String(repeating: "c", count: 64)).capabilities, ["ollama"])
+        XCTAssertEqual(MobileHelperHealthResponse(helperID: UUID().uuidString).capabilities, ["ollama"])
+    }
+
+    func testDecodingRejectsInvalidCapabilitySetsWhileKeepingStrictKeys() throws {
+        let valid = try JSONEncoder().encode(MobileHelperPairingResponse(helperID: UUID().uuidString,
+            deviceID: UUID().uuidString, token: String(repeating: "c", count: 64), capabilities: ["codex", "ollama"]))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: valid) as? [String: Any])
+        for capabilities in [[Any](), ["ollama", "ollama"] as [Any], ["ollama", "claude"] as [Any], ["ollama", "account"] as [Any]] {
+            var changed = object
+            changed["capabilities"] = capabilities
+            let data = try XCTUnwrap(JSONSerialization.data(withJSONObject: changed))
+            XCTAssertThrowsError(try JSONDecoder().decode(MobileHelperPairingResponse.self, from: data), "\(capabilities)")
+        }
+        var extra = object
+        extra["extra"] = true
+        XCTAssertThrowsError(try JSONDecoder().decode(MobileHelperPairingResponse.self,
+            from: JSONSerialization.data(withJSONObject: extra)))
+    }
+
+    func testPairingPayloadWireFormatStaysByteIdentical() throws {
+        let value = payload
+        let url = try value.pairingURL()
+        XCTAssertEqual(url.scheme, "langtools-example-auth")
+        XCTAssertEqual(url.host, "helper")
+        XCTAssertEqual(url.path, "/pair")
+        let items = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+        XCTAssertEqual(items.count, 6)
+        XCTAssertEqual(Set(items.map(\.name)), ["v", "endpoint", "identity", "fingerprint", "code", "name"])
+        XCTAssertEqual(value.version, 1)
+        XCTAssertEqual(try MobileHelperPairingPayload.parse(url), value)
+    }
 }

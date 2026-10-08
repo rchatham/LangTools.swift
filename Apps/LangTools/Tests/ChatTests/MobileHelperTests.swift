@@ -206,6 +206,40 @@ final class MobileHelperTests: XCTestCase {
         XCTAssertNil(try store.load(helperID: helperID))
     }
 
+    func testCredentialValidationAcceptsGrantedSetsAndRejectsInvalidOnes() throws {
+        let keychain = Keychain(service: suite + ".keychain").accessibility(.afterFirstUnlockThisDeviceOnly)
+        defer { try? keychain.removeAll() }
+        let store = MobileHelperCredentialStore(keychain: keychain)
+        let granted = credential(capabilities: ["claude", "codex", "ollama"])
+        try store.save(granted)
+        XCTAssertEqual(try store.load(helperID: helperID), granted)
+        for invalid in [["ollama", "account"], ["ollama", "ollama"], ["ollama", "claude"], [String]()] {
+            XCTAssertThrowsError(try store.save(credential(capabilities: invalid)), "\(invalid)")
+        }
+    }
+
+    func testPairingAcceptsGeneralizedCapabilitySets() async throws {
+        let granted = ["claude", "codex", "ollama"]
+        let pair = MobileHelperPairingResponse(version: 1, helperID: helperID, deviceID: deviceID,
+            token: String(repeating: "c", count: 64), capabilities: granted)
+        let health = MobileHelperHealthResponse(version: 1, helperID: helperID, capabilities: granted)
+        HelperPairingTestProtocol.handler = { request in
+            switch request.url?.path {
+            case "/v1/mobile/pair": return (200, try JSONEncoder().encode(pair), 0)
+            case "/v1/mobile/health": return (200, try JSONEncoder().encode(health), 0)
+            default: throw URLError(.unsupportedURL)
+            }
+        }
+        let coordinator = makeCoordinator()
+        coordinator.handle(try payload().pairingURL())
+        coordinator.confirm(deviceName: "Test Phone")
+        try await waitUntil { !coordinator.isPairing }
+        XCTAssertNil(coordinator.errorMessage)
+        XCTAssertEqual(store.records[helperID]?.capabilities, granted)
+        XCTAssertEqual(configuration.snapshot().helperID, helperID)
+        XCTAssertEqual(configuration.snapshot().baseURL.path, "/v1/ollama")
+    }
+
     func testPinnedTrustValidatesExactLeafAndCertificateTimeNotLANHostname() throws {
         let url = try XCTUnwrap(Bundle.module.url(forResource: "valid", withExtension: "der", subdirectory: "HelperCertificates"))
         let data = try Data(contentsOf: url)
@@ -317,10 +351,10 @@ final class MobileHelperTests: XCTestCase {
         MobileHelperPairingPayload(version: 1, endpoint: URL(string: "https://192.168.1.10:8086")!, helperID: helperID,
             fingerprint: String(repeating: "a", count: 64), code: String(repeating: "b", count: 64), name: "Test Mac")
     }
-    private func credential(helperID: String? = nil, token: String? = nil) -> MobileHelperCredential {
+    private func credential(helperID: String? = nil, token: String? = nil, capabilities: [String] = ["ollama"]) -> MobileHelperCredential {
         MobileHelperCredential(endpoint: payload().endpoint, helperID: helperID ?? self.helperID,
             fingerprint: payload().fingerprint, name: payload().name, deviceID: deviceID,
-            token: token ?? String(repeating: "c", count: 64), capabilities: ["ollama"])
+            token: token ?? String(repeating: "c", count: 64), capabilities: capabilities)
     }
     private func installSuccessfulResponses(healthHelperID: String? = nil, healthStatus: Int = 200, delay: TimeInterval = 0) {
         let pair = MobileHelperPairingResponse(version: 1, helperID: helperID, deviceID: deviceID,

@@ -58,6 +58,40 @@ final class MobileHelperTests: XCTestCase {
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
 
+    func testStoreRejectsInvalidCapabilitySetsAndMintsTheEnabledSet() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("devices.json")
+        let identity = UUID().uuidString
+        for invalid in [[String](), ["ollama", "ollama"], ["ollama", "claude"], ["ollama", "account"]] {
+            XCTAssertThrowsError(try MobileDeviceStore(helperID: identity, capabilities: invalid, fileURL: url), "\(invalid)")
+        }
+        let enabled = ["claude", "codex", "ollama"]
+        let store = try MobileDeviceStore(helperID: identity, capabilities: enabled, fileURL: url)
+        XCTAssertEqual(store.capabilities, enabled)
+        let code = try await store.generatePairingCode()
+        let pair = try await store.redeem(.init(code: code.code, name: "Phone"))
+        XCTAssertEqual(pair.capabilities, enabled)
+        let authenticated = await store.authenticate(pair.token)
+        XCTAssertEqual(authenticated?.id, pair.deviceID)
+        XCTAssertEqual(authenticated?.capabilities, enabled)
+        // Reload applies the same validity rule, not equality with the enabled set:
+        // persisted devices keep the capabilities they were granted.
+        let reload = try MobileDeviceStore(helperID: identity, fileURL: url)
+        XCTAssertEqual(reload.capabilities, ["ollama"])
+        let restored = await reload.authenticate(pair.token)
+        XCTAssertEqual(restored?.capabilities, enabled)
+        // A persisted invalid set is rejected at load instead of silently accepted.
+        let data = try Data(contentsOf: url)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var devices = try XCTUnwrap(object["devices"] as? [[String: Any]])
+        devices[0]["capabilities"] = ["ollama", "account"]
+        object["devices"] = devices
+        try JSONSerialization.data(withJSONObject: object).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        XCTAssertThrowsError(try MobileDeviceStore(helperID: identity, fileURL: url))
+    }
+
     func testPrivateListenerAuthExactAllowlistAndNoTokenForwarding() async throws {
         let fixture = try await MobileUpstreamFixture()
         defer { fixture.stop() }

@@ -21,7 +21,7 @@ struct MobileHelperPairingClient {
             let result = try JSONDecoder().decode(MobileHelperPairingResponse.self, from: data)
             guard result.version == 1, result.helperID == payload.helperID,
                   UUID(uuidString: result.deviceID) != nil, MobileHelperCredential.isSecret(result.token),
-                  result.capabilities == ["ollama"] else { throw MobileHelperError.invalidIdentity }
+                  MobileHelperCapabilities.isValid(result.capabilities) else { throw MobileHelperError.invalidIdentity }
             let credential = MobileHelperCredential(endpoint: payload.endpoint, helperID: payload.helperID,
                 fingerprint: payload.fingerprint, name: payload.name, deviceID: result.deviceID,
                 token: result.token, capabilities: result.capabilities)

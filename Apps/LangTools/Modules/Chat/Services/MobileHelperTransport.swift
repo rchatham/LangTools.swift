@@ -70,7 +70,7 @@ struct MobileHelperCredential: Codable, Equatable, Sendable, CustomStringConvert
         let payload = MobileHelperPairingPayload(version: 1, endpoint: endpoint, helperID: helperID,
             fingerprint: fingerprint, code: String(repeating: "0", count: 64), name: name)
         _ = try MobileHelperPairingPayload.parse(payload.pairingURL())
-        guard UUID(uuidString: deviceID) != nil, Self.isSecret(token), capabilities == ["ollama"] else {
+        guard UUID(uuidString: deviceID) != nil, Self.isSecret(token), MobileHelperCapabilities.isValid(capabilities) else {
             throw MobileHelperError.invalidIdentity
         }
     }
