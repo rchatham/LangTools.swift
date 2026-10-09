@@ -1,0 +1,62 @@
+[
+  {
+    "file": "reset.png",
+    "sha256": "8e650bb9d7aac3c42e35cd846f64ac5c71bba79d4a46d76a90f7e2b83b74bf4c",
+    "dimensions": [
+      1206,
+      2622
+    ],
+    "test": "ProxyModelDiscoveryUITests/testAdvancedParametersPersistAfterReopen()",
+    "timestamp": 1791497988.023
+  },
+  {
+    "file": "reopen.png",
+    "sha256": "9adb050ccd522a5edd702f207046a287d6303bd1512c9abfd99ab438ed98fbf3",
+    "dimensions": [
+      1206,
+      2622
+    ],
+    "test": "ProxyModelDiscoveryUITests/testAdvancedParametersPersistAfterReopen()",
+    "timestamp": 1791497980.388
+  },
+  {
+    "file": "stop-end.png",
+    "sha256": "9adb050ccd522a5edd702f207046a287d6303bd1512c9abfd99ab438ed98fbf3",
+    "dimensions": [
+      1206,
+      2622
+    ],
+    "test": "ProxyModelDiscoveryUITests/testAdvancedParametersPersistAfterReopen()",
+    "timestamp": 1791497969.384
+  },
+  {
+    "file": "seed.png",
+    "sha256": "fcdd0e2cb496399bbc77496036235f4b4dc0f134c83c3a36368b39428ac05903",
+    "dimensions": [
+      1206,
+      2622
+    ],
+    "test": "ProxyModelDiscoveryUITests/testAdvancedParametersPersistAfterReopen()",
+    "timestamp": 1791497961.529
+  },
+  {
+    "file": "temperature.png",
+    "sha256": "c6bbd3687244219ce860ec9c8e4b8a0ccf5f0da8c6c7be03c05ec449f7f8769e",
+    "dimensions": [
+      1206,
+      2622
+    ],
+    "test": "ProxyModelDiscoveryUITests/testAdvancedParametersPersistAfterReopen()",
+    "timestamp": 1791497958.628
+  },
+  {
+    "file": "tools-display.png",
+    "sha256": "b534ed9bae24f5b4ecea73897fac31bf60a0591dd6bcf15159f54e3c5add72f8",
+    "dimensions": [
+      1206,
+      2622
+    ],
+    "test": "ProxyModelDiscoveryUITests/testToolsAndDisplaySettingsTogglePersistence()",
+    "timestamp": 1791498199.758
+  }
+]
