@@ -22,34 +22,59 @@ public final class AuthSessionStore {
         keychain: Keychain(service: ChatUITestEnvironment.fixtureKeychainService)
     )
 
-    private let keychain: Keychain
+    private let secrets: any KeychainSecretStoring
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private let lock = NSLock()
+    private var revisions: [AccountLoginProvider: UInt64] = [:]
+
+    struct Snapshot {
+        let session: AccountSession?
+        let revision: UInt64
+    }
+    func revision(for provider: AccountLoginProvider) -> UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        return revisions[provider] ?? 0
+    }
 
     public init(keychain: Keychain = Keychain(service: "com.reidchatham.LangTools_Example")) {
-        self.keychain = keychain
+        self.secrets = KeychainService(keychain: keychain)
+    }
+
+    /// Isolated storage seam for tests and hosts with their own secure store.
+    public init(secretStore: any KeychainSecretStoring) {
+        secrets = secretStore
     }
 
     public func save(_ session: AccountSession) throws {
+        lock.lock(); defer { lock.unlock() }
         let data = try encoder.encode(session)
         guard let json = String(data: data, encoding: .utf8) else {
             throw AuthSessionStoreError.encodingFailed
         }
-        try keychain.set(json, key: key(for: session.provider))
+        try secrets.setSecret(json, forKey: key(for: session.provider))
+        revisions[session.provider, default: 0] &+= 1
     }
 
     public func session(for provider: AccountLoginProvider) throws -> AccountSession? {
-        guard let json = try keychain.getString(key(for: provider)) else {
-            return nil
+        try snapshot(for: provider).session
+    }
+
+    func snapshot(for provider: AccountLoginProvider) throws -> Snapshot {
+        lock.lock(); defer { lock.unlock() }
+        guard let json = try secrets.readSecret(forKey: key(for: provider)) else {
+            return Snapshot(session: nil, revision: revisions[provider] ?? 0)
         }
         guard let data = json.data(using: .utf8) else {
             throw AuthSessionStoreError.decodingFailed
         }
-        return try decoder.decode(AccountSession.self, from: data)
+        return Snapshot(session: try decoder.decode(AccountSession.self, from: data), revision: revisions[provider] ?? 0)
     }
 
     public func removeSession(for provider: AccountLoginProvider) throws {
-        try keychain.remove(key(for: provider))
+        lock.lock(); defer { lock.unlock() }
+        try secrets.removeSecret(forKey: key(for: provider))
+        revisions[provider, default: 0] &+= 1
     }
 
     public func allSessions() throws -> [AccountSession] {

@@ -53,7 +53,7 @@ The menu offers:
 - a status line (`Running at http://127.0.0.1:8765` / `Stopped`),
 - **Start/Stop Helper** (stopping cancels the server cleanly, so it can be restarted),
 - **Pair with LangTools Example…** (enabled while running),
-- **Connect iPhone…** (separate opt-in encrypted Ollama relay),
+- **Connect iPhone…** (separate opt-in encrypted LAN relay; Ollama by default, optional Codex/Claude Code account capabilities),
 - **Copy Token** and **Quit**.
 
 ### One-click pairing
@@ -68,13 +68,25 @@ LangTools_Example shows a confirmation alert before saving anything; on confirm 
 
 ### iPhone Ollama pairing (opt-in LAN)
 
-Choose **Connect iPhone…**, select an active private IPv4 interface, then explicitly enable **Allow encrypted iPhone access on this network**. The separate TLS listener binds only that selected address on port8086. It never exposes the loopback account/Codex routes or desktop token. LAN access is off at every helper launch; stopping the desktop loopback listener does not change the independently controlled LAN toggle.
+Choose **Connect iPhone…**, select an active private IPv4 interface, then explicitly enable **Allow encrypted iPhone access on this network**. The separate TLS listener binds only that selected address on port8086. By default it grants only Ollama access. Optional account capabilities require explicit opt-in; desktop credentials and login/logout/administration routes are never exposed. LAN access is off at every helper launch; stopping the desktop loopback listener does not change the independently controlled LAN toggle.
 
-Scan the five-minute single-use QR with iPhone Camera and confirm the named Mac plus **Ollama** capability in LangTools. Refresh invalidates the previous QR; cancel/close/expiry invalidates pairing without revoking existing devices. **Revoke** removes a device and interrupts its in-flight requests. Disable LAN or quit the helper to stop all phone traffic. Interface disappearance/address changes stop LAN rather than silently switching interfaces. Direct Ollama remains an explicit app alternative, never a failover from helper TLS.
+Scan the five-minute single-use QR with iPhone Camera and confirm the named Mac and listed capabilities in LangTools. Ollama-only links retain the v1 contract; v2 links explicitly bind optional account grants to the confirmation. Pairing does not select account transports: choose them separately in **Settings → Model Access**. Refresh invalidates the previous QR; cancel/close/expiry invalidates pairing without revoking existing devices. **Revoke** removes a device and interrupts its in-flight requests. Disable LAN or quit the helper to stop all phone traffic. Interface disappearance/address changes stop LAN rather than silently switching interfaces. Direct Ollama remains an explicit app alternative, never a failover from helper TLS.
 
 The helper creates a persistent self-signed identity using `/usr/bin/openssl` in a mode0700 temporary directory with mode0600 files, imports via Security, and stores private material only in the macOS login Keychain (`com.langtools.helper.mobile-identity.v1`). Phones trust only the exact QR-pinned SHA256 leaf plus a valid anchored basic X.509 evaluation: trust follows helper identity, not a changing numeric IP. Never approve arbitrary certificates or substitute plaintext. Device metadata/token hashes persist atomically in mode0600 `~/.langtools/mobile/devices-v1.json`; reusable tokens and active QR codes are not stored there.
 
 The mobile HTTP allowlist is `POST /v1/mobile/pair`, authenticated `GET /v1/mobile/health`, `GET /v1/ollama/api/{version,tags,ps}`, and `POST /v1/ollama/api/{chat,generate,pull}`. Only the fixed upstream `http://127.0.0.1:11434` is contacted, with no forwarded mobile Authorization or redirects. Bounds:8 concurrent connections,32KiB request headers,4MiB request bodies,1MiB NDJSON lines,16MiB non-NDJSON/256MiB streamed response total,10s request-read/15s downstream-send/300s total route deadlines. Responses stream incrementally; disconnect/revocation cancels the local upstream. A failed response after headers closes the stream without a fabricated completion event (Foundation can surface this as EOF; clients require final `done: true` for chat/generate and final `status: "success"` for model pulls).
+
+#### Optional account capabilities
+
+Before enabling LAN, opt in to **Allow Codex account chat and models** and/or **Allow external Claude Code backend relay**. Both are off by default. Scope/backend changes stop LAN and invalidate the QR; existing devices never gain new grants automatically. Re-pair to add a capability.
+
+- **Codex:** sign in on the Mac using the existing Codex helper. The phone uses its scoped device token, not an OAuth token. Allowed LAN routes are model discovery, read-only account status, chat completions and device-owned conversation cleanup. **Codex retains the Mac runtime's native tool permissions, including filesystem and command execution within the existing runtime policy; this is not per-device filesystem isolation. Enable only for trusted phones.**
+- **Claude Code:** configure an existing external backend with an explicit numeric-loopback HTTP origin and port (no path/query). This is not a new native Claude subscription runtime. The phone still needs that backend's account session. `/v1/claude/models` and `/v1/claude/chat/completions` relay only to the configured backend's `/auth/claude-code/models` and `/account/chat/completions`. The separate account token becomes upstream authorization; the device token and desktop token are not forwarded. Login/logout stay local, redirects are rejected, and there is no fallback.
+- **App routing:** each account provider can explicitly select its existing backend or the paired helper. Platform models continue to use **Direct API key**. Model/settings labels identify the actual selected route. Missing grants, revocation, trust changes or helper failure fail closed; captured in-flight requests retain their original route.
+
+The original Ollama allowlist and bounds above remain unchanged. Optional providers use the same TLS/device authorization, enabled-and-granted capability checks, deadlines and response bounds. Revoke/disable cancels active work; Codex cleanup joins producer interruption before freeing its slot.
+
+See [LAN account setup and current verification](../docs/helper-lan-providers.md) for screenshots, exact test commands and remaining iOS/physical-device blockers. This feature does **not** proxy OpenAI/Anthropic/Gemini/xAI API-key traffic.
 
 For UI verification without automatically enabling LAN:
 

@@ -117,7 +117,17 @@ private struct ManageAccessPromptModifier: ViewModifier {
             }
 
         default:
-            if currentDestination == .codex {
+            if let provider = currentDestination?.accountProvider,
+               accessManager.accountTransports.snapshot(for: provider).isPaired {
+                Button("Refresh Account Models") {
+                    coordinator.dismiss()
+                    handleAccountConnect(for: provider)
+                }
+                Button("Disconnect Paired Helper", role: .destructive) {
+                    coordinator.dismiss()
+                    handleAccountDisconnect(for: provider)
+                }
+            } else if currentDestination == .codex {
                 codexAccountButtons(state: state)
             } else if let accountProvider = currentDestination?.accountProvider {
                 Button(accountActionTitle(for: accountProvider, state: state)) {
@@ -172,6 +182,13 @@ private struct ManageAccessPromptModifier: ViewModifier {
     }
 
     private func dialogMessage(for service: APIService) -> String {
+        if let provider = currentDestination?.accountProvider {
+            let snapshot = accessManager.accountTransports.snapshot(for: provider)
+            if snapshot.isPaired {
+                let reason = accessManager.unavailableReason(for: currentState).map { " \($0)" } ?? ""
+                return "Transport: \(snapshot.label). Sign in to Codex on the Mac. Claude Code requires an existing external backend account session. Refresh performs read-only discovery, never phone-local login.\(reason)"
+            }
+        }
         let status = currentState.statusDescription
 
         switch service {
@@ -288,6 +305,8 @@ private struct ManageAccessPromptModifier: ViewModifier {
     }
 
     private func connectMessage(for provider: AccountLoginProvider, state: ProviderAccessState) -> String {
+        let snapshot = accessManager.accountTransports.snapshot(for: provider)
+        if snapshot.isPaired { return "Account models refreshed through \(snapshot.label)." }
         let accountLine: String
         if let accountIdentifier = state.accountIdentifier {
             accountLine = "Connected \(provider.displayName) as \(accountIdentifier)."

@@ -264,6 +264,144 @@ final class CodexAppServerClientTests: XCTestCase {
         await client.shutdown()
     }
 
+    func testAlreadyCancelledTurnDoesNotLaunchClientOrStrandSubsequentStartup() async throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-cancelled-cold-start-\(UUID().uuidString).py")
+        let logURL = scriptURL.appendingPathExtension("log")
+        try Data(Self.preDispatchCancellationServer.utf8).write(to: scriptURL)
+        defer {
+            for url in [scriptURL, logURL] { try? FileManager.default.removeItem(at: url) }
+        }
+        let client = CodexAppServerClient(
+            commandResolver: {
+                ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
+            },
+            environment: ["LOG": logURL.path],
+            defaultTimeout: .seconds(2),
+            containmentMode: .disabledForTesting
+        )
+        let turn = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await client.request(
+                method: "turn/start",
+                params: RequestParams(value: "cancelled"),
+                cancelOnTaskCancellation: false
+            ) as Response
+        }
+        do {
+            _ = try await turn.value
+            XCTFail("Expected pre-dispatch cancellation")
+        } catch is CancellationError {
+            // Expected even when response capture is noncancellable.
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: logURL.path))
+        // Bound the recovery check: a rejected cold waiter must not claim startup
+        // ownership and leave the next caller waiting for startup that never runs.
+        let recovered = expectation(description: "uncancelled request starts successfully")
+        let next = Task {
+            defer { recovered.fulfill() }
+            return try await client.request(method: "test/barrier", params: RequestParams(value: "barrier")) as Response
+        }
+        await fulfillment(of: [recovered], timeout: 3)
+        next.cancel()
+        await client.shutdown()
+        let response = try await next.value
+        XCTAssertEqual(response.value, "test/barrier")
+        let methods = try String(contentsOf: logURL, encoding: .utf8).split(separator: "\n")
+        XCTAssertEqual(methods, ["initialize", "initialized", "test/barrier"])
+    }
+
+    func testCancellationImmediatelyBeforeTurnDispatchSendsNoTurn() async throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-pre-dispatch-\(UUID().uuidString).py")
+        let logURL = scriptURL.appendingPathExtension("log")
+        try Data(Self.preDispatchCancellationServer.utf8).write(to: scriptURL)
+        defer {
+            for url in [scriptURL, logURL] { try? FileManager.default.removeItem(at: url) }
+        }
+        let client = CodexAppServerClient(
+            commandResolver: {
+                ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
+            },
+            environment: ["LOG": logURL.path],
+            defaultTimeout: .seconds(2),
+            containmentMode: .disabledForTesting
+        )
+        _ = try await client.initializedProcessGeneration()
+        let turn = Task {
+            try await client.request(
+                method: "turn/start",
+                params: CancellingTurnParams(),
+                cancelOnTaskCancellation: false
+            ) as Response
+        }
+        do {
+            _ = try await turn.value
+            XCTFail("Expected cancellation at the write boundary")
+        } catch is CancellationError {
+            // Encoding deterministically cancels after request/startup preflight.
+        }
+        // A response to a later request proves the server drained preceding input.
+        let _: Response = try await client.request(method: "test/barrier", params: RequestParams(value: "barrier"))
+        let methods = try String(contentsOf: logURL, encoding: .utf8).split(separator: "\n")
+        XCTAssertEqual(methods, ["initialize", "initialized", "test/barrier"])
+        await client.shutdown()
+    }
+
+    func testCancellationDuringInitializationSendsNoTurnAndPreservesSharedStartup() async throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-startup-cancellation-\(UUID().uuidString).py")
+        let logURL = scriptURL.appendingPathExtension("log")
+        let acceptedURL = scriptURL.appendingPathExtension("accepted")
+        let releaseURL = scriptURL.appendingPathExtension("release")
+        try Data(Self.preDispatchCancellationServer.utf8).write(to: scriptURL)
+        defer {
+            for url in [scriptURL, logURL, acceptedURL, releaseURL] {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        let client = CodexAppServerClient(
+            commandResolver: {
+                ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
+            },
+            environment: ["LOG": logURL.path, "ACCEPTED": acceptedURL.path, "RELEASE": releaseURL.path],
+            defaultTimeout: .seconds(2),
+            containmentMode: .disabledForTesting
+        )
+        let turn = Task {
+            try await client.request(
+                method: "turn/start",
+                params: RequestParams(value: "cancelled"),
+                cancelOnTaskCancellation: false
+            ) as Response
+        }
+        for _ in 0..<200 where !FileManager.default.fileExists(atPath: acceptedURL.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: acceptedURL.path))
+        turn.cancel()
+        do {
+            _ = try await turn.value
+            XCTFail("Expected initialization waiter cancellation")
+        } catch is CancellationError {
+            // Cancellation must not submit a turn after initialization completes.
+        }
+        try Data().write(to: releaseURL)
+        let _: Response = try await client.request(method: "test/barrier", params: RequestParams(value: "barrier"))
+        let methods = try String(contentsOf: logURL, encoding: .utf8).split(separator: "\n")
+        XCTAssertEqual(methods, ["initialize", "initialized", "test/barrier"])
+        await client.shutdown()
+    }
+
+    private struct CancellingTurnParams: Encodable {
+        func encode(to encoder: Encoder) throws {
+            // Cancel within the requesting task, after startup/preflight but before
+            // the actor writes. No sleeps, detached cancellation, or production hook.
+            withUnsafeCurrentTask { $0?.cancel() }
+            try RequestParams(value: "cancelled during encoding").encode(to: encoder)
+        }
+    }
+
     func testCancellationScopeCancelsStartupWaiterWithoutCancellingSharedInitialization() async throws {
         let scriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("langtools-app-server-startup-scope-\(UUID().uuidString).py")
@@ -546,6 +684,28 @@ request = json.loads(sys.stdin.readline())
 print(json.dumps({"id":request["id"], "result":{"userAgent":"fake","codexHome":"/tmp","platformFamily":"unix","platformOs":"linux"}}), flush=True)
 while True:
     sys.stdin.readline()
+"""#
+
+    private static let preDispatchCancellationServer = #"""
+import json
+import os
+import sys
+import time
+
+for line in sys.stdin:
+    request = json.loads(line)
+    with open(os.environ["LOG"], "a") as log:
+        log.write(request["method"] + "\n")
+    if request["method"] == "initialize":
+        if "RELEASE" in os.environ:
+            open(os.environ["ACCEPTED"], "w").close()
+            while not os.path.exists(os.environ["RELEASE"]):
+                time.sleep(0.005)
+        result = {"userAgent":"fake", "codexHome":"/tmp", "platformFamily":"unix", "platformOs":"macos"}
+    else:
+        result = {"value":request["method"]}
+    if "id" in request:
+        print(json.dumps({"id":request["id"], "result":result}), flush=True)
 """#
 
     private static let hangingInitializationServer = #"""

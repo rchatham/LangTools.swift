@@ -20,6 +20,13 @@ final class MobilePairingController: NSObject, ObservableObject, NSWindowDelegat
     @Published private(set) var devices: [MobileDevice] = []
     @Published private(set) var address: String?
     @Published private(set) var helperName = "Mac"
+    @Published private(set) var codexEnabled = false
+    @Published private(set) var claudeEnabled = false
+    @Published private(set) var claudeBackendAddress = "http://127.0.0.1:8080"
+    var capabilities: [String] {
+        (["ollama"] + (codexEnabled ? ["codex"] : []) + (claudeEnabled ? ["claude"] : [])).sorted()
+    }
+    var capabilityLabel: String { capabilities.map { $0 == "codex" ? "Codex" : $0 == "claude" ? "Claude Code" : "Ollama" }.joined(separator: ", ") }
     private var identity: MobileTLSIdentity?
     private var identityTask: Task<MobileTLSIdentity, Error>?
     private var store: MobileDeviceStore?
@@ -81,8 +88,43 @@ final class MobilePairingController: NSObject, ObservableObject, NSWindowDelegat
 
     func windowWillClose(_ notification: Notification) { cancelPairing() }
 
+    /// Scope/config changes stop and drain current requests, invalidate pending QR, and require explicit re-enable.
+    func setCodexEnabled(_ value: Bool) {
+        guard value != codexEnabled else { return }
+        codexEnabled = value
+        configurationChanged()
+    }
+
+    func setClaudeEnabled(_ value: Bool) {
+        guard value != claudeEnabled else { return }
+        claudeEnabled = value
+        configurationChanged()
+    }
+
+    func setClaudeBackendAddress(_ value: String) {
+        guard value != claudeBackendAddress else { return }
+        claudeBackendAddress = value
+        configurationChanged()
+    }
+
+    private func configurationChanged() {
+        disable()
+        status = "Provider scope changed. Existing device grants are unchanged; explicitly re-enable and pair again for new access."
+    }
+
     func setEnabled(_ value: Bool) {
         if !value { disable(); return }
+        let scope = capabilities
+        let claudeURL: URL?
+        do {
+            if claudeEnabled {
+                guard let url = URL(string: claudeBackendAddress) else { throw MobileHelperError.upstreamRejected }
+                claudeURL = try MobileClaudeRelay.validatedOrigin(url)
+            } else { claudeURL = nil }
+        } catch {
+            errorText = "Claude Code requires a fixed http://127.0.0.1:<port> or http://[::1]:<port> external backend origin."
+            return
+        }
         guard serverTask == nil, let selected = interfaces.first(where: { $0.id == selectedInterfaceID }) else {
             errorText = MobileHelperError.invalidInterface.localizedDescription; return
         }
@@ -113,7 +155,7 @@ final class MobilePairingController: NSObject, ObservableObject, NSWindowDelegat
                         guard let self, self.generation == current, self.enabled else { return }
                         self.actualPort = port
                         self.starting = false
-                        self.status = "Encrypted Ollama access at \(selected.address):\(port)"
+                        self.status = "Encrypted access (\(self.capabilityLabel)) at \(selected.address):\(port)"
                         // Readiness may arrive after close/cancel, even during identity creation.
                         guard self.pairingIntent == intent else { return }
                         await self.refreshPairing(intent: intent, generation: current)
@@ -121,6 +163,8 @@ final class MobilePairingController: NSObject, ObservableObject, NSWindowDelegat
                 })
                 guard generation == current, enabled else { return }
                 self.server = server
+                try await server.configure(capabilities: scope, claudeBackendURL: claudeURL)
+                guard generation == current, enabled else { return }
                 try await server.run()
             } catch is CancellationError {
                 // Explicit LAN disable or app shutdown interrupted the listener.
@@ -210,8 +254,8 @@ final class MobilePairingController: NSObject, ObservableObject, NSWindowDelegat
                 await store.cancelPairing(code: code.code); return
             }
             activeCode = code.code
-            let payload = MobileHelperPairingPayload(endpoint: URL(string: "https://\(address):\(actualPort)")!,
-                helperID: identity.helperID, fingerprint: identity.fingerprint, code: code.code, name: helperName)
+            let payload = try pairingPayload(endpoint: URL(string: "https://\(address):\(actualPort)")!,
+                                             identity: identity, code: code.code)
             let filter = CIFilter.qrCodeGenerator()
             filter.message = Data(try payload.pairingURL().absoluteString.utf8)
             filter.correctionLevel = "M"
@@ -233,6 +277,15 @@ final class MobilePairingController: NSObject, ObservableObject, NSWindowDelegat
             expiry = nil
             errorText = error.localizedDescription
         }
+    }
+
+    /// Preserve Ollama-only v1 links; v2 binds confirmation to optional account grants.
+    private func pairingPayload(endpoint: URL, identity: MobileTLSIdentity, code: String) throws -> MobileHelperPairingPayload {
+        let payload = MobileHelperPairingPayload(version: capabilities == ["ollama"] ? 1 : 2,
+            endpoint: endpoint, helperID: identity.helperID, fingerprint: identity.fingerprint,
+            code: code, name: helperName, capabilities: capabilities)
+        try payload.validate()
+        return payload
     }
 
     @discardableResult
@@ -286,7 +339,7 @@ final class MobilePairingController: NSObject, ObservableObject, NSWindowDelegat
                     let ids = Set(devices.map(\.id))
                     if !ids.subtracting(self.pairedDeviceIDs).isEmpty {
                         self.cancelPairing()
-                        self.status = "iPhone paired. Ollama-only access is ready."
+                        self.status = "iPhone paired. Granted provider access is ready."
                     }
                     self.pairedDeviceIDs = ids
                     self.devices = devices
@@ -302,8 +355,8 @@ private struct MobilePairingView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Connect iPhone").font(.largeTitle.bold())
-                Text("\(controller.helperName) · Ollama only").font(.headline)
-                Text("Keep iPhone and Mac on the same trusted local network. No account, files or desktop helper credentials are exposed.")
+                Text("\(controller.helperName) · \(controller.capabilityLabel)").font(.headline)
+                Text("Keep iPhone and Mac on the same trusted local network. Optional account chat runs on this Mac; login/logout, admin routes and desktop helper credentials are not exposed. Codex retains the Mac runtime's native tool permissions; enable account access only for trusted phones.")
                     .foregroundStyle(.secondary)
                 Picker("Private network interface", selection: $controller.selectedInterfaceID) {
                     ForEach(controller.interfaces) { interface in
@@ -311,6 +364,18 @@ private struct MobilePairingView: View {
                     }
                 }
                 .disabled(controller.enabled || controller.starting)
+                Toggle("Allow Codex account chat and models (Mac runtime permissions)", isOn: Binding(
+                    get: { controller.codexEnabled }, set: { controller.setCodexEnabled($0) }))
+                Toggle("Allow external Claude Code backend relay", isOn: Binding(
+                    get: { controller.claudeEnabled }, set: { controller.setClaudeEnabled($0) }))
+                if controller.claudeEnabled {
+                    TextField("Claude Code loopback backend origin", text: Binding(
+                        get: { controller.claudeBackendAddress }, set: { controller.setClaudeBackendAddress($0) }))
+                    Text("External backend only. Numeric loopback HTTP and explicit port required. Account tokens transit this Mac; sign in locally. No fallback if unavailable.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Text("Changing provider scope or backend stops LAN access and invalidates the QR. Existing phones do not gain new capabilities; re-pair explicitly.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Allow encrypted iPhone access on this network", isOn: Binding(
                     get: { controller.enabled }, set: { controller.setEnabled($0) }))
                     .disabled(controller.starting)
@@ -322,7 +387,7 @@ private struct MobilePairingView: View {
                 if let image = controller.qrImage {
                     HStack { Spacer(); Image(nsImage: image).interpolation(.none).resizable().frame(width: 300, height: 300)
                         .padding(12).background(.white); Spacer() }
-                    Text("Scan with iPhone Camera, open LangTools, then confirm this Mac and Ollama access.")
+                    Text("Scan with iPhone Camera, open LangTools, then confirm this Mac and \(controller.capabilityLabel) access.")
                     Text("Single-use QR expires in \(controller.remainingSeconds / 60):\(String(format: "%02d", controller.remainingSeconds % 60)).")
                         .font(.callout.monospacedDigit())
                 } else if controller.enabled && !controller.starting {
@@ -339,7 +404,7 @@ private struct MobilePairingView: View {
                     HStack {
                         VStack(alignment: .leading) {
                             Text(device.name)
-                            Text("Ollama · paired \(device.createdAt.formatted(date: .abbreviated, time: .omitted))")
+                            Text("\(device.capabilities.joined(separator: ", ")) · paired \(device.createdAt.formatted(date: .abbreviated, time: .omitted))")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()

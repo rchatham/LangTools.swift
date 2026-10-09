@@ -5,6 +5,27 @@ public enum MobileHelperLinkError: Error, LocalizedError {
     public var errorDescription: String? { "Invalid or unsupported mobile helper pairing link." }
 }
 
+/// Capabilities a paired device may be granted. Raw values are the wire spelling;
+/// v2 pairing links bind consent to these grants; v1 links remain Ollama-only.
+public enum MobileHelperCapability: String, CaseIterable, Sendable {
+    case ollama, codex, claude
+}
+
+/// Strict capability-set rule shared identically by helper and app: a set must
+/// be non-empty, duplicate-free, contain only known raw values, and appear in
+/// canonical sorted order.
+public enum MobileHelperCapabilities {
+    public static func isValid(_ values: [String]) -> Bool {
+        guard !values.isEmpty, values == values.sorted() else { return false }
+        let known = Set(MobileHelperCapability.allCases.map(\.rawValue))
+        var seen = Set<String>()
+        for value in values {
+            guard known.contains(value), seen.insert(value).inserted else { return false }
+        }
+        return true
+    }
+}
+
 /// The QR is an explicit identity bootstrap, not a reusable device credential.
 public struct MobileHelperPairingPayload: Codable, Equatable, Sendable {
     public let version: Int
@@ -13,32 +34,54 @@ public struct MobileHelperPairingPayload: Codable, Equatable, Sendable {
     public let fingerprint: String
     public let code: String
     public let name: String
+    /// v1 is implicitly Ollama-only; v2 explicitly declares the grants to confirm.
+    public let capabilities: [String]
 
-    public init(version: Int = 1, endpoint: URL, helperID: String, fingerprint: String, code: String, name: String) {
+    public init(version: Int = 1, endpoint: URL, helperID: String, fingerprint: String, code: String, name: String, capabilities: [String] = ["ollama"]) {
         self.version = version
         self.endpoint = endpoint
         self.helperID = helperID
         self.fingerprint = fingerprint
         self.code = code
         self.name = name
+        self.capabilities = capabilities
     }
 
-    private enum CodingKeys: String, CodingKey { case version, endpoint, helperID, fingerprint, code, name }
+    private enum CodingKeys: String, CodingKey { case version, endpoint, helperID, fingerprint, code, name, capabilities }
 
     public init(from decoder: Decoder) throws {
-        try requireKeys(decoder, ["version", "endpoint", "helperID", "fingerprint", "code", "name"])
         let container = try decoder.container(keyedBy: CodingKeys.self)
         version = try container.decode(Int.self, forKey: .version)
+        var keys: Set<String> = ["version", "endpoint", "helperID", "fingerprint", "code", "name"]
+        if version == 2 { keys.insert("capabilities") }
+        try requireKeys(decoder, keys)
         endpoint = try container.decode(URL.self, forKey: .endpoint)
         helperID = try container.decode(String.self, forKey: .helperID)
         fingerprint = try container.decode(String.self, forKey: .fingerprint)
         code = try container.decode(String.self, forKey: .code)
         name = try container.decode(String.self, forKey: .name)
+        capabilities = version == 2 ? try container.decode([String].self, forKey: .capabilities) : ["ollama"]
         try validate()
     }
 
+    public func encode(to encoder: Encoder) throws {
+        try validate()
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(endpoint, forKey: .endpoint)
+        try container.encode(helperID, forKey: .helperID)
+        try container.encode(fingerprint, forKey: .fingerprint)
+        try container.encode(code, forKey: .code)
+        try container.encode(name, forKey: .name)
+        if version == 2 { try container.encode(capabilities, forKey: .capabilities) }
+    }
+
     public func validate() throws {
-        guard version == 1, UUID(uuidString: helperID) != nil,
+        guard (version == 1 && capabilities == ["ollama"])
+                || (version == 2 && MobileHelperCapabilities.isValid(capabilities)) else {
+            throw MobileHelperLinkError.invalidPayload
+        }
+        guard UUID(uuidString: helperID) != nil,
               Self.isHexSecret(fingerprint), Self.isHexSecret(code), Self.isDisplayName(name),
               let components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false),
               components.scheme == "https", components.user == nil, components.password == nil,
@@ -54,21 +97,27 @@ public struct MobileHelperPairingPayload: Codable, Equatable, Sendable {
               components.scheme == "langtools-example-auth", components.host == "helper",
               components.path == "/pair", components.user == nil, components.password == nil,
               components.port == nil, components.fragment == nil,
-              let items = components.queryItems, items.count == 6
+              let items = components.queryItems, (6...7).contains(items.count)
         else { throw MobileHelperLinkError.invalidPayload }
         var fields: [String: String] = [:]
-        let keys: Set<String> = ["v", "endpoint", "identity", "fingerprint", "code", "name"]
+        let keys: Set<String> = ["v", "endpoint", "identity", "fingerprint", "code", "name", "capabilities"]
         for item in items {
             guard keys.contains(item.name), fields[item.name] == nil, let value = item.value else {
                 throw MobileHelperLinkError.invalidPayload
             }
             fields[item.name] = value
         }
-        guard fields["v"] == "1", let endpointText = fields["endpoint"], let endpoint = URL(string: endpointText),
+        guard let versionText = fields["v"], let version = Int(versionText), String(version) == versionText,
+              (version == 1 && items.count == 6 && fields["capabilities"] == nil)
+                || (version == 2 && items.count == 7 && fields["capabilities"] != nil),
+              let endpointText = fields["endpoint"], let endpoint = URL(string: endpointText),
               let identity = fields["identity"], let fingerprint = fields["fingerprint"],
               let code = fields["code"], let name = fields["name"]
         else { throw MobileHelperLinkError.invalidPayload }
-        let payload = Self(endpoint: endpoint, helperID: identity, fingerprint: fingerprint, code: code, name: name)
+        let capabilities = version == 1 ? ["ollama"]
+            : (fields["capabilities"] ?? "").split(separator: ",", omittingEmptySubsequences: false).map(String.init)
+        let payload = Self(version: version, endpoint: endpoint, helperID: identity, fingerprint: fingerprint,
+                           code: code, name: name, capabilities: capabilities)
         try payload.validate()
         return payload
     }
@@ -80,10 +129,13 @@ public struct MobileHelperPairingPayload: Codable, Equatable, Sendable {
         components.host = "helper"
         components.path = "/pair"
         components.queryItems = [
-            URLQueryItem(name: "v", value: "1"), URLQueryItem(name: "endpoint", value: endpoint.absoluteString),
+            URLQueryItem(name: "v", value: String(version)), URLQueryItem(name: "endpoint", value: endpoint.absoluteString),
             URLQueryItem(name: "identity", value: helperID), URLQueryItem(name: "fingerprint", value: fingerprint),
             URLQueryItem(name: "code", value: code), URLQueryItem(name: "name", value: name)
         ]
+        if version == 2 {
+            components.queryItems?.append(URLQueryItem(name: "capabilities", value: capabilities.joined(separator: ",")))
+        }
         guard let url = components.url else { throw MobileHelperLinkError.invalidPayload }
         return url
     }
@@ -155,7 +207,7 @@ public struct MobileHelperPairingResponse: Codable, Equatable, Sendable {
     }
     public func validate() throws {
         guard version == 1, UUID(uuidString: helperID) != nil, UUID(uuidString: deviceID) != nil,
-              MobileHelperPairingPayload.isHexSecret(token), capabilities == ["ollama"] else {
+              MobileHelperPairingPayload.isHexSecret(token), MobileHelperCapabilities.isValid(capabilities) else {
             throw MobileHelperLinkError.invalidPayload
         }
     }
@@ -178,7 +230,7 @@ public struct MobileHelperHealthResponse: Codable, Equatable, Sendable {
         try validate()
     }
     public func validate() throws {
-        guard version == 1, UUID(uuidString: helperID) != nil, capabilities == ["ollama"] else {
+        guard version == 1, UUID(uuidString: helperID) != nil, MobileHelperCapabilities.isValid(capabilities) else {
             throw MobileHelperLinkError.invalidPayload
         }
     }
