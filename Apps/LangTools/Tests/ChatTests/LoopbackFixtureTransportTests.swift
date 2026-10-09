@@ -5,7 +5,8 @@ import XCTest
 
 /// Bounded regression tests for `LoopbackURLSession` fixture transport injection.
 ///
-/// No stores, preferences, keys, or real network: the custom scheme
+/// No real credential stores, keys, or network; isolated synthetic preferences only.
+/// The custom scheme
 /// `fixture-loopback://` is answered only by a `URLProtocol`, and RFC 2606
 /// test hostnames (`fixture.invalid`, `other.invalid`) are used as data only.
 final class LoopbackFixtureTransportTests: XCTestCase {
@@ -66,6 +67,44 @@ final class LoopbackFixtureTransportTests: XCTestCase {
     }
 
     @MainActor
+    func testSharedSnapshotServiceChatAgentAndManagementUseFixtureNoRedirectSession() async throws {
+        #if DEBUG
+        LoopbackURLSession.installFixtureProtocols([FactoryOllamaProtocol.self])
+        let suite = "LoopbackFixtureTransportTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            LoopbackURLSession.installFixtureProtocols(nil)
+        }
+        let configuration = OllamaEndpointConfiguration(userDefaults: defaults, credentialStore: OllamaMemoryHelperStore())
+        let manager = ProviderAccessManager(keychainService: OllamaMemoryKeychainService(), sessionStore: AuthSessionStore(secretStore: OllamaMemorySecrets()), ollamaEndpointConfiguration: configuration)
+        let snapshot = configuration.snapshot()
+        let context = try snapshot.makeAgentContext(model: .init(rawValue: "fixture")!, messages: [], eventHandler: { _ in })
+        XCTAssertTrue(context.langTool.session === LoopbackURLSession.shared)
+        XCTAssertNotNil(context.langTool.session.delegate as? URLSessionTaskDelegate)
+        let service = OllamaService(endpointConfiguration: configuration, providerAccessManager: manager)
+        try await service.checkConnection(for: snapshot)
+        try await service.loadModel(.init(rawValue: "fixture")!, for: snapshot)
+        let prepared = try snapshot.makeToolchain().prepare(request: Ollama.ChatRequest(model: .init(rawValue: "fixture")!, messages: [], stream: false))
+        XCTAssertEqual(prepared.url?.host, "localhost")
+        XCTAssertNil(prepared.value(forHTTPHeaderField: "Authorization"))
+        let client = NetworkClient(keychainService: OllamaMemoryKeychainService(), accountLoginService: FixtureTransportLoginService(), providerAccessManager: manager, ollamaEndpointConfiguration: configuration)
+        let response = try await client.performChatCompletionRequest(messages: [], model: .ollama(.init(rawValue: "fixture")!), tools: nil, toolChoice: nil)
+        XCTAssertEqual(response.text, "fixture")
+        service.refreshModels()
+        let deadline = Date().addingTimeInterval(3)
+        while service.isLoading {
+            guard Date() < deadline else { throw URLError(.timedOut) }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertNil(service.error)
+        XCTAssertEqual(service.availableModels.map(\.rawValue), ["fixture"])
+        #else
+        throw XCTSkip("DEBUG fixture factory only")
+        #endif
+    }
+
+    @MainActor
     func testRedirectDelegateCancelsCrossOriginRedirectionWithoutExecutingHTTP() throws {
         let session = LoopbackURLSession.shared
         let taskDelegate = try XCTUnwrap(session.delegate as? URLSessionTaskDelegate)
@@ -105,16 +144,14 @@ final class LoopbackFixtureTransportTests: XCTestCase {
 private final class FixtureLoopbackProtocol: URLProtocol {
     static let fixtureBody = Data(#"{"ok": true, "probe": "fixture-loopback"}"#.utf8)
 
-    override class func canInit(with request: URLRequest) -> Bool {
-        request.url?.scheme == "fixture-loopback"
-    }
+    override class func canInit(with request: URLRequest) -> Bool { true }
 
     override class func canonicalRequest(for request: URLRequest) -> URLRequest {
         request
     }
 
     override func startLoading() {
-        guard let url = request.url, let response = HTTPURLResponse(
+        guard let url = request.url, url.scheme == "fixture-loopback", let response = HTTPURLResponse(
             url: url,
             statusCode: 200,
             httpVersion: "HTTP/1.1",
@@ -132,4 +169,36 @@ private final class FixtureLoopbackProtocol: URLProtocol {
     override func stopLoading() {
         // Static fixture: nothing to tear down.
     }
+}
+
+/// Every request is intercepted, including unexpected hosts/paths; no passthrough.
+private final class FactoryOllamaProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        guard let url = request.url, url.host == "localhost" else {
+            client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
+        }
+        let body: String
+        switch url.path {
+        case "/api/version": body = #"{"version":"fixture"}"#
+        case "/api/tags": body = #"{"models":[{"name":"fixture","modified_at":"2025-01-01T00:00:00Z","size":1,"digest":"fixture","details":{"format":"gguf","family":"llama","families":[],"parameter_size":"1B","quantization_level":"Q4"}}]}"#
+        case "/api/ps": body = #"{"models":[]}"#
+        case "/api/chat": body = #"{"model":"fixture","created_at":"2025-01-01T00:00:00Z","message":{"role":"assistant","content":"fixture"},"done":true}"#
+        default: client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
+        }
+        let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+private struct FixtureTransportLoginService: AccountLoginService {
+    func beginLogin(for provider: AccountLoginProvider) async throws -> AccountSession { throw URLError(.userAuthenticationRequired) }
+    func handleRedirect(_ url: URL) async throws -> AccountSession { throw URLError(.userAuthenticationRequired) }
+    func refreshSession(_ session: AccountSession) async throws -> AccountSession { session }
+    func logout(provider: AccountLoginProvider) async throws {}
+    func fetchAccessibleModels(for provider: AccountLoginProvider) async throws -> [String] { [] }
 }

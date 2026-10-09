@@ -70,7 +70,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     private let generationSettingsProvider: @Sendable () -> ChatGenerationSettings
     public let providerAccessManager: ProviderAccessManager
     private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
-    private let ollamaSession: URLSession
+    private let ollamaSession: URLSession?
 
     private var userDefaults: UserDefaults { .standard }
     private var langToolchain = LangToolchain()
@@ -85,7 +85,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         openAIAccountChatBridge: OpenAIAccountChatBridging = CLIAccountSessionBridge(),
         providerAccessManager: ProviderAccessManager = .shared,
         ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared,
-        ollamaSession: URLSession = .shared,
+        ollamaSession: URLSession? = nil,
         generationSettingsProvider: @escaping @Sendable () -> ChatGenerationSettings = {
             ChatGenerationSettingsStore().load()
         }
@@ -413,7 +413,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .xAI(let model): return AgentContext(langTool: try requiredLangTool(XAI.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
         case .ollama(let model):
             let snapshot = ollamaEndpointConfiguration.snapshot()
-            return AgentContext(langTool: try snapshot.provider(directSession: ollamaSession), model: model, messages: replayMessages.toOllamaMessages(), eventHandler: eventHandler)
+            return try snapshot.makeAgentContext(model: model, messages: replayMessages.toOllamaMessages(), eventHandler: eventHandler, directSession: ollamaSession ?? snapshot.directSession)
         case .ollamaCloud: throw NetworkError.ollamaCloudTransportUnavailable
         }
     }
@@ -431,7 +431,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         var snapshot = toolchainSnapshot()
         if model.apiService == .ollama {
             let endpoint = endpoint ?? ollamaEndpointConfiguration.snapshot()
-            snapshot.register(try endpoint.provider(directSession: ollamaSession))
+            // Register the captured capability, not a host-reconfigurable concrete provider.
+            return try endpoint.makeToolchain(directSession: ollamaSession ?? endpoint.directSession)
         }
         return snapshot
     }

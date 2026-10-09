@@ -1,6 +1,5 @@
 import Agents
 import Foundation
-import KeychainAccess
 import Ollama
 import OpenAI
 import XCTest
@@ -12,8 +11,6 @@ final class OllamaEndpointRoutingTests: XCTestCase {
     private var suiteName: String!
     private var endpointConfiguration: OllamaEndpointConfiguration!
     private var session: URLSession!
-    private var keychain: Keychain!
-    private var helperKeychain: Keychain!
     private var keychainService: KeychainService!
     private var sessionStore: AuthSessionStore!
     private var accessManager: ProviderAccessManager!
@@ -35,18 +32,15 @@ final class OllamaEndpointRoutingTests: XCTestCase {
         suiteName = "OllamaEndpointRoutingTests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
-        helperKeychain = Keychain(service: suiteName + ".helper")
-        endpointConfiguration = OllamaEndpointConfiguration(userDefaults: defaults,
-            credentialStore: MobileHelperCredentialStore(keychain: helperKeychain))
-
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [OllamaRoutingURLProtocol.self]
         session = URLSession(configuration: configuration)
         OllamaRoutingURLProtocol.reset()
 
-        keychain = Keychain(service: suiteName)
-        keychainService = KeychainService(keychain: keychain)
-        sessionStore = AuthSessionStore(keychain: keychain)
+        endpointConfiguration = OllamaEndpointConfiguration(userDefaults: defaults,
+            credentialStore: OllamaMemoryHelperStore(), directSession: session)
+        keychainService = OllamaMemoryKeychainService()
+        sessionStore = AuthSessionStore(secretStore: OllamaMemorySecrets())
         accessManager = ProviderAccessManager(
             keychainService: keychainService,
             sessionStore: sessionStore,
@@ -58,15 +52,13 @@ final class OllamaEndpointRoutingTests: XCTestCase {
         ToolSettings.shared.agentModelOverride = savedAgentModelOverride
         for key in toolSettingsKeys { UserDefaults.standard.set(globalToolSettings[key], forKey: key) }
         session.invalidateAndCancel()
-        try? keychain.removeAll()
-        try? helperKeychain.removeAll()
         defaults.removePersistentDomain(forName: suiteName)
         OllamaRoutingURLProtocol.reset()
         super.tearDown()
     }
 
     func testDiscoveryVersionChatStreamAndAgentUseConfiguredEndpoint() async throws {
-        _ = try endpointConfiguration.update("http://mac.local:11434")
+        _ = try endpointConfiguration.update("https://mac.local:11434")
         OllamaRoutingURLProtocol.handler = { request in
             switch request.url?.path {
             case "/api/tags":
@@ -113,8 +105,9 @@ final class OllamaEndpointRoutingTests: XCTestCase {
         XCTAssertEqual(streamed, "hello")
 
         let context = try client.agentContext(messages: [], model: model) { _ in }
-        let agentProvider = try XCTUnwrap(context.langTool as? Ollama)
-        XCTAssertEqual(agentProvider.configuration.baseURL.absoluteString, "http://mac.local:11434")
+        XCTAssertNil(context.langTool as? Ollama, "Captured capabilities must not expose a mutable concrete provider")
+        let agentRequest = try context.langTool.prepare(request: Ollama.ChatRequest(model: .init(rawValue: "llama3.2")!, messages: []))
+        XCTAssertEqual(agentRequest.url?.absoluteString, "https://mac.local:11434/api/chat")
 
         let requests = OllamaRoutingURLProtocol.requests()
         XCTAssertTrue(requests.allSatisfy { $0.url?.host == "mac.local" })
@@ -122,7 +115,7 @@ final class OllamaEndpointRoutingTests: XCTestCase {
     }
 
     func testStreamingCapturesEndpointBeforeEndpointChanges() async throws {
-        _ = try endpointConfiguration.update("http://old.local:11434")
+        _ = try endpointConfiguration.update("https://old.local:11434")
         OllamaRoutingURLProtocol.handler = { request in
             .json(Self.chatResponse(content: request.url?.host ?? "missing"), delay: 0.1)
         }
@@ -133,7 +126,7 @@ final class OllamaEndpointRoutingTests: XCTestCase {
             messages: [Message(text: "Hi", role: .user)], model: model, stream: true,
             tools: nil, toolChoice: nil
         )
-        _ = try endpointConfiguration.update("http://new.local:11434")
+        _ = try endpointConfiguration.update("https://new.local:11434")
         let newStream = try client.streamChatCompletionRequest(
             messages: [Message(text: "Hi", role: .user)], model: model, stream: true,
             tools: nil, toolChoice: nil
@@ -147,7 +140,7 @@ final class OllamaEndpointRoutingTests: XCTestCase {
     }
 
     func testMultiChunkStreamingResponseUsesConfiguredEndpoint() async throws {
-        _ = try endpointConfiguration.update("http://stream.local:11434")
+        _ = try endpointConfiguration.update("https://stream.local:11434")
         OllamaRoutingURLProtocol.handler = { request in
             guard request.url?.path == "/api/chat" else { throw URLError(.unsupportedURL) }
             return .stream([
@@ -169,8 +162,8 @@ final class OllamaEndpointRoutingTests: XCTestCase {
     }
 
     func testLoadAndPullUseExplicitCapturedSnapshotAfterEndpointChanges() async throws {
-        let capturedSnapshot = try endpointConfiguration.update("http://a.local:11434")
-        _ = try endpointConfiguration.update("http://b.local:11434")
+        let capturedSnapshot = try endpointConfiguration.update("https://a.local:11434")
+        _ = try endpointConfiguration.update("https://b.local:11434")
         OllamaRoutingURLProtocol.handler = { request in
             switch request.url?.path {
             case "/api/chat":
@@ -203,7 +196,7 @@ final class OllamaEndpointRoutingTests: XCTestCase {
     }
 
     func testStaleConnectionResultCannotOverwriteCurrentStatus() async throws {
-        _ = try endpointConfiguration.update("http://a.local:11434")
+        _ = try endpointConfiguration.update("https://a.local:11434")
         OllamaRoutingURLProtocol.handler = { request in
             guard request.url?.path == "/api/version" else { throw URLError(.unsupportedURL) }
             if request.url?.host == "a.local" {
@@ -225,7 +218,7 @@ final class OllamaEndpointRoutingTests: XCTestCase {
             OllamaRoutingURLProtocol.requests().contains { $0.url?.host == "a.local" }
         }
 
-        let currentSnapshot = try endpointConfiguration.update("http://b.local:11434")
+        let currentSnapshot = try endpointConfiguration.update("https://b.local:11434")
         viewModel.checkConnection(for: currentSnapshot)
         try await waitUntil { viewModel.isConnected && !viewModel.isCheckingConnection }
         try await Task.sleep(nanoseconds: 300_000_000)
@@ -236,7 +229,7 @@ final class OllamaEndpointRoutingTests: XCTestCase {
     }
 
     func testInFlightChatsRemainBoundToCapturedEndpoints() async throws {
-        _ = try endpointConfiguration.update("http://old.local:11434")
+        _ = try endpointConfiguration.update("https://old.local:11434")
         OllamaRoutingURLProtocol.handler = { request in
             let host = request.url?.host ?? "missing"
             return .json(Self.chatResponse(content: host), delay: host == "old.local" ? 0.25 : 0)
@@ -251,7 +244,7 @@ final class OllamaEndpointRoutingTests: XCTestCase {
             )
         }
         try await waitUntil { OllamaRoutingURLProtocol.requests().contains { $0.url?.host == "old.local" } }
-        _ = try endpointConfiguration.update("http://new.local:11434")
+        _ = try endpointConfiguration.update("https://new.local:11434")
         let newResponse = try await client.performChatCompletionRequest(
             messages: [Message(text: "new", role: .user)], model: model,
             tools: nil, toolChoice: nil
@@ -282,9 +275,9 @@ final class OllamaEndpointRoutingTests: XCTestCase {
             session: session,
             providerAccessManager: accessManager
         )
-        _ = try service.updateEndpoint("http://old.local:11434")
+        _ = try service.updateEndpoint("https://old.local:11434")
         try await waitUntil { OllamaRoutingURLProtocol.requests().contains { $0.url?.host == "old.local" } }
-        _ = try service.updateEndpoint("http://new.local:11434")
+        _ = try service.updateEndpoint("https://new.local:11434")
 
         try await waitUntil { service.availableModels.map(\.rawValue) == ["new-model"] }
         try await Task.sleep(nanoseconds: 400_000_000)
@@ -320,15 +313,15 @@ final class OllamaEndpointRoutingTests: XCTestCase {
             providerAccessManager: accessManager
         )
 
-        _ = try service.updateEndpoint("http://a.local:11434")
+        _ = try service.updateEndpoint("https://a.local:11434")
         try await waitUntil {
             OllamaRoutingURLProtocol.requests().contains { $0.url?.host == "a.local" && $0.url?.path == "/api/tags" }
         }
-        _ = try service.updateEndpoint("http://b.local:11434")
+        _ = try service.updateEndpoint("https://b.local:11434")
         try await waitUntil {
             OllamaRoutingURLProtocol.requests().contains { $0.url?.host == "b.local" && $0.url?.path == "/api/tags" }
         }
-        _ = try service.updateEndpoint("http://a.local:11434")
+        _ = try service.updateEndpoint("https://a.local:11434")
 
         try await waitUntil { service.availableModels.map(\.rawValue) == ["new-a-model"] }
         try await Task.sleep(nanoseconds: 400_000_000)
@@ -391,10 +384,11 @@ final class OllamaEndpointRoutingTests: XCTestCase {
         let streamed = try await Self.collect(stream)
         XCTAssertEqual(streamed, "hello")
         let context = try client.agentContext(messages: [], model: model) { _ in }
-        let provider = try XCTUnwrap(context.langTool as? Ollama)
-        XCTAssertTrue(provider.session === session)
-        XCTAssertEqual(provider.configuration.apiKey, credential.token)
-        XCTAssertEqual(provider.configuration.baseURL.path, "/v1/ollama")
+        XCTAssertNil(context.langTool as? Ollama)
+        let agentRequest = try context.langTool.prepare(request: Ollama.ChatRequest(model: .init(rawValue: "llama3.2")!, messages: []))
+        XCTAssertTrue(context.langTool.session === session)
+        XCTAssertEqual(agentRequest.value(forHTTPHeaderField: "Authorization"), "Bearer \(credential.token)")
+        XCTAssertEqual(agentRequest.url?.path, "/v1/ollama/api/chat")
         XCTAssertTrue(OllamaRoutingURLProtocol.requests().allSatisfy { $0.url?.host == "192.168.1.10" })
         try endpointConfiguration.disconnectHelper()
     }
@@ -402,10 +396,7 @@ final class OllamaEndpointRoutingTests: XCTestCase {
     func testHelperStreamsCaptureOldCredentialsWhenSameIdentityIsRepaired() async throws {
         let helperID = UUID().uuidString
         func connection(token: String) -> MobileHelperConnection {
-            let credential = MobileHelperCredential(endpoint: URL(string: "https://192.168.1.10:8086")!, helperID: helperID,
-                fingerprint: String(repeating: "a", count: 64), name: "Mac", deviceID: UUID().uuidString,
-                token: String(repeating: token, count: 64), capabilities: ["ollama"])
-            return MobileHelperConnection(credential: credential, session: session)
+            helperConnection(helperID: helperID, host: "192.168.1.10", token: token)
         }
         try endpointConfiguration.selectHelper(connection(token: "a"))
         OllamaRoutingURLProtocol.handler = { request in
@@ -418,7 +409,8 @@ final class OllamaEndpointRoutingTests: XCTestCase {
         try endpointConfiguration.selectHelper(connection(token: "b"))
         let oldResult = try await Self.collect(stream)
         XCTAssertEqual(oldResult, "a")
-        XCTAssertEqual((context.langTool as? Ollama)?.configuration.apiKey, String(repeating: "a", count: 64))
+        let capturedRequest = try context.langTool.prepare(request: Ollama.ChatRequest(model: .init(rawValue: "llama3.2")!, messages: []))
+        XCTAssertEqual(capturedRequest.value(forHTTPHeaderField: "Authorization"), "Bearer " + String(repeating: "a", count: 64))
         let next = try client.streamChatCompletionRequest(messages: [], model: model, stream: true, tools: nil, toolChoice: nil)
         let nextResult = try await Self.collect(next)
         XCTAssertEqual(nextResult, "b")
@@ -426,7 +418,7 @@ final class OllamaEndpointRoutingTests: XCTestCase {
     }
 
     func testGenerationOverridesPreserveDirectChatAndStreamEndpointSnapshots() async throws {
-        _ = try endpointConfiguration.update("http://old.local:11434")
+        _ = try endpointConfiguration.update("https://old.local:11434")
         let settings = try Self.generationOverrides()
         OllamaRoutingURLProtocol.handler = { request in
             let streaming = try Self.assertGenerationOverrides(in: request, settings: settings)
@@ -447,7 +439,7 @@ final class OllamaEndpointRoutingTests: XCTestCase {
             try await client.performChatCompletionRequest(messages: [], model: model, tools: nil, toolChoice: nil)
         }
         try await waitUntil { OllamaRoutingURLProtocol.requests().filter { $0.url?.host == "old.local" }.count == 2 }
-        _ = try endpointConfiguration.update("http://new.local:11434")
+        _ = try endpointConfiguration.update("https://new.local:11434")
         let newChat = try await client.performChatCompletionRequest(messages: [], model: model, tools: nil, toolChoice: nil)
         let newStream = try client.streamChatCompletionRequest(messages: [], model: model, stream: true,
                                                                tools: nil, toolChoice: nil)
@@ -515,23 +507,231 @@ final class OllamaEndpointRoutingTests: XCTestCase {
         ToolSettings.shared.agentModelOverride = .ollama(model)
         let client = makeClient(generationSettingsProvider: { XCTFail("Agent execution must not read chat generation overrides"); return .automatic })
         let context = try client.agentContext(messages: [], model: .openAI(.gpt4o_mini)) { _ in }
-        let provider = try XCTUnwrap(context.langTool as? Ollama)
+        XCTAssertNil(context.langTool as? Ollama)
         XCTAssertEqual(context.model as? Ollama.Model, model)
-        _ = try endpointConfiguration.update("http://direct.local:11434")
-        XCTAssertTrue(provider.session === session)
-        XCTAssertEqual(provider.configuration.baseURL.absoluteString, "https://192.168.1.10:8086/v1/ollama")
-        XCTAssertEqual(provider.configuration.apiKey, connection.credential.token)
+        _ = try endpointConfiguration.update("https://direct.local:11434")
+        let capturedRequest = try context.langTool.prepare(request: Ollama.ChatRequest(model: model, messages: []))
+        XCTAssertTrue(context.langTool.session === connection.session)
+        XCTAssertEqual(capturedRequest.url?.absoluteString, "https://192.168.1.10:8086/v1/ollama/api/chat")
+        XCTAssertEqual(capturedRequest.value(forHTTPHeaderField: "Authorization"), "Bearer \(connection.credential.token)")
         let next = try client.agentContext(messages: [], model: .openAI(.gpt4o_mini)) { _ in }
-        let directProvider = try XCTUnwrap(next.langTool as? Ollama)
-        XCTAssertEqual(directProvider.configuration.baseURL.absoluteString, "http://direct.local:11434")
-        XCTAssertNil(directProvider.configuration.apiKey)
+        let directRequest = try next.langTool.prepare(request: Ollama.ChatRequest(model: model, messages: []))
+        XCTAssertEqual(directRequest.url?.absoluteString, "https://direct.local:11434/api/chat")
+        XCTAssertNil(directRequest.value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testInvalidPersistedSourceBlocksDiscoveryProbeChatAgentAndCache() async throws {
+        defaults.set("http://user:secret@remote.local?secret", forKey: OllamaEndpointConfiguration.endpointKey)
+        endpointConfiguration = OllamaEndpointConfiguration(userDefaults: defaults, credentialStore: OllamaMemoryHelperStore(), directSession: session)
+        accessManager = ProviderAccessManager(keychainService: keychainService, sessionStore: sessionStore, ollamaEndpointConfiguration: endpointConfiguration)
+        let service = OllamaService(endpointConfiguration: endpointConfiguration, providerAccessManager: accessManager)
+        XCTAssertNotNil(service.error as? OllamaEndpointConfiguration.ValidationError)
+        service.refreshModels()
+        try await waitUntil { !service.isLoading }
+        XCTAssertTrue(service.availableModels.isEmpty)
+        XCTAssertNotNil(service.error as? OllamaEndpointConfiguration.ValidationError)
+        do { try await service.checkConnection(); XCTFail("Expected invalid source") }
+        catch { XCTAssertNotNil(error as? OllamaEndpointConfiguration.ValidationError) }
+        let client = makeClient()
+        let model = Model.ollama(.init(rawValue: "local:cloud")!)
+        do {
+            _ = try await client.performChatCompletionRequest(messages: [], model: model, tools: nil, toolChoice: nil)
+            XCTFail("Expected invalid source")
+        } catch { XCTAssertNotNil(error as? OllamaEndpointConfiguration.ValidationError) }
+        XCTAssertThrowsError(try client.agentContext(messages: [], model: model) { _ in })
+        XCTAssertTrue(OllamaRoutingURLProtocol.requests().isEmpty)
+        XCTAssertNil(defaults.object(forKey: OllamaEndpointConfiguration.modelsByEndpointKey))
+        let vm = OllamaSettingsView.ViewModel(ollamaService: service)
+        XCTAssertEqual(vm.serverUrl, "")
+        XCTAssertEqual(vm.editingServerUrl, "")
+        XCTAssertFalse(try XCTUnwrap(vm.endpointValidationError).contains("secret"))
+    }
+
+    func testFailedAndUnchangedSettingsSavesPreserveOperationsModelsAndDiagnostics() throws {
+        let service = OllamaService(endpointConfiguration: endpointConfiguration, session: session, providerAccessManager: accessManager)
+        service.availableModels = [.init(rawValue: "old")!]
+        service.error = URLError(.cannotConnectToHost)
+        let vm = OllamaSettingsView.ViewModel(ollamaService: service)
+        vm.loadingModelName = "loading"
+        vm.isPulling = true
+        vm.pullProgress = 0.5
+        vm.pullError = "keep pull diagnostic"
+        vm.isConnected = true
+        vm.connectionError = "keep connection diagnostic"
+        let original = endpointConfiguration.snapshot()
+        vm.editingServerUrl = "http://remote.local"
+        XCTAssertFalse(vm.updateServerUrl())
+        XCTAssertEqual(endpointConfiguration.snapshot(), original)
+        XCTAssertEqual(vm.serverUrl, "http://localhost:11434")
+        XCTAssertNotNil(vm.endpointValidationError)
+        vm.editingServerUrl = " http://localhost:11434/ "
+        XCTAssertTrue(vm.updateServerUrl())
+        XCTAssertEqual(endpointConfiguration.snapshot(), original)
+        XCTAssertEqual(vm.loadingModelName, "loading")
+        XCTAssertTrue(vm.isPulling)
+        XCTAssertEqual(vm.pullProgress, 0.5)
+        XCTAssertEqual(vm.pullError, "keep pull diagnostic")
+        XCTAssertTrue(vm.isConnected)
+        XCTAssertEqual(vm.connectionError, "keep connection diagnostic")
+        XCTAssertEqual(service.availableModels.map(\.rawValue), ["old"])
+        XCTAssertEqual((service.error as? URLError)?.code, .cannotConnectToHost)
+        XCTAssertTrue(OllamaRoutingURLProtocol.requests().isEmpty)
+    }
+
+    func testStaleSuccessfulAndFailedProbesThrowCancellationAndNeverRetarget() async throws {
+        for success in [true, false] {
+            OllamaRoutingURLProtocol.reset()
+            let old = try endpointConfiguration.update("https://old.local/base")
+            OllamaRoutingURLProtocol.handler = { request in
+                XCTAssertEqual(request.url?.host, "old.local")
+                return .json(success ? #"{"version":"0.5.0"}"# : #"{"invalid":true}"#, delay: 0.1)
+            }
+            let service = OllamaService(endpointConfiguration: endpointConfiguration, providerAccessManager: accessManager)
+            let pending = Task { try await service.checkConnection(for: old) }
+            try await waitUntil { !OllamaRoutingURLProtocol.requests().isEmpty }
+            _ = try endpointConfiguration.update("https://new.local/base")
+            do { try await pending.value; XCTFail("Stale probe must not succeed") }
+            catch { XCTAssertTrue(error is CancellationError) }
+            XCTAssertEqual(OllamaRoutingURLProtocol.requests().count, 1)
+            do { try await service.checkConnection(for: old); XCTFail("Already stale probe") }
+            catch { XCTAssertTrue(error is CancellationError) }
+            XCTAssertEqual(OllamaRoutingURLProtocol.requests().count, 1)
+        }
+    }
+
+    func testCancelledProbeDoesNotClearExistingDiagnosticOrPublishModels() async throws {
+        OllamaRoutingURLProtocol.handler = { _ in .json(#"{"version":"0.5.0"}"#, delay: 0.1) }
+        let service = OllamaService(endpointConfiguration: endpointConfiguration, session: session, providerAccessManager: accessManager)
+        service.error = URLError(.cannotConnectToHost)
+        let probe = Task { try await service.checkConnection() }
+        try await waitUntil { !OllamaRoutingURLProtocol.requests().isEmpty }
+        probe.cancel()
+        do { try await probe.value; XCTFail("Cancelled probe") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertEqual((service.error as? URLError)?.code, .cannotConnectToHost)
+        XCTAssertTrue(service.availableModels.isEmpty)
+    }
+
+    func testSelectedHelperIsIndependentOfInvalidDormantDirectSourceAndDisconnectHasNoDestination() throws {
+        defaults.set("http://remote.local", forKey: OllamaEndpointConfiguration.endpointKey)
+        endpointConfiguration = OllamaEndpointConfiguration(userDefaults: defaults, credentialStore: OllamaMemoryHelperStore(), directSession: session)
+        let connection = helperConnection(helperID: UUID().uuidString, host: "192.168.1.10", token: "a")
+        try endpointConfiguration.selectHelper(connection)
+        let selected = endpointConfiguration.snapshot()
+        XCTAssertNil(selected.validationError)
+        XCTAssertNotNil(endpointConfiguration.directValidationError)
+        let captured = try selected.makeToolchain()
+        let request = Ollama.ChatRequest(model: .init(rawValue: "local:cloud")!, messages: [], stream: false)
+        XCTAssertEqual(try captured.prepare(request: request).url?.path, "/v1/ollama/api/chat")
+        try endpointConfiguration.disconnectHelper()
+        let disconnected = endpointConfiguration.snapshot()
+        XCTAssertTrue(disconnected.isHelper)
+        XCTAssertNil(disconnected.baseURL)
+        XCTAssertNil(disconnected.cacheScope)
+        XCTAssertFalse(endpointConfiguration.storeModels([.init(rawValue: "blocked")!], for: disconnected))
+        XCTAssertThrowsError(try disconnected.makeToolchain())
+        XCTAssertEqual(try captured.prepare(request: request).value(forHTTPHeaderField: "Authorization"), "Bearer \(connection.credential.token)")
+        endpointConfiguration.useDirect()
+        XCTAssertNil(endpointConfiguration.snapshot().baseURL)
+        XCTAssertThrowsError(try endpointConfiguration.snapshot().makeToolchain())
+    }
+
+    func testLocalCloudSuffixKeepsFullModelIDAndNeverUsesCloudKeyOrAuthority() async throws {
+        keychainService.saveApiKey(apiKey: "synthetic-cloud-secret", for: .ollama)
+        accessManager.refresh()
+        _ = try endpointConfiguration.update("https://daemon.local/custom%20base")
+        OllamaRoutingURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.host, "daemon.local")
+            XCTAssertEqual(request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.percentEncodedPath }, "/custom%20base/api/chat")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: OllamaRoutingURLProtocol.requestBody(request)) as? [String: Any])
+            XCTAssertEqual(payload["model"] as? String, "local:cloud")
+            return .json(Self.chatResponse(content: "local"))
+        }
+        let client = makeClient()
+        let local = Model.ollama(.init(rawValue: "local:cloud")!)
+        let result = try await client.performChatCompletionRequest(messages: [], model: local, tools: nil, toolChoice: nil)
+        XCTAssertEqual(result.text, "local")
+        let agent = try client.agentContext(messages: [], model: local) { _ in }
+        XCTAssertEqual((agent.model as? Ollama.Model)?.rawValue, "local:cloud")
+        let request = try agent.langTool.prepare(request: Ollama.ChatRequest(model: .init(rawValue: "local:cloud")!, messages: []))
+        XCTAssertEqual(request.url?.host, "daemon.local")
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+        let count = OllamaRoutingURLProtocol.requests().count
+        do {
+            _ = try await client.performChatCompletionRequest(messages: [], model: .ollamaCloud(.init(rawValue: "local:cloud")!), tools: nil, toolChoice: nil)
+            XCTFail("Standalone Cloud transport remains separate/unavailable")
+        } catch { XCTAssertEqual(error as? NetworkClient.NetworkError, .ollamaCloudTransportUnavailable) }
+        XCTAssertEqual(OllamaRoutingURLProtocol.requests().count, count)
+    }
+
+    func testInvalidLocalSourcePreservesIndependentCloudEligibilityOverrideAndCatalog() throws {
+        let previousCloudCatalog = UserDefaults.standard.object(forKey: "ollamaCloudModels")
+        defer { UserDefaults.standard.set(previousCloudCatalog, forKey: "ollamaCloudModels") }
+        Model.updateCachedOllamaCloudModels([.init(rawValue: "synthetic-hosted:cloud")!])
+        let local = endpointConfiguration.snapshot()
+        XCTAssertTrue(endpointConfiguration.storeModels([.init(rawValue: "synthetic-local:cloud")!], for: local))
+        keychainService.saveApiKey(apiKey: "synthetic-cloud-secret", for: .ollama)
+        accessManager.refresh()
+        XCTAssertTrue(accessManager.availableChatModels().contains { $0.rawValue == "ollama-cloud/synthetic-hosted" })
+        defaults.set("http://remote.local", forKey: OllamaEndpointConfiguration.endpointKey)
+        accessManager.refresh()
+        XCTAssertTrue(accessManager.state(for: .ollama).availableModels.isEmpty)
+        XCTAssertTrue(accessManager.availableChatModels().contains { $0.rawValue == "ollama-cloud/synthetic-hosted" })
+        accessManager.configureOllamaCloudAccessEligibilityOverride { false }
+        XCTAssertFalse(accessManager.availableChatModels().contains { $0.route == .ollamaCloud })
+        keychainService.deleteApiKey(for: .ollama)
+        accessManager.configureOllamaCloudAccessEligibilityOverride { true }
+        XCTAssertTrue(accessManager.availableChatModels().contains { $0.rawValue == "ollama-cloud/synthetic-hosted" })
+        accessManager.configureOllamaCloudAccessEligibilityOverride(nil)
+        XCTAssertFalse(accessManager.availableChatModels().contains { $0.route == .ollamaCloud })
+        XCTAssertEqual(Model.cachedOllamaCloudModels.map(\.rawValue), ["synthetic-hosted"])
+        XCTAssertNil(endpointConfiguration.snapshot().baseURL)
+    }
+
+    func testCapturedToolchainPreservesIntermediateToolResponseCallbacksAndOldAuthority() async throws {
+        let old = try endpointConfiguration.update("https://old.local/custom")
+        let toolchain = try old.makeToolchain()
+        _ = try endpointConfiguration.update("https://new.local")
+        var toolCalls = 0
+        let tool = OpenAI.Tool(name: "fixture_tool", description: nil, tool_schema: .init(), callback: { _, _ in
+            toolCalls += 1
+            return "synthetic tool result"
+        })
+        var requestCount = 0
+        OllamaRoutingURLProtocol.handler = { request in
+            requestCount += 1
+            XCTAssertEqual(request.url?.host, "old.local")
+            XCTAssertEqual(request.url?.path, "/custom/api/chat")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            if requestCount == 1 {
+                return .json(#"{"model":"fixture-model","created_at":"2026-10-08T00:00:00Z","message":{"role":"assistant","content":"tool step","tool_calls":[{"function":{"name":"fixture_tool","arguments":{}}}]},"done":true}"#)
+            }
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: OllamaRoutingURLProtocol.requestBody(request)) as? [String: Any])
+            let messages = try XCTUnwrap(payload["messages"] as? [[String: Any]])
+            XCTAssertTrue(messages.contains { $0["role"] as? String == "tool" && $0["content"] as? String == "synthetic tool result" })
+            return .json(Self.chatResponse(content: "final step"))
+        }
+        var callbacks: [String] = []
+        let response = try await toolchain.perform(request: Ollama.ChatRequest(model: .init(rawValue: "fixture-model")!, messages: [], stream: false, tools: [tool]), onResponse: { response in
+            callbacks.append(response.message?.content.text ?? "")
+        })
+        XCTAssertEqual(response.message?.content.text, "final step")
+        XCTAssertEqual(callbacks, ["tool step", "final step"])
+        XCTAssertEqual(toolCalls, 1)
+        XCTAssertEqual(requestCount, 2)
     }
 
     private func helperConnection(helperID: String, host: String, token: String) -> MobileHelperConnection {
         let credential = MobileHelperCredential(endpoint: URL(string: "https://\(host):8086")!,
             helperID: helperID, fingerprint: String(repeating: "a", count: 64), name: "Test Mac",
             deviceID: UUID().uuidString, token: String(repeating: token, count: 64), capabilities: ["ollama"])
-        return MobileHelperConnection(credential: credential, session: session)
+        // Each pairing owns a distinct synthetic session/lease, just like production.
+        // Reusing a raw session across separate retirement leases would invalidate
+        // a repaired pairing when the old captured operation completes.
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OllamaRoutingURLProtocol.self]
+        return MobileHelperConnection(credential: credential, session: URLSession(configuration: configuration))
     }
 
     private static func generationOverrides() throws -> ChatGenerationSettings {

@@ -1,5 +1,4 @@
 import Foundation
-import KeychainAccess
 import Ollama
 import XCTest
 @testable import Chat
@@ -8,11 +7,11 @@ import XCTest
 final class ProviderAccessRefreshRegressionTests: XCTestCase {
     func testQueuedRefreshCannotRestoreOldServerCatalog() async throws {
         try await withConfiguration { configuration, manager in
-            let old = try configuration.update("http://old.local:11434")
+            let old = try configuration.update("https://old.local:11434")
             XCTAssertTrue(configuration.storeModels([.init(rawValue: "old-model")!], for: old))
             try queueBackgroundRefresh(manager)
 
-            let current = try configuration.update("http://new.local:11434")
+            let current = try configuration.update("https://new.local:11434")
             XCTAssertTrue(configuration.storeModels([.init(rawValue: "new-model")!], for: current))
             manager.refresh()
             await drainMainQueue()
@@ -38,12 +37,12 @@ final class ProviderAccessRefreshRegressionTests: XCTestCase {
 
     func testQueuedRefreshIsRejectedOnEndpointRevisionChangeWithoutAnotherRefresh() async throws {
         try await withConfiguration { configuration, manager in
-            let old = try configuration.update("http://a.local:11434")
+            let old = try configuration.update("https://a.local:11434")
             XCTAssertTrue(configuration.storeModels([.init(rawValue: "old-model")!], for: old))
             try queueBackgroundRefresh(manager)
 
-            _ = try configuration.update("http://b.local:11434")
-            _ = try configuration.update("http://a.local:11434")
+            _ = try configuration.update("https://b.local:11434")
+            _ = try configuration.update("https://a.local:11434")
             await drainMainQueue()
 
             XCTAssertTrue(manager.state(for: .ollama).availableModels.isEmpty,
@@ -68,7 +67,7 @@ final class ProviderAccessRefreshRegressionTests: XCTestCase {
     func testEndpointChangeDuringRefreshCannotPublishAnotherEndpointsCache() async throws {
         let keys = PausingRegressionKeychainService()
         try await withConfiguration(keys: keys) { configuration, manager in
-            let old = try configuration.update("http://old.local:11434")
+            let old = try configuration.update("https://old.local:11434")
             XCTAssertTrue(configuration.storeModels([.init(rawValue: "old-model")!], for: old))
             let finished = DispatchSemaphore(value: 0)
             keys.pauseNextRead()
@@ -80,7 +79,7 @@ final class ProviderAccessRefreshRegressionTests: XCTestCase {
             defer { keys.resume.signal() }
             XCTAssertEqual(keys.paused.wait(timeout: .now() + 5), .success)
 
-            let current = try configuration.update("http://new.local:11434")
+            let current = try configuration.update("https://new.local:11434")
             XCTAssertTrue(configuration.storeModels([.init(rawValue: "new-model")!], for: current))
             keys.resume.signal()
             XCTAssertEqual(finished.wait(timeout: .now() + 5), .success)
@@ -102,7 +101,7 @@ final class ProviderAccessRefreshRegressionTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let configuration = OllamaEndpointConfiguration(userDefaults: defaults, credentialStore: RegressionHelperStore())
         let manager = ProviderAccessManager(keychainService: keys,
-            sessionStore: AuthSessionStore(keychain: Keychain(service: suite)),
+            sessionStore: AuthSessionStore(secretStore: OllamaMemorySecrets()),
             ollamaEndpointConfiguration: configuration)
         try await operation(configuration, manager)
     }
@@ -181,7 +180,7 @@ final class OllamaSettingsErrorRegressionTests: XCTestCase {
             }
         }
         let manager = ProviderAccessManager(keychainService: PausingRegressionKeychainService(),
-            sessionStore: AuthSessionStore(keychain: Keychain(service: suite)), ollamaEndpointConfiguration: configuration)
+            sessionStore: AuthSessionStore(secretStore: OllamaMemorySecrets()), ollamaEndpointConfiguration: configuration)
         let service = OllamaService(endpointConfiguration: configuration, session: .shared, providerAccessManager: manager)
         let viewModel = OllamaSettingsView.ViewModel(ollamaService: service, endpointConfiguration: configuration)
         if pull {

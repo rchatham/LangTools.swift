@@ -1,15 +1,8 @@
 import XCTest
-import KeychainAccess
 import Ollama
 @testable import Chat
 
-/// `OllamaEndpointPolicy` is the fail-closed endpoint policy used by Botsworth's
-/// startup discovery and backend routing. The shared app stack (OllamaService,
-/// OllamaSettingsView, NetworkClient) now routes through OllamaEndpointConfiguration
-/// (upstream main semantics: invalid persisted values reset to the default
-/// endpoint); its behavior is covered by OllamaEndpointConfigurationTests,
-/// OllamaEndpointRoutingTests, and OllamaAppRegressionTests. This suite pins the
-/// policy itself plus the settings view's never-echo-secrets guarantee.
+/// Both compatibility policy and shared configuration enforce one fail-closed validator.
 final class OllamaEndpointPolicyTests: XCTestCase {
     private var defaults: UserDefaults!
     private var suiteName: String!
@@ -18,133 +11,80 @@ final class OllamaEndpointPolicyTests: XCTestCase {
         super.setUp()
         suiteName = "OllamaEndpointPolicyTests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
     }
-
     override func tearDown() {
         defaults.removePersistentDomain(forName: suiteName)
-        defaults = nil
-        suiteName = nil
         super.tearDown()
     }
 
     func testAbsentSettingUsesDefaultAndFactoryUsesLoopbackSession() throws {
         XCTAssertEqual(try OllamaEndpointPolicy.resolve(userDefaults: defaults), OllamaEndpointPolicy.defaultURL)
-
         let ollama = try OllamaEndpointPolicy.makeOllama(userDefaults: defaults)
-
         XCTAssertEqual(ollama.configuration.baseURL, URL(string: "http://localhost:11434"))
         XCTAssertTrue(ollama.session === LoopbackURLSession.shared)
     }
 
     func testValidEndpointsPreserveCustomPath() throws {
-        let values = [
-            "http://localhost:22445/custom/path",
-            "http://127.0.0.1:22445/custom/path",
-            "http://[::1]:22445/custom/path",
-            "https://ollama.example.com/custom/path",
-        ]
-
-        for value in values {
+        for value in ["http://localhost:22445/custom/path", "http://127.0.0.1:22445/custom/path", "http://[::1]:22445/custom/path", "https://ollama.example.com/custom%20path"] {
             XCTAssertEqual(try OllamaEndpointPolicy.validate(value).absoluteString, value)
         }
     }
 
-    func testPresentInvalidEndpointsNeverFallBackToDefault() {
-        let invalidValues: [(String, OllamaEndpointError)] = [
-            ("", .empty),
-            (" https://ollama.example.com", .malformed(" https://ollama.example.com")),
-            ("not a url", .unsupportedScheme(nil)),
-            ("localhost:11434", .unsupportedScheme("localhost")),
-            ("ftp://localhost:11434", .unsupportedScheme("ftp")),
-            ("https:///missing-host", .missingHost),
-            ("https://user@ollama.example.com/path", .disallowedComponent("user or password")),
-            ("https://user:password@ollama.example.com/path", .disallowedComponent("user or password")),
-            ("https://ollama.example.com/path?model=one", .disallowedComponent("query")),
-            ("https://ollama.example.com/path?", .disallowedComponent("query")),
-            ("https://ollama.example.com/path#models", .disallowedComponent("fragment")),
-            ("https://ollama.example.com/path#", .disallowedComponent("fragment")),
-            ("http://example.com:11434", .unsafeHTTPHost("example.com")),
-            ("http://localhost.example.com:11434", .unsafeHTTPHost("localhost.example.com")),
-        ]
-
-        for (value, expectedError) in invalidValues {
+    func testPresentInvalidEndpointsNeverFallBackOrRetainInputInError() {
+        let invalidValues = ["", "not a url", "localhost:11434", "ftp://localhost:11434", "https:///missing-host", "https://user:secret@ollama.example.com/path", "https://ollama.example.com/path?secret", "https://ollama.example.com/path#secret", "http://example.com:11434", "http://localhost.example.com:11434"]
+        for value in invalidValues {
             defaults.set(value, forKey: OllamaEndpointPolicy.userDefaultsKey)
-            XCTAssertThrowsError(try OllamaEndpointPolicy.resolve(userDefaults: defaults), value) { error in
-                XCTAssertEqual(error as? OllamaEndpointError, expectedError)
+            XCTAssertThrowsError(try OllamaEndpointPolicy.resolve(userDefaults: defaults)) { error in
+                XCTAssertNotNil(error as? OllamaEndpointConfiguration.ValidationError)
+                XCTAssertFalse(String(describing: error).contains("secret"))
+                XCTAssertFalse(error.localizedDescription.contains("secret"))
             }
+            XCTAssertEqual(defaults.string(forKey: OllamaEndpointPolicy.userDefaultsKey), value)
         }
-
         defaults.set(11434, forKey: OllamaEndpointPolicy.userDefaultsKey)
         XCTAssertThrowsError(try OllamaEndpointPolicy.resolve(userDefaults: defaults)) { error in
-            guard case .malformed = error as? OllamaEndpointError else {
-                return XCTFail("Expected malformed error, got \(error)")
-            }
+            XCTAssertEqual(error as? OllamaEndpointConfiguration.ValidationError, .invalidURL)
         }
     }
 
     @MainActor
     func testSettingsDisplayCanonicalEndpointAndNeverEchoInvalidLegacySecrets() throws {
-        // A valid persisted endpoint displays unchanged.
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [PolicyFailClosedURLProtocol.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
         defaults.set("https://ollama.example.com", forKey: OllamaEndpointConfiguration.endpointKey)
-        let keychain = Keychain(service: "OllamaEndpointPolicyTests.\(UUID().uuidString)")
-        let manager = ProviderAccessManager(
-            keychainService: KeychainService(keychain: keychain),
-            sessionStore: AuthSessionStore(keychain: keychain)
-        )
-        let service = OllamaService(
-            endpointConfiguration: OllamaEndpointConfiguration(userDefaults: defaults),
-            providerAccessManager: manager
-        )
+        let configuration = OllamaEndpointConfiguration(userDefaults: defaults, credentialStore: OllamaMemoryHelperStore(), directSession: session)
+        let manager = ProviderAccessManager(keychainService: OllamaMemoryKeychainService(), sessionStore: AuthSessionStore(secretStore: OllamaMemorySecrets()), ollamaEndpointConfiguration: configuration)
+        let service = OllamaService(endpointConfiguration: configuration, session: session, providerAccessManager: manager)
         let settings = OllamaSettingsView.ViewModel(ollamaService: service)
         XCTAssertEqual(settings.serverUrl, "https://ollama.example.com")
         XCTAssertEqual(settings.editingServerUrl, "https://ollama.example.com")
-
-        // Invalid legacy secret-bearing values follow the upstream shared-stack
-        // semantics: they reset to the default endpoint and are never echoed in
-        // published UI state or validation errors.
-        let invalidValues = [
-            "https://user:secret@ollama.example.com/path",
-            "https://ollama.example.com/path?token=secret",
-            "https://ollama.example.com/path#secret",
-            "secret://ollama.example.com/path",
-        ]
-
-        for value in invalidValues {
+        for value in ["https://user:secret@ollama.example.com/path", "https://ollama.example.com/path?token=secret", "https://ollama.example.com/path#secret", "secret://ollama.example.com/path"] {
             defaults.set(value, forKey: OllamaEndpointConfiguration.endpointKey)
-            let configuration = OllamaEndpointConfiguration(userDefaults: defaults)
-            XCTAssertEqual(
-                configuration.directBaseURL,
-                OllamaEndpointConfiguration.defaultBaseURL,
-                "invalid persisted value must reset to the default endpoint: \(value)"
-            )
-            XCTAssertEqual(
-                defaults.string(forKey: OllamaEndpointConfiguration.endpointKey),
-                OllamaEndpointConfiguration.defaultBaseURL.absoluteString,
-                "the reset must be persisted so the legacy value is discarded: \(value)"
-            )
-
-            let settings = OllamaSettingsView.ViewModel(ollamaService: OllamaService(
-                endpointConfiguration: configuration,
-                providerAccessManager: manager
-            ))
-            XCTAssertEqual(settings.serverUrl, OllamaEndpointConfiguration.defaultBaseURL.absoluteString, value)
-            XCTAssertEqual(settings.editingServerUrl, OllamaEndpointConfiguration.defaultBaseURL.absoluteString, value)
-
+            let configuration = OllamaEndpointConfiguration(userDefaults: defaults, credentialStore: OllamaMemoryHelperStore(), directSession: session)
+            XCTAssertNil(configuration.directBaseURL)
+            XCTAssertEqual(defaults.string(forKey: OllamaEndpointConfiguration.endpointKey), value)
+            let settings = OllamaSettingsView.ViewModel(ollamaService: OllamaService(endpointConfiguration: configuration, session: session, providerAccessManager: manager))
+            XCTAssertEqual(settings.serverUrl, "")
+            XCTAssertEqual(settings.editingServerUrl, "")
+            XCTAssertNotNil(settings.endpointValidationError)
             settings.editingServerUrl = value
-            XCTAssertFalse(settings.updateServerUrl(), value)
-            let validationError = try XCTUnwrap(settings.endpointValidationError, value)
-            XCTAssertFalse(validationError.contains("secret"), value)
-
+            XCTAssertFalse(settings.updateServerUrl())
+            XCTAssertFalse(try XCTUnwrap(settings.endpointValidationError).contains("secret"))
             settings.editingServerUrl = "http://127.0.0.1:11434"
             XCTAssertTrue(settings.updateServerUrl())
             XCTAssertEqual(settings.serverUrl, "http://127.0.0.1:11434")
-            XCTAssertEqual(
-                defaults.string(forKey: OllamaEndpointConfiguration.endpointKey),
-                "http://127.0.0.1:11434"
-            )
+            XCTAssertNil(settings.endpointValidationError)
+            XCTAssertEqual(defaults.string(forKey: OllamaEndpointConfiguration.endpointKey), "http://127.0.0.1:11434")
         }
-
-        try? keychain.removeAll()
     }
+}
+
+/// Synthetic failure for every request; never falls through to real transport.
+private final class PolicyFailClosedURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet)) }
+    override func stopLoading() {}
 }

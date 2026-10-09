@@ -36,43 +36,13 @@ public enum OllamaEndpointPolicy {
             return defaultURL
         }
         guard let value = persistedValue as? String else {
-            throw OllamaEndpointError.malformed(String(describing: persistedValue))
+            throw OllamaEndpointConfiguration.ValidationError.invalidURL
         }
         return try validate(value)
     }
 
     public static func validate(_ value: String) throws -> URL {
-        guard !value.isEmpty else {
-            throw OllamaEndpointError.empty
-        }
-        guard value == value.trimmingCharacters(in: .whitespacesAndNewlines),
-              let components = URLComponents(string: value),
-              let url = components.url else {
-            throw OllamaEndpointError.malformed(value)
-        }
-        guard let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
-            throw OllamaEndpointError.unsupportedScheme(components.scheme)
-        }
-        guard let host = components.host, !host.isEmpty else {
-            throw OllamaEndpointError.missingHost
-        }
-        if components.user != nil || components.password != nil {
-            throw OllamaEndpointError.disallowedComponent("user or password")
-        }
-        if components.query != nil {
-            throw OllamaEndpointError.disallowedComponent("query")
-        }
-        if components.fragment != nil {
-            throw OllamaEndpointError.disallowedComponent("fragment")
-        }
-        if scheme == "http" {
-            let normalizedHost = host.lowercased() == "[::1]" ? "::1" : host.lowercased()
-            let loopbackHosts = ["localhost", "127.0.0.1", "::1"]
-            guard loopbackHosts.contains(normalizedHost) else {
-                throw OllamaEndpointError.unsafeHTTPHost(host)
-            }
-        }
-        return url
+        try OllamaEndpointConfiguration.validate(value)
     }
 
     public static func makeOllama(userDefaults: UserDefaults = .standard) throws -> Ollama {
