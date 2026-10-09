@@ -215,6 +215,7 @@ public struct ChatSettingsView: View {
                 .disabled(viewModel.availableModels.isEmpty)
 
                 modelCatalogStatus
+                selectedModelAvailabilityStatus
                 if !viewModel.isProxyContext {
                     Text(viewModel.transportLabel(for: viewModel.model))
                         .font(.caption)
@@ -507,6 +508,16 @@ public struct ChatSettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private var selectedModelAvailabilityStatus: some View {
+        if let reason = viewModel.selectedModelUnavailableReason {
+            Text(reason)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .accessibilityIdentifier("settings.models.selectedUnavailable")
+        }
+    }
+
     // MARK: - macOS Detail Views
 
     private var generalSettingsView: some View {
@@ -539,6 +550,7 @@ public struct ChatSettingsView: View {
                         .disabled(viewModel.availableModels.isEmpty)
 
                         modelCatalogStatus
+                        selectedModelAvailabilityStatus
                         Divider()
 
                         VStack(alignment: .leading, spacing: 6) {
@@ -1376,8 +1388,19 @@ extension ChatSettingsView {
         public var availableModels: [Model] {
             if let modelSource, modelSource.isProxy { return modelSource.models }
             let available = accessManager.availableChatModels()
-            guard model.apiService == .ollama, !available.contains(model) else { return available }
+            guard !available.contains(model),
+                  model.apiService == .ollama || accessManager.usesPairedAccountTransport(for: model) else { return available }
             return [model] + available
+        }
+
+        var selectedModelUnavailableReason: String? {
+            guard !isProxyContext,
+                  accessManager.usesPairedAccountTransport(for: model),
+                  !accessManager.availableChatModels().contains(model) else { return nil }
+            let state = providerAccessStates.first { $0.accessDestination == AccessDestination.destination(for: model) }
+            let reason = state.flatMap { accessManager.unavailableReason(for: $0) }
+                ?? "The selected model is not in the current helper account catalog."
+            return "Selected model \(model.rawValue) is unavailable. \(reason) Your selection is kept; reconnect or explicitly choose another model. No direct API fallback is used."
         }
 
         func loadSettings() {
@@ -1692,6 +1715,10 @@ extension ChatSettingsView {
             if model.apiService == .ollama,
                !accessManager.availableChatModels().contains(model) {
                 return "\(model.rawValue) — Unavailable on current Ollama server"
+            }
+            if accessManager.usesPairedAccountTransport(for: model),
+               !accessManager.availableChatModels().contains(model) {
+                return "\(model.rawValue) — Unavailable — \(transportLabel(for: model))"
             }
             return "\(model.rawValue) — \(transportLabel(for: model))"
         }

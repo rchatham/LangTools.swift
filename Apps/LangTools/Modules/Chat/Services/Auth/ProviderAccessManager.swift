@@ -200,9 +200,20 @@ public final class ProviderAccessManager: ObservableObject {
             + state(for: .ollama).availableModels
     }
 
+    /// The user's paired-account route is not consent to use a paid API key.
+    /// Catalog loss (including relaunch and disconnect) must require an explicit
+    /// replacement, while requests for the preserved model still fail closed.
+    func usesPairedAccountTransport(for model: Model) -> Bool {
+        switch model.route {
+        case .codex: return accountTransports.snapshot(for: .openAI).isPaired
+        case .claudeCode: return accountTransports.snapshot(for: .claudeCode).isPaired
+        default: return false
+        }
+    }
+
     public func validateSelectedModel(_ model: Model) -> Model {
         let available = availableChatModels()
-        if available.contains(model) || model.apiService == .ollama {
+        if available.contains(model) || model.apiService == .ollama || usesPairedAccountTransport(for: model) {
             return model
         }
         return available.first ?? model
