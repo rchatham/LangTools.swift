@@ -14,6 +14,7 @@ public enum MobileHelperError: LocalizedError, Equatable {
     case unavailable
     case ollamaUnavailable
     case accountUnavailable
+    case accountSignInRequired
     case missingCapability(String)
     case persistence(String)
 
@@ -27,6 +28,7 @@ public enum MobileHelperError: LocalizedError, Equatable {
         case .unavailable: return "Cannot reach the paired Mac. Start LangToolsHelper, enable Connect iPhone, and join the same network. If its LAN address changed, scan a new QR."
         case .ollamaUnavailable: return "The helper is reachable but Ollama is unavailable. Start Ollama on the paired Mac and retry."
         case .accountUnavailable: return "The paired Mac's account service is unavailable. Sign in on the Mac and verify that its helper capability is enabled."
+        case .accountSignInRequired: return MobileHelperAccountError.signInRequiredMessage
         case .missingCapability(let capability): return "This pairing does not grant \(capability) access. Enable it on the Mac and scan a new QR."
         case .persistence(let message): return "Helper credential could not be read or saved in Keychain. \(message)"
         }

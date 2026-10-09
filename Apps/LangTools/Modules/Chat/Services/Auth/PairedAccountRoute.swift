@@ -1,4 +1,5 @@
 import Foundation
+import HelperLink
 
 /// Private paired route construction deliberately bypasses neither the strict
 /// loopback gate nor TLS: a validated stored credential and its pin lease are required.
@@ -48,6 +49,9 @@ struct PairedAccountRoute {
         case 200..<300: return
         case 300..<400: throw MobileHelperError.redirectRejected
         case 401, 403: throw MobileHelperError.revoked
+        case MobileHelperAccountError.signInRequiredStatus
+            where response.value(forHTTPHeaderField: MobileHelperAccountError.headerName) == MobileHelperAccountError.signInRequiredCode:
+            throw MobileHelperError.accountSignInRequired
         default: throw MobileHelperError.accountUnavailable
         }
     }
@@ -62,7 +66,8 @@ struct PairedAccountCatalogClient {
         if snapshot.provider == .openAI {
             let statusData = try await route.data(for: route.request(path: "/v1/account/status"))
             let status = try decoder.decode(CodexHelperStatus.self, from: statusData)
-            guard status.provider == "openAI", status.authenticated else { throw MobileHelperError.accountUnavailable }
+            guard status.provider == "openAI" else { throw MobileHelperError.accountUnavailable }
+            guard status.authenticated else { throw MobileHelperError.accountSignInRequired }
             let modelsData = try await route.data(for: route.request(path: "/v1/models/codex"))
             let models = try decoder.decode(CodexHelperModelsResponse.self, from: modelsData)
             return (AccountSession.normalizedModelIDs(models.models), status.accountIdentifier)

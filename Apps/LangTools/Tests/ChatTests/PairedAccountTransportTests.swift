@@ -251,6 +251,93 @@ final class PairedAccountTransportTests: XCTestCase {
         XCTAssertTrue(PairedAccountURLProtocol.requests.allSatisfy { $0.url?.host == "192.168.1.7" })
     }
 
+    func testAccountSignInFailureRetainsPairingAndRecoversAfterMacSignIn() async throws {
+        for operation in 0..<3 {
+            try register()
+            selections.select(.pairedHelper, for: .openAI)
+            let originalConnection = try XCTUnwrap(selections.snapshot(for: .openAI).connection)
+            let originalCredential = try XCTUnwrap(credentials.records[helperID])
+            let snapshot = selections.snapshot(for: .openAI)
+            XCTAssertTrue(selections.publish(modelIDs: ["gpt-5.5"], accountIdentifier: "Mac", for: snapshot))
+            PairedAccountURLProtocol.reset()
+            PairedAccountURLProtocol.responseHeaders = [MobileHelperAccountError.headerName: MobileHelperAccountError.signInRequiredCode]
+            // A malicious/raw body is ignored: only the fixed service marker is presented.
+            PairedAccountURLProtocol.handler = { _ in (503, #"{"error":"upstream-secret-do-not-display"}"#) }
+            do {
+                if operation == 0 {
+                    _ = try await transport().performChatCompletionRequest(messages: [], model: .codex(.gpt5_5), session: codexSession(), tools: nil, toolChoice: nil)
+                } else {
+                    for try await _ in try transport().streamChatCompletionRequest(messages: [], model: .codex(.gpt5_5), session: codexSession(), stream: operation == 2, tools: nil, toolChoice: nil) {
+                        XCTFail("An authentication failure must not yield successful output")
+                    }
+                }
+                XCTFail("Expected Mac account sign-in failure")
+            } catch {
+                XCTAssertEqual(error as? MobileHelperError, .accountSignInRequired)
+                XCTAssertTrue(error.localizedDescription.contains("paired Mac"))
+                XCTAssertTrue(error.localizedDescription.contains("still paired"))
+                XCTAssertFalse(error.localizedDescription.contains("QR"))
+                XCTAssertFalse(error.localizedDescription.contains("upstream-secret"))
+            }
+            let failed = selections.snapshot(for: .openAI)
+            XCTAssertEqual(failed.error, .accountSignInRequired)
+            XCTAssertTrue(failed.isPaired)
+            XCTAssertTrue(failed.connection === originalConnection)
+            XCTAssertEqual(credentials.records[helperID], originalCredential)
+            XCTAssertTrue(manager.availableChatModels().isEmpty, "Account access remains fail-closed until discovery succeeds")
+
+            PairedAccountURLProtocol.reset()
+            installCatalogResponses() // Synthetic Mac sign-in, no pairing endpoint or credential rewrite.
+            await manager.refreshPairedAccount(.openAI)
+            let recovered = selections.snapshot(for: .openAI)
+            XCTAssertNil(recovered.error)
+            XCTAssertTrue(recovered.connection === originalConnection)
+            XCTAssertEqual(credentials.records[helperID], originalCredential)
+            XCTAssertNotNil(manager.session(for: .openAI))
+            PairedAccountURLProtocol.handler = { _ in (200, #"{"content":"recovered"}"#) }
+            let message = try await transport().performChatCompletionRequest(messages: [], model: .codex(.gpt5_5), session: codexSession(), tools: nil, toolChoice: nil)
+            XCTAssertEqual(message.text, "recovered")
+            XCTAssertFalse(PairedAccountURLProtocol.requests.contains { $0.url?.path == "/v1/mobile/pair" })
+            XCTAssertTrue(PairedAccountURLProtocol.requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer \(deviceToken)" })
+        }
+    }
+
+    func testAccountServiceMarkerNeverOverridesRealDeviceAuthorizationFailure() throws {
+        try register()
+        selections.select(.pairedHelper, for: .openAI)
+        let route = try PairedAccountRoute(snapshot: selections.snapshot(for: .openAI), session: codexSession())
+        for status in [401, 403, 500, 503] {
+            for marked in [false, true] {
+                let headers = marked ? [MobileHelperAccountError.headerName: MobileHelperAccountError.signInRequiredCode] : [:]
+                let response = HTTPURLResponse(url: route.request(path: "/v1/account/status").url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!
+                let expected: MobileHelperError = status == 401 || status == 403 ? .revoked :
+                    (status == 503 && marked ? .accountSignInRequired : .accountUnavailable)
+                XCTAssertThrowsError(try route.validate(response)) { XCTAssertEqual($0 as? MobileHelperError, expected) }
+            }
+        }
+    }
+
+    func testUnauthenticatedMacCatalogPromptsSignInWithoutRevokingPairing() async throws {
+        try register()
+        selections.select(.pairedHelper, for: .openAI)
+        installCatalogResponses()
+        let catalogHandler = PairedAccountURLProtocol.handler!
+        PairedAccountURLProtocol.handler = { request in
+            if request.url?.path == "/v1/account/status" {
+                return (200, #"{"provider":"openAI","authenticated":false}"#)
+            }
+            return try catalogHandler(request)
+        }
+        await manager.refreshPairedAccount(.openAI)
+        XCTAssertEqual(selections.snapshot(for: .openAI).error, .accountSignInRequired)
+        XCTAssertNotNil(credentials.records[helperID])
+        XCTAssertFalse(PairedAccountURLProtocol.requests.contains { $0.url?.path == "/v1/models/codex" })
+        installCatalogResponses()
+        await manager.refreshPairedAccount(.openAI)
+        XCTAssertNotNil(manager.session(for: .openAI))
+        XCTAssertNil(selections.snapshot(for: .openAI).error)
+    }
+
     func testDirectAPIModelsNeverUseMobileTokenAndLabelsReflectActualRoute() throws {
         try register()
         selections.select(.pairedHelper, for: .openAI)
@@ -749,17 +836,18 @@ private final class AccountMemoryKeys: KeychainService {
 }
 private final class PairedAccountURLProtocol: URLProtocol {
     static var handler: ((URLRequest) throws -> (Int, String))?
+    static var responseHeaders: [String: String] = [:]
     private static let lock = NSLock()
     private static var recorded: [URLRequest] = []
     static var requests: [URLRequest] { lock.lock(); defer { lock.unlock() }; return recorded }
-    static func reset() { lock.lock(); defer { lock.unlock() }; recorded = []; handler = nil }
+    static func reset() { lock.lock(); defer { lock.unlock() }; recorded = []; handler = nil; responseHeaders = [:] }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         Self.lock.lock(); Self.recorded.append(request); Self.lock.unlock()
         do {
             let (status, body) = try Self.handler?(request) ?? (500, "")
-            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/x-ndjson"])!
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: Self.responseHeaders.merging(["Content-Type": "application/x-ndjson"]) { value, _ in value })!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: Data(body.utf8))
             client?.urlProtocolDidFinishLoading(self)

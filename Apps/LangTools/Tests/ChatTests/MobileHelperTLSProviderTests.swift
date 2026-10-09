@@ -631,6 +631,43 @@ final class MobileHelperAccountTLSTests: XCTestCase {
         XCTAssertEqual(fixture.receivedHTTPByteCount, 0, "Health may not send a bearer before pinned trust")
     }
 
+    func testAccountDataAndBytesDistinguishMacSignInFromDeviceRevocation() async throws {
+        for status in [503, 401, 403] {
+            for streaming in [false, true] {
+                let fixture = try HelperTLSFixture(mode: .http, host: privateIPv4(), response: { _ in
+                    .init(status: status, body: #"{"error":"upstream-secret-do-not-display"}"#,
+                        headers: [MobileHelperAccountError.headerName: MobileHelperAccountError.signInRequiredCode])
+                })
+                let endpoint = try await fixture.start()
+                defer { fixture.stop() }
+                try select(endpoint: endpoint, fingerprint: fixture.fingerprint)
+                let originalConnection = selections.snapshot(for: .openAI).connection
+                let expected: MobileHelperError = status == 503 ? .accountSignInRequired : .revoked
+                do {
+                    if streaming {
+                        for try await _ in try transport().streamChatCompletionRequest(messages: [], model: .codex(.gpt5_5), session: codexSession(), stream: true, tools: nil, toolChoice: nil) {
+                            XCTFail("Account authentication failure cannot yield output")
+                        }
+                    } else {
+                        _ = try await transport().performChatCompletionRequest(messages: [], model: .codex(.gpt5_5), session: codexSession(), tools: nil, toolChoice: nil)
+                    }
+                    XCTFail("Expected actionable authentication error")
+                } catch {
+                    XCTAssertEqual(error as? MobileHelperError, expected)
+                    XCTAssertFalse(error.localizedDescription.contains("upstream-secret"))
+                }
+                let snapshot = selections.snapshot(for: .openAI)
+                XCTAssertEqual(snapshot.error, expected)
+                XCTAssertTrue(snapshot.isPaired)
+                XCTAssertTrue(snapshot.connection === originalConnection)
+                XCTAssertEqual(snapshot.connection?.credential.token, HelperTLSFixture.token)
+                XCTAssertEqual(fixture.requests.count, 1)
+                XCTAssertTrue(fixture.requests[0].hasPrefix("POST /v1/account/chat/completions "))
+                XCTAssertTrue(fixture.requests[0].contains("Authorization: Bearer " + HelperTLSFixture.token))
+            }
+        }
+    }
+
     func testAccountDataAndBytesNeverFollowRedirects() async throws {
         for streaming in [false, true] {
             let fixture = try HelperTLSFixture(mode: .http, host: privateIPv4(), response: { _ in .redirect(to: "/redirected") })
@@ -732,6 +769,7 @@ private final class HelperTLSFixture: @unchecked Sendable {
         var body: String
         var location: String? = nil
         var held = false
+        var headers: [String: String] = [:]
         static func redirect(to location: String) -> Self { .init(status: 307, body: "", location: location) }
     }
     static let helperID = "11111111-1111-4111-8111-111111111111"
@@ -867,7 +905,8 @@ private final class HelperTLSFixture: @unchecked Sendable {
     }
     private func send(_ response: Response, on connection: NWConnection) {
         let location = response.location.map { "Location: \($0)\r\n" } ?? ""
-        let message = "HTTP/1.1 \(response.status) Fixture\r\n\(location)Content-Type: application/json\r\nContent-Length: \(response.body.utf8.count)\r\nConnection: close\r\n\r\n\(response.body)"
+        let headers = response.headers.map { "\($0.key): \($0.value)\r\n" }.joined()
+        let message = "HTTP/1.1 \(response.status) Fixture\r\n\(location)\(headers)Content-Type: application/json\r\nContent-Length: \(response.body.utf8.count)\r\nConnection: close\r\n\r\n\(response.body)"
         connection.send(content: Data(message.utf8), contentContext: .finalMessage, isComplete: true,
             completion: .contentProcessed { _ in connection.cancel() })
     }

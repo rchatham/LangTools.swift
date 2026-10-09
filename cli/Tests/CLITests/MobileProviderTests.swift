@@ -130,6 +130,80 @@ final class MobileProviderTests: XCTestCase {
         await fixture.runtime.shutdown()
     }
 
+    func testStaleCodexAccountIsSanitizedServiceFailureAndRecoversWithoutRePairing() async throws {
+        for streaming in [false, true] {
+            let fixture = try MobileCodexFixture(requiresSignIn: true)
+            defer { fixture.stop() }
+            let harness = try await MobileHarness(capabilities: ["codex", "ollama"], accountRoutes: .init(runtime: fixture.runtime))
+            defer { harness.stop() }
+            let pair = try await harness.pair()
+            let client = harness.client()
+            defer { client.invalidateAndCancel() }
+            var request = URLRequest(url: harness.url("/v1/account/chat/completions"))
+            request.httpMethod = "POST"
+            request.httpBody = Data(chatBody.replacingOccurrences(of: "true", with: streaming ? "true" : "false").utf8)
+            request.setValue("Bearer \(pair.token)", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await client.data(for: request)
+            let http = try XCTUnwrap(response as? HTTPURLResponse)
+            XCTAssertEqual(http.statusCode, MobileHelperAccountError.signInRequiredStatus)
+            XCTAssertEqual(http.value(forHTTPHeaderField: MobileHelperAccountError.headerName), MobileHelperAccountError.signInRequiredCode)
+            let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: String])
+            XCTAssertEqual(fields, ["error": MobileHelperAccountError.signInRequiredMessage])
+            XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("upstream-secret"))
+            XCTAssertFalse(String(decoding: data, as: UTF8.self).contains(pair.token))
+            let stillAuthorized = await harness.store.authenticate(pair.token)
+            XCTAssertEqual(stillAuthorized?.id, pair.deviceID)
+            XCTAssertEqual(stillAuthorized?.capabilities, ["codex", "ollama"])
+
+            // A Mac-side fake runtime state change, not a LAN login or new pairing.
+            try fixture.signInOnMac()
+            let status = try await harness.request("/v1/account/status", token: pair.token)
+            XCTAssertTrue(try JSONDecoder().decode(HelperAuthStatusResponse.self, from: status.1).authenticated)
+            let recovered = try await client.data(for: request)
+            XCTAssertEqual((recovered.1 as? HTTPURLResponse)?.statusCode, 200)
+            if streaming {
+                let events = try recovered.0.split(separator: 10).map { try JSONDecoder().decode(HelperChatStreamEvent.self, from: Data($0)) }
+                XCTAssertEqual(events, [.delta("first"), .complete("first")])
+            } else {
+                XCTAssertEqual(try JSONDecoder().decode(HelperChatResponse.self, from: recovered.0).content, "first")
+            }
+            let turnsBeforeRevocation = fixture.methods.filter { $0 == "turn/start" }.count
+            try await harness.server.revokeDevice(pair.deviceID)
+            let revoked = try await client.data(for: request)
+            XCTAssertEqual((revoked.1 as? HTTPURLResponse)?.statusCode, 401)
+            XCTAssertNil((revoked.1 as? HTTPURLResponse)?.value(forHTTPHeaderField: MobileHelperAccountError.headerName))
+            XCTAssertEqual(fixture.methods.filter { $0 == "turn/start" }.count, turnsBeforeRevocation)
+            XCTAssertFalse(fixture.methods.contains(where: { $0.contains("login") || $0.contains("logout") }))
+            await fixture.runtime.shutdown()
+        }
+        XCTAssertEqual(LocalHelperServer.httpStatus(for: CodexRuntimeError.authentication("private upstream detail")), .unauthorized,
+            "The desktop loopback contract is unchanged")
+    }
+
+    func testCodexAuthenticationFailureAfterDeltaAbortsWithoutSuccessfulFinish() async throws {
+        let fixture = try MobileCodexFixture(requiresSignIn: true, authFailureAfterDelta: true)
+        defer { fixture.stop() }
+        let harness = try await MobileHarness(capabilities: ["codex", "ollama"], accountRoutes: .init(runtime: fixture.runtime))
+        defer { harness.stop() }
+        let pair = try await harness.pair()
+        let connection = try await mobileRawPinnedConnection(harness)
+        defer { connection.cancel() }
+        let read = Task { await mobileBoundaryRawResponse(connection) }
+        try await mobileRawSend(connection, rawChat(harness, pair: pair))
+        let wire = await read.value
+        XCTAssertFalse(wire.timedOut)
+        let text = String(decoding: wire.data, as: UTF8.self)
+        XCTAssertTrue(text.hasPrefix("HTTP/1.1 200 "))
+        XCTAssertTrue(text.contains("\"delta\":\"first\""))
+        XCTAssertFalse(text.contains("\"type\":\"complete\""))
+        XCTAssertFalse(text.contains("upstream-secret"))
+        XCTAssertFalse(wire.data.suffix(5) == Data("0\r\n\r\n".utf8))
+        let stillAuthorized = await harness.store.authenticate(pair.token)
+        XCTAssertNotNil(stillAuthorized)
+        try await waitForSlotRelease(harness)
+        await fixture.runtime.shutdown()
+    }
+
     func testCodexQuietStreamRevocationJoinsActorBeforeReleasingSlot() async throws {
         let fixture = try MobileCodexFixture(quiet: true)
         defer { fixture.stop() }
@@ -357,14 +431,15 @@ private final class MobileCodexFixture: @unchecked Sendable {
             ((try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any])?["method"] as? String
         }
     }
-    init(quiet: Bool = false, delta: String = "first") throws {
+    init(quiet: Bool = false, delta: String = "first", requiresSignIn: Bool = false, authFailureAfterDelta: Bool = false) throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("mobile-provider-codex-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         log = directory.appendingPathComponent("requests.jsonl")
         let script = directory.appendingPathComponent("fake.py")
         try Data(Self.server.utf8).write(to: script)
         let environment = ProcessInfo.processInfo.environment.merging([
-            "MOBILE_TEST_ROOT": directory.path, "QUIET": quiet ? "1" : "0", "DELTA": delta
+            "MOBILE_TEST_ROOT": directory.path, "QUIET": quiet ? "1" : "0", "DELTA": delta,
+            "REQUIRES_SIGN_IN": requiresSignIn ? "1" : "0", "AUTH_AFTER_DELTA": authFailureAfterDelta ? "1" : "0"
         ]) { _, value in value }
         let client = CodexAppServerClient(commandResolver: {
             ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", script.path])
@@ -377,6 +452,7 @@ private final class MobileCodexFixture: @unchecked Sendable {
         let runtime = self.runtime
         Task { await runtime.shutdown() }
     }
+    func signInOnMac() throws { try Data().write(to: directory.appendingPathComponent("signed-in")) }
     func releaseInterrupt() { FileManager.default.createFile(atPath: directory.appendingPathComponent("release-interrupt").path, contents: Data()) }
     func waitForInterrupt() async throws {
         for _ in 0..<250 {
@@ -405,19 +481,24 @@ for line in sys.stdin:
         write({"id":request["id"], "result":{"data":[{"id":"codex-test", "model":"codex-test", "displayName":"Test", "description":"Fixture", "hidden":False, "isDefault":True}], "nextCursor":None}})
     elif method == "account/read":
         assert request["params"]["refreshToken"] == False
-        write({"id":request["id"], "result":{"account":None, "requiresOpenaiAuth":True}})
+        account = {"type":"chatgpt", "email":"fixture@example.invalid", "planType":"plus"} if os.path.exists(root + "/signed-in") else None
+        write({"id":request["id"], "result":{"account":account, "requiresOpenaiAuth":True}})
     elif method == "thread/start":
         thread += 1
         write({"id":request["id"], "result":{"thread":{"id":"thread-" + str(thread)}, "model":"codex-test", "modelProvider":"openai"}})
     elif method == "turn/start":
         thread_id = request["params"]["threadId"]
         write({"id":request["id"], "result":{"turn":{"id":"turn-" + str(thread)}}})
-        write({"method":"item/agentMessage/delta", "params":{"threadId":thread_id, "turnId":"turn-" + str(thread), "itemId":"agent", "delta":os.environ["DELTA"]}})
-        if os.environ["QUIET"] != "1":
+        stale_account = os.environ["REQUIRES_SIGN_IN"] == "1" and not os.path.exists(root + "/signed-in")
+        if not stale_account or os.environ["AUTH_AFTER_DELTA"] == "1":
+            write({"method":"item/agentMessage/delta", "params":{"threadId":thread_id, "turnId":"turn-" + str(thread), "itemId":"agent", "delta":os.environ["DELTA"]}})
+        if stale_account:
+            write({"method":"turn/completed", "params":{"threadId":thread_id, "turn":{"id":"turn-" + str(thread), "status":"failed", "error":{"message":"upstream-secret: stale account", "codexErrorInfo":"unauthorized"}}}})
+        elif os.environ["QUIET"] != "1":
             write({"method":"turn/completed", "params":{"threadId":thread_id, "turn":{"id":"turn-" + str(thread), "status":"completed", "error":None}}})
     elif method == "turn/interrupt":
         deadline = time.monotonic() + 5
-        while not os.path.exists(root + "/release-interrupt") and time.monotonic() < deadline:
+        while os.environ["QUIET"] == "1" and not os.path.exists(root + "/release-interrupt") and time.monotonic() < deadline:
             time.sleep(0.01)
         write({"id":request["id"], "result":{}})
     else:
