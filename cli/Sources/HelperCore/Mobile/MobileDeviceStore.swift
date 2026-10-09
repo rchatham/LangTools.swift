@@ -15,8 +15,8 @@ public actor MobileDeviceStore {
     public static let defaultURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".langtools/mobile/devices-v1.json")
     public let helperID: String
-    /// Capabilities granted to every device this store mints; validated in init.
-    public nonisolated let capabilities: [String]
+    /// Scope of newly generated codes only; persisted grants never change on upgrade.
+    public private(set) var capabilities: [String]
     private let fileURL: URL
     private var records: [MobileDevice]
     private var pairing: (code: String, expiry: Date)?
@@ -46,6 +46,12 @@ public actor MobileDeviceStore {
         } else { self.records = [] }
     }
 
+    /// Scope changes invalidate outstanding codes. Existing devices must explicitly re-pair for new grants.
+    public func setPairingCapabilities(_ values: [String]) throws {
+        guard MobileHelperCapabilities.isValid(values) else { throw MobileHelperError.invalidStore }
+        if capabilities != values { pairing = nil; capabilities = values }
+    }
+
     public func generatePairingCode() throws -> (code: String, expiry: Date) {
         let result = (code: try randomSecret(), expiry: now().addingTimeInterval(300))
         pairing = result
@@ -56,7 +62,8 @@ public actor MobileDeviceStore {
         if code == nil || pairing?.code == code { pairing = nil }
     }
 
-    public func redeem(_ request: MobileHelperPairingRequest) throws -> MobileHelperPairingResponse {
+    public func redeem(_ request: MobileHelperPairingRequest, capabilities expectedCapabilities: [String]? = nil) throws -> MobileHelperPairingResponse {
+        guard expectedCapabilities == nil || expectedCapabilities == capabilities else { throw MobileHelperError.invalidPairing }
         guard MobileHelperPairingPayload.isHexSecret(request.code), MobileHelperPairingPayload.isDisplayName(request.name),
               let pairing, pairing.expiry > now(),
               SecureTokenComparison.matches(expected: pairing.code, provided: request.code, maximumBytes: 64), records.count < 64

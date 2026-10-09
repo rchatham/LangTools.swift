@@ -68,7 +68,8 @@ final class MobileHelperTests: XCTestCase {
         }
         let enabled = ["claude", "codex", "ollama"]
         let store = try MobileDeviceStore(helperID: identity, capabilities: enabled, fileURL: url)
-        XCTAssertEqual(store.capabilities, enabled)
+        let storeCapabilities = await store.capabilities
+        XCTAssertEqual(storeCapabilities, enabled)
         let code = try await store.generatePairingCode()
         let pair = try await store.redeem(.init(code: code.code, name: "Phone"))
         XCTAssertEqual(pair.capabilities, enabled)
@@ -78,7 +79,8 @@ final class MobileHelperTests: XCTestCase {
         // Reload applies the same validity rule, not equality with the enabled set:
         // persisted devices keep the capabilities they were granted.
         let reload = try MobileDeviceStore(helperID: identity, fileURL: url)
-        XCTAssertEqual(reload.capabilities, ["ollama"])
+        let reloadCapabilities = await reload.capabilities
+        XCTAssertEqual(reloadCapabilities, ["ollama"])
         let restored = await reload.authenticate(pair.token)
         XCTAssertEqual(restored?.capabilities, enabled)
         // A persisted invalid set is rejected at load instead of silently accepted.
@@ -103,11 +105,15 @@ final class MobileHelperTests: XCTestCase {
         let health = try await harness.request("/v1/mobile/health", token: pair.token)
         XCTAssertEqual(health.0, 200)
         XCTAssertEqual(try JSONDecoder().decode(MobileHelperHealthResponse.self, from: health.1).helperID, pair.helperID)
-        for route in ["/v1/auth/login", "/v1/auth/logout", "/v1/account/chat/completions", "/v1/models/codex",
+        for route in ["/v1/auth/login", "/v1/auth/logout",
                       "/v1/ollama/api/delete", "/v1/ollama/api/tags/../chat", "/v1/ollama/api/tags?upstream=evil"] {
             let response = try await harness.request(route, token: pair.token)
             XCTAssertTrue([400, 404].contains(response.0), route)
         }
+        let disabledCodex = try await harness.request("/v1/models/codex", token: pair.token)
+        XCTAssertEqual(disabledCodex.0, 401, "Optional providers fail closed by default.")
+        let disabledChat = try await harness.request("/v1/account/chat/completions", method: "POST", token: pair.token, body: "{}")
+        XCTAssertEqual(disabledChat.0, 401)
         let wrongMethod = try await harness.request("/v1/ollama/api/tags", method: "POST", token: pair.token, body: "{}")
         XCTAssertEqual(wrongMethod.0, 405)
         let tags = try await harness.request("/v1/ollama/api/tags", token: pair.token)
@@ -414,7 +420,7 @@ final class MobileHelperTests: XCTestCase {
     }
 }
 
-private final class MobileHarness: @unchecked Sendable {
+final class MobileHarness: @unchecked Sendable {
     let identity: MobileTLSIdentity
     let store: MobileDeviceStore
     let server: MobileOllamaServer
@@ -422,17 +428,25 @@ private final class MobileHarness: @unchecked Sendable {
     let port: UInt16
     private let directory: URL
     private let task: Task<Void, Error>
+    let oldPair: MobileHelperPairingResponse?
 
     init(identity: MobileTLSIdentity? = nil, upstream: URL = URL(string: "http://127.0.0.1:11434")!,
          relayLifetime: Duration = MobileOllamaServer.relayLifetime, sendTimeout: Duration = MobileOllamaServer.sendTimeout,
-         responseByteLimits: MobileOllamaServer.ResponseByteLimits = .production) async throws {
+         responseByteLimits: MobileOllamaServer.ResponseByteLimits = .production,
+         capabilities: [String] = ["ollama"], claudeBackendURL: URL? = nil,
+         accountRoutes: AccountRouteHandlers = AccountRouteHandlers(), seedOllamaDevice: Bool = false) async throws {
         guard let interface = MobileLANInterface.available().first else { throw XCTSkip("No active private IPv4 interface available for a real LAN-bound TLS test.") }
         self.host = interface.address
         self.identity = try identity ?? MobileTLSIdentity.ephemeral()
         directory = try makeDirectory()
         store = try MobileDeviceStore(helperID: self.identity.helperID, fileURL: directory.appendingPathComponent("devices.json"))
+        if seedOllamaDevice {
+            let code = try await store.generatePairingCode()
+            oldPair = try await store.redeem(.init(code: code.code, name: "Old Ollama Phone"))
+        } else { oldPair = nil }
         let ready = MobileTestPort()
-        server = MobileOllamaServer(host: host, port: 0, identity: self.identity, devices: store, upstream: upstream, relayLifetime: relayLifetime, sendTimeout: sendTimeout, responseByteLimits: responseByteLimits, onReady: { ready.resolve(.success($0)) })
+        server = MobileOllamaServer(host: host, port: 0, identity: self.identity, devices: store, upstream: upstream, relayLifetime: relayLifetime, sendTimeout: sendTimeout, responseByteLimits: responseByteLimits, accountRoutes: accountRoutes, onReady: { ready.resolve(.success($0)) })
+        try await server.configure(capabilities: capabilities, claudeBackendURL: claudeBackendURL)
         let server = self.server
         task = Task { do { try await server.run() } catch { ready.resolve(.failure(error)); throw error } }
         port = try await ready.wait()
@@ -453,19 +467,21 @@ private final class MobileHarness: @unchecked Sendable {
         XCTAssertEqual(response.0, 200)
         return try JSONDecoder().decode(MobileHelperPairingResponse.self, from: response.1)
     }
-    func request(_ path: String, method: String = "GET", token: String? = nil, body: String? = nil) async throws -> (Int, Data) {
+    func request(_ path: String, method: String = "GET", token: String? = nil, body: String? = nil,
+                 accountToken: String? = nil) async throws -> (Int, Data) {
         let session = client()
         defer { session.invalidateAndCancel() }
         var request = URLRequest(url: url(path))
         request.httpMethod = method
         request.httpBody = body.map { Data($0.utf8) }
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        if let accountToken { request.setValue(accountToken, forHTTPHeaderField: "X-LangTools-Account-Token") }
         let (data, response) = try await session.data(for: request)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
     }
 }
 
-private final class MobileTestPin: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
+final class MobileTestPin: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
     let fingerprint: String
     init(fingerprint: String) { self.fingerprint = fingerprint }
     func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
@@ -488,7 +504,7 @@ private final class MobileTestPin: NSObject, URLSessionDelegate, URLSessionTaskD
     }
 }
 
-private final class MobileUpstreamFixture: @unchecked Sendable {
+final class MobileUpstreamFixture: @unchecked Sendable {
     private var port: UInt16 = 0
     var origin: URL { URL(string: "http://127.0.0.1:\(port)")! }
     private let listener: NWListener
@@ -499,6 +515,10 @@ private final class MobileUpstreamFixture: @unchecked Sendable {
     private var authorization: String?
     private var path: String?
     private var count = 0
+    private var lastHeaders: [String: String] = [:]
+    private let claudeMode: ClaudeMode
+    enum ClaudeMode { case normal, redirect, error, errorEvent, successErrorBody, escapedSuccess, quiet, oversized }
+    var receivedHeaders: [String: String] { lock.withLock { lastHeaders } }
     private var disconnected = false
     private var floodSent = 0
     static let maximumFloodBytes = 64 * 1024 * 1024
@@ -508,7 +528,8 @@ private final class MobileUpstreamFixture: @unchecked Sendable {
     var requestCount: Int { lock.withLock { count } }
     var quietDisconnected: Bool { lock.withLock { disconnected } }
 
-    init() async throws {
+    init(claudeMode: ClaudeMode = .normal) async throws {
+        self.claudeMode = claudeMode
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         listener = try NWListener(using: parameters)
@@ -549,7 +570,7 @@ private final class MobileUpstreamFixture: @unchecked Sendable {
             case .incomplete: self.receive(connection, data: accumulated)
             case .failure: connection.cancel()
             case .request(let request):
-                self.lock.withLock { self.authorization = request.authorizationBearerToken; self.path = request.path; self.count += 1 }
+                self.lock.withLock { self.authorization = request.authorizationBearerToken; self.path = request.path; self.lastHeaders = request.headers; self.count += 1 }
                 let task = Task { await self.respond(connection, request: request) }
                 self.lock.withLock { self.tasks.append(task) }
             }
@@ -558,6 +579,40 @@ private final class MobileUpstreamFixture: @unchecked Sendable {
     private func respond(_ connection: NWConnection, request: HTTPRequest) async {
         do {
             switch request.path {
+            case "/auth/claude-code/models", "/account/chat/completions":
+                switch claudeMode {
+                case .redirect:
+                    try await send(connection, Data("HTTP/1.1 302 Found\r\nLocation: \(origin)/redirect-target\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8))
+                case .error:
+                    let body = "echoed-secret: " + (request.authorizationBearerToken ?? "")
+                    try await send(connection, HTTPResponseEncoder.fixed(status: .unauthorized, body: body))
+                case .errorEvent:
+                    try await send(connection, HTTPResponseEncoder.chunkedHeader(status: .ok))
+                    let event = HelperChatStreamEvent.failure("echoed-secret: " + (request.authorizationBearerToken ?? ""))
+                    try await send(connection, try HTTPResponseEncoder.ndjsonChunk(event))
+                    try await send(connection, HTTPResponseEncoder.terminalChunk)
+                case .escapedSuccess:
+                    try await send(connection, HTTPResponseEncoder.fixed(status: .ok, body: #"{"content":"\u0061ccount-secret-do-not-echo"}"#))
+                case .successErrorBody:
+                    let body = "{\"error\":\"echoed-secret: " + (request.authorizationBearerToken ?? "") + "\"}"
+                    try await send(connection, HTTPResponseEncoder.fixed(status: .ok, body: body))
+                case .quiet:
+                    try await send(connection, HTTPResponseEncoder.chunkedHeader(status: .ok))
+                    try await send(connection, HTTPResponseEncoder.chunk(Data("{\"type\":\"delta\",\"delta\":\"first\"}\n".utf8)))
+                    connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { [weak self] _, _, _, _ in
+                        self?.lock.withLock { self?.disconnected = true }
+                    }
+                    return
+                case .oversized:
+                    try await send(connection, HTTPResponseEncoder.chunkedHeader(status: .ok))
+                    try await send(connection, HTTPResponseEncoder.chunk(Data(("{\"type\":\"delta\",\"delta\":\"" + String(repeating: "x", count: 4096) + "\"}\n").utf8)))
+                    connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { [weak self] _, _, _, _ in
+                        self?.lock.withLock { self?.disconnected = true }
+                    }
+                    return
+                case .normal:
+                    try await send(connection, HTTPResponseEncoder.fixed(status: .ok, body: request.path.contains("models") ? "{\"models\":[]}" : "{\"content\":\"claude fixture\"}"))
+                }
             case "/api/generate":
                 try await send(connection, HTTPResponseEncoder.chunkedHeader(status: .ok))
                 if String(decoding: request.body, as: UTF8.self).contains("oversized") {
@@ -753,7 +808,7 @@ private func mobileBoundaryJSON(byteCount: Int, trailingNewline: Bool = false) -
     return prefix + Data(repeating: 120, count: byteCount - prefix.count - suffix.count) + suffix
 }
 
-private func mobileBoundaryRawResponse(_ connection: NWConnection) async -> (data: Data, timedOut: Bool) {
+func mobileBoundaryRawResponse(_ connection: NWConnection) async -> (data: Data, timedOut: Bool) {
     let timeout = MobileBoundaryGate()
     let deadline = Task {
         do {
@@ -813,7 +868,7 @@ private final class MobileTestClock: @unchecked Sendable {
     func advance(_ seconds: TimeInterval) { lock.withLock { date.addTimeInterval(seconds) } }
 }
 
-private func mobileRawPinnedConnection(_ harness: MobileHarness) async throws -> NWConnection {
+func mobileRawPinnedConnection(_ harness: MobileHarness) async throws -> NWConnection {
     let tls = NWProtocolTLS.Options()
     let queue = DispatchQueue(label: "MobileRawPinnedTest")
     let fingerprint = harness.identity.fingerprint
@@ -835,7 +890,7 @@ private func mobileRawPinnedConnection(_ harness: MobileHarness) async throws ->
     return connection
 }
 
-private func mobileRawSend(_ connection: NWConnection, _ data: Data) async throws {
+func mobileRawSend(_ connection: NWConnection, _ data: Data) async throws {
     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
         connection.send(content: data, completion: .contentProcessed { error in
             if let error { continuation.resume(throwing: error) } else { continuation.resume() }

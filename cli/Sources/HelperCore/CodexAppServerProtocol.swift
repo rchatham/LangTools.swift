@@ -235,7 +235,10 @@ struct CodexTurnStartParams: Encodable, Sendable {
 
 /// This policy constrains commands launched inside Codex's local sandbox. It
 /// does not disable Codex account capabilities such as native hosted tools or
-/// MCP servers configured in the user's Codex home.
+/// MCP servers configured in the user's Codex home. Neither `readOnly` nor
+/// `workspaceWrite` restricts readable roots: the installed Codex 0.159.0
+/// generated v2/SandboxPolicy schema has no read-root allowlist. Do not treat a
+/// conversation's writable root as a LAN principal's read-isolation boundary.
 enum CodexSandboxPolicy: Encodable, Sendable {
     case readOnly(networkAccess: Bool)
     case workspaceWrite(
