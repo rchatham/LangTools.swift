@@ -65,7 +65,7 @@ jobs:
       run: |
         set -euo pipefail
         swift test --package-path cli --jobs 2 --no-parallel \
-          --filter 'MobileHelperTests|MobilePairingControllerTests' 2>&1 | tee "$RUNNER_TEMP/helper-mobile-tests.log"
+          --filter 'MobileHelperTests|MobilePairingControllerTests|MobileProviderTests|MobileCodexContainmentTests|CodexRuntimeServiceFocusedTests|CodexAppServer' 2>&1 | tee "$RUNNER_TEMP/helper-mobile-tests.log"
         if ! grep -Eq 'Executed [1-9][0-9]* tests?' "$RUNNER_TEMP/helper-mobile-tests.log"; then
           echo 'Expected focused helper XCTest cases to execute.' >&2
           exit 1
@@ -104,7 +104,7 @@ jobs:
         # These suites use isolated credentials and local fixtures, not live
         # accounts/Ollama or legacy Keychain ACLs. Keep shared mock state serial.
         swift test --package-path Apps/LangTools --jobs 2 --no-parallel \
-          --filter 'MobileHelper|OllamaEndpoint|ProviderAccessManagerTests|ProviderAccessRefreshRegressionTests|OllamaSettingsErrorRegressionTests|ChatGenerationSettingsTests|ModelGenerationCapabilitiesTests|ChatModelSourceTests/testProxyOllamaCatalogAndTitlesIgnoreDirectEndpointAvailability|ChatModelSourceTests/testDefaultAndDirectCatalogUseExistingProviderAccessManager' \
+          --filter 'PairedAccountTransportTests|NetworkClientAuthTests|MobileHelper|OllamaEndpoint|ProviderAccessManagerTests|ProviderAccessRefreshRegressionTests|OllamaSettingsErrorRegressionTests|ChatGenerationSettingsTests|ModelGenerationCapabilitiesTests|ChatModelSourceTests/testProxyOllamaCatalogAndTitlesIgnoreDirectEndpointAvailability|ChatModelSourceTests/testDefaultAndDirectCatalogUseExistingProviderAccessManager' \
           2>&1 | tee "$RUNNER_TEMP/app-helper-tests.log"
         if ! grep -Eq 'Executed [1-9][0-9]* tests?' "$RUNNER_TEMP/app-helper-tests.log"; then
           echo 'Expected focused app XCTest cases to execute.' >&2
