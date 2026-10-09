@@ -1,6 +1,6 @@
 # iPhone Ollama helper pairing — verification
 
-The helper provides an opt-in, encrypted, Ollama-only LAN transport. Direct Ollama remains an explicit alternative; helper failures never downgrade to direct HTTP. See the [helper setup and security boundaries](../cli/README.md#iphone-ollama-pairing-opt-in-lan).
+This document records the original opt-in, encrypted Ollama LAN transport and its historical verification. Direct Ollama remains an explicit alternative; helper failures never downgrade to direct HTTP. Optional Codex and external Claude Code account capabilities are documented separately in [LAN account routing and verification](helper-lan-providers.md). See the [helper setup and security boundaries](../cli/README.md#iphone-ollama-pairing-opt-in-lan).
 
 ## Recorded verification
 
@@ -34,9 +34,14 @@ Post-merge checks retain upstream generation settings and authoritative proxy ca
 - Remote run `37716378991` passed helper 14/app 100 XCTest cases, but both jobs failed afterward because the hosted runner lacked `rg`. Four guard/report searches now use native `grep -E`; YAML/shell syntax and 14 success, empty-suite, failed-command and skip/report probes passed with `rg` absent. [Remote Swift run `37727387415`](https://github.com/rchatham/LangTools.swift/actions/runs/37727387415) at `2d688c88` passed helper 14/app 109 without failures or skips, including the guard/report steps. Root/build, extended, performance and Pi workflow checks passed; cloud smoke checks were skipped.
 - Independent scoped code and security reviews found no remaining findings in this follow-up. These nonvisual changes do not resolve the existing authorization, current-iOS, physical-device or full-suite acceptance blockers below.
 
+## Physical-device acceptance (2026-10-08)
+
+- The owner reports verification of the Ollama LAN path on a physical iPhone, including pairing, reconnect, and revocation. This is user-reported acceptance, not an agent-executed test run.
+- Other previously recorded checks, including helper shutdown, interface/IP changes, current screenshots, and complete whole-app/CLI verification, are not established by that report.
+
 ## Known verification blockers
 
-- Physical iPhone Camera scan, Local Network permission, actual redemption, reconnect/relaunch, models/chat/agents, revocation, helper shutdown and interface/IP changes remain unverified.
+- Physical-iPhone pairing, reconnect, and revocation are owner-verified (see above). Helper shutdown, interface/IP changes, and the remaining detailed acceptance checks still need explicit verification.
 - Full app testing encountered an external Ollama E2E timeout and then a legacy real-account Keychain access permission wait. No Keychain ACL bypass was used.
 - Full CLI runs encountered existing Codex test failures/timeouts and a separately reproduced loopback-server restart connection-refused failure. The privileged loopback server was not changed for this feature.
 - An earlier post-merge simulator run timed out compiling SwiftSyntax. Latest clean-config attempts fail promptly because Xcode requires normal approval of `JSONMacroPlugin` at immutable JSON.swift revision `f80d29f5113b5a3ed0a47e6afa908eab07ef024c`. Local approval currently covers the identical-tree 1.0.4 merge commit `498270c44bb80c5cf5b8de8727ceb030f95c0777`; Xcode treats revision fingerprints separately. No trust metadata, dependencies or validation settings were changed. Use Xcode's normal **Trust & Enable** confirmation for the reviewed resolved macro, then rerun build/UI checks. Current iPhone visual evidence remains blocked.
