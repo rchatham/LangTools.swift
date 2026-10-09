@@ -216,6 +216,9 @@ public struct ChatSettingsView: View {
 
                 modelCatalogStatus
                 if !viewModel.isProxyContext {
+                    Text(viewModel.transportLabel(for: viewModel.model))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                     Text("Available models depend on which providers you have connected. If a provider is missing, add an API key or sign in from Manage Access.")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -240,6 +243,7 @@ public struct ChatSettingsView: View {
                             Text(state.statusDescription)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
+                            accountTransportControls(for: state)
                             if let reason = viewModel.unavailableReason(for: state) {
                                 Text(reason)
                                     .font(.caption2)
@@ -542,6 +546,10 @@ public struct ChatSettingsView: View {
                                 .font(.headline)
                                 .foregroundColor(.secondary)
 
+                            if !viewModel.isProxyContext {
+                                Text(viewModel.transportLabel(for: viewModel.model))
+                                    .font(.caption)
+                            }
                             Text(viewModel.isProxyContext ? "Models are provided by the Botsworth server. No personal provider API key is required." : modelDescription(for: viewModel.model))
                                 .font(.body)
                         }
@@ -596,6 +604,7 @@ public struct ChatSettingsView: View {
                                     Text(state.statusDescription)
                                         .font(.subheadline)
                                         .foregroundColor(.secondary)
+                                    accountTransportControls(for: state)
 
                                     if let reason = viewModel.unavailableReason(for: state) {
                                         Text(reason)
@@ -1089,6 +1098,32 @@ public struct ChatSettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private func accountTransportControls(for state: ProviderAccessState) -> some View {
+        if let provider = state.accessDestination?.accountProvider {
+            Picker("Transport", selection: Binding(
+                get: { viewModel.accountTransport(for: provider) },
+                set: { viewModel.selectAccountTransport($0, for: provider) }
+            )) {
+                Text(provider == .openAI ? "Local Codex helper" : "Claude Code backend").tag(AccountTransportChoice.existing)
+                Text(viewModel.pairedHelperLabel).tag(AccountTransportChoice.pairedHelper)
+            }
+            .accessibilityIdentifier("settings.accountTransport.\(provider.rawValue)")
+            if viewModel.accountTransport(for: provider) == .pairedHelper {
+                Button("Refresh Account Models") { viewModel.refreshPairedAccount(provider) }
+                Button("Disconnect Paired Helper", role: .destructive) { viewModel.disconnectPairedHelper() }
+                Text("Requires the same trusted network. Sign in to Codex on the Mac. Claude Code requires an existing external backend account session; pairing does not create one. No automatic fallback.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            if let error = viewModel.accountTransportError {
+                Text(error).font(.caption).foregroundColor(.red)
+            }
+        } else {
+            Text("Direct API key").font(.caption).foregroundColor(.secondary)
+        }
+    }
+
     // Helper function to provide model descriptions
     private func accessActionTitle(for state: ProviderAccessState) -> String {
         "Manage \(state.displayName) Access"
@@ -1097,7 +1132,9 @@ public struct ChatSettingsView: View {
     private func modelDescription(for model: Model) -> String {
         switch model {
         case .codex:
-            return "This model runs through the Codex helper using your OpenAI account subscription instead of the OpenAI Platform API."
+            return "This model uses your Codex account through \(viewModel.transportLabel(for: model)), not the OpenAI Platform API."
+        case .claudeCode:
+            return "This model uses the external Claude Code account backend through \(viewModel.transportLabel(for: model)), not an Anthropic API key."
         case .openAI where model.slug.contains("gpt-3.5"):
             return "GPT-3.5 is a fast and cost-effective model suitable for most everyday tasks. It offers a good balance between capabilities and response time, with good understanding of context and general knowledge up to its training cutoff date."
         case .openAI where model.slug.contains("gpt-4o"):
@@ -1368,6 +1405,30 @@ extension ChatSettingsView {
             accessManager.statesForAccessUI()
         }
 
+        @Published var accountTransportError: String?
+
+        var pairedHelperLabel: String { accessManager.accountTransports.pairedHelperLabel }
+        func accountTransport(for provider: AccountLoginProvider) -> AccountTransportChoice {
+            accessManager.accountTransports.snapshot(for: provider).choice
+        }
+        func transportLabel(for model: Model) -> String { accessManager.transportLabel(for: model) }
+        func selectAccountTransport(_ choice: AccountTransportChoice, for provider: AccountLoginProvider) {
+            accountTransportError = nil
+            accessManager.accountTransports.select(choice, for: provider)
+            accessManager.refresh()
+            objectWillChange.send()
+            if choice == .pairedHelper { refreshPairedAccount(provider) }
+        }
+        func refreshPairedAccount(_ provider: AccountLoginProvider) {
+            Task { await accessManager.refreshPairedAccount(provider) }
+        }
+        func disconnectPairedHelper() {
+            do {
+                try accessManager.disconnectPairedHelper()
+                objectWillChange.send()
+            } catch { accountTransportError = error.localizedDescription }
+        }
+
         func unavailableReason(for state: ProviderAccessState) -> String? {
             accessManager.unavailableReason(for: state)
         }
@@ -1632,7 +1693,7 @@ extension ChatSettingsView {
                !accessManager.availableChatModels().contains(model) {
                 return "\(model.rawValue) — Unavailable on current Ollama server"
             }
-            return model.rawValue
+            return "\(model.rawValue) — \(transportLabel(for: model))"
         }
 
         /// Trigger WhisperKit preload

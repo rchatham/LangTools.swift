@@ -218,7 +218,7 @@ final class MobileHelperTests: XCTestCase {
         }
     }
 
-    func testPairingAcceptsGeneralizedCapabilitySets() async throws {
+    func testV1ImplicitScopeRejectsCapabilityExpansion() async throws {
         let granted = ["claude", "codex", "ollama"]
         let pair = MobileHelperPairingResponse(version: 1, helperID: helperID, deviceID: deviceID,
             token: String(repeating: "c", count: 64), capabilities: granted)
@@ -234,10 +234,10 @@ final class MobileHelperTests: XCTestCase {
         coordinator.handle(try payload().pairingURL())
         coordinator.confirm(deviceName: "Test Phone")
         try await waitUntil { !coordinator.isPairing }
-        XCTAssertNil(coordinator.errorMessage)
-        XCTAssertEqual(store.records[helperID]?.capabilities, granted)
-        XCTAssertEqual(configuration.snapshot().helperID, helperID)
-        XCTAssertEqual(configuration.snapshot().baseURL.path, "/v1/ollama")
+        XCTAssertNotNil(coordinator.errorMessage)
+        XCTAssertTrue(store.records.isEmpty)
+        XCTAssertFalse(configuration.snapshot().isHelper)
+        XCTAssertEqual(HelperPairingTestProtocol.requests.map { $0.url!.path }, ["/v1/mobile/pair"])
     }
 
     func testPinnedTrustValidatesExactLeafAndCertificateTimeNotLANHostname() throws {

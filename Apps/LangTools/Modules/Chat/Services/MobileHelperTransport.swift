@@ -13,17 +13,21 @@ public enum MobileHelperError: LocalizedError, Equatable {
     case redirectRejected
     case unavailable
     case ollamaUnavailable
+    case accountUnavailable
+    case missingCapability(String)
     case persistence(String)
 
     public var errorDescription: String? {
         switch self {
-        case .invalidIdentity: return "The helper identity or Ollama capability did not match the pairing QR. Pair again from the Mac."
-        case .disconnected: return "Helper disconnected. Scan a new QR on your Mac, or explicitly choose Direct Ollama in settings."
+        case .invalidIdentity: return "The helper identity or granted capabilities did not match the pairing QR. Pair again from the Mac."
+        case .disconnected: return "Helper disconnected. Scan a new QR on your Mac, or explicitly choose another transport in settings."
         case .revoked: return "This phone's helper access was revoked or expired. Scan a new pairing QR on the Mac."
         case .trustChanged: return "The helper certificate changed or is invalid. Do not bypass trust; scan a new QR on the trusted Mac."
         case .redirectRejected: return "The helper redirected a request. Redirects are blocked to protect your device credential. Pair again with the correct helper."
         case .unavailable: return "Cannot reach the paired Mac. Start LangToolsHelper, enable Connect iPhone, and join the same network. If its LAN address changed, scan a new QR."
         case .ollamaUnavailable: return "The helper is reachable but Ollama is unavailable. Start Ollama on the paired Mac and retry."
+        case .accountUnavailable: return "The paired Mac's account service is unavailable. Sign in on the Mac and verify that its helper capability is enabled."
+        case .missingCapability(let capability): return "This pairing does not grant \(capability) access. Enable it on the Mac and scan a new QR."
         case .persistence(let message): return "Helper credential could not be read or saved in Keychain. \(message)"
         }
     }

@@ -642,8 +642,7 @@ extension OllamaSettingsView {
 
         func disconnectHelper() {
             do {
-                try endpointConfiguration.disconnectHelper()
-                ollamaService.transportDidChange()
+                try ollamaService.disconnectHelper()
                 transportDidChange()
             } catch { connectionError = MobileHelperError.persistence(error.localizedDescription).localizedDescription }
         }
