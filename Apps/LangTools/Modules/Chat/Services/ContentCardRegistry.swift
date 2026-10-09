@@ -47,6 +47,7 @@
 import Foundation
 import os
 import SwiftUI
+import ChatUI
 import LangTools
 
 // MARK: - ContentCardRegistry
@@ -70,11 +71,12 @@ public final class ContentCardRegistry: @unchecked Sendable {
         /// Converts raw agent result JSON → ContentCardsContent (for messaging / persistence).
         let parseResult: (String) -> ContentCardsContent?
         /// Converts a ContentCardsContent → type-erased SwiftUI view (for rendering).
-        let buildView: @MainActor @Sendable (ContentCardsContent) -> AnyView
+        let buildView: @MainActor @Sendable (ContentCardsContent, Bool) -> AnyView
     }
 
     private struct Storage {
         var byAgentKey: [AnyHashable: Entry] = [:]
+        var byToolName: [AnyHashable: Entry] = [:]
         var byCardType: [String: Entry] = [:]
     }
 
@@ -114,14 +116,9 @@ public final class ContentCardRegistry: @unchecked Sendable {
                     cardCount: items.count
                 )
             },
-            buildView: { content in
+            buildView: { content, showsSummary in
                 guard let items = try? content.decodeCards(as: Item.self) else {
-                    #if DEBUG
-                    assertionFailure(
-                        "[ContentCardRegistry] Failed to decode \(Item.self) from cardsJSON " +
-                        "for cardType '\(cardType)'. Encoding/decoding mismatch?"
-                    )
-                    #endif
+                    Self.logDecodeFailure(type: Item.self, cardType: cardType)
                     return AnyView(
                         Text("Could not display \(content.message ?? cardType + " card")")
                             .font(.subheadline)
@@ -130,6 +127,9 @@ public final class ContentCardRegistry: @unchecked Sendable {
                 }
                 return AnyView(
                     VStack(alignment: .leading, spacing: 12) {
+                        if showsSummary, let summary = Self.nonemptySummary(content.message) {
+                            Text(summary)
+                        }
                         render(items)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -141,6 +141,19 @@ public final class ContentCardRegistry: @unchecked Sendable {
             $0.byAgentKey[AnyHashable(agent)] = entry
             $0.byCardType[cardType] = entry
         }
+    }
+
+    private static func nonemptySummary(_ summary: String?) -> String? {
+        guard let summary, !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return summary
+    }
+
+    /// Non-fatal log for stale/corrupt persisted display payloads.
+    private static func logDecodeFailure(type: Any.Type, cardType: String, file: StaticString = #fileID, line: UInt = #line) {
+        let message = "[ContentCardRegistry] Failed to decode \(type) from cardsJSON for cardType '\(cardType)'. Data may be stale or from a different app version."
+        #if DEBUG
+        print(message)
+        #endif
     }
 
     /// Convenience overload for agents whose result is a single top-level `StructuredOutput`
@@ -175,17 +188,6 @@ public final class ContentCardRegistry: @unchecked Sendable {
     }
 
     /// Ready-made closure for `MessageService.agentResultParser`.
-    ///
-    /// Looks up the agent by its raw name string (the value `MessageService` passes in) and
-    /// converts results containing cards into a `Message.contentCards`.
-    /// Returns `nil` for unregistered agents or results with no cards. In the latter
-    /// case the outer model's follow-up supplies the sole prose answer, rather than
-    /// showing both the agent's summary and the follow-up as separate bubbles.
-    ///
-    /// Usage (in any app target):
-    ///
-    ///     service.agentResultParser = ContentCardRegistry.shared.agentResultParser
-    ///
     public var agentResultParser: (String, String) -> Message? {
         { [weak self] result, agentName in
             guard let self,
@@ -196,22 +198,100 @@ public final class ContentCardRegistry: @unchecked Sendable {
         }
     }
 
+    // MARK: - Tool registration
+
+    /// Register a tool with full control over decoding and rendering.
+    /// Uses a separate tool-name namespace so the same name can be registered
+    /// as both an agent and a tool without collision.
+    public func register<ToolKey: Hashable, Item: StructuredOutput, V: View>(
+        tool: ToolKey,
+        cardType: String,
+        as type: Item.Type,
+        decode: @escaping (String) -> (message: String?, items: [Item])?,
+        @ViewBuilder render: @escaping @Sendable ([Item]) -> V
+    ) {
+        let entry = Entry(
+            parseResult: { json in
+                guard let (message, items) = decode(json),
+                      let data = try? JSONEncoder().encode(items),
+                      let cardsJSON = String(data: data, encoding: .utf8)
+                else { return nil }
+                return ContentCardsContent(cardType: cardType, message: message, cardsJSON: cardsJSON, cardCount: items.count)
+            },
+            buildView: { content, showsSummary in
+                guard let items = try? content.decodeCards(as: Item.self) else {
+                    Self.logDecodeFailure(type: Item.self, cardType: cardType)
+                    return AnyView(Text("Could not display \(content.message ?? cardType + " card")").font(.subheadline).foregroundStyle(.secondary))
+                }
+                return AnyView(
+                    VStack(alignment: .leading, spacing: 12) {
+                        if showsSummary, let summary = Self.nonemptySummary(content.message) {
+                            Text(summary)
+                        }
+                        render(items)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                )
+            }
+        )
+        storage.withLock { $0.byToolName[AnyHashable(tool)] = entry; $0.byCardType[cardType] = entry }
+    }
+
+    /// Convenience overload for tools whose result is a single top-level `StructuredOutput`.
+    public func register<ToolKey: Hashable, Item: StructuredOutput, V: View>(
+        tool: ToolKey, cardType: String, as type: Item.Type,
+        @ViewBuilder render: @escaping @Sendable ([Item]) -> V
+    ) {
+        register(tool: tool, cardType: cardType, as: type,
+                  decode: { json in guard let item = try? Item(jsonString: json) else { return nil }; return (message: nil, items: [item]) },
+                  render: render)
+    }
+
+    // MARK: - Tool parse path
+
+    /// Convert a raw tool result JSON string into a `ContentCardsContent`.
+    public func parseToolResult<ToolKey: Hashable>(_ json: String, for toolKey: ToolKey) -> ContentCardsContent? {
+        let entry = storage.withLock { $0.byToolName[AnyHashable(toolKey)] }
+        return entry?.parseResult(json)
+    }
+
+    /// Ready-made closure for `MessageService.resultContentParser`.
+    public var resultContentParser: (String, String, ChatToolCall.Kind) -> ChatToolCall.DisplayContent? {
+        { [weak self] result, name, kind in
+            guard let self else { return nil }
+            let content: ContentCardsContent? = switch kind {
+            case .agent: self.parseResult(result, for: name)
+            case .tool: self.parseToolResult(result, for: name)
+            }
+            guard let content, content.cardCount > 0 else { return nil }
+            return ChatToolCall.DisplayContent(type: content.cardType, json: content.cardsJSON, summary: content.message, itemCount: content.cardCount)
+        }
+    }
+
+    // MARK: - DisplayContent view path
+
+    /// Build an attached result view, including its nonempty summary above the
+    /// decoded items. Decode failures and unknown types retain a single fallback.
+    @MainActor @ViewBuilder
+    public func view(for displayContent: ChatToolCall.DisplayContent) -> some View {
+        let entry: Entry? = storage.withLock { $0.byCardType[displayContent.type] }
+        if let entry {
+            let content = ContentCardsContent(cardType: displayContent.type, message: displayContent.summary, cardsJSON: displayContent.json, cardCount: displayContent.itemCount)
+            entry.buildView(content, true)
+        } else {
+            Text(Self.nonemptySummary(displayContent.summary) ?? "Unknown card type: \(displayContent.type)").font(.subheadline).foregroundStyle(.secondary)
+        }
+    }
+
     // MARK: - View path
 
-    /// Build a SwiftUI view for the given content. Falls back to plain secondary text
-    /// if no registration is found for `content.cardType` (e.g. cards persisted from
-    /// an older app version whose type was later removed).
-    @MainActor
-    @ViewBuilder
+    /// Build legacy standalone cards. Their summary is already presented by
+    /// `Message.text`, so do not repeat it in the registered item renderer.
+    @MainActor @ViewBuilder
     public func view(for content: ContentCardsContent) -> some View {
         let entry: Entry? = storage.withLock { $0.byCardType[content.cardType] }
-        if let entry {
-            entry.buildView(content)
-        } else {
-            Text(content.message ?? "Unknown card type: \(content.cardType)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
+        if let entry { entry.buildView(content, false) }
+        else { Text(content.message ?? "Unknown card type: \(content.cardType)").font(.subheadline).foregroundStyle(.secondary) }
     }
 
     // MARK: - Batch registration
