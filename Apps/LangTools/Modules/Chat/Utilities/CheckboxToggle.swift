@@ -8,6 +8,8 @@ extension View {
     public func checkboxToggleStyle() -> some View {
         #if os(macOS)
         toggleStyle(.checkbox)
+        #else
+        self
         #endif
     }
 }
