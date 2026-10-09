@@ -200,6 +200,65 @@ final class RichResultToolCallHistoryReplayTests: XCTestCase {
     }
 
     @MainActor
+    func testDirectToolCompletionKeepsCapturedOriginAfterProviderSwitch() async throws {
+        let keys = ["model", "chat_conversation_settings", "systemMessage"]
+        let defaults = UserDefaults.standard
+        let prior = Dictionary(uniqueKeysWithValues: keys.compactMap { key in
+            defaults.object(forKey: key).map { (key, $0) }
+        })
+        let suite = "DirectToolOrigin." + UUID().uuidString
+        let isolated = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer {
+            for key in keys {
+                if let value = prior[key] { defaults.set(value, forKey: key) }
+                else { defaults.removeObject(forKey: key) }
+            }
+            isolated.removePersistentDomain(forName: suite)
+        }
+        ChatConversationSettingsStore().save(ChatConversationSettings(systemPrompt: "Synthetic origin fixture", memoryFields: []))
+        UserDefaults.model = .openAI(.gpt4o)
+        let settings = ToolSettings(defaults: isolated)
+        settings.keepsToolCallsInHistory = true
+        let client = ReplayTerminalNetworkStub(name: registerReplayTool(), raw: raw)
+        client.pauseCompletion = true
+        let service = MessageService(networkClient: client, toolSettings: settings)
+        service.resultContentParser = ContentCardRegistry.shared.resultContentParser
+        let operation = service.sendOperation(message: "Controlled origin lookup")
+        defer { operation.cancel() }
+        try await operation.waitUntilEstablished()
+        XCTAssertEqual(client.requestModels.first?.apiService, .openAI)
+        let complete = try XCTUnwrap(client.pendingCompletion)
+        UserDefaults.model = .ollama(try XCTUnwrap(OllamaModel(rawValue: "llama3.2")))
+        client.pendingCompletion = nil
+        complete()
+        try await operation.waitForCompletion()
+
+        let original = try XCTUnwrap(service.messages.first { !$0.toolCalls.isEmpty })
+        let call = try XCTUnwrap(original.toolCalls.first)
+        XCTAssertEqual(call.status, .success)
+        XCTAssertEqual(call.result, raw)
+        XCTAssertNotNil(call.displayContent)
+        XCTAssertEqual(original.providerToolResults[call.id], raw)
+        XCTAssertEqual(original.providerToolResultServices[call.id], .openAI,
+                       "Completion must use the request's provider, not the new selection")
+        let reloaded = try JSONDecoder().decode(Message.self, from: JSONEncoder().encode(original))
+        XCTAssertEqual(reloaded.providerToolResultServices[call.id], .openAI)
+        for target in targets {
+            for sharing in [false, true] {
+                let filtered = reloaded.replayFiltered(targetService: target, allowCrossProvider: sharing)
+                let permitted = sharing || target == .openAI
+                XCTAssertEqual(filtered.toolCalls[0].result, permitted ? raw : nil)
+                XCTAssertEqual(filtered.providerToolResults[call.id], permitted ? raw : nil)
+                let body = try encodedRequest([filtered], target: target)
+                XCTAssertEqual(body.contains("RAW_ONLY_SENTINEL"), permitted)
+                XCTAssertEqual(body.contains("raw_only_wrapper"), permitted)
+                XCTAssertEqual(reloaded.toolCalls[0], call, "Filtering must not alter local disclosure/display")
+                XCTAssertEqual(reloaded.providerToolResults[call.id], raw)
+            }
+        }
+    }
+
+    @MainActor
     func testHistoryOffTerminalSanitizationReplaysDecodedCardsNotRawWrapper() async throws {
         let previous = ToolSettings.shared.keepsToolCallsInHistory
         ToolSettings.shared.keepsToolCallsInHistory = false
@@ -255,6 +314,9 @@ private final class ReplayTerminalNetworkStub: NetworkClientProtocol {
     let name: String
     let raw: String
     var requests: [[Message]] = []
+    var requestModels: [Model] = []
+    var pauseCompletion = false
+    var pendingCompletion: (() -> Void)?
 
     init(name: String, raw: String) { self.name = name; self.raw = raw }
 
@@ -264,8 +326,18 @@ private final class ReplayTerminalNetworkStub: NetworkClientProtocol {
 
     func streamChatCompletionRequest(messages: [Message], model: Model, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> AsyncThrowingStream<String, Error> {
         requests.append(messages)
+        requestModels.append(model)
         if requests.count == 1 {
             toolEventHandler(.toolCalled(ReplaySelection(name: name)))
+            if pauseCompletion {
+                return AsyncThrowingStream { continuation in
+                    pendingCompletion = {
+                        toolEventHandler(.toolCompleted(ReplayResult(tool_selection_id: "provider-call-1", result: self.raw)))
+                        continuation.yield("Done.")
+                        continuation.finish()
+                    }
+                }
+            }
             toolEventHandler(.toolCompleted(ReplayResult(tool_selection_id: "provider-call-1", result: raw)))
         }
         return AsyncThrowingStream { continuation in

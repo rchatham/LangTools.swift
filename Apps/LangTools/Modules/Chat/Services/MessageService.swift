@@ -784,7 +784,7 @@ extension MessageService {
                             message.toolCalls[index].status = isSuccess ? .success : .failure
                             message.toolCalls[index].result = result.result
                             if isSuccess {
-                                applyToolDisplayContent(result: result.result, name: identity.name ?? "", kind: .tool, toCallAt: index, in: message, keepsToolCallsInHistory: keepsToolCallsInHistory, generatedMessageIDs: &generatedMessageIDs)
+                                applyToolDisplayContent(result: result.result, name: identity.name ?? "", kind: .tool, toCallAt: index, in: message, keepsToolCallsInHistory: keepsToolCallsInHistory, replayService: replayService, generatedMessageIDs: &generatedMessageIDs)
                             }
                         } else {
                             message.toolCalls[index].status = .failure
@@ -801,7 +801,7 @@ extension MessageService {
                         )
                         appendOrphanToolCompletion(result, identity: identity, to: anchor)
                         if !result.is_error, let lastIdx = anchor.toolCalls.indices.last {
-                            applyToolDisplayContent(result: result.result, name: identity?.name ?? "tool", kind: .tool, toCallAt: lastIdx, in: anchor, keepsToolCallsInHistory: keepsToolCallsInHistory, generatedMessageIDs: &generatedMessageIDs)
+                            applyToolDisplayContent(result: result.result, name: identity?.name ?? "tool", kind: .tool, toCallAt: lastIdx, in: anchor, keepsToolCallsInHistory: keepsToolCallsInHistory, replayService: replayService, generatedMessageIDs: &generatedMessageIDs)
                         }
                         toolCallTracker.recordToolAnchor(anchor.uuid)
                         toolBreakOccurred = anchor.uuid == anchorMessageID
@@ -817,7 +817,7 @@ extension MessageService {
                     )
                     let completedIdx = anchor.applyToolEventReturningCompletedIndex(.toolCompleted(result))
                     if let result, !result.is_error, let idx = completedIdx, anchor.toolCalls.indices.contains(idx) {
-                        applyToolDisplayContent(result: result.result, name: anchor.toolCalls[idx].name, kind: .tool, toCallAt: idx, in: anchor, keepsToolCallsInHistory: keepsToolCallsInHistory, generatedMessageIDs: &generatedMessageIDs)
+                        applyToolDisplayContent(result: result.result, name: anchor.toolCalls[idx].name, kind: .tool, toCallAt: idx, in: anchor, keepsToolCallsInHistory: keepsToolCallsInHistory, replayService: replayService, generatedMessageIDs: &generatedMessageIDs)
                     }
                     toolBreakOccurred = true
                     updatedMessage = anchor
@@ -1008,14 +1008,15 @@ extension MessageService {
     private func applyToolDisplayContent(
         result: String, name: String, kind: ChatToolCall.Kind,
         toCallAt index: Int, in message: Message,
-        keepsToolCallsInHistory: Bool, generatedMessageIDs: inout Set<UUID>
+        keepsToolCallsInHistory: Bool, replayService: APIService,
+        generatedMessageIDs: inout Set<UUID>
     ) {
         guard let displayContent = resultContentParser?(result, name, kind) else { return }
         guard message.toolCalls.indices.contains(index) else { return }
         if keepsToolCallsInHistory {
             message.toolCalls[index].displayContent = displayContent
             message.providerToolResults[message.toolCalls[index].id] = result
-            message.providerToolResultServices[message.toolCalls[index].id] = UserDefaults.model.apiService
+            message.providerToolResultServices[message.toolCalls[index].id] = replayService
         } else {
             let cardMessage = Message.contentCards(ContentCardsContent(
                 cardType: displayContent.type, message: displayContent.summary,
