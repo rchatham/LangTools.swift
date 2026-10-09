@@ -118,6 +118,39 @@ final class MobileHelperModelsTests: XCTestCase {
             from: JSONSerialization.data(withJSONObject: extra)))
     }
 
+    func testV2PairingBindsCanonicalCapabilityScope() throws {
+        let original = payload
+        for capabilities in [["codex"], ["claude", "codex", "ollama"]] {
+            let value = MobileHelperPairingPayload(version: 2, endpoint: original.endpoint,
+                helperID: original.helperID, fingerprint: original.fingerprint, code: original.code,
+                name: original.name, capabilities: capabilities)
+            XCTAssertEqual(try MobileHelperPairingPayload.parse(value.pairingURL()), value)
+            XCTAssertEqual(try JSONDecoder().decode(MobileHelperPairingPayload.self,
+                from: JSONEncoder().encode(value)), value)
+        }
+        let value = MobileHelperPairingPayload(version: 2, endpoint: original.endpoint,
+            helperID: original.helperID, fingerprint: original.fingerprint, code: original.code,
+            name: original.name, capabilities: ["codex", "ollama"])
+        let valid = try value.pairingURL().absoluteString
+        for scope in ["", "codex,codex", "ollama,codex", "account", "codex,"] {
+            var parts = try XCTUnwrap(URLComponents(string: valid))
+            parts.queryItems = parts.queryItems?.map { $0.name == "capabilities" ? URLQueryItem(name: $0.name, value: scope) : $0 }
+            XCTAssertThrowsError(try MobileHelperPairingPayload.parse(try XCTUnwrap(parts.url)))
+        }
+        XCTAssertThrowsError(try MobileHelperPairingPayload.parse(URL(string: valid + "&capabilities=codex")!))
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
+        object.removeValue(forKey: "capabilities")
+        XCTAssertThrowsError(try JSONDecoder().decode(MobileHelperPairingPayload.self,
+            from: JSONSerialization.data(withJSONObject: object)))
+        object["version"] = 1
+        object["capabilities"] = ["codex"]
+        XCTAssertThrowsError(try JSONDecoder().decode(MobileHelperPairingPayload.self,
+            from: JSONSerialization.data(withJSONObject: object)))
+        XCTAssertThrowsError(try MobileHelperPairingPayload(endpoint: original.endpoint,
+            helperID: original.helperID, fingerprint: original.fingerprint, code: original.code,
+            name: original.name, capabilities: ["codex"]).pairingURL())
+    }
+
     func testPairingPayloadWireFormatStaysByteIdentical() throws {
         let value = payload
         let url = try value.pairingURL()
