@@ -1,37 +1,66 @@
 import Foundation
+import Agents
+import LangTools
 import Ollama
 
 /// Thread-safe, persisted source of truth for the Ollama server and its model cache.
 public final class OllamaEndpointConfiguration: @unchecked Sendable {
     public struct Snapshot: Equatable, Sendable {
-        public let baseURL: URL
+        public let baseURL: URL?
+        public let validationError: ValidationError?
         public let revision: UInt64
         public let helperID: String?
         public let helperName: String?
         let helper: MobileHelperConnection?
         let helperError: MobileHelperError?
+        let directSession: URLSession?
         public var isHelper: Bool { helperID != nil }
-        var cacheScope: String { helperID.map { "helper:\($0)" } ?? baseURL.absoluteString }
+        var cacheScope: String? {
+            guard baseURL != nil, validationError == nil, helperError == nil else { return nil }
+            return helperID.map { "helper:\($0)" } ?? baseURL?.absoluteString
+        }
 
         public static func == (lhs: Snapshot, rhs: Snapshot) -> Bool {
-            lhs.baseURL == rhs.baseURL && lhs.revision == rhs.revision && lhs.helperID == rhs.helperID
+            lhs.baseURL == rhs.baseURL && lhs.validationError == rhs.validationError && lhs.revision == rhs.revision && lhs.helperID == rhs.helperID
         }
 
         public func actionableError(_ error: Error) -> Error {
             isHelper ? MobileHelperError.actionable(error, session: helper?.session) : error
         }
 
-        func provider(directSession: URLSession) throws -> Ollama {
+        /// Captures the validated destination and retains its transport lease without exposing credentials.
+        public func makeToolchain() throws -> LangToolchain {
+            try makeToolchain(directSession: directSession)
+        }
+
+        func makeToolchain(directSession: URLSession?) throws -> LangToolchain {
+            var toolchain = LangToolchain()
+            toolchain.register(CapturedOllama(provider: try provider(directSession: directSession)))
+            return toolchain
+        }
+
+        public func makeAgentContext(model: Ollama.Model, messages: [Ollama.Message], eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
+            try makeAgentContext(model: model, messages: messages, eventHandler: eventHandler, directSession: directSession)
+        }
+
+        func makeAgentContext(model: Ollama.Model, messages: [Ollama.Message], eventHandler: @escaping (AgentEvent) -> Void, directSession: URLSession?) throws -> AgentContext {
+            AgentContext(langTool: CapturedOllama(provider: try provider(directSession: directSession)), model: model, messages: messages, eventHandler: eventHandler)
+        }
+
+        func provider(directSession: URLSession?) throws -> Ollama {
             if let helperError { throw helperError }
+            if let validationError { throw validationError }
+            guard let baseURL else { throw MobileHelperError.disconnected }
             if let helper {
                 return Ollama(baseURL: baseURL, apiKey: helper.credential.token, sessionLease: helper.sessionLease)
             }
             guard !isHelper else { throw MobileHelperError.disconnected }
+            guard let directSession else { throw ValidationError.invalidURL }
             return Ollama(baseURL: baseURL, session: directSession)
         }
     }
 
-    public enum ValidationError: LocalizedError, Equatable {
+    public enum ValidationError: LocalizedError, Equatable, Sendable {
         case empty
         case invalidURL
         case unsupportedScheme
@@ -41,13 +70,14 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
         case fragmentNotAllowed
         case pathNotAllowed
         case invalidPort
+        case unsafeHTTPHost
 
         public var errorDescription: String? {
             switch self {
             case .empty:
                 return "Enter an Ollama server URL."
             case .invalidURL:
-                return "Enter a valid Ollama server URL, such as http://192.168.1.10:11434."
+                return "Enter a valid Ollama server URL, such as http://localhost:11434 or https://ollama.example.com."
             case .unsupportedScheme:
                 return "The Ollama server URL must use http or https."
             case .missingHost:
@@ -62,6 +92,8 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
                 return "Enter the Ollama base URL without /api or another path."
             case .invalidPort:
                 return "The Ollama server URL contains an invalid port."
+            case .unsafeHTTPHost:
+                return "HTTP is only allowed for localhost Ollama servers. Use HTTPS for remote servers."
             }
         }
     }
@@ -74,31 +106,32 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
 
     private let defaults: UserDefaults
     private let lock = NSLock()
-    private var baseURL: URL
+    private var baseURL: URL?
+    private var validationError: ValidationError?
     private var revision: UInt64 = 0
     private var helperID: String?
     private var helperName: String?
     private var helper: MobileHelperConnection?
     private var helperError: MobileHelperError?
     private let credentialStore: any MobileHelperCredentialStoring
+    private let syntheticDirectSession: URLSession?
     static let helperSelectionKey = "ollamaSelectedMobileHelperID"
 
     public convenience init(userDefaults: UserDefaults = .standard) {
         self.init(userDefaults: userDefaults, credentialStore: MobileHelperCredentialStore.shared)
     }
 
-    init(userDefaults: UserDefaults, credentialStore: any MobileHelperCredentialStoring) {
+    init(userDefaults: UserDefaults, credentialStore: any MobileHelperCredentialStoring, directSession: URLSession? = nil) {
         defaults = userDefaults
         self.credentialStore = credentialStore
-        if let persisted = userDefaults.string(forKey: Self.endpointKey),
-           let validated = try? Self.validate(persisted) {
-            baseURL = validated
-            if persisted != validated.absoluteString {
-                userDefaults.set(validated.absoluteString, forKey: Self.endpointKey)
-            }
+        syntheticDirectSession = directSession
+        if let persisted = userDefaults.object(forKey: Self.endpointKey) {
+            if let value = persisted as? String {
+                do { baseURL = try Self.validate(value) }
+                catch { validationError = (error as? ValidationError) ?? .invalidURL }
+            } else { validationError = .invalidURL }
         } else {
             baseURL = Self.defaultBaseURL
-            userDefaults.set(Self.defaultBaseURL.absoluteString, forKey: Self.endpointKey)
         }
         helperID = userDefaults.string(forKey: Self.helperSelectionKey)
         helperName = userDefaults.string(forKey: "ollamaSelectedMobileHelperName")
@@ -107,18 +140,41 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
                 if let saved = try credentialStore.load(helperID: helperID) {
                     helper = MobileHelperConnection(credential: saved)
                 } else { helperError = .disconnected }
-            } catch { helperError = .persistence(error.localizedDescription) }
+            } catch { helperError = .persistence("The saved helper could not be loaded.") }
         }
     }
 
     public func snapshot() -> Snapshot { lock.withLock { snapshotLocked() } }
 
-    public var directBaseURL: URL { lock.withLock { baseURL } }
+    public var directBaseURL: URL? { lock.withLock { synchronizeDirectLocked(); return baseURL } }
+    public var directValidationError: ValidationError? { lock.withLock { synchronizeDirectLocked(); return validationError } }
+
+    /// Validate persistence for each new operation/currentness check. Never rewrite
+    /// rejected input or retarget already captured capabilities. Dormant direct
+    /// settings do not invalidate a selected helper's authority.
+    private func synchronizeDirectLocked() {
+        var resolvedURL: URL?
+        var resolvedError: ValidationError?
+        if let persisted = defaults.object(forKey: Self.endpointKey) {
+            if let value = persisted as? String {
+                do { resolvedURL = try Self.validate(value) }
+                catch { resolvedError = (error as? ValidationError) ?? .invalidURL }
+            } else { resolvedError = .invalidURL }
+        } else { resolvedURL = Self.defaultBaseURL }
+        guard resolvedURL != baseURL || resolvedError != validationError else { return }
+        baseURL = resolvedURL
+        validationError = resolvedError
+        if helperID == nil { revision &+= 1 }
+    }
 
     private func snapshotLocked() -> Snapshot {
-        Snapshot(baseURL: helper?.credential.endpoint.appendingPathComponent("v1/ollama") ?? baseURL,
+        synchronizeDirectLocked()
+        return Snapshot(baseURL: helperID != nil ? helper?.credential.endpoint.appendingPathComponent("v1/ollama") : baseURL,
+            validationError: helperID != nil ? nil : validationError,
             revision: revision, helperID: helperID, helperName: helper?.credential.name ?? helperName,
-            helper: helper, helperError: helperError)
+            helper: helper, helperError: helperError,
+            directSession: helperID == nil && baseURL != nil && validationError == nil
+                ? (syntheticDirectSession ?? LoopbackURLSession.shared) : nil)
     }
 
     /// Call only after pinned pairing and matching authenticated health verification.
@@ -164,8 +220,9 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
     public func update(_ value: String) throws -> Snapshot {
         let validated = try Self.validate(value)
         return lock.withLock {
-            if validated != baseURL || helperID != nil {
+            if validated != baseURL || validationError != nil || helperID != nil {
                 baseURL = validated
+                validationError = nil
                 revision &+= 1
             }
             helper = nil
@@ -180,21 +237,24 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
     public func cachedModels() -> [Ollama.Model] {
         lock.withLock {
             let snapshot = snapshotLocked()
-            return snapshot.helperError == nil ? cachedModelsLocked(for: snapshot.cacheScope) : []
+            return snapshot.cacheScope.map { cachedModelsLocked(for: $0) } ?? []
         }
     }
 
     public func cachedModels(for snapshot: Snapshot) -> [Ollama.Model] {
-        lock.withLock { snapshot.helperError == nil ? cachedModelsLocked(for: snapshot.cacheScope) : [] }
+        lock.withLock {
+            guard snapshot == snapshotLocked(), let scope = snapshot.cacheScope else { return [] }
+            return cachedModelsLocked(for: scope)
+        }
     }
 
     /// Saves discovery results only while the endpoint snapshot is still current.
     @discardableResult
     public func storeModels(_ models: [Ollama.Model], for snapshot: Snapshot) -> Bool {
         lock.withLock {
-            guard snapshot == snapshotLocked() else { return false }
+            guard snapshot == snapshotLocked(), let scope = snapshot.cacheScope else { return false }
             var modelsByEndpoint = defaults.dictionary(forKey: Self.modelsByEndpointKey) as? [String: [String]] ?? [:]
-            modelsByEndpoint[snapshot.cacheScope] = models.map(\.rawValue)
+            modelsByEndpoint[scope] = models.map(\.rawValue)
             defaults.set(modelsByEndpoint, forKey: Self.modelsByEndpointKey)
             return true
         }
@@ -219,8 +279,11 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
         guard components.fragment == nil, components.percentEncodedFragment == nil else {
             throw ValidationError.fragmentNotAllowed
         }
-        guard components.path.isEmpty || components.path == "/" else {
-            throw ValidationError.pathNotAllowed
+        if scheme.lowercased() == "http" {
+            let host = components.host?.lowercased()
+            guard ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host) else {
+                throw ValidationError.unsafeHTTPHost
+            }
         }
 
         // URLComponents reports nil for both an absent and a malformed port, so
@@ -231,7 +294,8 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
 
         var canonical = components
         canonical.scheme = scheme.lowercased()
-        canonical.path = ""
+        canonical.host = components.host?.lowercased()
+        if canonical.percentEncodedPath == "/" { canonical.percentEncodedPath = "" }
         guard let url = canonical.url else { throw ValidationError.invalidURL }
         return url
     }
@@ -272,5 +336,41 @@ private extension NSLock {
         lock()
         defer { unlock() }
         return try operation()
+    }
+}
+
+/// Private forwarding authority: the concrete provider (and its helper lease) cannot be
+/// recovered or reconfigured by hosts consuming a captured snapshot capability.
+private final class CapturedOllama: LangTools {
+    typealias Model = Ollama.Model
+    typealias ErrorResponse = Ollama.ErrorResponse
+    private let provider: Ollama
+
+    init(provider: Ollama) { self.provider = provider }
+    var session: URLSession { provider.session }
+    static var requestValidators: [(any LangToolsRequest) -> Bool] { Ollama.requestValidators }
+
+    func prepare(request: some LangToolsRequest) throws -> URLRequest {
+        try provider.prepare(request: request)
+    }
+
+    func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response {
+        try await provider.perform(request: request)
+    }
+
+    func perform<Request: LangToolsRequest>(request: Request, onResponse: @escaping (Request.Response) -> Void) async throws -> Request.Response {
+        try await provider.perform(request: request, onResponse: onResponse)
+    }
+
+    func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {
+        provider.stream(request: request)
+    }
+
+    static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
+        try Ollama.decodeStream(buffer)
+    }
+
+    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        try Ollama.chatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
     }
 }

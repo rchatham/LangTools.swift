@@ -49,6 +49,13 @@ public struct LangToolchain {
         return try await langTool.perform(request: request)
     }
 
+    /// Preserves each intermediate response callback on the selected provider,
+    /// including recursive tool completions, rather than reporting only the final response.
+    public func perform<Request: LangToolsRequest>(request: Request, onResponse: @escaping (Request.Response) -> Void) async throws -> Request.Response {
+        let langTool = try selectProvider(for: request, operation: "perform")
+        return try await langTool.perform(request: request, onResponse: onResponse)
+    }
+
     public func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {
         do {
             return try selectProvider(for: request, operation: "stream").stream(request: request)

@@ -320,7 +320,7 @@ public struct ChatGenerationSettingsView: View {
                         }
                     }
                 )) {
-                    Text("Stop Sequences").frame(width: labelWidth - 20, alignment: .leading)
+                    overrideToggleLabel("Stop Sequences")
                 }
                 .accessibilityIdentifier("generation.stop.toggle")
                 .checkboxToggleStyle()
@@ -423,7 +423,7 @@ public struct ChatGenerationSettingsView: View {
 #else
         HStack(spacing: 8) {
             Toggle(isOn: isOn) {
-                Text(label).frame(width: labelWidth - 20, alignment: .leading)
+                overrideToggleLabel(label)
             }
             .accessibilityIdentifier("generation.\(label.lowercased().replacingOccurrences(of: " ", with: ".")).toggle")
             .checkboxToggleStyle()
@@ -478,7 +478,7 @@ public struct ChatGenerationSettingsView: View {
 #else
         HStack(spacing: 8) {
             Toggle(isOn: isOn) {
-                Text(label).frame(width: labelWidth - 20, alignment: .leading)
+                overrideToggleLabel(label)
             }
             .accessibilityIdentifier("generation.\(label.lowercased().replacingOccurrences(of: " ", with: ".")).toggle")
             .checkboxToggleStyle()
@@ -537,7 +537,7 @@ public struct ChatGenerationSettingsView: View {
 #else
         HStack(spacing: 8) {
             Toggle(isOn: isOn) {
-                Text("Seed").frame(width: labelWidth - 20, alignment: .leading)
+                overrideToggleLabel("Seed")
             }
             .accessibilityIdentifier("generation.seed.toggle")
             .checkboxToggleStyle()
@@ -577,6 +577,14 @@ public struct ChatGenerationSettingsView: View {
         Text(capabilities.unsupportedReason ?? "Advanced generation parameters are unavailable for this model.")
             .font(.callout)
             .foregroundColor(.secondary)
+    }
+
+    private func overrideToggleLabel(_ label: String) -> some View {
+#if os(macOS)
+        Text(label).frame(width: labelWidth - 20, alignment: .leading)
+#else
+        Text(label).fixedSize(horizontal: false, vertical: true)
+#endif
     }
 
     private var savedValuesFootnote: some View {

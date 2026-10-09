@@ -51,6 +51,25 @@ final class LangToolchainTests: XCTestCase {
         XCTAssertEqual(response.provider, "first")
     }
 
+    func testCallbackPerformForwardsToSelectedProviderAndPreservesIntermediateResponses() async throws {
+        var toolchain = LangToolchain()
+        toolchain.register(SecondTestProvider(marker: "second"))
+        toolchain.register(FirstTestProvider(marker: "first"))
+        var callbacks: [String] = []
+        let result = try await toolchain.perform(request: TestRequest(), onResponse: { callbacks.append($0.provider) })
+        XCTAssertEqual(callbacks, ["second:intermediate", "second:final"])
+        XCTAssertEqual(result.provider, "second:final")
+    }
+
+    func testCallbackPerformWithoutHandlerThrowsBeforeAnyCallback() async {
+        var callbacks = 0
+        do {
+            _ = try await LangToolchain().perform(request: TestRequest(), onResponse: { _ in callbacks += 1 })
+            XCTFail("Unhandled request")
+        } catch { XCTAssertEqual(error as? LangToolchainError, .toolchainCannotHandleRequest) }
+        XCTAssertEqual(callbacks, 0)
+    }
+
     func testTypedStreamUsesRegistrationOrder() async throws {
         var toolchain = LangToolchain()
         toolchain.register(SecondTestProvider(marker: "second"))
@@ -176,6 +195,16 @@ private extension TestProvider {
             throw LangToolsError.invalidArgument("Unexpected test response type")
         }
         return response
+    }
+
+    func perform<Request: LangToolsRequest>(request: Request, onResponse: @escaping (Request.Response) -> Void) async throws -> Request.Response {
+        guard let intermediate = TestResponse(provider: marker + ":intermediate") as? Request.Response,
+              let final = TestResponse(provider: marker + ":final") as? Request.Response else {
+            throw LangToolsError.invalidArgument("Unexpected callback response type")
+        }
+        onResponse(intermediate)
+        onResponse(final)
+        return final
     }
 
     func stream<Request: LangToolsStreamableRequest>(
