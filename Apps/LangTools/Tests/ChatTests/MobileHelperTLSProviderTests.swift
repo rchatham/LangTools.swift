@@ -585,8 +585,14 @@ private final class HelperTLSFixture: @unchecked Sendable {
         let url = try XCTUnwrap(Bundle.module.url(forResource: "fixture-identity", withExtension: "p12", subdirectory: "HelperCertificates"))
         let pkcs12 = try Data(contentsOf: url)
         var imported: CFArray?
-        let options = [kSecImportExportPassphrase as String: "fixture-only"] as CFDictionary
-        guard SecPKCS12Import(pkcs12 as CFData, options, &imported) == errSecSuccess,
+        var options: [String: Any] = [kSecImportExportPassphrase as String: "fixture-only"]
+        // macOS otherwise imports the synthetic identity into the default
+        // Keychain. Keep it in memory on supported hosts; older CI runners
+        // retain their existing import behavior.
+        if #available(macOS 15.0, *) {
+            options[kSecImportToMemoryOnly as String] = true
+        }
+        guard SecPKCS12Import(pkcs12 as CFData, options as CFDictionary, &imported) == errSecSuccess,
               let entry = (imported as? [[String: Any]])?.first,
               let rawIdentity = entry[kSecImportItemIdentity as String] else { throw FixtureError.identity }
         let identity = rawIdentity as! SecIdentity
