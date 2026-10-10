@@ -1,4 +1,5 @@
 import Foundation
+import KeychainAccess
 import Ollama
 
 /// Thread-safe, persisted source of truth for the Ollama server and its model cache.
@@ -21,7 +22,7 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
             isHelper ? MobileHelperError.actionable(error, session: helper?.session) : error
         }
 
-        func provider(directSession: URLSession) throws -> Ollama {
+        public func provider(directSession: URLSession) throws -> Ollama {
             if let helperError { throw helperError }
             if let helper {
                 return Ollama(baseURL: baseURL, apiKey: helper.credential.token, sessionLease: helper.sessionLease)
@@ -66,6 +67,14 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
         }
     }
 
+    public enum ConfigurationError: LocalizedError, Equatable {
+        case invalidKeychainService
+
+        public var errorDescription: String? {
+            "The helper Keychain service must not be blank or contain control characters."
+        }
+    }
+
     public static let shared = OllamaEndpointConfiguration()
     public static let defaultBaseURL = URL(string: "http://localhost:11434")!
 
@@ -85,6 +94,17 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
 
     public convenience init(userDefaults: UserDefaults = .standard) {
         self.init(userDefaults: userDefaults, credentialStore: MobileHelperCredentialStore.shared)
+    }
+
+    /// The owning app supplies its defaults domain and unique credential namespace.
+    /// Existing LangTools credentials are never imported into this service.
+    public convenience init(userDefaults: UserDefaults, keychainService: String) throws {
+        guard !keychainService.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              keychainService.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else {
+            throw ConfigurationError.invalidKeychainService
+        }
+        let keychain = Keychain(service: keychainService).accessibility(.afterFirstUnlockThisDeviceOnly)
+        self.init(userDefaults: userDefaults, credentialStore: MobileHelperCredentialStore(keychain: keychain))
     }
 
     init(userDefaults: UserDefaults, credentialStore: any MobileHelperCredentialStoring) {

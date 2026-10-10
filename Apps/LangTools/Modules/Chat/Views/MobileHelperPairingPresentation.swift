@@ -4,7 +4,13 @@ import UIKit
 #endif
 
 private struct MobileHelperPairingPresentation: ViewModifier {
-    @ObservedObject private var coordinator = MobileHelperPairingCoordinator.shared
+    @ObservedObject private var coordinator: MobileHelperPairingCoordinator
+    private let brandingTitle: String
+
+    init(coordinator: MobileHelperPairingCoordinator, brandingTitle: String) {
+        self.coordinator = coordinator
+        self.brandingTitle = brandingTitle
+    }
 
     func body(content: Content) -> some View {
         content
@@ -29,7 +35,7 @@ private struct MobileHelperPairingPresentation: ViewModifier {
                             Spacer()
                         }
                         .padding(24)
-                        .navigationTitle("Connect LangToolsHelper")
+                        .navigationTitle(brandingTitle)
                         #if os(iOS)
                         .navigationBarTitleDisplayMode(.inline)
                         #endif
@@ -65,6 +71,11 @@ private struct MobileHelperPairingPresentation: ViewModifier {
 
 extension View {
     public func mobileHelperPairingPresentation() -> some View {
-        modifier(MobileHelperPairingPresentation())
+        modifier(MobileHelperPairingPresentation(coordinator: .shared, brandingTitle: "Connect LangToolsHelper"))
+    }
+
+    public func mobileHelperPairingPresentation(coordinator: MobileHelperPairingCoordinator,
+                                               brandingTitle: String) -> some View {
+        modifier(MobileHelperPairingPresentation(coordinator: coordinator, brandingTitle: brandingTitle))
     }
 }
