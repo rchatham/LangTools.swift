@@ -224,19 +224,13 @@ private final class MR21ConversationStore: ChatConversationSettingsStoring {
     func reset() {}
 }
 
-/// Restore only changed keys from a complete snapshot, including missing keys.
-/// This avoids persisting untouched global-domain defaults into the app domain.
-private struct MR21PreferenceSnapshot {
-    private let original = UserDefaults.standard.dictionaryRepresentation()
-    func restore() {
-        let defaults = UserDefaults.standard
-        let current = defaults.dictionaryRepresentation()
-        for key in Set(original.keys).union(current.keys) {
-            let before = original[key] as? NSObject
-            let after = current[key] as? NSObject
-            guard before != after else { continue }
-            if let value = original[key] { defaults.set(value, forKey: key) }
-            else { defaults.removeObject(forKey: key) }
-        }
+/// Only fixture-owned backing keys are restored after in-memory teardown.
+struct MR21PreferenceSnapshot {
+    private let preferences: FixturePreferenceSnapshot
+
+    init(defaults: UserDefaults = .standard) {
+        preferences = FixturePreferenceSnapshot(defaults: defaults, keys: FixturePreferenceKeys.settingsView)
     }
+
+    func restore() { preferences.restore() }
 }
