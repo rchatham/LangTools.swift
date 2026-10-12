@@ -26,22 +26,24 @@ Codex Mac-account authentication failures use a sanitized **503** response with 
 
 See [helper README](../cli/README.md#optional-account-capabilities) for routes and [Ollama verification history](helper-ollama-verification.md) for prior acceptance evidence.
 
-## Current verification (2026-10-09)
+## Current verification (2026-10-09–10)
 
-All results below are local runs, not a claim about remote CI or live subscriptions.
+All results below are local runs, not a claim about remote CI or live subscriptions. Root/app/build/UI results are from October 9; the helper filter was rerun on October 10 after the test-only idle-cleanup adjustment.
 
 | Verification | Result |
 |---|---|
 | Root `swift test --jobs 2 --no-parallel` | 378 executed, 5 skipped, zero failures (373 passed) |
 | Shared `HelperLinkTests` | 11 passed, zero skips/failures; included in root total |
-| Updated bounded helper CI filter | 102 passed, zero skips/failures |
+| Updated bounded helper CI filter | 103 passed, zero skips/failures |
 | Updated bounded app CI filter | 184 passed, zero skips/failures |
 | App filter plus upstream checkbox regression | 185 passed, zero skips/failures |
 | Actual Chat module macOS build and current fixture relink | Passed |
 | Independent code/security re-review | No actionable findings in selection preservation and account-authentication fixes |
 | Frozen-resolution iOS simulator build | Exit 65 at normal `JSONMacroPlugin` changed-revision approval, before app compilation/UI tests |
 
-The branch includes the latest main merge (`0d17fa90`). Remote CI for the previously pushed `ace2ba43` was seven successful checks and two intentionally skipped cloud checks; that run does not validate these fixes. The helper-control screenshots below were recorded on October 8; their UI implementation is unchanged.
+The October 10 focused cleanup and retained-workspace tests both passed, followed by 20 consecutive successful idle-cleanup repetitions and the 103-test helper filter above. Cleanup polling has a five-second monotonic deadline and still asserts workspace removal **before shutdown**; the retained-workspace case verifies timeout without false success. The scoped test-only review found no actionable issues. Production timing and UI are unchanged.
+
+The branch includes main merge `0d17fa90`. Remote CI at `323222c5` had six successful checks, one helper-test failure (workspace still present after a fixed 100 ms sleep), and two intentionally skipped cloud checks. That affected test/runtime code predated these account fixes; scheduler delay is plausible, not proven. The bounded assertion adjustment addresses this CI finding; subsequent remote checks are tracked on the PR, not claimed here. The helper-control screenshots below were recorded on October 8; their UI implementation is unchanged.
 
 Reproduce the focused checks:
 
