@@ -149,7 +149,7 @@ public final class ContentCardRegistry: @unchecked Sendable {
     }
 
     /// Non-fatal log for stale/corrupt persisted display payloads.
-    private static func logDecodeFailure(type: Any.Type, cardType: String, file: StaticString = #fileID, line: UInt = #line) {
+    private static func logDecodeFailure(type: Any.Type, cardType: String) {
         let message = "[ContentCardRegistry] Failed to decode \(type) from cardsJSON for cardType '\(cardType)'. Data may be stale or from a different app version."
         #if DEBUG
         print(message)
