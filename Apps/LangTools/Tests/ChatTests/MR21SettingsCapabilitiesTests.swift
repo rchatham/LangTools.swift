@@ -1,6 +1,7 @@
 import Agents
 #if canImport(AppKit)
 import AppKit
+import ObjectiveC
 #endif
 import ChatUI
 import Foundation
@@ -62,11 +63,10 @@ final class MR21SettingsCapabilitiesTests: XCTestCase {
     #if canImport(AppKit)
     func testNativeSettingsVisibilityInteractionsAndSnapshots() throws {
         NSApplication.shared.finishLaunching()
-        let enhanced = NSSelectorFromString("accessibilitySetEnhancedUserInterfaceAttribute:")
-        guard NSApplication.shared.responds(to: enhanced) else {
-            throw XCTSkip("In-process SwiftUI accessibility hierarchy is unavailable")
-        }
-        _ = NSApplication.shared.perform(enhanced, with: NSNumber(value: true))
+        try withEnhancedAccessibility { try verifyNativeSettingsVisibilityInteractionsAndSnapshots() }
+    }
+
+    private func verifyNativeSettingsVisibilityInteractionsAndSnapshots() throws {
         let preferences = MR21PreferenceSnapshot()
         let oldToolsEnabled = ToolManager.shared.toolsEnabled
         let oldRich = ToolSettings.shared.richContentEnabled
@@ -145,6 +145,68 @@ final class MR21SettingsCapabilitiesTests: XCTestCase {
                 RunLoop.main.run(until: Date().addingTimeInterval(0.05))
             }
         }
+    }
+
+    func testNativeSettingsFixtureRestoresFalseAndTrueAccessibilityStates() throws {
+        NSApplication.shared.finishLaunching()
+        let original = try enhancedAccessibilityState()
+        defer { setEnhancedAccessibility(original) }
+        for initial in [false, true] {
+            setEnhancedAccessibility(NSNumber(value: initial))
+            try testNativeSettingsVisibilityInteractionsAndSnapshots()
+            XCTAssertEqual(try enhancedAccessibilityState().boolValue, initial)
+        }
+    }
+
+    func testEnhancedAccessibilityScopeRestoresStateOnThrow() throws {
+        NSApplication.shared.finishLaunching()
+        let original = try enhancedAccessibilityState()
+        defer { setEnhancedAccessibility(original) }
+        for initial in [false, true] {
+            setEnhancedAccessibility(NSNumber(value: initial))
+            XCTAssertThrowsError(try withEnhancedAccessibility {
+                XCTAssertTrue(try enhancedAccessibilityState().boolValue)
+                throw FixtureFailure.expected
+            }) { error in
+                XCTAssertEqual(error as? FixtureFailure, .expected)
+            }
+            XCTAssertEqual(try enhancedAccessibilityState().boolValue, initial)
+        }
+    }
+
+    private enum FixtureFailure: Error { case expected }
+
+    private func withEnhancedAccessibility<Result>(_ body: () throws -> Result) throws -> Result {
+        let original = try enhancedAccessibilityState()
+        setEnhancedAccessibility(NSNumber(value: true))
+        defer { setEnhancedAccessibility(original) }
+        return try body()
+    }
+
+    private func enhancedAccessibilityState() throws -> NSNumber {
+        let application = NSApplication.shared
+        let getter = NSSelectorFromString("accessibilityEnhancedUserInterfaceAttribute")
+        let setter = NSSelectorFromString("accessibilitySetEnhancedUserInterfaceAttribute:")
+        // Both selectors use NSObject.perform's object ABI on supported hosts.
+        // Never invoke a private getter/setter with an incompatible scalar ABI.
+        guard application.responds(to: getter), application.responds(to: setter),
+              let getMethod = class_getInstanceMethod(type(of: application), getter),
+              let setMethod = class_getInstanceMethod(type(of: application), setter),
+              let returnType = method_getTypeEncoding(getMethod),
+              let argumentType = method_copyArgumentType(setMethod, 2) else {
+            throw XCTSkip("In-process SwiftUI accessibility capture/restoration is unavailable")
+        }
+        defer { free(argumentType) }
+        guard String(cString: returnType).hasPrefix("@"),
+              String(cString: argumentType).hasPrefix("@"),
+              let value = application.perform(getter)?.takeUnretainedValue() as? NSNumber else {
+            throw XCTSkip("In-process SwiftUI accessibility state has an unsupported representation")
+        }
+        return value
+    }
+
+    private func setEnhancedAccessibility(_ value: NSNumber) {
+        _ = NSApplication.shared.perform(NSSelectorFromString("accessibilitySetEnhancedUserInterfaceAttribute:"), with: value)
     }
 
     private func settleLayout(_ host: NSView) {
