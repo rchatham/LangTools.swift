@@ -5,6 +5,7 @@ import ObjectiveC
 #endif
 import ChatUI
 import Foundation
+import KeychainAccess
 import LangTools
 import OpenAI
 import SwiftUI
@@ -23,9 +24,17 @@ final class MR21SettingsCapabilitiesTests: XCTestCase {
 
     func testDefaultHostKeepsSampleCapabilitiesAndOriginalInitializerSignature() {
         let preferences = MR21PreferenceSnapshot()
-        defer { preferences.restore() }
+        let access = MR21AccessFixture(label: "default-host")
+        defer {
+            access.restore()
+            preferences.restore()
+        }
         let makeView: (ChatSettingsView.ViewModel) -> ChatSettingsView = ChatSettingsView.init(viewModel:)
-        let model = ChatSettingsView.ViewModel(clearMessages: {})
+        let model = ChatSettingsView.ViewModel(
+            clearMessages: {},
+            accessManager: access.accessManager,
+            codexHelperTokenStore: access.helperTokenStore
+        )
         let view = makeView(model)
         XCTAssertTrue(view.supportedSettings.agentModelOverride)
         XCTAssertTrue(view.supportedSettings.advancedGeneration)
@@ -34,7 +43,11 @@ final class MR21SettingsCapabilitiesTests: XCTestCase {
 
     func testOptOutHostHidesOnlyNewGenerationControlsWithoutChangingSavedValues() throws {
         let preferences = MR21PreferenceSnapshot()
-        defer { preferences.restore() }
+        let access = MR21AccessFixture(label: "optout-host")
+        defer {
+            access.restore()
+            preferences.restore()
+        }
         let original = Model.openAI(.gpt4o).generationCapabilities
         let filtered = optOutSettings.generationCapabilities(for: .openAI(.gpt4o))
         XCTAssertEqual(filtered.maximumOutputField, original.maximumOutputField)
@@ -52,7 +65,12 @@ final class MR21SettingsCapabilitiesTests: XCTestCase {
         XCTAssertFalse(optOutSettings.generationCapabilities(for: ollama).supportsTopK)
         let settings = try ChatGenerationSettings(temperature: 0.4, topP: 0.8, seed: 21)
         let store = MR21GenerationStore(settings: settings)
-        let model = ChatSettingsView.ViewModel(clearMessages: {}, generationSettingsStore: store)
+        let model = ChatSettingsView.ViewModel(
+            clearMessages: {},
+            generationSettingsStore: store,
+            accessManager: access.accessManager,
+            codexHelperTokenStore: access.helperTokenStore
+        )
         model.generationSettings = settings
         _ = ChatSettingsView(viewModel: model, supportedSettings: optOutSettings)
         XCTAssertEqual(model.generationSettings, settings)
@@ -68,6 +86,7 @@ final class MR21SettingsCapabilitiesTests: XCTestCase {
 
     private func verifyNativeSettingsVisibilityInteractionsAndSnapshots() throws {
         let preferences = MR21PreferenceSnapshot()
+        let access = MR21AccessFixture(label: "native-snapshots")
         let oldToolsEnabled = ToolManager.shared.toolsEnabled
         let oldRich = ToolSettings.shared.richContentEnabled
         let oldHistory = ToolSettings.shared.keepsToolCallsInHistory
@@ -75,6 +94,7 @@ final class MR21SettingsCapabilitiesTests: XCTestCase {
         let oldTimeout = ToolSettings.shared.toolTimeoutSeconds
         let oldAgentModel = ToolSettings.shared.agentModelOverride
         defer {
+            access.restore()
             ToolManager.shared.toolsEnabled = oldToolsEnabled
             ToolSettings.shared.richContentEnabled = oldRich
             ToolSettings.shared.keepsToolCallsInHistory = oldHistory
@@ -83,8 +103,9 @@ final class MR21SettingsCapabilitiesTests: XCTestCase {
             ToolSettings.shared.agentModelOverride = oldAgentModel
             preferences.restore()
         }
-        // A deterministic catalog avoids direct-provider access prompts, Keychain
-        // writes and live model discovery. Host support is independent of catalog.
+        // A deterministic catalog plus disposable, prompt-denying access stores
+        // avoids shared credentials and live discovery. Catalog alone does not
+        // prevent the default access manager from reading protected Keychain items.
         UserDefaults.model = .openAI(.gpt4o)
         ToolManager.shared.toolsEnabled = false
         ToolSettings.shared.richContentEnabled = true
@@ -102,7 +123,9 @@ final class MR21SettingsCapabilitiesTests: XCTestCase {
                     clearMessages: {},
                     modelSource: ChatModelSource(state: .ready([.openAI(.gpt4o)])),
                     generationSettingsStore: generation,
-                    conversationSettingsStore: MR21ConversationStore()
+                    conversationSettingsStore: MR21ConversationStore(),
+                    accessManager: access.accessManager,
+                    codexHelperTokenStore: access.helperTokenStore
                 )
                 let root = ChatSettingsView(viewModel: model, supportedSettings: support)
                 let host = NSHostingView(rootView: root)
@@ -284,6 +307,64 @@ private final class MR21ConversationStore: ChatConversationSettingsStoring {
     func load() -> ChatConversationSettings { .default }
     func save(_ settings: ChatConversationSettings) {}
     func reset() {}
+}
+
+/// Fresh per-test credential isolation so constructing
+/// ViewModel never touches the shared credential stores. Provider lookups use
+/// a fresh UUID Keychain namespace with authentication UI denied; helper secrets
+/// use memory only. These are namespace-restricted native lookups, not a claim
+/// of zero Keychain API calls. No native Keychain records are written.
+private final class MR21AccessFixture {
+    let accessManager: ProviderAccessManager
+    let helperTokenStore: CodexHelperTokenStore
+    private let defaults: UserDefaults
+    private let suiteName: String
+
+    init(label: String) {
+        suiteName = "MR21SettingsCapabilitiesTests.\(label).\(UUID().uuidString)"
+        // Private suite: a fresh domain never contains the shared ollama
+        // endpoint/helper selections or legacy helper tokens.
+        defaults = UserDefaults(suiteName: suiteName)!
+        // Reuse the established ProviderAccessManagerTests isolation pattern:
+        // one unique per-test keychain backing both credential stores, plus a
+        // test-only ollama endpoint configuration so refresh() never reads the
+        // shared endpoint or mobile-helper credentials.
+        let keychain = Keychain(service: suiteName).authenticationUI(.fail)
+        accessManager = ProviderAccessManager(
+            keychainService: KeychainService(keychain: keychain),
+            sessionStore: AuthSessionStore(keychain: keychain),
+            ollamaEndpointConfiguration: OllamaEndpointConfiguration(userDefaults: defaults)
+        )
+        helperTokenStore = CodexHelperTokenStore(
+            defaults: defaults,
+            keychain: MR21InMemorySecretStore()
+        )
+    }
+
+    /// Removes only fixture-owned backing stores created in init.
+    func restore() {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+}
+
+/// In-memory `KeychainSecretStoring` backend for the helper token store, so the
+/// Codex helper token never reaches the system keychain (matches
+/// CodexHelperTokenStoreTests' synthetic store protocol usage).
+private final class MR21InMemorySecretStore: KeychainSecretStoring {
+    private var values: [String: String] = [:]
+    private let lock = NSLock()
+
+    func setSecret(_ value: String, forKey key: String) throws {
+        lock.withLock { values[key] = value }
+    }
+
+    func readSecret(forKey key: String) throws -> String? {
+        lock.withLock { values[key] }
+    }
+
+    func removeSecret(forKey key: String) throws {
+        lock.withLock { _ = values.removeValue(forKey: key) }
+    }
 }
 
 /// Only fixture-owned backing keys are restored after in-memory teardown.
