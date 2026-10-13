@@ -533,18 +533,243 @@ private final class TLSFixtureCredentialStore: MobileHelperCredentialStoring, @u
     }
 }
 
+private final class TLSFixtureKeys: KeychainService {
+    override func getApiKey(for service: APIService) -> String? { nil }
+}
+
+private final class TLSFixtureSecrets: KeychainSecretStoring {
+    func readSecret(forKey key: String) throws -> String? { nil }
+    func setSecret(_ value: String, forKey key: String) throws { throw MobileHelperError.persistence("Read-only test store") }
+    func removeSecret(forKey key: String) throws { throw MobileHelperError.persistence("Read-only test store") }
+}
+
 private actor TLSFixtureToolTracker {
     private(set) var count = 0
     func called() { count += 1 }
 }
 
+/// Exercise the account transport's actual data/bytes task delegates, not just
+/// URLProtocol mocks. Strict private-LAN credential validation stays enabled.
+@MainActor
+final class MobileHelperAccountTLSTests: XCTestCase {
+    private var suite: String!
+    private var defaults: UserDefaults!
+    private var selections: AccountTransportSelectionStore!
+
+    override func setUp() {
+        super.setUp()
+        suite = "MobileHelperAccountTLSTests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suite)!
+        selections = AccountTransportSelectionStore(userDefaults: defaults, credentialStore: TLSFixtureCredentialStore())
+    }
+    override func tearDown() {
+        selections = nil
+        defaults.removePersistentDomain(forName: suite)
+        super.tearDown()
+    }
+
+    func testAccountDataUsesPinnedTLSAndSeparatesClaudeBackendCredential() async throws {
+        let fixture = try HelperTLSFixture(mode: .http, host: privateIPv4(), response: { _ in .init(body: #"{"content":"fixture"}"#) })
+        let endpoint = try await fixture.start()
+        defer { fixture.stop() }
+        try select(endpoint: endpoint, fingerprint: fixture.fingerprint)
+        let codex = try await transport().performChatCompletionRequest(messages: [], model: .codex(.gpt5_5), session: codexSession(), tools: nil, toolChoice: nil)
+        XCTAssertEqual(codex.text, "fixture")
+        let claude = AccountSession(provider: .claudeCode, accountIdentifier: "Claude", accessToken: "synthetic-backend-token")
+        let model = try XCTUnwrap(Model(rawValue: "claude-code/claude-opus-4-1-20250805"))
+        _ = try await transport().performChatCompletionRequest(messages: [], model: model, session: claude, tools: nil, toolChoice: nil)
+        XCTAssertEqual(fixture.requests.count, 2)
+        XCTAssertTrue(fixture.requests[0].hasPrefix("POST /v1/account/chat/completions "))
+        XCTAssertTrue(fixture.requests[1].hasPrefix("POST /v1/claude/chat/completions "))
+        XCTAssertTrue(fixture.requests.allSatisfy { $0.contains("Authorization: Bearer " + HelperTLSFixture.token) })
+        XCTAssertFalse(fixture.requests[0].contains("X-LangTools-Account-Token"))
+        XCTAssertTrue(fixture.requests[1].contains("X-LangTools-Account-Token: synthetic-backend-token"))
+    }
+
+    func testAccountDataAndBytesRejectWrongPinBeforeSendingDeviceToken() async throws {
+        for streaming in [false, true] {
+            let fixture = try HelperTLSFixture(mode: .accountStream, host: privateIPv4())
+            let endpoint = try await fixture.start()
+            defer { fixture.stop() }
+            try select(endpoint: endpoint, fingerprint: String(repeating: "0", count: 64))
+            do {
+                if streaming {
+                    for try await _ in try transport().streamChatCompletionRequest(messages: [], model: .codex(.gpt5_5), session: codexSession(), stream: true, tools: nil, toolChoice: nil) {}
+                } else {
+                    _ = try await transport().performChatCompletionRequest(messages: [], model: .codex(.gpt5_5), session: codexSession(), tools: nil, toolChoice: nil)
+                }
+                XCTFail("Expected pin rejection")
+            } catch { XCTAssertEqual(error as? MobileHelperError, .trustChanged) }
+            XCTAssertEqual(fixture.receivedHTTPByteCount, 0)
+            XCTAssertTrue(fixture.requests.isEmpty)
+            XCTAssertThrowsError(try selections.snapshot(for: .openAI).requireConnection())
+        }
+    }
+
+    func testWrongPinAccountDiscoveryPublishesTrustChangedWarningInsteadOfSilentCancellation() async throws {
+        let fixture = try HelperTLSFixture(mode: .http, host: privateIPv4(), response: { _ in HelperTLSFixture.healthResponse() })
+        let endpoint = try await fixture.start()
+        defer { fixture.stop() }
+        try select(endpoint: endpoint, fingerprint: String(repeating: "0", count: 64))
+        let snapshot = selections.snapshot(for: .openAI)
+        XCTAssertTrue(selections.publish(modelIDs: ["gpt-5.5"], accountIdentifier: "Mac", for: snapshot))
+        let configuration = OllamaEndpointConfiguration(userDefaults: defaults, credentialStore: TLSFixtureCredentialStore())
+        let manager = ProviderAccessManager(keychainService: TLSFixtureKeys(),
+            sessionStore: AuthSessionStore(secretStore: TLSFixtureSecrets()),
+            ollamaEndpointConfiguration: configuration, accountTransports: selections)
+        XCTAssertNotNil(manager.session(for: .openAI))
+        await manager.refreshPairedAccount(.openAI)
+        XCTAssertEqual(selections.snapshot(for: .openAI).error, .trustChanged)
+        XCTAssertNil(manager.session(for: .openAI))
+        XCTAssertTrue(manager.availableChatModels().isEmpty)
+        let state = try XCTUnwrap(manager.statesForAccessUI().first { $0.accessDestination == .codex })
+        XCTAssertEqual(manager.unavailableReason(for: state), MobileHelperError.trustChanged.localizedDescription)
+        XCTAssertThrowsError(try selections.snapshot(for: .openAI).requireConnection()) {
+            XCTAssertEqual($0 as? MobileHelperError, .trustChanged)
+        }
+        XCTAssertTrue(fixture.requests.isEmpty)
+        XCTAssertEqual(fixture.receivedHTTPByteCount, 0, "Health may not send a bearer before pinned trust")
+    }
+
+    func testAccountDataAndBytesDistinguishMacSignInFromDeviceRevocation() async throws {
+        for status in [503, 401, 403] {
+            for streaming in [false, true] {
+                let fixture = try HelperTLSFixture(mode: .http, host: privateIPv4(), response: { _ in
+                    .init(status: status, body: #"{"error":"upstream-secret-do-not-display"}"#,
+                        headers: [MobileHelperAccountError.headerName: MobileHelperAccountError.signInRequiredCode])
+                })
+                let endpoint = try await fixture.start()
+                defer { fixture.stop() }
+                try select(endpoint: endpoint, fingerprint: fixture.fingerprint)
+                let originalConnection = selections.snapshot(for: .openAI).connection
+                let expected: MobileHelperError = status == 503 ? .accountSignInRequired : .revoked
+                do {
+                    if streaming {
+                        for try await _ in try transport().streamChatCompletionRequest(messages: [], model: .codex(.gpt5_5), session: codexSession(), stream: true, tools: nil, toolChoice: nil) {
+                            XCTFail("Account authentication failure cannot yield output")
+                        }
+                    } else {
+                        _ = try await transport().performChatCompletionRequest(messages: [], model: .codex(.gpt5_5), session: codexSession(), tools: nil, toolChoice: nil)
+                    }
+                    XCTFail("Expected actionable authentication error")
+                } catch {
+                    XCTAssertEqual(error as? MobileHelperError, expected)
+                    XCTAssertFalse(error.localizedDescription.contains("upstream-secret"))
+                }
+                let snapshot = selections.snapshot(for: .openAI)
+                XCTAssertEqual(snapshot.error, expected)
+                XCTAssertTrue(snapshot.isPaired)
+                XCTAssertTrue(snapshot.connection === originalConnection)
+                XCTAssertEqual(snapshot.connection?.credential.token, HelperTLSFixture.token)
+                XCTAssertEqual(fixture.requests.count, 1)
+                XCTAssertTrue(fixture.requests[0].hasPrefix("POST /v1/account/chat/completions "))
+                XCTAssertTrue(fixture.requests[0].contains("Authorization: Bearer " + HelperTLSFixture.token))
+            }
+        }
+    }
+
+    func testAccountDataAndBytesNeverFollowRedirects() async throws {
+        for streaming in [false, true] {
+            let fixture = try HelperTLSFixture(mode: .http, host: privateIPv4(), response: { _ in .redirect(to: "/redirected") })
+            let endpoint = try await fixture.start()
+            defer { fixture.stop() }
+            try select(endpoint: endpoint, fingerprint: fixture.fingerprint)
+            do {
+                if streaming {
+                    for try await _ in try transport().streamChatCompletionRequest(messages: [], model: .codex(.gpt5_5), session: codexSession(), stream: true, tools: nil, toolChoice: nil) {}
+                } else {
+                    _ = try await transport().performChatCompletionRequest(messages: [], model: .codex(.gpt5_5), session: codexSession(), tools: nil, toolChoice: nil)
+                }
+                XCTFail("Expected redirect rejection")
+            } catch { XCTAssertEqual(error as? MobileHelperError, .redirectRejected) }
+            XCTAssertEqual(fixture.requests.count, 1)
+            XCTAssertTrue(fixture.requests[0].hasPrefix("POST /v1/account/chat/completions "))
+        }
+    }
+
+    func testAccountStreamKeepsPinLeaseAcrossDisconnectThenRetires() async throws {
+        let fixture = try HelperTLSFixture(mode: .accountStream, host: privateIPv4(), holdTerminalChunk: true)
+        let endpoint = try await fixture.start()
+        defer { fixture.stop() }
+        try select(endpoint: endpoint, fingerprint: fixture.fingerprint)
+        weak var lease = selections.snapshot(for: .openAI).connection?.sessionLease
+        weak var delegate = lease?.session.delegate
+        let stream = try transport().streamChatCompletionRequest(messages: [], model: .codex(.gpt5_5), session: codexSession(), stream: true, tools: nil, toolChoice: nil)
+        let first = expectation(description: "Incremental account delta")
+        let consumer = Task { () throws -> String in
+            var text = ""
+            for try await delta in stream {
+                if text.isEmpty { first.fulfill() }
+                text += delta
+            }
+            return text
+        }
+        defer { consumer.cancel() }
+        await fulfillment(of: [first], timeout: 3)
+        XCTAssertTrue(fixture.hasHeldTerminalChunk)
+        try selections.disconnectHelper()
+        XCTAssertNotNil(lease)
+        XCTAssertNotNil(delegate)
+        fixture.releaseTerminalChunks()
+        let text = try await consumer.value
+        XCTAssertEqual(text, "hello")
+        let deadline = Date().addingTimeInterval(3)
+        while (lease != nil || delegate != nil) && Date() < deadline { try await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertNil(lease)
+        XCTAssertNil(delegate)
+    }
+
+    func testAccountCleanEOFFailsWithoutManufacturingCompletion() async throws {
+        let fixture = try HelperTLSFixture(mode: .accountCleanEOF, host: privateIPv4())
+        let endpoint = try await fixture.start()
+        defer { fixture.stop() }
+        try select(endpoint: endpoint, fingerprint: fixture.fingerprint)
+        var text = ""
+        do {
+            for try await delta in try transport().streamChatCompletionRequest(messages: [], model: .codex(.gpt5_5), session: codexSession(), stream: true, tools: nil, toolChoice: nil) { text += delta }
+            XCTFail("Clean EOF is not account completion")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("completion event")) }
+        XCTAssertEqual(text, "hel")
+    }
+
+    private func select(endpoint: URL, fingerprint: String) throws {
+        let credential = MobileHelperCredential(endpoint: endpoint, helperID: HelperTLSFixture.helperID, fingerprint: fingerprint,
+            name: "TLS Fixture Mac", deviceID: HelperTLSFixture.deviceID, token: HelperTLSFixture.token, capabilities: ["claude", "codex", "ollama"])
+        try selections.registerPairedHelper(MobileHelperConnection(credential: credential))
+        selections.select(.pairedHelper, for: .openAI)
+        selections.select(.pairedHelper, for: .claudeCode)
+    }
+    private func transport() -> AccountProxyTransport {
+        AccountProxyTransport(configuration: AccountBackendConfiguration(baseURL: URL(string: "http://127.0.0.1:8080")!,
+            codexHelperBaseURL: URL(string: "http://127.0.0.1:8765")!, codexHelperToken: "unused-local-token"), selections: selections)
+    }
+    private func codexSession() -> AccountSession { AccountSession(provider: .openAI, accountIdentifier: "Mac", accessToken: CodexSessionMarker.value) }
+    private func privateIPv4() throws -> String {
+        var interfaces: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&interfaces) == 0 else { throw POSIXError(.ENXIO) }
+        defer { freeifaddrs(interfaces) }
+        var cursor = interfaces
+        while let interface = cursor {
+            defer { cursor = interface.pointee.ifa_next }
+            guard let address = interface.pointee.ifa_addr, address.pointee.sa_family == UInt8(AF_INET),
+                  interface.pointee.ifa_flags & UInt32(IFF_UP) != 0, interface.pointee.ifa_flags & UInt32(IFF_LOOPBACK) == 0 else { continue }
+            var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            guard getnameinfo(address, socklen_t(address.pointee.sa_len), &buffer, socklen_t(buffer.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
+            let host = String(cString: buffer)
+            if MobileHelperPairingPayload.isPrivateIPv4(host) { return host }
+        }
+        throw XCTSkip("Account TLS tests require a local private IPv4; validation is not bypassed")
+    }
+}
+
 private final class HelperTLSFixture: @unchecked Sendable {
-    enum Mode { case stream, redirect, cleanEOF, cleanEOFToolCall, http }
+    enum Mode { case stream, redirect, cleanEOF, cleanEOFToolCall, http, accountStream, accountCleanEOF }
     struct Response {
         var status = 200
         var body: String
         var location: String? = nil
         var held = false
+        var headers: [String: String] = [:]
         static func redirect(to location: String) -> Self { .init(status: 307, body: "", location: location) }
     }
     static let helperID = "11111111-1111-4111-8111-111111111111"
@@ -680,7 +905,8 @@ private final class HelperTLSFixture: @unchecked Sendable {
     }
     private func send(_ response: Response, on connection: NWConnection) {
         let location = response.location.map { "Location: \($0)\r\n" } ?? ""
-        let message = "HTTP/1.1 \(response.status) Fixture\r\n\(location)Content-Type: application/json\r\nContent-Length: \(response.body.utf8.count)\r\nConnection: close\r\n\r\n\(response.body)"
+        let headers = response.headers.map { "\($0.key): \($0.value)\r\n" }.joined()
+        let message = "HTTP/1.1 \(response.status) Fixture\r\n\(location)\(headers)Content-Type: application/json\r\nContent-Length: \(response.body.utf8.count)\r\nConnection: close\r\n\r\n\(response.body)"
         connection.send(content: Data(message.utf8), contentContext: .finalMessage, isComplete: true,
             completion: .contentProcessed { _ in connection.cancel() })
     }
@@ -699,17 +925,20 @@ private final class HelperTLSFixture: @unchecked Sendable {
         }
         let toolCalls = mode == .cleanEOFToolCall
             ? #", "tool_calls":[{"function":{"name":"fixture_tool","arguments":{}}}]"# : ""
-        let first = #"{"model":"fixture-model","created_at":"2026-10-07T00:00:00Z","message":{"role":"assistant","content":"hel"\#(toolCalls)},"done":false}"# + "\n"
-        let last = #"{"model":"fixture-model","created_at":"2026-10-07T00:00:00Z","message":{"role":"assistant","content":"lo"},"done":true}"# + "\n"
+        let account = mode == .accountStream || mode == .accountCleanEOF
+        let first = (account ? #"{"type":"delta","delta":"hel"}"# :
+            #"{"model":"fixture-model","created_at":"2026-10-07T00:00:00Z","message":{"role":"assistant","content":"hel"\#(toolCalls)},"done":false}"#) + "\n"
+        let last = account ? #"{"type":"delta","delta":"lo"}"# + "\n" + #"{"type":"complete","content":"hello"}"# + "\n" :
+            #"{"model":"fixture-model","created_at":"2026-10-07T00:00:00Z","message":{"role":"assistant","content":"lo"},"done":true}"# + "\n"
         let headers = "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
         let start = headers + chunk(first)
         connection.send(content: Data(start.utf8), completion: .contentProcessed { [weak self] error in
             guard let self, error == nil else { connection.cancel(); return }
             // A valid HTTP terminating chunk produces clean transport EOF, not
             // a socket/reset error. The provider's terminal record is omitted.
-            let final = (self.mode == .cleanEOF || self.mode == .cleanEOFToolCall)
+            let final = (self.mode == .cleanEOF || self.mode == .cleanEOFToolCall || self.mode == .accountCleanEOF)
                 ? "0\r\n\r\n" : self.chunk(last) + "0\r\n\r\n"
-            if self.mode == .stream && self.holdTerminalChunk {
+            if (self.mode == .stream || self.mode == .accountStream) && self.holdTerminalChunk {
                 if self.terminalChunksReleased { self.sendTerminalChunk(final, on: connection) }
                 else { self.heldTerminalChunks.append((connection, final)) }
             } else {

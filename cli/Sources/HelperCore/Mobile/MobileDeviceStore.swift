@@ -15,14 +15,18 @@ public actor MobileDeviceStore {
     public static let defaultURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".langtools/mobile/devices-v1.json")
     public let helperID: String
+    /// Scope of newly generated codes only; persisted grants never change on upgrade.
+    public private(set) var capabilities: [String]
     private let fileURL: URL
     private var records: [MobileDevice]
     private var pairing: (code: String, expiry: Date)?
     private let now: @Sendable () -> Date
 
-    public init(helperID: String, fileURL: URL = MobileDeviceStore.defaultURL, now: @escaping @Sendable () -> Date = { Date() }) throws {
-        guard UUID(uuidString: helperID) != nil else { throw MobileHelperError.invalidStore }
+    public init(helperID: String, capabilities: [String] = ["ollama"],
+                fileURL: URL = MobileDeviceStore.defaultURL, now: @escaping @Sendable () -> Date = { Date() }) throws {
+        guard UUID(uuidString: helperID) != nil, MobileHelperCapabilities.isValid(capabilities) else { throw MobileHelperError.invalidStore }
         self.helperID = helperID
+        self.capabilities = capabilities
         self.fileURL = fileURL
         self.now = now
         let directory = fileURL.deletingLastPathComponent()
@@ -36,10 +40,16 @@ public actor MobileDeviceStore {
             guard persisted.helperID == helperID, persisted.devices.count <= 64,
                   Set(persisted.devices.map(\.id)).count == persisted.devices.count,
                   persisted.devices.allSatisfy({ UUID(uuidString: $0.id) != nil && MobileHelperPairingPayload.isDisplayName($0.name)
-                      && MobileHelperPairingPayload.isHexSecret($0.tokenHash) && $0.capabilities == ["ollama"] })
+                      && MobileHelperPairingPayload.isHexSecret($0.tokenHash) && MobileHelperCapabilities.isValid($0.capabilities) })
             else { throw MobileHelperError.invalidStore }
             self.records = persisted.devices
         } else { self.records = [] }
+    }
+
+    /// Scope changes invalidate outstanding codes. Existing devices must explicitly re-pair for new grants.
+    public func setPairingCapabilities(_ values: [String]) throws {
+        guard MobileHelperCapabilities.isValid(values) else { throw MobileHelperError.invalidStore }
+        if capabilities != values { pairing = nil; capabilities = values }
     }
 
     public func generatePairingCode() throws -> (code: String, expiry: Date) {
@@ -52,7 +62,8 @@ public actor MobileDeviceStore {
         if code == nil || pairing?.code == code { pairing = nil }
     }
 
-    public func redeem(_ request: MobileHelperPairingRequest) throws -> MobileHelperPairingResponse {
+    public func redeem(_ request: MobileHelperPairingRequest, capabilities expectedCapabilities: [String]? = nil) throws -> MobileHelperPairingResponse {
+        guard expectedCapabilities == nil || expectedCapabilities == capabilities else { throw MobileHelperError.invalidPairing }
         guard MobileHelperPairingPayload.isHexSecret(request.code), MobileHelperPairingPayload.isDisplayName(request.name),
               let pairing, pairing.expiry > now(),
               SecureTokenComparison.matches(expected: pairing.code, provided: request.code, maximumBytes: 64), records.count < 64
@@ -60,11 +71,11 @@ public actor MobileDeviceStore {
         // Consume before persistence to prevent replay even if writing fails.
         self.pairing = nil
         let token = try randomSecret()
-        let device = MobileDevice(id: UUID().uuidString, name: request.name, createdAt: now(), capabilities: ["ollama"], tokenHash: digest(Data(token.utf8)))
+        let device = MobileDevice(id: UUID().uuidString, name: request.name, createdAt: now(), capabilities: capabilities, tokenHash: digest(Data(token.utf8)))
         let updated = records + [device]
         try persist(updated)
         records = updated
-        return MobileHelperPairingResponse(helperID: helperID, deviceID: device.id, token: token)
+        return MobileHelperPairingResponse(helperID: helperID, deviceID: device.id, token: token, capabilities: capabilities)
     }
 
     public func authenticate(_ token: String?) -> MobileDevice? {

@@ -772,9 +772,32 @@ final class CodexRuntimeServiceFocusedTests: XCTestCase {
             try readJSONLines(logURL).first { $0["method"] as? String == "thread/start" }?["params"] as? [String: Any]
         )["cwd"] as? String
         let workspacePath = try XCTUnwrap(workspace)
-        try await Task.sleep(for: .milliseconds(100))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: workspacePath))
+        let clock = ContinuousClock()
+        let beganWaiting = clock.now
+        let removed = try await waitForWorkspaceRemoval(atPath: workspacePath)
+        let diagnostic = "Idle cleanup did not remove \(workspacePath) after \(beganWaiting.duration(to: clock.now))"
+        XCTAssertTrue(removed, diagnostic)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: workspacePath), diagnostic)
         await runtime.shutdown()
+    }
+
+    func testIdleCleanupWaitTimesOutForRetainedWorkspace() async throws {
+        let workspace = temporaryURL(suffix: ".retained-workspace")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer {
+            do {
+                try FileManager.default.removeItem(at: workspace)
+            } catch {
+                XCTFail("Unable to remove retained test workspace: \(error)")
+            }
+        }
+        let clock = ContinuousClock()
+        let beganWaiting = clock.now
+        let timeout = Duration.milliseconds(50)
+        let removed = try await waitForWorkspaceRemoval(atPath: workspace.path, timeout: timeout)
+        XCTAssertFalse(removed, "A retained workspace must not be reported as removed")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.path))
+        XCTAssertGreaterThanOrEqual(beganWaiting.duration(to: clock.now), timeout)
     }
 
     func testStaleThreadStartRetriesOnceWithFullTranscript() async throws {
@@ -1172,6 +1195,7 @@ final class CodexRuntimeServiceFocusedTests: XCTestCase {
             },
             environment: ProcessInfo.processInfo.environment.merging(environment) { _, override in override },
             defaultTimeout: .seconds(1),
+            requestTimeoutSleeper: requestTimeoutSleeper,
             containmentMode: .disabledForTesting,
         )
     }
@@ -1193,6 +1217,17 @@ final class CodexRuntimeServiceFocusedTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("Timed out waiting for fake server marker at \(url.path)")
+    }
+
+    private func waitForWorkspaceRemoval(atPath path: String, timeout: Duration = .seconds(5)) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while FileManager.default.fileExists(atPath: path) {
+            let now = clock.now
+            guard now < deadline else { return false }
+            try await clock.sleep(until: min(deadline, now.advanced(by: .milliseconds(20))))
+        }
+        return true
     }
 
     private func assertProcessExited(_ processID: Int32) async throws {

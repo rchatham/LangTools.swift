@@ -106,13 +106,14 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     public func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) async throws -> Message {
         try ensureModelAccess(for: model)
 
-        if let session = accountSession(for: model) {
+        if let context = try accountContext(for: model) {
+            let session = context.session
             if session.provider == .openAI,
                session.accessToken != CodexSessionMarker.value {
                 return try await openAIAccountChatBridge.performOpenAIChat(messages: messages, model: model)
             }
 
-            return try await accountProxyTransport.performChatCompletionRequest(
+            return try await context.transport.performChatCompletionRequest(
                 messages: messages,
                 model: model,
                 session: session,
@@ -133,7 +134,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     public func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> AsyncThrowingStream<String, Error> {
         try ensureModelAccess(for: model)
 
-        if let session = accountSession(for: model) {
+        if let context = try accountContext(for: model) {
+            let session = context.session
             if session.provider == .openAI,
                session.accessToken != CodexSessionMarker.value {
                 return AsyncThrowingStream { continuation in
@@ -152,7 +154,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                 }
             }
 
-            return try accountProxyTransport.streamChatCompletionRequest(
+            return try context.transport.streamChatCompletionRequest(
                 messages: messages,
                 model: model,
                 session: session,
@@ -191,10 +193,10 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     ) async throws -> Message {
         try ensureModelAccess(for: model)
         guard case .codex = model,
-              let session = accountSession(for: model),
-              session.provider == .openAI,
-              session.accessToken == CodexSessionMarker.value,
-              let transport = accountProxyTransport as? ConversationAwareAccountProxyTransportProtocol
+              let context = try accountContext(for: model),
+              context.session.provider == .openAI,
+              context.session.accessToken == CodexSessionMarker.value,
+              let transport = context.transport as? ConversationAwareAccountProxyTransportProtocol
         else {
             return try await performChatCompletionRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
         }
@@ -202,7 +204,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         return try await transport.performChatCompletionRequest(
             messages: messages,
             model: model,
-            session: session,
+            session: context.session,
             conversationID: conversationID,
             tools: tools,
             toolChoice: toolChoice
@@ -220,10 +222,10 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     ) throws -> AsyncThrowingStream<String, Error> {
         try ensureModelAccess(for: model)
         guard case .codex = model,
-              let session = accountSession(for: model),
-              session.provider == .openAI,
-              session.accessToken == CodexSessionMarker.value,
-              let transport = accountProxyTransport as? ConversationAwareAccountProxyTransportProtocol
+              let context = try accountContext(for: model),
+              context.session.provider == .openAI,
+              context.session.accessToken == CodexSessionMarker.value,
+              let transport = context.transport as? ConversationAwareAccountProxyTransportProtocol
         else {
             return try streamChatCompletionRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
         }
@@ -231,7 +233,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         return try transport.streamChatCompletionRequest(
             messages: messages,
             model: model,
-            session: session,
+            session: context.session,
             conversationID: conversationID,
             stream: stream,
             tools: tools,
@@ -397,7 +399,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     public func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
         let effectiveModel = ToolSettings.shared.agentModelOverride ?? model
         try ensureModelAccess(for: effectiveModel)
-        if accountSession(for: effectiveModel) != nil {
+        if try providerAccessManager.accountRequestContext(for: effectiveModel) != nil {
             throw NetworkError.accountProxyTransportFailed("Account-backed agent execution is not supported. Use an API key for agent runs.")
         }
         let replayMessages = messages.replayFiltered(
@@ -452,6 +454,10 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     }
 
     public func connectAccount(_ provider: AccountLoginProvider) async throws {
+        if providerAccessManager.accountTransports.snapshot(for: provider).isPaired {
+            try await discoverPairedAccount(provider)
+            return
+        }
         let session = try await accountLoginService.beginLogin(for: provider)
         try await MainActor.run {
             try providerAccessManager.saveAccountSession(session)
@@ -459,13 +465,29 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     }
 
     public func connectCodexHelper() async throws {
+        if providerAccessManager.accountTransports.snapshot(for: .openAI).isPaired {
+            try await discoverPairedAccount(.openAI)
+            return
+        }
         let session = try await accountLoginService.beginCodexHelperLogin()
         try await MainActor.run {
             try providerAccessManager.saveAccountSession(session.canonicalized)
         }
     }
 
+    private func discoverPairedAccount(_ provider: AccountLoginProvider) async throws {
+        await providerAccessManager.refreshPairedAccount(provider)
+        // Do not claim sign-in succeeded when read-only discovery failed or
+        // selection changed. In particular, never attempt a phone-local login.
+        _ = try providerAccessManager.accountTransports.snapshot(for: provider).requireConnection()
+        guard providerAccessManager.session(for: provider) != nil else { throw MobileHelperError.accountUnavailable }
+    }
+
     public func disconnectAccount(_ provider: AccountLoginProvider) async throws {
+        if providerAccessManager.accountTransports.snapshot(for: provider).isPaired {
+            try providerAccessManager.disconnectPairedHelper()
+            return
+        }
         let sessionBeingDisconnected = providerAccessManager.session(for: provider)
         if provider == .openAI,
            sessionBeingDisconnected?.accessToken == CodexSessionMarker.value {
@@ -488,6 +510,10 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     }
 
     public func disconnectCodexHelper() async throws {
+        if providerAccessManager.accountTransports.snapshot(for: .openAI).isPaired {
+            try providerAccessManager.disconnectPairedHelper()
+            return
+        }
         let sessionBeingDisconnected = providerAccessManager.session(for: .openAI)
         do {
             try await accountLoginService.logoutCodexHelper()
@@ -552,17 +578,18 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         }
     }
 
-    private func accountSession(for model: Model) -> AccountSession? {
-        let provider: AccountLoginProvider
-        switch model.route {
-        case .codex:
-            provider = .openAI
-        case .claudeCode:
-            provider = .claudeCode
-        default:
-            return nil
+    private func accountContext(for model: Model) throws -> (session: AccountSession, transport: AccountProxyTransportProtocol)? {
+        // Account ModelRoutes must never fall through to a direct API request.
+        // Capture the authorized catalog, account credential and route together,
+        // before invoking an async transport that could observe newer settings.
+        guard let context = try providerAccessManager.accountRequestContext(for: model) else { return nil }
+        if context.session.provider == .openAI, context.session.accessToken != CodexSessionMarker.value {
+            // The existing CLI account bridge does not use the proxy route.
+            return (context.session, accountProxyTransport)
         }
-        return providerAccessManager.session(for: provider)
+        let transport = try (accountProxyTransport as? AccountProxyTransport)?.capturingRoute(
+            session: context.session, snapshot: context.snapshot) ?? accountProxyTransport
+        return (context.session, transport)
     }
 }
 

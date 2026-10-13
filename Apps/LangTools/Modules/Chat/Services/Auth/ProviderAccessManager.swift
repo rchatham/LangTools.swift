@@ -14,17 +14,23 @@ public final class ProviderAccessManager: ObservableObject {
     private let keychainService: KeychainService
     private let sessionStore: AuthSessionStore
     private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
+    public let accountTransports: AccountTransportSelectionStore
     private let stateLock = NSLock()
     private var refreshGeneration: UInt64 = 0
+    private var transportSubscription: AnyCancellable?
 
     public init(
         keychainService: KeychainService = .shared,
         sessionStore: AuthSessionStore = .shared,
-        ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared
+        ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared,
+        accountTransports: AccountTransportSelectionStore = .shared
     ) {
         self.keychainService = keychainService
         self.sessionStore = sessionStore
         self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
+        self.accountTransports = accountTransports
+        transportSubscription = NotificationCenter.default.publisher(for: AccountTransportSelectionStore.didChange, object: accountTransports)
+            .sink { [weak self] _ in self?.refresh() }
         refresh()
     }
 
@@ -33,13 +39,17 @@ public final class ProviderAccessManager: ObservableObject {
         refreshGeneration &+= 1
         let generation = refreshGeneration
         let ollamaSnapshot = ollamaEndpointConfiguration.snapshot()
+        let accountSnapshots = AccountLoginProvider.allCases.map { accountTransports.snapshot(for: $0) }
+        let sessionRevisions = AccountLoginProvider.allCases.map { ($0, sessionStore.revision(for: $0)) }
         stateLock.unlock()
 
         var newStates: [APIService: ProviderAccessState] = [:]
         for service in APIService.allCases {
             let apiKey = keychainService.getApiKey(for: service)
             let accountProvider = service.accountLoginProvider
-            let session = accountProvider.flatMap { try? sessionStore.session(for: $0) }
+            let session = accountProvider.flatMap { provider in
+                effectiveSession(for: provider, snapshot: accountSnapshots.first { $0.provider == provider }!)
+            }
             let status = authStatus(apiKey: apiKey, session: session)
             newStates[service] = ProviderAccessState(
                 service: service,
@@ -54,7 +64,9 @@ public final class ProviderAccessManager: ObservableObject {
             // Background refreshes must not restore an older catalog after a
             // newer refresh, server switch, repair, or helper disconnect.
             guard generation == self.refreshGeneration,
-                  self.ollamaEndpointConfiguration.isCurrent(ollamaSnapshot) else { return }
+                  self.ollamaEndpointConfiguration.isCurrent(ollamaSnapshot),
+                  accountSnapshots.allSatisfy(self.accountTransports.isCurrent),
+                  sessionRevisions.allSatisfy({ self.sessionStore.revision(for: $0.0) == $0.1 }) else { return }
             self.states = newStates
         }
         if Thread.isMainThread {
@@ -97,7 +109,89 @@ public final class ProviderAccessManager: ObservableObject {
     }
 
     public func session(for provider: AccountLoginProvider) -> AccountSession? {
-        try? sessionStore.session(for: provider)
+        effectiveSession(for: provider, snapshot: accountTransports.snapshot(for: provider))
+    }
+
+    /// Bind authorization and the catalog to the same transport revision before
+    /// any network await. A change during secure-store access fails closed;
+    /// later changes may not retarget this immutable context.
+    func accountRequestContext(for model: Model) throws -> (session: AccountSession, snapshot: AccountTransportSelectionStore.Snapshot)? {
+        let provider: AccountLoginProvider
+        switch model.route {
+        case .codex: provider = .openAI
+        case .claudeCode: provider = .claudeCode
+        default: return nil
+        }
+        let snapshot = accountTransports.snapshot(for: provider)
+        guard let session = effectiveSession(for: provider, snapshot: snapshot),
+              accountTransports.isCurrent(snapshot),
+              accountModels(session: session, service: model.apiService).contains(model) else {
+            throw NetworkClient.NetworkError.modelAccessUnavailable(model.rawValue)
+        }
+        return (session, snapshot)
+    }
+
+    private func effectiveSession(for provider: AccountLoginProvider, snapshot: AccountTransportSelectionStore.Snapshot) -> AccountSession? {
+        guard snapshot.isPaired else { return try? sessionStore.session(for: provider) }
+        guard (try? snapshot.requireConnection()) != nil, !snapshot.modelIDs.isEmpty else { return nil }
+        if provider == .openAI {
+            return AccountSession(provider: .openAI, accountIdentifier: snapshot.accountIdentifier ?? snapshot.helperName ?? "Paired Mac",
+                accessToken: CodexSessionMarker.value, accessibleModelIDs: snapshot.modelIDs)
+        }
+        guard let stored = try? sessionStore.snapshot(for: .claudeCode), let session = stored.session,
+              snapshot.accountSessionRevision == stored.revision, !session.isExpired else { return nil }
+        return AccountSession(id: session.id, provider: session.provider, accountIdentifier: session.accountIdentifier,
+            accessToken: session.accessToken, refreshToken: session.refreshToken, expiresAt: session.expiresAt,
+            accessibleModelIDs: snapshot.modelIDs, createdAt: session.createdAt)
+    }
+
+    /// Read-only discovery. Codex sign-in stays on the Mac; Claude still requires
+    /// an existing external-backend account session, not a local CLI runtime.
+    public func refreshPairedAccount(_ provider: AccountLoginProvider) async {
+        let snapshot = accountTransports.discoverySnapshot(for: provider)
+        guard snapshot.isPaired else { refresh(); return }
+        refresh()
+        do {
+            let stored = provider == .claudeCode ? try sessionStore.snapshot(for: provider) : nil
+            let catalog = try await PairedAccountCatalogClient().discover(snapshot: snapshot, session: stored?.session)
+            // Session replacement/removal (even A→B→A) invalidates Claude discovery.
+            if let stored, sessionStore.revision(for: provider) != stored.revision { refresh(); return }
+            _ = accountTransports.publish(modelIDs: catalog.models, accountIdentifier: catalog.identifier, for: snapshot,
+                accountSessionRevision: stored?.revision)
+        } catch {
+            // Health runs before route.data's error mapping. A pin rejection
+            // can be -999 too; map with the captured delegate before deciding
+            // whether this is an ordinary, silent cancellation.
+            let actionable = snapshot.actionableError(error)
+            if !(actionable is CancellationError), (actionable as? URLError)?.code != .cancelled {
+                _ = accountTransports.fail(actionable, for: snapshot)
+            }
+        }
+        refresh()
+    }
+
+    /// A shared device connection must be disconnected across all selected
+    /// capabilities. Both stores clear future routes even if secure deletion fails.
+    public func disconnectPairedHelper() throws {
+        var firstError: Error?
+        let registeredID = accountTransports.registeredHelperID
+        do { try accountTransports.disconnectHelper() } catch { firstError = error }
+        if let ollamaID = ollamaEndpointConfiguration.snapshot().helperID, ollamaID == registeredID {
+            do { try ollamaEndpointConfiguration.disconnectHelper() } catch { if firstError == nil { firstError = error } }
+        }
+        refresh()
+        if let firstError { throw firstError }
+    }
+
+    public func transportLabel(for model: Model) -> String {
+        switch model.route {
+        case .codex: return accountTransports.snapshot(for: .openAI).label
+        case .claudeCode: return accountTransports.snapshot(for: .claudeCode).label
+        case .ollama:
+            let snapshot = ollamaEndpointConfiguration.snapshot()
+            return snapshot.isHelper ? "LangToolsHelper (\(snapshot.helperName ?? "disconnected"))" : "Direct Ollama"
+        default: return "Direct API key"
+        }
     }
 
     public func availableChatModels() -> [Model] {
@@ -106,9 +200,20 @@ public final class ProviderAccessManager: ObservableObject {
             + state(for: .ollama).availableModels
     }
 
+    /// The user's paired-account route is not consent to use a paid API key.
+    /// Catalog loss (including relaunch and disconnect) must require an explicit
+    /// replacement, while requests for the preserved model still fail closed.
+    func usesPairedAccountTransport(for model: Model) -> Bool {
+        switch model.route {
+        case .codex: return accountTransports.snapshot(for: .openAI).isPaired
+        case .claudeCode: return accountTransports.snapshot(for: .claudeCode).isPaired
+        default: return false
+        }
+    }
+
     public func validateSelectedModel(_ model: Model) -> Model {
         let available = availableChatModels()
-        if available.contains(model) || model.apiService == .ollama {
+        if available.contains(model) || model.apiService == .ollama || usesPairedAccountTransport(for: model) {
             return model
         }
         return available.first ?? model
@@ -137,7 +242,7 @@ public final class ProviderAccessManager: ObservableObject {
                 route: .codex,
                 accessDestination: .codex,
                 authStatus: codexSession.map { .accountConnected($0.provider) } ?? .notConfigured,
-                availableModels: openAIState.availableModels.filter { $0.route == .codex },
+                availableModels: accountModels(session: codexSession, service: .openAI),
                 accountIdentifier: codexSession?.accountIdentifier
             ),
             ProviderAccessState(
@@ -150,7 +255,7 @@ public final class ProviderAccessManager: ObservableObject {
                 service: .anthropic,
                 accessDestination: .claudeCode,
                 authStatus: claudeCodeSession.map { .accountConnected($0.provider) } ?? .notConfigured,
-                availableModels: anthropicState.availableModels.filter { $0.route == .claudeCode },
+                availableModels: accountModels(session: claudeCodeSession, service: .anthropic),
                 accountIdentifier: claudeCodeSession?.accountIdentifier
             ),
             accessState(for: .xAI),
@@ -170,6 +275,14 @@ public final class ProviderAccessManager: ObservableObject {
 
     public func unavailableReason(for state: ProviderAccessState) -> String? {
         guard state.service != .ollama, state.service != .serper else { return nil }
+        if let provider = state.accessDestination?.accountProvider {
+            let snapshot = accountTransports.snapshot(for: provider)
+            if snapshot.isPaired {
+                do { _ = try snapshot.requireConnection() }
+                catch { return error.localizedDescription }
+                if snapshot.modelIDs.isEmpty { return "\(snapshot.label): refresh account models after signing in on the Mac. Claude Code also needs its external backend account session." }
+            }
+        }
         if state.authStatus == .notConfigured {
             switch state.accessDestination {
             case .openAI:
@@ -225,27 +338,7 @@ public final class ProviderAccessManager: ObservableObject {
             return []
         }
 
-        let sessionModels: [Model] = {
-            guard let session else { return [] }
-            let parsed: [Model]
-            switch service {
-            case .openAI:
-                parsed = session.accessibleModelIDs.compactMap { slug in
-                    let trimmed = slug.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard trimmed.isEmpty == false else { return nil }
-                    return .codex(OpenAI.Model(rawValue: trimmed) ?? OpenAI.Model(customModelID: trimmed))
-                }
-            case .anthropic:
-                parsed = session.accessibleModelIDs.compactMap { identifier in
-                    let slug = identifier.split(separator: "/", maxSplits: 1).last.map(String.init) ?? identifier
-                    guard let model = Anthropic.Model(rawValue: slug) else { return nil }
-                    return .claudeCode(model)
-                }
-            case .xAI, .gemini, .ollama, .serper:
-                parsed = session.accessibleModelIDs.compactMap(Model.init(rawValue:))
-            }
-            return parsed
-        }()
+        let sessionModels = accountModels(session: session, service: service)
 
         let platformModels: [Model] = {
             guard hasAPIKey else { return [] }
@@ -274,6 +367,22 @@ public final class ProviderAccessManager: ObservableObject {
         }
 
         return platformModels
+    }
+
+    private func accountModels(session: AccountSession?, service: APIService) -> [Model] {
+        guard let session else { return [] }
+        switch service {
+        case .openAI:
+            return AccountSession.normalizedModelIDs(session.accessibleModelIDs).map {
+                .codex(OpenAI.Model(rawValue: $0) ?? OpenAI.Model(customModelID: $0))
+            }
+        case .anthropic:
+            return session.accessibleModelIDs.compactMap { identifier in
+                let slug = identifier.split(separator: "/", maxSplits: 1).last.map(String.init) ?? identifier
+                return Anthropic.Model(rawValue: slug).map { .claudeCode($0) }
+            }
+        default: return session.accessibleModelIDs.compactMap(Model.init(rawValue:))
+        }
     }
 }
 

@@ -11,6 +11,7 @@ public struct LocalHelperServer: Sendable {
     private let onReady: (@Sendable () -> Void)?
     private let pairingCodeConsumer: (@Sendable (String) async -> Bool)?
     private let beforeSessionRegistration: (@Sendable () -> Void)?
+    private let accountRoutes = AccountRouteHandlers()
 
     static let maximumHeaderBytes = 32 * 1_024
     static let maximumBodyBytes = 4 * 1_048_576
@@ -192,7 +193,7 @@ public struct LocalHelperServer: Sendable {
                 guard let conversationID = Self.conversationID(fromCleanupPath: request.path) else {
                     throw CodexRuntimeError.badRequest("A valid conversation UUID is required.")
                 }
-                await CodexRuntimeService.shared.endConversation(id: conversationID)
+                await accountRoutes.endConversation(conversationID)
                 await respond(session: session, status: .noContent, body: "")
                 return
             }
@@ -202,10 +203,10 @@ public struct LocalHelperServer: Sendable {
                 let body = try Self.jsonBody(HelperHealthResponse(status: "ok", version: 1))
                 await respond(session: session, status: .ok, body: body)
             case "/v1/auth/status":
-                let body = try Self.jsonBody(try await authStatusResponse())
+                let body = try Self.jsonBody(try await accountRoutes.status())
                 await respond(session: session, status: .ok, body: body)
             case "/v1/models/codex":
-                let body = try Self.jsonBody(HelperModelsResponse(models: try await AuthCLI.openAIAccessibleModelIDs()))
+                let body = try Self.jsonBody(try await accountRoutes.models())
                 await respond(session: session, status: .ok, body: body)
             case "/v1/auth/login":
                 let payload = try JSONDecoder().decode(HelperAuthRequest.self, from: request.body)
@@ -239,18 +240,11 @@ public struct LocalHelperServer: Sendable {
                 let body = try Self.jsonBody(HelperHealthResponse(status: "ok", version: 1))
                 await respond(session: session, status: .ok, body: body)
             case "/v1/account/chat/completions":
-                let payload = try JSONDecoder().decode(HelperChatRequest.self, from: request.body)
-                try Self.validateChatPayload(payload)
+                let payload = try AccountRouteHandlers.decodeChat(request.body)
                 if payload.stream {
                     await streamChat(payload, session: session)
                 } else {
-                    let content = try await OpenAIAccountChatCommand.performChat(
-                        modelID: payload.model,
-                        messages: payload.messages,
-                        codexHomeOverride: nil,
-                        conversationID: payload.conversationID
-                    )
-                    let body = try Self.jsonBody(HelperChatResponse(content: content))
+                    let body = try Self.jsonBody(try await accountRoutes.chat(payload, conversationID: payload.conversationID))
                     await respond(session: session, status: .ok, body: body)
                 }
             default:
@@ -267,30 +261,9 @@ public struct LocalHelperServer: Sendable {
 
     private func streamChat(_ payload: HelperChatRequest, session: HelperConnectionSession) async {
         do {
-            try await session.send(HTTPResponseEncoder.chunkedHeader(status: .ok))
-            let stream = await CodexRuntimeService.shared.chatStream(
-                model: payload.model,
-                messages: payload.messages,
-                conversationID: payload.conversationID
-            )
-            do {
-                for try await event in stream {
-                    let wireEvent: HelperChatStreamEvent
-                    switch event {
-                    case .delta(let value): wireEvent = .delta(value)
-                    case .complete(let value): wireEvent = .complete(value)
-                    }
-                    try await session.send(try HTTPResponseEncoder.ndjsonChunk(wireEvent))
-                }
-            } catch is CancellationError {
-                guard Task.isCancelled == false else { throw CancellationError() }
-                let failure = HelperChatStreamEvent.failure("Request cancelled.")
-                try await session.send(try HTTPResponseEncoder.ndjsonChunk(failure))
-            } catch {
-                let failure = HelperChatStreamEvent.failure(error.localizedDescription)
-                try await session.send(try HTTPResponseEncoder.ndjsonChunk(failure))
+            try await accountRoutes.streamChat(payload, conversationID: payload.conversationID) {
+                try await session.send($0)
             }
-            try await session.send(HTTPResponseEncoder.terminalChunk)
             await session.finish()
         } catch {
             await session.cancelRoute()
@@ -311,48 +284,8 @@ public struct LocalHelperServer: Sendable {
         await session.finish()
     }
 
-    private func authStatusResponse() async throws -> HelperAuthStatusResponse {
-        do {
-            let status = try await CodexRuntimeService.shared.accountStatus()
-            return HelperAuthStatusResponse(
-                provider: "openAI",
-                authenticated: status.authenticated,
-                accountIdentifier: status.accountIdentifier,
-                expiresAt: nil,
-                accessibleModelIDs: status.authenticated ? try await AuthCLI.openAIAccessibleModelIDs() : nil
-            )
-        } catch CodexAppServerError.unavailable {
-            return unauthenticatedStatusResponse()
-        } catch CodexAppServerError.exited {
-            return unauthenticatedStatusResponse()
-        }
-    }
-
-    private func unauthenticatedStatusResponse() -> HelperAuthStatusResponse {
-        HelperAuthStatusResponse(
-            provider: "openAI",
-            authenticated: false,
-            accountIdentifier: nil,
-            expiresAt: nil,
-            accessibleModelIDs: nil
-        )
-    }
-
     private static func isOpenAI(_ provider: String) -> Bool {
         provider == "openAI" || provider == "openai"
-    }
-
-    private static func validateChatPayload(_ payload: HelperChatRequest) throws {
-        guard isOpenAI(payload.provider) else {
-            throw CodexRuntimeError.badRequest("Only openAI is currently supported.")
-        }
-        let supportedRoles: Set<String> = ["system", "user", "assistant", "tool"]
-        guard payload.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
-              payload.messages.isEmpty == false,
-              payload.messages.allSatisfy({ supportedRoles.contains($0.role.lowercased()) })
-        else {
-            throw CodexRuntimeError.badRequest("A model and valid chat messages are required.")
-        }
     }
 
     static func routeErrorStatus(method: String, path: String) -> HTTPStatus? {

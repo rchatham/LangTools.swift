@@ -264,6 +264,408 @@ final class CodexAppServerClientTests: XCTestCase {
         await client.shutdown()
     }
 
+    func testAlreadyCancelledTurnDoesNotLaunchClientOrStrandSubsequentStartup() async throws {
+        try await observeColdStartup(preCancelled: true)
+    }
+
+    func testNormalColdStartupSucceedsWithoutCancelledWaiter() async throws {
+        try await observeColdStartup(preCancelled: false)
+    }
+
+    func testControlledSlowColdStartupExceedsLegacyObservationWindow() async throws {
+        // Both fresh paths use the same controlled fixture. This proves that three
+        // seconds can reject valid completion, not the cause of the historical CI delay.
+        try await observeColdStartup(preCancelled: false, controlled: true)
+        try await observeColdStartup(preCancelled: true, controlled: true)
+    }
+
+    func testDelayedFixtureEntryAllowsNormalColdStartup() async throws {
+        try await observeColdStartup(preCancelled: false, entryDelayed: true)
+    }
+
+    func testDelayedFixtureEntryAllowsPreCancelledRecovery() async throws {
+        try await observeColdStartup(preCancelled: true, entryDelayed: true)
+    }
+
+    func testColdStartupObservationPreservesBarrierError() async throws {
+        try await observeColdStartup(preCancelled: false, barrierError: true)
+    }
+
+    private struct ColdStartupTrace: Decodable {
+        let stages: [String: UInt64]
+        let error: String?
+    }
+
+    private final class ColdStartupRecorder: @unchecked Sendable {
+        struct Snapshot {
+            var phases: [String: ContinuousClock.Instant] = [:]
+            var timers: [String: Duration] = [:]
+            var result: Result<Response, Error>?
+        }
+
+        private let lock = NSLock()
+        private var stored = Snapshot()
+        var snapshot: Snapshot { lock.withLock { stored } }
+
+        func mark(_ phase: String) {
+            lock.withLock {
+                if stored.phases[phase] == nil { stored.phases[phase] = ContinuousClock.now }
+            }
+        }
+
+        func timer(method: String, duration: Duration) {
+            lock.withLock {
+                stored.phases["timer/\(method)"] = ContinuousClock.now
+                stored.timers[method] = duration
+            }
+        }
+
+        func finish(_ result: Result<Response, Error>) {
+            lock.withLock {
+                // A terminal timestamp is published only with the explicit outcome.
+                stored.result = result
+                stored.phases["terminal"] = ContinuousClock.now
+            }
+        }
+    }
+
+    private static func coldStartupFile(_ url: URL) throws -> Data? {
+        do {
+            return try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return nil
+        }
+    }
+
+    private func observeColdStartup(
+        preCancelled: Bool,
+        controlled: Bool = false,
+        entryDelayed: Bool = false,
+        barrierError: Bool = false
+    ) async throws {
+        // Exercise entry and reply delays separately, never consuming two holds
+        // within the unchanged initialization timeout.
+        guard !controlled || !entryDelayed else {
+            throw NSError(domain: "ColdStartupObservation", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: "Fixture-entry and initialize-reply holds must not be stacked"
+            ])
+        }
+        let initializationTimeout = Duration.seconds(8)
+        let operationalTimeout = Duration.seconds(2)
+        let uncoveredResolutionLaunchObservationAllowance = Duration.seconds(3)
+        let legacyObservationWindow = Duration.seconds(3)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-cold-observation-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        let scriptURL = directory.appendingPathComponent("server.py")
+        let logURL = directory.appendingPathComponent("transcript")
+        let traceURL = directory.appendingPathComponent("trace.json")
+        let releaseURL = directory.appendingPathComponent("release")
+        do {
+            try Data(Self.coldStartupObservationServer.utf8).write(to: scriptURL)
+        } catch {
+            do { try FileManager.default.removeItem(at: directory) }
+            catch { XCTFail("Cold-start setup cleanup error: \(error)") }
+            throw error
+        }
+        var environment = ["LOG": logURL.path, "TRACE": traceURL.path]
+        if controlled {
+            environment["INITIALIZE_HOLD_SECONDS"] = "3.25"
+            environment["RELEASE"] = releaseURL.path
+        }
+        if entryDelayed { environment["FIXTURE_ENTRY_HOLD_SECONDS"] = "3.25" }
+        if barrierError { environment["BARRIER_ERROR"] = "1" }
+        let recorder = ColdStartupRecorder()
+        let resolutions = ThreadSafeCounter()
+        let client = CodexAppServerClient(
+            commandResolver: {
+                recorder.mark("resolverEntry")
+                resolutions.increment()
+                defer { recorder.mark("resolverReturn") }
+                return ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
+            },
+            environment: environment,
+            defaultTimeout: operationalTimeout,
+            initializationTimeout: initializationTimeout,
+            requestTimeoutSleeper: { method, duration in
+                recorder.timer(method: method, duration: duration)
+                try await Task.sleep(for: duration)
+            },
+            containmentMode: .disabledForTesting
+        )
+        var requests: [Task<Void, Never>] = []
+        var trace: ColdStartupTrace?
+        var transcript: String?
+        var primaryError: Error?
+
+        func readEvidence() throws {
+            if let data = try Self.coldStartupFile(traceURL) {
+                let decoded = try JSONDecoder().decode(ColdStartupTrace.self, from: data)
+                trace = decoded
+                for stage in decoded.stages.keys { recorder.mark("observed/\(stage)") }
+            }
+            if let data = try Self.coldStartupFile(logURL) {
+                transcript = try XCTUnwrap(String(data: data, encoding: .utf8), "Invalid transcript UTF-8")
+            }
+        }
+
+        do {
+            if preCancelled {
+                let cancelled = ColdStartupRecorder()
+                cancelled.mark("requestStart")
+                requests.append(Task {
+                    withUnsafeCurrentTask { $0?.cancel() }
+                    do {
+                        let response: Response = try await client.request(
+                            method: "turn/start",
+                            params: RequestParams(value: "cancelled"),
+                            cancelOnTaskCancellation: false
+                        )
+                        cancelled.finish(.success(response))
+                    } catch { cancelled.finish(.failure(error)) }
+                })
+                let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+                while cancelled.snapshot.result == nil && ContinuousClock.now < deadline {
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                let outcome = try XCTUnwrap(cancelled.snapshot.result, "Pre-cancelled request remained pending")
+                guard case .failure(let error) = outcome, error is CancellationError else {
+                    throw NSError(domain: "ColdStartupObservation", code: 1, userInfo: [
+                        NSLocalizedDescriptionKey: "Expected CancellationError, got \(outcome)"
+                    ])
+                }
+                try readEvidence()
+                XCTAssertEqual(resolutions.value, 0)
+                XCTAssertNil(trace, "Pre-cancelled input launched the fixture")
+                XCTAssertNil(transcript, "Pre-cancelled input wrote a transcript/turn")
+                let snapshot = cancelled.snapshot
+                let start = try XCTUnwrap(snapshot.phases["requestStart"])
+                let terminal = try XCTUnwrap(snapshot.phases["terminal"])
+                print("COLD_START_CANCELLED result=\(outcome) elapsed=\(start.duration(to: terminal)) " +
+                      "resolverCount=\(resolutions.value) traceMissing=\(trace == nil) transcriptMissing=\(transcript == nil)")
+            }
+
+            // Freeze the policy: 8s initialization + 2s request + 3s uncovered
+            // resolution/launch/observation allowance. Historical successful cold
+            // totals of 2.113/2.852s motivate that allowance, not a production bound.
+            // Every phase shares this original absolute deadline; none restarts it.
+            // Receipt and host polling can occur beyond 3s while initialization
+            // remains within its 8s timer; phase observations are diagnostics.
+            recorder.mark("requestStart")
+            let start = try XCTUnwrap(recorder.snapshot.phases["requestStart"])
+            let deadline = start.advanced(by: initializationTimeout + operationalTimeout +
+                                          uncoveredResolutionLaunchObservationAllowance)
+            requests.append(Task {
+                do {
+                    let response: Response = try await client.request(
+                        method: "test/barrier", params: RequestParams(value: "barrier")
+                    )
+                    recorder.finish(.success(response))
+                } catch { recorder.finish(.failure(error)) }
+            })
+            if controlled {
+                let legacyDeadline = start.advanced(by: legacyObservationWindow)
+                while ContinuousClock.now < legacyDeadline {
+                    try readEvidence()
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                try readEvidence()
+                XCTAssertNil(recorder.snapshot.result, "Controlled startup completed before release")
+                XCTAssertFalse(FileManager.default.fileExists(atPath: releaseURL.path))
+                print("COLD_START_LEGACY preCancelled=\(preCancelled) elapsed=\(start.duration(to: .now)) " +
+                      "pending=\(recorder.snapshot.result == nil) releaseAbsent=true")
+                try Data().write(to: releaseURL)
+            }
+            while ContinuousClock.now < deadline {
+                try readEvidence()
+                if recorder.snapshot.result != nil && trace?.stages["barrierResponseFlushed"] != nil { break }
+                // On an early error, preserve it immediately instead of waiting for
+                // a success trace that the failed fixture cannot produce.
+                if case .failure? = recorder.snapshot.result, !barrierError { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            try readEvidence()
+            let snapshot = recorder.snapshot
+            let outcome = try XCTUnwrap(snapshot.result, "Cold-start request still pending at absolute 13s deadline")
+            if barrierError {
+                guard case .failure(let error as CodexAppServerError) = outcome,
+                      case .server(let code, let message) = error else {
+                    throw NSError(domain: "ColdStartupObservation", code: 2, userInfo: [
+                        NSLocalizedDescriptionKey: "Expected exact barrier server error, got \(outcome)"
+                    ])
+                }
+                XCTAssertEqual(code, -32077)
+                XCTAssertEqual(message, "cold-start observation barrier error")
+            } else {
+                let response = try outcome.get()
+                XCTAssertEqual(response.value, "test/barrier")
+            }
+            XCTAssertEqual(resolutions.value, 1)
+            XCTAssertEqual(transcript?.split(separator: "\n"), ["initialize", "initialized", "test/barrier"])
+            XCTAssertEqual(snapshot.timers["initialize"], initializationTimeout)
+            XCTAssertEqual(snapshot.timers["test/barrier"], operationalTimeout)
+            let stages = try XCTUnwrap(trace).stages
+            if entryDelayed {
+                let holdStarted = try XCTUnwrap(stages["entryHoldStarted"])
+                let fixtureEntry = try XCTUnwrap(stages["fixtureEntry"])
+                XCTAssertGreaterThanOrEqual(fixtureEntry, holdStarted)
+                let entryHold = (Double(fixtureEntry) - Double(holdStarted)) / 1_000_000_000
+                XCTAssertGreaterThanOrEqual(entryHold, 3.25, "Opt-in entry hold must actually run")
+                // Host durations use only ContinuousClock. Both old success
+                // predicates must reject this valid, successful cold startup.
+                for stage in ["observed/fixtureEntry", "observed/initializeReceived"] {
+                    let instant = try XCTUnwrap(snapshot.phases[stage], "Missing host stage: \(stage)")
+                    XCTAssertGreaterThan(start.duration(to: instant), legacyObservationWindow, stage)
+                }
+            }
+            let initializeReceived = try XCTUnwrap(stages["initializeReceived"])
+            let initializeFlushed = try XCTUnwrap(stages["initializeResponseFlushed"])
+            let barrierReceived = try XCTUnwrap(stages["barrierReceived"])
+            let barrierFlushed = try XCTUnwrap(stages["barrierResponseFlushed"])
+            // Differences stay within the Python clock origin; host observations
+            // above use only ContinuousClock timestamps.
+            XCTAssertGreaterThanOrEqual(initializeFlushed, initializeReceived)
+            XCTAssertGreaterThanOrEqual(barrierFlushed, barrierReceived)
+            let initialization = (Double(initializeFlushed) - Double(initializeReceived)) / 1_000_000_000
+            let barrier = (Double(barrierFlushed) - Double(barrierReceived)) / 1_000_000_000
+            XCTAssertLessThan(initialization, 8)
+            XCTAssertLessThan(barrier, 2)
+            if controlled { XCTAssertGreaterThanOrEqual(initialization, 3.25) }
+            XCTAssertLessThanOrEqual(ContinuousClock.now, deadline, "All success/error evidence must fit the absolute budget")
+        } catch {
+            primaryError = error
+            // Missing evidence is not allowed to replace the original outcome.
+            do { try readEvidence() }
+            catch { XCTFail("Cold-start evidence read/parse error before teardown: \(error)") }
+        }
+
+        // Durable test logs capture both clock origins, the explicit result and
+        // transcript availability BEFORE cancellation/shutdown, including failures.
+        let snapshot = recorder.snapshot
+        let hostPhases = snapshot.phases.sorted { $0.key < $1.key }.map { stage, instant in
+            let elapsed = snapshot.phases["requestStart"].map { $0.duration(to: instant) }
+            return "\(stage)=\(elapsed.map(String.init(describing:)) ?? "before-request")"
+        }.joined(separator: ", ")
+        print("COLD_START preCancelled=\(preCancelled) controlled=\(controlled) entryDelayed=\(entryDelayed) barrierError=\(barrierError) " +
+              "result=\(snapshot.result.map(String.init(describing:)) ?? "pending") primaryError=\(primaryError.map(String.init(describing:)) ?? "none") " +
+              "resolverCount=\(resolutions.value) timers=\(snapshot.timers) " +
+              "host={\(hostPhases)} fixture=\(trace.map(String.init(describing:)) ?? "missing") transcript=\(transcript.map { String(reflecting: $0) } ?? "missing")")
+
+        requests.forEach { $0.cancel() }
+        let shutdown = Task { await client.shutdown() }
+        let joined = ThreadSafeCounter()
+        let joining = Task {
+            for request in requests { await request.value }
+            await shutdown.value
+            joined.increment()
+        }
+        let cleanupDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while joined.value == 0 && ContinuousClock.now < cleanupDeadline {
+            // Cleanup must still run if the observing task was itself cancelled.
+            do { try await Task.sleep(for: .milliseconds(10)) }
+            catch { XCTFail("Cold-start cleanup polling cancelled: \(error)"); break }
+        }
+        if joined.value == 0 {
+            XCTFail("Cold-start cleanup timeout (3s), separate from primary outcome; scratch retained at \(directory.path)")
+            joining.cancel()
+        } else {
+            do { try FileManager.default.removeItem(at: directory) }
+            catch { XCTFail("Cold-start scratch cleanup error: \(error)") }
+        }
+        if let primaryError { throw primaryError }
+    }
+
+    func testCancellationImmediatelyBeforeTurnDispatchSendsNoTurn() async throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-pre-dispatch-\(UUID().uuidString).py")
+        let logURL = scriptURL.appendingPathExtension("log")
+        try Data(Self.preDispatchCancellationServer.utf8).write(to: scriptURL)
+        defer {
+            for url in [scriptURL, logURL] { try? FileManager.default.removeItem(at: url) }
+        }
+        let client = CodexAppServerClient(
+            commandResolver: {
+                ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
+            },
+            environment: ["LOG": logURL.path],
+            defaultTimeout: .seconds(2),
+            containmentMode: .disabledForTesting
+        )
+        _ = try await client.initializedProcessGeneration()
+        let turn = Task {
+            try await client.request(
+                method: "turn/start",
+                params: CancellingTurnParams(),
+                cancelOnTaskCancellation: false
+            ) as Response
+        }
+        do {
+            _ = try await turn.value
+            XCTFail("Expected cancellation at the write boundary")
+        } catch is CancellationError {
+            // Encoding deterministically cancels after request/startup preflight.
+        }
+        // A response to a later request proves the server drained preceding input.
+        let _: Response = try await client.request(method: "test/barrier", params: RequestParams(value: "barrier"))
+        let methods = try String(contentsOf: logURL, encoding: .utf8).split(separator: "\n")
+        XCTAssertEqual(methods, ["initialize", "initialized", "test/barrier"])
+        await client.shutdown()
+    }
+
+    func testCancellationDuringInitializationSendsNoTurnAndPreservesSharedStartup() async throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-startup-cancellation-\(UUID().uuidString).py")
+        let logURL = scriptURL.appendingPathExtension("log")
+        let acceptedURL = scriptURL.appendingPathExtension("accepted")
+        let releaseURL = scriptURL.appendingPathExtension("release")
+        try Data(Self.preDispatchCancellationServer.utf8).write(to: scriptURL)
+        defer {
+            for url in [scriptURL, logURL, acceptedURL, releaseURL] {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        let client = CodexAppServerClient(
+            commandResolver: {
+                ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
+            },
+            environment: ["LOG": logURL.path, "ACCEPTED": acceptedURL.path, "RELEASE": releaseURL.path],
+            defaultTimeout: .seconds(2),
+            containmentMode: .disabledForTesting
+        )
+        let turn = Task {
+            try await client.request(
+                method: "turn/start",
+                params: RequestParams(value: "cancelled"),
+                cancelOnTaskCancellation: false
+            ) as Response
+        }
+        for _ in 0..<200 where !FileManager.default.fileExists(atPath: acceptedURL.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: acceptedURL.path))
+        turn.cancel()
+        do {
+            _ = try await turn.value
+            XCTFail("Expected initialization waiter cancellation")
+        } catch is CancellationError {
+            // Cancellation must not submit a turn after initialization completes.
+        }
+        try Data().write(to: releaseURL)
+        let _: Response = try await client.request(method: "test/barrier", params: RequestParams(value: "barrier"))
+        let methods = try String(contentsOf: logURL, encoding: .utf8).split(separator: "\n")
+        XCTAssertEqual(methods, ["initialize", "initialized", "test/barrier"])
+        await client.shutdown()
+    }
+
+    private struct CancellingTurnParams: Encodable {
+        func encode(to encoder: Encoder) throws {
+            // Cancel within the requesting task, after startup/preflight but before
+            // the actor writes. No sleeps, detached cancellation, or production hook.
+            withUnsafeCurrentTask { $0?.cancel() }
+            try RequestParams(value: "cancelled during encoding").encode(to: encoder)
+        }
+    }
+
     func testCancellationScopeCancelsStartupWaiterWithoutCancellingSharedInitialization() async throws {
         let scriptURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("langtools-app-server-startup-scope-\(UUID().uuidString).py")
@@ -546,6 +948,104 @@ request = json.loads(sys.stdin.readline())
 print(json.dumps({"id":request["id"], "result":{"userAgent":"fake","codexHome":"/tmp","platformFamily":"unix","platformOs":"linux"}}), flush=True)
 while True:
     sys.stdin.readline()
+"""#
+
+    private static let preDispatchCancellationServer = #"""
+import json
+import os
+import sys
+import time
+
+for line in sys.stdin:
+    request = json.loads(line)
+    with open(os.environ["LOG"], "a") as log:
+        log.write(request["method"] + "\n")
+    if request["method"] == "initialize":
+        if "RELEASE" in os.environ:
+            open(os.environ["ACCEPTED"], "w").close()
+            while not os.path.exists(os.environ["RELEASE"]):
+                time.sleep(0.005)
+        result = {"userAgent":"fake", "codexHome":"/tmp", "platformFamily":"unix", "platformOs":"macos"}
+    else:
+        result = {"value":request["method"]}
+    if "id" in request:
+        print(json.dumps({"id":request["id"], "result":result}), flush=True)
+"""#
+
+    private static let coldStartupObservationServer = #"""
+import json
+import os
+import sys
+import time
+
+stages = {}
+trace_path = os.environ["TRACE"]
+log_path = os.environ["LOG"]
+
+def publish(error=None):
+    snapshot = {"stages": stages, "error": error}
+    temporary = trace_path + ".tmp"
+    with open(temporary, "w") as trace:
+        json.dump(snapshot, trace)
+    os.replace(temporary, trace_path)
+
+def mark(stage):
+    stages[stage] = time.monotonic_ns()
+    publish()
+
+def respond(request, payload):
+    print(json.dumps({"jsonrpc": "2.0", "id": request["id"], **payload}), flush=True)
+
+try:
+    hold = float(os.environ.get("INITIALIZE_HOLD_SECONDS", "0"))
+    entry_hold = float(os.environ.get("FIXTURE_ENTRY_HOLD_SECONDS", "0"))
+    if hold < 0 or hold >= 8 or (hold > 0 and "RELEASE" not in os.environ):
+        raise ValueError("invalid controlled initialization gate")
+    if not 0 <= entry_hold < 8 or (entry_hold > 0 and hold > 0):
+        raise ValueError("invalid or stacked fixture-entry hold")
+    if entry_hold > 0:
+        mark("entryHoldStarted")
+        while True:
+            elapsed = (time.monotonic_ns() - stages["entryHoldStarted"]) / 1_000_000_000
+            if elapsed >= 8:
+                raise TimeoutError("fixture-entry hold exceeded unchanged 8s budget")
+            if elapsed >= entry_hold:
+                break
+            time.sleep(0.005)
+    mark("fixtureEntry")  # Before the first stdin read, unlike the shared fixture.
+    for line in sys.stdin:
+        request = json.loads(line)
+        method = request["method"]
+        with open(log_path, "a") as log:
+            log.write(method + "\n")  # Close before the corresponding response.
+        if method == "initialize":
+            mark("initializeReceived")
+            received = stages["initializeReceived"]
+            while hold > 0:
+                elapsed = (time.monotonic_ns() - received) / 1_000_000_000
+                if elapsed >= 8:
+                    raise TimeoutError("initialization gate exceeded unchanged 8s budget")
+                if elapsed >= hold and os.path.exists(os.environ["RELEASE"]):
+                    break
+                time.sleep(0.005)
+            respond(request, {"result": {"userAgent": "fake", "codexHome": "/tmp", "platformFamily": "unix", "platformOs": "macos"}})
+            mark("initializeResponseFlushed")
+        elif method == "test/barrier":
+            mark("barrierReceived")
+            if os.environ.get("BARRIER_ERROR") == "1":
+                respond(request, {"error": {"code": -32077, "message": "cold-start observation barrier error"}})
+            else:
+                respond(request, {"result": {"value": method}})
+            mark("barrierResponseFlushed")
+        elif method != "initialized":
+            raise ValueError("unexpected method: " + method)
+except Exception as error:
+    print("cold-start fixture: " + repr(error), file=sys.stderr, flush=True)
+    try:
+        publish(repr(error))
+    except Exception as trace_error:
+        print("cold-start trace failure: " + repr(trace_error), file=sys.stderr, flush=True)
+    sys.exit(1)
 """#
 
     private static let hangingInitializationServer = #"""
