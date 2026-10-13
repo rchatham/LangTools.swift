@@ -35,7 +35,9 @@ extension Ollama {
         /// The response schema for structured output. Stored as
         /// ``GenerateFormat/jsonSchema(_:)`` for full schemas or recovered
         /// semantically from legacy ``GenerateFormat/schema(_:)`` for simple
-        /// object schemas without extra constraints.
+        /// schemas without extra constraints. The legacy root type is
+        /// preserved from the stored format; unknown legacy type strings fall
+        /// back to an object root for backward compatibility.
         public var responseSchema: JSONSchema? {
             get {
                 switch format {
@@ -44,7 +46,7 @@ extension Ollama {
                 case .schema(let schemaFormat):
                     // Recover semantically from legacy flat format:
                     // convert simplified {type, description} properties
-                    // back to a JSONSchema object.
+                    // back to a JSONSchema with the stored root type.
                     var properties: [String: JSONSchema] = [:]
                     for (key, prop) in schemaFormat.properties {
                         let schemaType = JSONSchema.SchemaType(rawValue: prop.type) ?? .string
@@ -54,7 +56,7 @@ extension Ollama {
                         )
                     }
                     return JSONSchema(
-                        type: .object,
+                        type: JSONSchema.SchemaType(rawValue: schemaFormat.type) ?? .object,
                         properties: properties.isEmpty ? nil : properties,
                         required: schemaFormat.required
                     )

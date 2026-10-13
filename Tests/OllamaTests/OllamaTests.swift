@@ -903,6 +903,102 @@ class OllamaTests: XCTestCase {
         XCTAssertNil(json["format"], "Cleared schema must be omitted from the encoded request")
     }
 
+    // MARK: - Legacy SchemaFormat root-type recovery
+
+    func testLegacySchemaFormatNonObjectRootTypeRecovered() throws {
+        // Every supported non-object legacy root must retain its original type.
+        for root in ["string", "number", "integer", "boolean", "array", "null"] {
+            let expected = try XCTUnwrap(JSONSchema.SchemaType(rawValue: root))
+            let request = Ollama.ChatRequest(
+                model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+                messages: [Ollama.Message(role: .user, content: "Hi")],
+                format: .schema(.init(type: root, properties: [:], required: nil))
+            )
+            let recovered = try XCTUnwrap(request.responseSchema)
+            XCTAssertEqual(recovered.type, expected, "Legacy root type \(root) must be preserved")
+        }
+    }
+
+    func testLegacySchemaFormatUnknownRootTypeFallsBackToObject() throws {
+        // Unknown legacy root type strings retain the previous .object fallback.
+        let request = Ollama.ChatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: [Ollama.Message(role: .user, content: "Hi")],
+            format: .schema(.init(
+                type: "widget",
+                properties: ["x": .init(type: "integer", description: "A number")],
+                required: ["x"]
+            ))
+        )
+        let recovered = try XCTUnwrap(request.responseSchema)
+        XCTAssertEqual(recovered.type, .object, "Unknown legacy root type must fall back to object")
+        XCTAssertEqual(recovered.properties?["x"]?.type, .integer)
+        XCTAssertEqual(recovered.required, ["x"])
+    }
+
+    func testLegacySchemaFormatObjectRootStillRecovered() throws {
+        // Object legacy roots keep their existing recovery behavior.
+        let request = Ollama.ChatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: [Ollama.Message(role: .user, content: "Hi")],
+            format: .schema(.init(
+                type: "object",
+                properties: ["x": .init(type: "integer", description: "A number")],
+                required: ["x"]
+            ))
+        )
+        let recovered = try XCTUnwrap(request.responseSchema)
+        XCTAssertEqual(recovered.type, .object)
+        XCTAssertEqual(recovered.properties?["x"]?.type, .integer)
+        XCTAssertEqual(recovered.properties?["x"]?.schemaDescription, "A number")
+        XCTAssertEqual(recovered.required, ["x"])
+    }
+
+    func testFullSchemaEncodableReclassifiesIntoLegacySchemaFormat() throws {
+        // A full JSONSchema that is structurally equivalent to the legacy flat
+        // format decodes as .schema(SchemaFormat) and recovers its non-object
+        // root type through the getter.
+        let schema = JSONSchema(type: .string, properties: [:])
+        let request = Ollama.ChatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: [Ollama.Message(role: .user, content: "Hi")],
+            format: .jsonSchema(schema)
+        )
+        let decoded = try JSONDecoder().decode(
+            Ollama.ChatRequest.self,
+            from: JSONEncoder().encode(request)
+        )
+        guard case .schema(let legacy) = decoded.format else {
+            XCTFail("Structurally simple schema must reclassify into the legacy .schema format, got \(String(describing: decoded.format))")
+            return
+        }
+        XCTAssertEqual(legacy.type, "string")
+        XCTAssertEqual(decoded.responseSchema?.type, .string, "Reclassified legacy root type must be preserved")
+    }
+
+    func testLegacyRecoveryGetterSetterReuseRetainsWireRootType() throws {
+        // Reading the recovered schema from a decoded legacy request and
+        // reassigning it through the setter must keep the same semantic schema
+        // and re-encode the wire format with the non-object root type retained.
+        let legacy = Ollama.ChatRequest(
+            model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
+            messages: [Ollama.Message(role: .user, content: "Hi")],
+            format: .schema(.init(type: "string", properties: [:], required: nil))
+        )
+        var request = try JSONDecoder().decode(
+            Ollama.ChatRequest.self,
+            from: JSONEncoder().encode(legacy)
+        )
+        let recovered = try XCTUnwrap(request.responseSchema)
+        request.responseSchema = recovered
+        XCTAssertEqual(try XCTUnwrap(request.responseSchema), recovered, "Getter reuse must return the same recovered schema")
+        let json: [String: Any] = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any]
+        )
+        let format = try XCTUnwrap(json["format"] as? [String: Any])
+        XCTAssertEqual(format["type"] as? String, "string", "Re-encoded wire format must retain the non-object root type")
+    }
+
     func testPlainJsonFormatBackwardCompatible() throws {
         var request = Ollama.ChatRequest(
             model: try XCTUnwrap(Ollama.Model(rawValue: "llama3.2")),
