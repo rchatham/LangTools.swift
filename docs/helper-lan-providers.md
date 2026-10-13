@@ -26,15 +26,15 @@ Codex Mac-account authentication failures use a sanitized **503** response with 
 
 See [helper README](../cli/README.md#optional-account-capabilities) for routes and [Ollama verification history](helper-ollama-verification.md) for prior acceptance evidence.
 
-## Current verification (2026-10-09–10)
+## Current verification (2026-10-09–13)
 
-All results below are local runs, not a claim about remote CI or live subscriptions. Root/app/build/UI results are from October 9; the helper filter was rerun on October 10 after the test-only idle-cleanup adjustment.
+All results below are local runs, not a claim about remote CI or live subscriptions. Root/app/build/UI results are from October 9; the helper filter was rerun on October 13 after the test/fixture-only cold-start observation adjustment.
 
 | Verification | Result |
 |---|---|
 | Root `swift test --jobs 2 --no-parallel` | 378 executed, 5 skipped, zero failures (373 passed) |
 | Shared `HelperLinkTests` | 11 passed, zero skips/failures; included in root total |
-| Updated bounded helper CI filter | 103 passed, zero skips/failures |
+| Updated bounded helper CI filter (October 13) | 108 passed, zero skips/failures; includes 24 client tests |
 | Updated bounded app CI filter | 184 passed, zero skips/failures |
 | App filter plus upstream checkbox regression | 185 passed, zero skips/failures |
 | Actual Chat module macOS build and current fixture relink | Passed |
@@ -44,6 +44,16 @@ All results below are local runs, not a claim about remote CI or live subscripti
 The October 10 focused cleanup and retained-workspace tests both passed, followed by 20 consecutive successful idle-cleanup repetitions and the 103-test helper filter above. Cleanup polling has a five-second monotonic deadline and still asserts workspace removal **before shutdown**; the retained-workspace case verifies timeout without false success. The scoped test-only review found no actionable issues. Production timing and UI are unchanged.
 
 The branch includes main merge `0d17fa90`. Remote CI at `323222c5` had six successful checks, one helper-test failure (workspace still present after a fixed 100 ms sleep), and two intentionally skipped cloud checks. That affected test/runtime code predated these account fixes; scheduler delay is plausible, not proven. The bounded assertion adjustment addresses this CI finding; subsequent remote checks are tracked on the PR, not claimed here. The helper-control screenshots below were recorded on October 8; their UI implementation is unchanged.
+
+### October 13 cold-start observation verification
+
+The cold-start cancellation regression now records resolver/fixture phases and explicit success/error before cancellation and shutdown, using an isolated Python fixture with protocol-only NDJSON stdout. Pre-cancelled input must produce `CancellationError`, zero resolver calls and no fixture evidence; recovery must succeed with the exact initialization/barrier transcript. A dedicated error case verifies that request completion is not mistaken for success.
+
+Fresh normal startup and pre-cancel/recovery both succeeded with controlled 3.25-second initialization-reply holds and separate 3.25-second fixture-entry holds. Reinstating the rejected three-second phase predicates in a temporary **test-only** probe produced four expected assertion failures across the two entry-delay cases, despite successful barriers; the probe was removed and restored source rebuilt. This establishes a test observation defect, **not the cause of the historical CI delay**. Client initialization/request deadlines remain eight/two seconds. One absolute 13-second test observer budget includes a named three-second resolution/launch/observation allowance; individual phase observations are diagnostic, not premature three-second rejection gates. Cleanup has a separate bounded wait.
+
+Latest verification: **20/20** serial cancellation-regression repetitions, **2/2** dedicated entry-delay tests and **108/108** tests in the exact helper filter. Independent scoped review found no actionable issues in the corrected test/fixture changes. Production and UI are unchanged.
+
+**Unresolved verification caveat:** standalone client-suite runs also failed in unchanged cases. An earlier run passed 20/22 (oversized-line subscription timeout and unexpected restart count); the latest standalone run passed 22/24 with unexpected process exits in `testInitializationUsesSeparateTimeoutFromOperationalRequests` and `testProcessExitIsReportedAndNextRequestRestartsServer`. The later helper-filter run passed all 24 client tests, but does not explain or clear those failures. No unrelated test/runtime fix was made. At pushed head `0af9ab68`, remote helper CI still failed the original cold-start test's three-second expectation plus missing-log error; both idle regressions and all 16 provider tests passed. Fresh remote checks are required for this adjustment and tracked on the PR, not inferred from local success.
 
 Reproduce the focused checks:
 
@@ -102,7 +112,8 @@ The cloned-package path is a local pinned cache, not a portable prerequisite. Th
 - **Current iOS layout/build/signature and simulator UI verification:** the October 9 retry without the outer sandbox wrapper, using frozen-resolution flags and cached JSON.swift revision `498270c44bb80c5cf5b8de8727ceb030f95c0777`, failed at `ComputeTargetDependencyGraph`: “Macro ‘JSONMacroPlugin’ from package ‘JSON.swift’ was changed since a previous approval and must be enabled before it can be used.” Use Xcode's normal **Trust & Enable** confirmation for the reviewed resolved macro, then rerun the build and UI checks. No macro-validation bypass, trust metadata/dependency/lockfile change, or stale simulator binary was used on this retry. The built-in app fixture is macOS-only; an iOS capture must independently establish safe fixture startup before launch.
 - **Live account end-to-end:** neither physical-phone Codex chat nor the external Claude backend/session path was exercised against a real subscription in this work. Active QR scanning for added grants remains unverified.
 - **Physical Ollama:** the owner reported pairing/reconnect/revocation on an iPhone for the existing Ollama path only. This does not establish new account capabilities, shutdown/interface-change checks or current screenshots.
-- **Whole app/CLI suites:** focused isolated suites are green; the historical whole-app/CLI live-account, Keychain and external-service blockers were not reclassified as passed.
+- **CI/test stability:** the latest bounded helper filter passed, but standalone client-suite failures above remain unexplained and remote helper CI at `0af9ab68` is red. A later local pass does not clear earlier failures; inspect fresh remote checks before claiming CI success.
+- **Whole app/CLI suites:** the historical whole-app/CLI live-account, Keychain and external-service blockers were not reclassified as passed.
 - **Presentation limits:** a long selected Claude picker title truncates at the existing width; full identity is visible in model info/expanded menu. The separate desktop Codex pairing section can say “Not paired” while LAN account routing is paired; it reflects desktop pairing, not the LAN route.
 
 Keep the PR **draft** until current iOS and live account/physical-device acceptance are explicitly resolved. macOS fixture screenshots verify presentation, not connectivity or iOS layout.
