@@ -110,6 +110,28 @@ jobs:
           echo 'Expected focused app XCTest cases to execute.' >&2
           exit 1
         fi
+    - name: Run exclusive iteration-budget enforcement reproduction
+      shell: bash
+      run: |
+        set -euo pipefail
+        # The enforcement test registers a synthetic tool it cannot unregister
+        # and mutates shared ToolManager/ToolSettings state, so it runs only in
+        # a dedicated opt-in process: LANGTOOLS_BUDGET_REPRO=1 plus an XCTest
+        # selection that is exactly the single enforcement method. Ordinary,
+        # mixed, or unfiltered invocations skip before any shared-state access.
+        LANGTOOLS_BUDGET_REPRO=1 swift test --package-path Apps/LangTools --jobs 2 --no-parallel \
+          --filter ToolIterationEnforcementTests 2>&1 | tee "$RUNNER_TEMP/app-budget-repro.log"
+        # Strict: exactly one passing XCTest — a zero-test run, extra tests,
+        # failures, or any skip fails this step.
+        summary="$(grep -E '^[[:space:]]*Executed [0-9]+ tests?, with ' "$RUNNER_TEMP/app-budget-repro.log" | tail -n 1)"
+        if ! printf '%s\n' "$summary" | grep -Eq '^[[:space:]]*Executed 1 test, with 0 failures \(0 unexpected\)'; then
+          echo 'Expected exactly one passing iteration-budget enforcement test.' >&2
+          exit 1
+        fi
+        if grep -Eq 'Test Case .* skipped|tests? skipped|XCTSkip|Test skipped' "$RUNNER_TEMP/app-budget-repro.log"; then
+          echo 'Unexpected skip in the dedicated iteration-budget reproduction process.' >&2
+          exit 1
+        fi
     - name: Report app suite execution and skips
       if: ${{ always() }}
       shell: bash
@@ -123,6 +145,15 @@ jobs:
             fi
           else
             echo 'No test log produced; inspect the preceding step for the failure.'
+          fi
+          echo '### Iteration-budget enforcement reproduction'
+          echo 'Exclusive opt-in process; the dedicated step fails on zero tests, extra tests, failures, or skips.'
+          if test -f "$RUNNER_TEMP/app-budget-repro.log"; then
+            if ! grep -E 'Executed [0-9]+ tests?|skipped|XCTSkip|Test Suite.*(passed|failed)|exclusive XCTest selector' "$RUNNER_TEMP/app-budget-repro.log"; then
+              echo 'No budget reproduction summary found; inspect the preceding step for the failure.'
+            fi
+          else
+            echo 'No budget reproduction log produced; inspect the preceding step for the failure.'
           fi
         } >> "$GITHUB_STEP_SUMMARY"
 

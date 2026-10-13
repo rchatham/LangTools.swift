@@ -11,9 +11,54 @@ import XCTest
 /// over-budget callbacks never execute, and every requested call still gets an
 /// invocation record — excess calls surface as inline failures the model can
 /// see and respond to (no orphans, no alerts).
+///
+/// Opt-in, dedicated XCTest process ONLY:
+/// LANGTOOLS_BUDGET_REPRO=1 swift test --package-path Apps/LangTools --filter ToolIterationEnforcementTests
+/// ToolManager has no unregister API: the defer below restores the enabled
+/// flag and exact backing preferences, but the synthetic registration and its
+/// captured callback survive in this process (excluded only because the
+/// absent-prior flag resolves false). Those residuals are confined to this
+/// exclusive process, NOT claimed to be restored. The gate below therefore
+/// rejects default, class-only, mixed, duplicate, or unknown XCTest selections
+/// BEFORE any ToolManager/ToolSettings/UserDefaults snapshot or mutation, so
+/// ordinary suite processes skip without shared-state contamination.
 @MainActor
 final class ToolIterationEnforcementTests: XCTestCase {
+    private static func exclusiveXCTestSelection(arguments: [String]) -> String? {
+        // macOS SwiftPM invokes Apple's xctest runner with -XCTest followed by
+        // comma-separated, fully qualified methods. Fail closed on unfiltered,
+        // class-only, malformed, mixed, duplicate, or unknown selections/options.
+        let options = arguments.indices.filter { arguments[$0] == "-XCTest" }
+        guard options.count == 1, let index = options.first, index > 0,
+              arguments.indices.contains(index + 1) else { return nil }
+        let remaining = arguments.indices.dropFirst().filter { $0 != index && $0 != index + 1 }
+        // Depending on the host, argv also includes the .xctest bundle path.
+        guard remaining.isEmpty || (remaining.count == 1 &&
+            URL(fileURLWithPath: arguments[remaining[0]]).pathExtension == "xctest") else { return nil }
+        let selection = arguments[index + 1]
+        let methods = selection.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
+        let allowed: Set<String> = [
+            "ChatTests.ToolIterationEnforcementTests/testBudgetStopsExcessCallbacksAndSurfacesInlineFailures"
+        ]
+        guard !methods.isEmpty, Set(methods).count == methods.count,
+              methods.allSatisfy({ allowed.contains($0) }) else { return nil }
+        return selection
+    }
+
+    private static func requireDedicatedProcess() throws {
+        // MUST precede ToolSettingsAmbientSnapshot, ToolSettings, ToolManager,
+        // UserDefaults, and any shared singleton/defaults snapshot or mutation.
+        guard ProcessInfo.processInfo.environment["LANGTOOLS_BUDGET_REPRO"] == "1" else {
+            throw XCTSkip("Opt-in macOS reproduction: use LANGTOOLS_BUDGET_REPRO=1 with the exclusive ToolIterationEnforcementTests filter")
+        }
+        guard let selection = exclusiveXCTestSelection(arguments: CommandLine.arguments) else {
+            throw XCTSkip("Iteration-budget reproduction rejected before shared-state access: XCTest selection is not exclusively the known ToolIterationEnforcementTests method; argv=\(CommandLine.arguments)")
+        }
+        print("Iteration-budget reproduction exclusive XCTest selector accepted: \(selection)")
+    }
+
     func testBudgetStopsExcessCallbacksAndSurfacesInlineFailures() async throws {
+        try Self.requireDedicatedProcess()
         let preferences = ToolSettingsAmbientSnapshot()
         let oldCap = ToolSettings.shared.maxToolIterations
         let oldHistory = ToolSettings.shared.keepsToolCallsInHistory
