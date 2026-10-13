@@ -54,6 +54,11 @@ public struct MobileHelperPairingPayload: Codable, Equatable, Sendable {
     }
 
     /// The owning app chooses the expected scheme; never infer it from the QR.
+    ///
+    /// The `scheme` parameter is used for strict exact-case validation during parsing.
+    /// While OS-level URL routing and classification are often case-insensitive, the parser
+    /// requires the link's scheme to exactly match the provided `scheme` string.
+    /// It is recommended to use lowercase schemes.
     public static func parse(_ url: URL, scheme: String) throws -> Self {
         guard isValidScheme(scheme),
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
@@ -83,6 +88,11 @@ public struct MobileHelperPairingPayload: Codable, Equatable, Sendable {
         try pairingURL(scheme: "langtools-example-auth")
     }
 
+    /// Returns a pairing URL for the given scheme.
+    ///
+    /// The `scheme` parameter is used for exact-case generation. While OS-level
+    /// classification is case-insensitive, the link is generated using the exact spelling
+    /// provided. It is recommended to use lowercase schemes.
     public func pairingURL(scheme: String) throws -> URL {
         guard Self.isValidScheme(scheme) else { throw MobileHelperLinkError.invalidPayload }
         try validate()

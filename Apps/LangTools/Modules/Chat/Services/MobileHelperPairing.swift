@@ -81,6 +81,10 @@ public final class MobileHelperPairingCoordinator: ObservableObject {
         })
     }
     /// Custom clients use only their own configuration and selection callback.
+    ///
+    /// Use the exact same scheme spelling as the QR producer; lowercase is recommended.
+    /// `isPairingURL` classifies links case-insensitively for routing only. `handle`
+    /// parses the payload with exact-case matching against this configured scheme.
     public convenience init(configuration: OllamaEndpointConfiguration, scheme: String,
                             didSelect: @escaping () -> Void) throws {
         try self.init(configuration: configuration, scheme: scheme,
@@ -107,6 +111,8 @@ public final class MobileHelperPairingCoordinator: ObservableObject {
         isPairingURL(url, scheme: "langtools-example-auth")
     }
 
+    /// Classification is routing-only and case-insensitive.
+    /// Parser requirements for the configured scheme are exact-case.
     public static func isPairingURL(_ url: URL, scheme: String) -> Bool {
         guard MobileHelperPairingPayload.isValidScheme(scheme) else { return false }
         return url.scheme?.lowercased() == scheme.lowercased() && url.host?.lowercased() == "helper" && url.path == "/pair"
