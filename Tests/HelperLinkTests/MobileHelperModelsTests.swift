@@ -53,6 +53,33 @@ final class MobileHelperModelsTests: XCTestCase {
         }
     }
 
+    func testSchemeGrammar() {
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("a"))
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("A"))
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("botsworth"))
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("botsworth.helper"))
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("botsworth+helper"))
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("botsworth-helper"))
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("v1"))
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("a1.b2+c3-d4"))
+
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme(""))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("1"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("1a"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("+a"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("-a"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme(".a"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("a_b"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("a:b"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("a/b"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("a b"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme(" botsworth"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("botsworth "))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("bötsworth"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("bots\nworth"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("bots\u{0}worth"))
+    }
+
     func testRejectsDuplicateMissingUnknownAndVersion() throws {
         let text = try payload.pairingURL().absoluteString
         for invalid in [text + "&v=1", text + "&token=secret", text.replacingOccurrences(of: "v=1", with: "v=2"),

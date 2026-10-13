@@ -93,7 +93,7 @@ public final class MobileHelperPairingCoordinator: ObservableObject {
 
     convenience init(configuration: OllamaEndpointConfiguration, scheme: String,
                      client: MobileHelperPairingClient, didSelect: @escaping () -> Void) throws {
-        guard Self.isValidScheme(scheme) else { throw MobileHelperLinkError.invalidPayload }
+        guard MobileHelperPairingPayload.isValidScheme(scheme) else { throw MobileHelperLinkError.invalidPayload }
         self.init(configuration: configuration, validatedScheme: scheme, client: client, didSelect: didSelect)
     }
 
@@ -108,16 +108,10 @@ public final class MobileHelperPairingCoordinator: ObservableObject {
     }
 
     public static func isPairingURL(_ url: URL, scheme: String) -> Bool {
-        guard isValidScheme(scheme) else { return false }
+        guard MobileHelperPairingPayload.isValidScheme(scheme) else { return false }
         return url.scheme?.lowercased() == scheme.lowercased() && url.host?.lowercased() == "helper" && url.path == "/pair"
     }
 
-    private static func isValidScheme(_ scheme: String) -> Bool {
-        let bytes = scheme.utf8
-        func isLetter(_ byte: UInt8) -> Bool { (65...90).contains(byte) || (97...122).contains(byte) }
-        guard let first = bytes.first, isLetter(first) else { return false }
-        return bytes.dropFirst().allSatisfy { isLetter($0) || (48...57).contains($0) || $0 == 43 || $0 == 45 || $0 == 46 }
-    }
     public func handle(_ url: URL) {
         cancel()
         errorMessage = nil

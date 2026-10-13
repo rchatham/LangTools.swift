@@ -99,7 +99,15 @@ public struct MobileHelperPairingPayload: Codable, Equatable, Sendable {
         return url
     }
 
-    private static func isValidScheme(_ value: String) -> Bool {
+    /// Validates a custom URL scheme according to RFC 3986 ASCII grammar.
+    ///
+    /// The scheme must start with an ASCII letter and contain only ASCII letters,
+    /// digits, plus, minus, or dots.
+    /// Grammar: `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`
+    ///
+    /// - Parameter value: The scheme string to validate.
+    /// - Returns: True if the scheme is valid.
+    public static func isValidScheme(_ value: String) -> Bool {
         guard let first = value.utf8.first,
               (65...90).contains(first) || (97...122).contains(first) else { return false }
         return value.utf8.dropFirst().allSatisfy { byte in

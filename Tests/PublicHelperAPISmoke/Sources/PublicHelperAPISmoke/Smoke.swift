@@ -23,6 +23,7 @@ public enum PublicHelperAPISmoke {
         _ = try legacyParser(legacyURL())
         let configuredURL = try payload.pairingURL(scheme: "botsworth")
         _ = try MobileHelperPairingPayload.parse(configuredURL, scheme: "botsworth")
+        _ = MobileHelperPairingPayload.isValidScheme("botsworth")
 
         let defaults = UserDefaults(suiteName: "PublicHelperAPISmoke.\(UUID().uuidString)")!
         let configuration = try OllamaEndpointConfiguration(
