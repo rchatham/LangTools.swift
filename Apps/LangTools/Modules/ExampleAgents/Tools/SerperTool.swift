@@ -17,7 +17,12 @@ public struct SerperTool: LangToolsTool {
     @CodableIgnored
     public var callback: ((LangToolsRequestInfo, [String:JSON]) async throws -> String?)?
 
-    public init(apiKey: String) {
+    public init(apiKey: String, session: URLSession = .shared) {
+        self.init(apiKeyProvider: { apiKey }, session: session)
+    }
+
+    /// The resolver is native-only and runs at execution, never during encoding/startup.
+    public init(apiKeyProvider: @escaping () throws -> String?, session: URLSession = .shared) {
         self.name = "google_search"
         self.description = "Search Google for information about a topic"
         self.tool_schema = .init(
@@ -34,13 +39,25 @@ public struct SerperTool: LangToolsTool {
             required: ["query"]
         )
 
-        let service = SerperService(apiKey: apiKey)
-
         self.callback = { _, args in
+            try Task.checkCancellation()
             guard let query = args["query"]?.stringValue else {
                 throw AgentError("Missing required query parameter")
             }
 
+            let apiKey: String?
+            do {
+                apiKey = try apiKeyProvider()
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                throw AgentError("Research credentials are unavailable. Check native settings.")
+            }
+            guard let apiKey, !apiKey.isEmpty else {
+                throw AgentError("Configure a Serper API key in native settings to use google_search.")
+            }
+            try Task.checkCancellation()
+            let service = SerperService(apiKey: apiKey, session: session)
             let numResults = args["num_results"]?.intValue ?? 10
 
             do {
@@ -67,8 +84,11 @@ public struct SerperTool: LangToolsTool {
                 }
 
                 return output
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
-                throw AgentError("Error performing search: \(error.localizedDescription)")
+                // Arbitrary transport errors can contain request headers/credentials.
+                throw AgentError("Research search failed. Check native settings and try again.")
             }
         }
     }

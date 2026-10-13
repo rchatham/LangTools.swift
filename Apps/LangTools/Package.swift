@@ -102,6 +102,7 @@ let package = Package(
             name: "ExampleAgentsTests",
             dependencies: [
                 "ExampleAgents",
+                .product(name: "OpenAI", package: "langtools.swift"),
                 .product(name: "LangTools", package: "langtools.swift"),
             ],
             path: "Tests/ExampleAgentsTests"),

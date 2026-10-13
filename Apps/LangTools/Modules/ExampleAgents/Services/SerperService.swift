@@ -17,9 +17,11 @@ import Agents
 public class SerperService {
     private let apiKey: String
     private let baseURL = "https://google.serper.dev"
-    
-    public init(apiKey: String) {
+    private let session: URLSession
+
+    public init(apiKey: String, session: URLSession = .shared) {
         self.apiKey = apiKey
+        self.session = session
     }
     
     public enum Endpoint: String {
@@ -69,7 +71,7 @@ public class SerperService {
         let encoder = JSONEncoder()
         request.httpBody = try encoder.encode(parameters)
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SerperError.invalidResponse
