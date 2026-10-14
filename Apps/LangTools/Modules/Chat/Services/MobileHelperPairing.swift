@@ -9,7 +9,10 @@ struct MobileHelperPairingClient {
     }
 
     func pair(_ payload: MobileHelperPairingPayload, deviceName: String) async throws -> MobileHelperConnection {
-        _ = try MobileHelperPairingPayload.parse(payload.pairingURL())
+        // The coordinator already checked the configured link envelope. Validate
+        // all typed identity/endpoint/pin/code/name fields before creating transport,
+        // without re-encoding a custom-scheme payload as a default-scheme link.
+        try payload.validate()
         let session = sessionFactory(payload.endpoint, payload.fingerprint)
         do {
             var request = URLRequest(url: payload.endpoint.appendingPathComponent("v1/mobile/pair"))
@@ -67,6 +70,7 @@ public final class MobileHelperPairingCoordinator: ObservableObject {
     private let configuration: OllamaEndpointConfiguration
     private let client: MobileHelperPairingClient
     private let didSelect: () -> Void
+    private let scheme: String
     private var generation: UInt64 = 0
     public var pendingGeneration: UInt64 { generation }
     private var pairingTask: Task<Void, Never>?
@@ -76,17 +80,48 @@ public final class MobileHelperPairingCoordinator: ObservableObject {
             OllamaService.shared.transportDidChange()
         })
     }
-    init(configuration: OllamaEndpointConfiguration, client: MobileHelperPairingClient, didSelect: @escaping () -> Void) {
+    /// Custom clients use only their own configuration and selection callback.
+    ///
+    /// Use the exact same scheme spelling as the QR producer; lowercase is recommended.
+    /// `isPairingURL` classifies links case-insensitively for routing only. `handle`
+    /// parses the payload with exact-case matching against this configured scheme.
+    public convenience init(configuration: OllamaEndpointConfiguration, scheme: String,
+                            didSelect: @escaping () -> Void) throws {
+        try self.init(configuration: configuration, scheme: scheme,
+            client: MobileHelperPairingClient(), didSelect: didSelect)
+    }
+
+    convenience init(configuration: OllamaEndpointConfiguration, client: MobileHelperPairingClient, didSelect: @escaping () -> Void) {
+        self.init(configuration: configuration, validatedScheme: "langtools-example-auth", client: client, didSelect: didSelect)
+    }
+
+    convenience init(configuration: OllamaEndpointConfiguration, scheme: String,
+                     client: MobileHelperPairingClient, didSelect: @escaping () -> Void) throws {
+        guard MobileHelperPairingPayload.isValidScheme(scheme) else { throw MobileHelperLinkError.invalidPayload }
+        self.init(configuration: configuration, validatedScheme: scheme, client: client, didSelect: didSelect)
+    }
+
+    private init(configuration: OllamaEndpointConfiguration, validatedScheme: String,
+                 client: MobileHelperPairingClient, didSelect: @escaping () -> Void) {
         self.configuration = configuration; self.client = client; self.didSelect = didSelect
+        scheme = validatedScheme
     }
 
     public static func isPairingURL(_ url: URL) -> Bool {
-        url.scheme?.lowercased() == "langtools-example-auth" && url.host?.lowercased() == "helper" && url.path == "/pair"
+        isPairingURL(url, scheme: "langtools-example-auth")
     }
+
+    /// Classification is routing-only and case-insensitive.
+    /// Parser requirements for the configured scheme are exact-case.
+    public static func isPairingURL(_ url: URL, scheme: String) -> Bool {
+        guard MobileHelperPairingPayload.isValidScheme(scheme) else { return false }
+        return url.scheme?.lowercased() == scheme.lowercased() && url.host?.lowercased() == "helper" && url.path == "/pair"
+    }
+
     public func handle(_ url: URL) {
         cancel()
         errorMessage = nil
-        do { pendingPairing = try MobileHelperPairingPayload.parse(url) }
+        do { pendingPairing = try MobileHelperPairingPayload.parse(url, scheme: scheme) }
         catch { errorMessage = "Invalid helper pairing QR. Create a new QR on the trusted Mac. \(error.localizedDescription)" }
     }
     public func confirm(_ payload: MobileHelperPairingPayload, generation confirmedGeneration: UInt64, deviceName: String) {

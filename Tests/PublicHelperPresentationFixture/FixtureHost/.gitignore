@@ -1,0 +1,10 @@
+# Build products and caches — regenerable, never needed in version control.
+.build/
+.swiftpm/
+DerivedData/
+xcuserdata/
+
+# Keep: PresentationFixtureHost.xcodeproj (including the shared scheme under
+# xcshareddata/xcschemes and the resolved local-package dependency lock at
+# project.xcworkspace/xcshareddata/swiftpm/Package.resolved) so a fresh
+# checkout reproduces the exact same dependency graph without re-resolving.

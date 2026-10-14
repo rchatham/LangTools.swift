@@ -11,6 +11,75 @@ final class MobileHelperModelsTests: XCTestCase {
         XCTAssertEqual(try MobileHelperPairingPayload.parse(value.pairingURL()), value)
         XCTAssertEqual(try JSONDecoder().decode(MobileHelperPairingPayload.self, from: JSONEncoder().encode(value)), value)
     }
+    func testConfiguredSchemeRoundTripAndNamespaceRejection() throws {
+        let value = payload
+        for scheme in ["botsworth", "botsworth+helper.v1", "helper-v2"] {
+            let url = try value.pairingURL(scheme: scheme)
+            XCTAssertEqual(try MobileHelperPairingPayload.parse(url, scheme: scheme), value)
+            XCTAssertThrowsError(try MobileHelperPairingPayload.parse(url))
+            XCTAssertThrowsError(try MobileHelperPairingPayload.parse(url, scheme: "other-helper"))
+            XCTAssertThrowsError(try MobileHelperPairingPayload.parse(value.pairingURL(), scheme: scheme))
+        }
+    }
+
+    func testRejectsInvalidConfiguredSchemesBeforeParsingOrGeneration() throws {
+        let value = payload
+        let url = try value.pairingURL()
+        for scheme in ["", " ", " botsworth", "botsworth ", "1botsworth", "botsworth:",
+                       "botsworth://", "bots/worth", "bots_worth", "bots?worth", "bots#worth",
+                       "bötsworth", "bots\nworth", "bots\u{0}worth", "+botsworth"] {
+            XCTAssertThrowsError(try value.pairingURL(scheme: scheme), scheme) { error in
+                XCTAssertTrue(error is MobileHelperLinkError)
+            }
+            XCTAssertThrowsError(try MobileHelperPairingPayload.parse(url, scheme: scheme), scheme) { error in
+                XCTAssertTrue(error is MobileHelperLinkError)
+            }
+        }
+    }
+
+    func testLegacyMethodFunctionReferencesRemainCompatible() throws {
+        let value = payload
+        let parse: (URL) throws -> MobileHelperPairingPayload = MobileHelperPairingPayload.parse
+        let make: () throws -> URL = value.pairingURL
+        XCTAssertEqual(try parse(make()), value)
+    }
+
+    func testConfiguredSchemeStillValidatesStrictPayload() throws {
+        let text = try payload.pairingURL(scheme: "botsworth").absoluteString
+        for invalid in [text + "&v=1", text + "&token=secret",
+                        text.replacingOccurrences(of: "v=1", with: "v=2"),
+                        text.replacingOccurrences(of: "&name=", with: "&unknown=")] {
+            XCTAssertThrowsError(try MobileHelperPairingPayload.parse(URL(string: invalid)!, scheme: "botsworth"))
+        }
+    }
+
+    func testSchemeGrammar() {
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("a"))
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("A"))
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("botsworth"))
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("botsworth.helper"))
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("botsworth+helper"))
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("botsworth-helper"))
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("v1"))
+        XCTAssertTrue(MobileHelperPairingPayload.isValidScheme("a1.b2+c3-d4"))
+
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme(""))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("1"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("1a"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("+a"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("-a"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme(".a"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("a_b"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("a:b"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("a/b"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("a b"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme(" botsworth"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("botsworth "))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("bötsworth"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("bots\nworth"))
+        XCTAssertFalse(MobileHelperPairingPayload.isValidScheme("bots\u{0}worth"))
+    }
+
     func testRejectsDuplicateMissingUnknownAndVersion() throws {
         let text = try payload.pairingURL().absoluteString
         for invalid in [text + "&v=1", text + "&token=secret", text.replacingOccurrences(of: "v=1", with: "v=2"),
