@@ -18,6 +18,7 @@ public final class ProviderAccessManager: ObservableObject {
     private let defaultOllamaCloudAccessEligibility: OllamaCloudAccessEligibility
     private var ollamaCloudAccessEligibilityOverride: OllamaCloudAccessEligibility?
     private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
+    private let ollamaCloudModelStore: OllamaCloudModelStore
     private let stateLock = NSLock()
     private var refreshGeneration: UInt64 = 0
 
@@ -25,11 +26,13 @@ public final class ProviderAccessManager: ObservableObject {
         keychainService: KeychainService = .shared,
         sessionStore: AuthSessionStore = .shared,
         ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared,
+        ollamaCloudModelStore: OllamaCloudModelStore = .init(),
         ollamaCloudAccessEligibility: OllamaCloudAccessEligibility? = nil
     ) {
         self.keychainService = keychainService
         self.sessionStore = sessionStore
         self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
+        self.ollamaCloudModelStore = ollamaCloudModelStore
         self.defaultOllamaCloudAccessEligibility = {
             keychainService.getApiKey(for: .ollama)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -142,7 +145,7 @@ public final class ProviderAccessManager: ObservableObject {
 
     private func availableChatModels(ollamaCloudAccessEligible: Bool) -> [Model] {
         let cloudModels = ollamaCloudAccessEligible
-            ? Model.cachedOllamaCloudModels.map { Model.ollamaCloud($0) }
+            ? ollamaCloudModelStore.cachedModels().map { Model.ollamaCloud($0) }
             : []
         return statesForAccessUI()
             .flatMap(\.availableModels)

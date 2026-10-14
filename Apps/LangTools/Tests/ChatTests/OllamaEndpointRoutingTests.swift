@@ -14,6 +14,7 @@ final class OllamaEndpointRoutingTests: XCTestCase {
     private var keychainService: KeychainService!
     private var sessionStore: AuthSessionStore!
     private var accessManager: ProviderAccessManager!
+    private var cloudModelStore: OllamaCloudModelStore!
     private var savedAgentModelOverride: Model?
     private var globalToolSettings: [String: Any] = [:]
     private let toolSettingsKeys = [
@@ -32,6 +33,7 @@ final class OllamaEndpointRoutingTests: XCTestCase {
         suiteName = "OllamaEndpointRoutingTests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
+        cloudModelStore = OllamaCloudModelStore(userDefaults: defaults)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [OllamaRoutingURLProtocol.self]
         session = URLSession(configuration: configuration)
@@ -44,14 +46,21 @@ final class OllamaEndpointRoutingTests: XCTestCase {
         accessManager = ProviderAccessManager(
             keychainService: keychainService,
             sessionStore: sessionStore,
-            ollamaEndpointConfiguration: endpointConfiguration
+            ollamaEndpointConfiguration: endpointConfiguration,
+            ollamaCloudModelStore: cloudModelStore
         )
     }
 
     override func tearDown() {
         ToolSettings.shared.agentModelOverride = savedAgentModelOverride
         for key in toolSettingsKeys { UserDefaults.standard.set(globalToolSettings[key], forKey: key) }
+        accessManager = nil
+        cloudModelStore = nil
+        endpointConfiguration = nil
+        keychainService = nil
+        sessionStore = nil
         session.invalidateAndCancel()
+        session = nil
         defaults.removePersistentDomain(forName: suiteName)
         OllamaRoutingURLProtocol.reset()
         super.tearDown()
@@ -523,7 +532,7 @@ final class OllamaEndpointRoutingTests: XCTestCase {
     func testInvalidPersistedSourceBlocksDiscoveryProbeChatAgentAndCache() async throws {
         defaults.set("http://user:secret@remote.local?secret", forKey: OllamaEndpointConfiguration.endpointKey)
         endpointConfiguration = OllamaEndpointConfiguration(userDefaults: defaults, credentialStore: OllamaMemoryHelperStore(), directSession: session)
-        accessManager = ProviderAccessManager(keychainService: keychainService, sessionStore: sessionStore, ollamaEndpointConfiguration: endpointConfiguration)
+        accessManager = ProviderAccessManager(keychainService: keychainService, sessionStore: sessionStore, ollamaEndpointConfiguration: endpointConfiguration, ollamaCloudModelStore: cloudModelStore)
         let service = OllamaService(endpointConfiguration: endpointConfiguration, providerAccessManager: accessManager)
         XCTAssertNotNil(service.error as? OllamaEndpointConfiguration.ValidationError)
         service.refreshModels()
@@ -666,9 +675,7 @@ final class OllamaEndpointRoutingTests: XCTestCase {
     }
 
     func testInvalidLocalSourcePreservesIndependentCloudEligibilityOverrideAndCatalog() throws {
-        let previousCloudCatalog = UserDefaults.standard.object(forKey: "ollamaCloudModels")
-        defer { UserDefaults.standard.set(previousCloudCatalog, forKey: "ollamaCloudModels") }
-        Model.updateCachedOllamaCloudModels([.init(rawValue: "synthetic-hosted:cloud")!])
+        cloudModelStore.updateCachedModels([.init(rawValue: "synthetic-hosted:cloud")!])
         let local = endpointConfiguration.snapshot()
         XCTAssertTrue(endpointConfiguration.storeModels([.init(rawValue: "synthetic-local:cloud")!], for: local))
         keychainService.saveApiKey(apiKey: "synthetic-cloud-secret", for: .ollama)
@@ -685,7 +692,7 @@ final class OllamaEndpointRoutingTests: XCTestCase {
         XCTAssertTrue(accessManager.availableChatModels().contains { $0.rawValue == "ollama-cloud/synthetic-hosted" })
         accessManager.configureOllamaCloudAccessEligibilityOverride(nil)
         XCTAssertFalse(accessManager.availableChatModels().contains { $0.route == .ollamaCloud })
-        XCTAssertEqual(Model.cachedOllamaCloudModels.map(\.rawValue), ["synthetic-hosted"])
+        XCTAssertEqual(cloudModelStore.cachedModels().map(\.rawValue), ["synthetic-hosted"])
         XCTAssertNil(endpointConfiguration.snapshot().baseURL)
     }
 

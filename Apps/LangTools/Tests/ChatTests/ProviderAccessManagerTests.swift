@@ -12,7 +12,7 @@ final class ProviderAccessManagerTests: XCTestCase {
     private var endpointDefaults: UserDefaults!
     private var endpointSuiteName: String!
     private var endpointConfiguration: OllamaEndpointConfiguration!
-    private var previousCloudModels: Any?
+    private var cloudModelStore: OllamaCloudModelStore!
 
     override func setUp() {
         super.setUp()
@@ -23,19 +23,25 @@ final class ProviderAccessManagerTests: XCTestCase {
         endpointDefaults = UserDefaults(suiteName: endpointSuiteName)!
         endpointDefaults.removePersistentDomain(forName: endpointSuiteName)
         endpointConfiguration = OllamaEndpointConfiguration(userDefaults: endpointDefaults)
-        previousCloudModels = UserDefaults.standard.object(forKey: "ollamaCloudModels")
-        UserDefaults.standard.removeObject(forKey: "ollamaCloudModels")
+        cloudModelStore = OllamaCloudModelStore(userDefaults: endpointDefaults)
         accessManager = ProviderAccessManager(
             keychainService: keychainService,
             sessionStore: sessionStore,
-            ollamaEndpointConfiguration: endpointConfiguration
+            ollamaEndpointConfiguration: endpointConfiguration,
+            ollamaCloudModelStore: cloudModelStore
         )
     }
 
     override func tearDown() {
         try? keychain.removeAll()
+        accessManager = nil
+        cloudModelStore = nil
+        endpointConfiguration = nil
+        sessionStore = nil
+        keychainService = nil
+        keychain = nil
         endpointDefaults.removePersistentDomain(forName: endpointSuiteName)
-        restore(previousCloudModels, forKey: "ollamaCloudModels")
+        endpointDefaults = nil
         super.tearDown()
     }
 
@@ -72,6 +78,8 @@ final class ProviderAccessManagerTests: XCTestCase {
         let manager = ProviderAccessManager(
             keychainService: keychainService,
             sessionStore: sessionStore,
+            ollamaEndpointConfiguration: endpointConfiguration,
+            ollamaCloudModelStore: cloudModelStore,
             ollamaCloudAccessEligibility: { true }
         )
 
@@ -83,6 +91,8 @@ final class ProviderAccessManagerTests: XCTestCase {
         let manager = ProviderAccessManager(
             keychainService: keychainService,
             sessionStore: sessionStore,
+            ollamaEndpointConfiguration: endpointConfiguration,
+            ollamaCloudModelStore: cloudModelStore,
             ollamaCloudAccessEligibility: { false }
         )
 
@@ -294,14 +304,6 @@ final class ProviderAccessManagerTests: XCTestCase {
         XCTAssertEqual(modelIDs, ["codex/gpt-5.5"])
         XCTAssertFalse(modelIDs.contains("openai/gpt-5.5"))
         XCTAssertFalse(modelIDs.contains("openai/gpt-4o-mini"))
-    }
-
-    private func restore(_ value: Any?, forKey key: String) {
-        if let value {
-            UserDefaults.standard.set(value, forKey: key)
-        } else {
-            UserDefaults.standard.removeObject(forKey: key)
-        }
     }
 
     func testConcurrentRefreshAndStateReadsAreSafeAcrossIsolation() async {

@@ -122,53 +122,45 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
     public var id: String { rawValue }
 
     public static var allCases: [Model] {
+        allCases(ollamaModels: OllamaEndpointConfiguration.shared.cachedModels(),
+                 ollamaCloudModels: cachedOllamaCloudModels)
+    }
+
+    static func allCases(ollamaModels: [Ollama.Model], ollamaCloudModels: [Ollama.Model]) -> [Model] {
         let standardModels: [Model] = OpenAI.Model.allCases.map { .openAI($0) }
         + Anthropic.Model.allCases.map { .anthropic($0) }
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
 
-        let ollamaModels = OllamaEndpointConfiguration.shared.cachedModels().map { Model.ollama($0) }
-        let ollamaCloudModels: [Model] = cachedOllamaCloudModels.map { .ollamaCloud($0) }
-
-        return standardModels + ollamaModels + ollamaCloudModels
+        return standardModels + ollamaModels.map { .ollama($0) }
+            + ollamaCloudModels.map { .ollamaCloud($0) }
     }
 
     public static var chatModels: [Model] {
+        chatModels(ollamaModels: OllamaEndpointConfiguration.shared.cachedModels(),
+                   ollamaCloudModels: cachedOllamaCloudModels)
+    }
+
+    static func chatModels(ollamaModels: [Ollama.Model], ollamaCloudModels: [Ollama.Model]) -> [Model] {
         OpenAI.Model.chatModels.map { .openAI($0) }
         + Anthropic.Model.allCases.map { .anthropic($0) }
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
-        + OllamaEndpointConfiguration.shared.cachedModels().map { .ollama($0) }
-        + cachedOllamaCloudModels.map { .ollamaCloud($0) }
+        + ollamaModels.map { .ollama($0) }
+        + ollamaCloudModels.map { .ollamaCloud($0) }
     }
 
     public static let defaultOllamaCloudModelID = "glm-5.2"
 
     public static var cachedOllamaCloudModels: [Ollama.Model] {
-        let cachedModels = UserDefaults.standard
-            .stringArray(forKey: "ollamaCloudModels")?
-            .compactMap(normalizedOllamaCloudModelID)
-            .compactMap(Ollama.Model.init(rawValue:)) ?? []
-        return cachedModels.isEmpty ? defaultOllamaCloudModels : cachedModels
+        OllamaCloudModelStore().cachedModels()
     }
 
     public static func updateCachedOllamaCloudModels(_ models: [Ollama.Model]) {
-        var seen = Set<String>()
-        let modelNames = models.compactMap { model -> String? in
-            guard let modelID = normalizedOllamaCloudModelID(model.rawValue),
-                  seen.insert(modelID).inserted
-            else { return nil }
-            return modelID
-        }
-        UserDefaults.standard.set(modelNames, forKey: "ollamaCloudModels")
+        OllamaCloudModelStore().updateCachedModels(models)
     }
 
-    private static var defaultOllamaCloudModels: [Ollama.Model] {
-        guard let model = Ollama.Model(rawValue: defaultOllamaCloudModelID) else { return [] }
-        return [model]
-    }
-
-    private static func normalizedOllamaCloudModelID(_ rawValue: String) -> String? {
+    static func normalizedOllamaCloudModelID(_ rawValue: String) -> String? {
         var modelID = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         if modelID.hasSuffix(":cloud") {
             modelID.removeLast(":cloud".count)
