@@ -113,7 +113,7 @@ final class ChatModelSourceTests: XCTestCase {
         XCTAssertFalse(access.availableChatModels().contains(proxyModel))
         XCTAssertEqual(viewModel.modelPickerTitle(for: proxyModel), proxyModel.rawValue)
 
-        let snapshot = try endpoint.update("http://local-fixture.local:11434")
+        let snapshot = try endpoint.update("https://local-fixture.local:11434")
         XCTAssertTrue(endpoint.storeModels([directModel], for: snapshot))
         access.refresh()
         XCTAssertTrue(access.availableChatModels().contains(.ollama(directModel)))
