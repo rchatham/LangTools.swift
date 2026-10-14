@@ -31,6 +31,9 @@ public enum PublicHelperAPISmoke {
         let session = URLSession(configuration: .ephemeral)
         let provider: Ollama = try configuration.snapshot().provider(directSession: session)
         _ = provider
+        let legacySettings: (ChatSettingsView.ViewModel) -> ChatSettingsView = ChatSettingsView.init(viewModel:)
+        let injectedSettings: (ChatSettingsView.ViewModel, OllamaService) -> ChatSettingsView = ChatSettingsView.init(viewModel:ollamaService:)
+        _ = (legacySettings, injectedSettings) // References only; never construct either settings view.
         let legacyCoordinator: () -> MobileHelperPairingCoordinator = MobileHelperPairingCoordinator.init
         _ = legacyCoordinator
         let coordinator = try MobileHelperPairingCoordinator(

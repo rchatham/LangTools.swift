@@ -15,6 +15,7 @@ public struct ChatSettingsView: View {
     @State private var selectedTab: SettingsTab = .general
     @State private var selectedCustomTab: String? = nil
     @ObservedObject private var pairingCoordinator = CodexHelperPairingCoordinator.shared
+    private let ollamaSettingsPresentation: OllamaSettingsPresentation
 
     public enum SettingsTab: String, CaseIterable, Identifiable {
         case general = "General"
@@ -38,6 +39,12 @@ public struct ChatSettingsView: View {
 
     public init(viewModel: ViewModel) {
         self.viewModel = viewModel
+        self.ollamaSettingsPresentation = .legacy
+    }
+
+    public init(viewModel: ViewModel, ollamaService: OllamaService) {
+        self.viewModel = viewModel
+        self.ollamaSettingsPresentation = .injected(ollamaService)
     }
 
     public var body: some View {
@@ -190,7 +197,7 @@ public struct ChatSettingsView: View {
         }
         #if !os(watchOS) && !os(tvOS)
         .sheet(isPresented: $showingOllamaSettings) {
-            OllamaSettingsView()
+            ollamaSettingsPresentation.makeView()
         }
         #endif
         .directAccessPrompts(enabled: !viewModel.isProxyContext)
@@ -466,7 +473,7 @@ public struct ChatSettingsView: View {
             SystemMessageEditor(systemMessage: $viewModel.systemMessage)
         }
         .sheet(isPresented: $showingOllamaSettings) {
-            OllamaSettingsView()
+            ollamaSettingsPresentation.makeView()
         }
         .directAccessPrompts(enabled: !viewModel.isProxyContext)
     }
