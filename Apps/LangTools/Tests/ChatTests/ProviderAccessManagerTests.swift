@@ -124,6 +124,35 @@ final class ProviderAccessManagerTests: XCTestCase {
         XCTAssertEqual(evaluationCount, 1)
     }
 
+    func testUnavailableSelectedLocalModelIsPreservedInsteadOfUsingOrdinaryFallback() throws {
+        seedLocalModels([try XCTUnwrap(Ollama.Model(rawValue: "local-fallback"))])
+        let selected = try XCTUnwrap(Model(rawValue: "ollama/uncached-local"))
+
+        XCTAssertFalse(accessManager.availableChatModels().contains(selected))
+        XCTAssertFalse(accessManager.availableChatModels().isEmpty)
+        XCTAssertEqual(accessManager.validateSelectedModel(selected), selected)
+    }
+
+    func testEligibleUncachedSelectedCloudModelIsPreservedInsteadOfUsingFallback() throws {
+        let selected = try XCTUnwrap(Model(rawValue: "ollama-cloud/uncached-hosted"))
+        seedLocalModels([try XCTUnwrap(Ollama.Model(rawValue: "local-fallback"))])
+        var evaluationCount = 0
+        accessManager.configureOllamaCloudAccessEligibilityOverride {
+            evaluationCount += 1
+            return true
+        }
+
+        XCTAssertEqual(accessManager.validateSelectedModel(selected), selected)
+        XCTAssertEqual(evaluationCount, 1)
+    }
+
+    func testUnavailableOrdinarySelectionUsesAvailableFallback() throws {
+        let fallback = try XCTUnwrap(Ollama.Model(rawValue: "local-fallback"))
+        seedLocalModels([fallback])
+
+        XCTAssertEqual(accessManager.validateSelectedModel(.codex(.gpt5_5)), .ollama(fallback))
+    }
+
     func testLocalOllamaModelsRemainAvailableWithoutCloudEligibility() throws {
         let localModel = try XCTUnwrap(Ollama.Model(rawValue: "glm-5.2:cloud"))
         seedLocalModels([localModel])

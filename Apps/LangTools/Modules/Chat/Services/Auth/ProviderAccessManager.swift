@@ -130,15 +130,14 @@ public final class ProviderAccessManager: ObservableObject {
     public func validateSelectedModel(_ model: Model) -> Model {
         let cloudAccessEligible = isOllamaCloudAccessEligible()
         let available = availableChatModels(ollamaCloudAccessEligible: cloudAccessEligible)
-        if available.contains(model) || model.apiService == .ollama {
+        switch model {
+        case .ollama, .ollamaCloud:
+            // Preserve explicit local and Cloud preferences even when discovery
+            // or access is temporarily unavailable. Neither becomes a new fallback.
             return model
+        default:
+            return available.contains(model) ? model : (available.first ?? model)
         }
-        if case .ollamaCloud = model, cloudAccessEligible == false {
-            // Keep the user's persisted cloud preference across temporary key
-            // or proxy unavailability, but never use it as a new fallback.
-            return model
-        }
-        return available.first ?? model
     }
 
     private func availableChatModels(ollamaCloudAccessEligible: Bool) -> [Model] {
