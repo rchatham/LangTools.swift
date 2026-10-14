@@ -1,6 +1,7 @@
 import Agents
 import Foundation
 import HelperLink
+import LangTools
 import Ollama
 import XCTest
 @testable import Chat
@@ -36,7 +37,7 @@ final class MobileHelperSessionLifetimeTests: XCTestCase {
         let coordinator = coordinator(probe: probe)
         try confirm(coordinator)
         try await waitUntil { LifetimeURLProtocol.hasPendingResponse }
-        _ = try configuration.update("http://new.local:11434")
+        _ = try configuration.update("https://new.local:11434")
         LifetimeURLProtocol.releaseResponse()
         try await waitUntil { !coordinator.isPairing }
         XCTAssertNil(coordinator.errorMessage)
@@ -85,7 +86,7 @@ final class MobileHelperSessionLifetimeTests: XCTestCase {
         try selectConnection(probe: probe)
         var snapshot: OllamaEndpointConfiguration.Snapshot? = configuration.snapshot()
         var provider: Ollama? = try snapshot?.provider(directSession: .shared)
-        var context: AgentContext? = AgentContext(langTool: try XCTUnwrap(provider),
+        var context: AgentContext? = try snapshot?.makeAgentContext(
             model: .init(rawValue: "fixture-model")!, messages: [], eventHandler: { _ in })
         let replacement = RetirementProbe()
         try selectConnection(probe: replacement)
@@ -94,9 +95,43 @@ final class MobileHelperSessionLifetimeTests: XCTestCase {
         XCTAssertNotNil(probe.session)
         snapshot = nil
         provider = nil
-        XCTAssertTrue((context?.langTool as? Ollama)?.session === probe.session)
-        XCTAssertEqual((context?.langTool as? Ollama)?.configuration.apiKey, credential().token)
+        XCTAssertNil(context?.langTool as? Ollama)
+        XCTAssertTrue(context?.langTool.session === probe.session)
+        let capturedRequest = try context?.langTool.prepare(request: Ollama.ChatRequest(model: .init(rawValue: "fixture-model")!, messages: []))
+        XCTAssertEqual(capturedRequest?.value(forHTTPHeaderField: "Authorization"), "Bearer \(credential().token)")
         context = nil
+        try await assertRetired(probe)
+    }
+
+    func testCapturedToolchainRetainsHelperLeaseUntilCapabilityReleased() async throws {
+        let probe = RetirementProbe()
+        try selectConnection(probe: probe)
+        var toolchain: LangToolchain? = try configuration.snapshot().makeToolchain()
+        try configuration.disconnectHelper()
+        XCTAssertNotNil(probe.session)
+        XCTAssertNotNil(probe.delegate)
+        let request = try toolchain?.prepare(request: Ollama.ChatRequest(model: .init(rawValue: "fixture-model")!, messages: [], stream: false))
+        XCTAssertEqual(request?.value(forHTTPHeaderField: "Authorization"), "Bearer \(credential().token)")
+        XCTAssertEqual(request?.url?.path, "/v1/ollama/api/chat")
+        toolchain = nil
+        try await assertRetired(probe)
+    }
+
+    func testCapturedToolchainDataOperationSurvivesDisconnectAndCapabilityRelease() async throws {
+        let probe = RetirementProbe()
+        try selectConnection(probe: probe)
+        var toolchain: LangToolchain? = try configuration.snapshot().makeToolchain()
+        let task = Task { [captured = try XCTUnwrap(toolchain)] in
+            try await captured.perform(request: Ollama.ChatRequest(model: .init(rawValue: "fixture-model")!, messages: [], stream: false))
+        }
+        try await waitUntil { LifetimeURLProtocol.hasPendingResponse }
+        try configuration.disconnectHelper()
+        toolchain = nil
+        XCTAssertNotNil(probe.session)
+        XCTAssertNotNil(probe.delegate)
+        LifetimeURLProtocol.releaseResponse()
+        let response = try await task.value
+        XCTAssertEqual(response.message?.content.text, "hello")
         try await assertRetired(probe)
     }
 

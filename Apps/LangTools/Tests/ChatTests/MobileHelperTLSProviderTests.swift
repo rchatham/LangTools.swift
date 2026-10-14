@@ -293,9 +293,9 @@ final class MobileHelperTLSProviderTests: XCTestCase {
         let credential = MobileHelperCredential(endpoint: endpoint, helperID: UUID().uuidString,
             fingerprint: pin, name: "TLS fixture", deviceID: UUID().uuidString,
             token: String(repeating: "c", count: 64), capabilities: ["ollama"])
-        return .init(baseURL: endpoint.appendingPathComponent("v1/ollama"), revision: 1,
+        return .init(baseURL: endpoint.appendingPathComponent("v1/ollama"), validationError: nil, revision: 1,
             helperID: credential.helperID, helperName: credential.name,
-            helper: MobileHelperConnection(credential: credential, session: session), helperError: nil)
+            helper: MobileHelperConnection(credential: credential, session: session), helperError: nil, directSession: session)
     }
 }
 

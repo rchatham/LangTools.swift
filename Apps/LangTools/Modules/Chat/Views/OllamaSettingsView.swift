@@ -616,8 +616,9 @@ extension OllamaSettingsView {
             let snapshot = resolvedConfiguration.snapshot()
             helperID = snapshot.helperID
             helperName = snapshot.helperName
-            serverUrl = resolvedConfiguration.directBaseURL.absoluteString
+            serverUrl = resolvedConfiguration.directBaseURL?.absoluteString ?? ""
             editingServerUrl = serverUrl
+            endpointValidationError = resolvedConfiguration.directValidationError?.localizedDescription
         }
 
         func activate() {
@@ -629,8 +630,9 @@ extension OllamaSettingsView {
             let snapshot = endpointConfiguration.snapshot()
             helperID = snapshot.helperID
             helperName = snapshot.helperName
-            serverUrl = endpointConfiguration.directBaseURL.absoluteString
+            serverUrl = endpointConfiguration.directBaseURL?.absoluteString ?? ""
             editingServerUrl = serverUrl
+            endpointValidationError = endpointConfiguration.directValidationError?.localizedDescription
             loadGeneration &+= 1
             pullGeneration &+= 1
             loadingModelName = nil
@@ -659,17 +661,16 @@ extension OllamaSettingsView {
             do {
                 let previousSnapshot = endpointConfiguration.snapshot()
                 let snapshot = try ollamaService.updateEndpoint(editingServerUrl)
-                if snapshot != previousSnapshot {
-                    loadGeneration &+= 1
-                    pullGeneration &+= 1
-                    loadingModelName = nil
-                    isPulling = false
-                    pullProgress = 0
-                    pullError = nil
-                }
+                guard snapshot != previousSnapshot else { return true }
+                loadGeneration &+= 1
+                pullGeneration &+= 1
+                loadingModelName = nil
+                isPulling = false
+                pullProgress = 0
+                pullError = nil
                 helperID = snapshot.helperID
                 helperName = snapshot.helperName
-                serverUrl = endpointConfiguration.directBaseURL.absoluteString
+                serverUrl = endpointConfiguration.directBaseURL?.absoluteString ?? ""
                 editingServerUrl = serverUrl
                 endpointValidationError = nil
                 checkConnection(for: snapshot)
@@ -693,6 +694,7 @@ extension OllamaSettingsView {
             Task {
                 do {
                     try await ollamaService.checkConnection(for: capturedSnapshot)
+                    try Task.checkCancellation()
                     guard generation == connectionGeneration,
                           endpointConfiguration.isCurrent(capturedSnapshot) else { return }
                     isConnected = true
@@ -700,9 +702,10 @@ extension OllamaSettingsView {
                 } catch {
                     guard generation == connectionGeneration,
                           endpointConfiguration.isCurrent(capturedSnapshot) else { return }
+                    guard !(error is CancellationError), !Task.isCancelled else { return }
                     isConnected = false
                     isCheckingConnection = false
-                    connectionError = "Could not connect to \(capturedSnapshot.baseURL.absoluteString). \(error.localizedDescription)"
+                    connectionError = "Could not connect to the selected Ollama source. \(error.localizedDescription)"
                 }
             }
         }

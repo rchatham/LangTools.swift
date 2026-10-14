@@ -7,24 +7,50 @@ import Gemini
 import Ollama
 
 public final class ProviderAccessManager: ObservableObject {
+    public typealias OllamaCloudAccessEligibility = () -> Bool
+
     public static let shared = ProviderAccessManager()
 
     @Published public private(set) var states: [APIService: ProviderAccessState] = [:]
 
     private let keychainService: KeychainService
     private let sessionStore: AuthSessionStore
+    private let defaultOllamaCloudAccessEligibility: OllamaCloudAccessEligibility
+    private var ollamaCloudAccessEligibilityOverride: OllamaCloudAccessEligibility?
     private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
+    private let ollamaCloudModelStore: OllamaCloudModelStore
     private let stateLock = NSLock()
     private var refreshGeneration: UInt64 = 0
 
     public init(
         keychainService: KeychainService = .shared,
         sessionStore: AuthSessionStore = .shared,
-        ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared
+        ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared,
+        ollamaCloudModelStore: OllamaCloudModelStore = .init(),
+        ollamaCloudAccessEligibility: OllamaCloudAccessEligibility? = nil
     ) {
         self.keychainService = keychainService
         self.sessionStore = sessionStore
         self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
+        self.ollamaCloudModelStore = ollamaCloudModelStore
+        self.defaultOllamaCloudAccessEligibility = {
+            keychainService.getApiKey(for: .ollama)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty == false
+        }
+        self.ollamaCloudAccessEligibilityOverride = ollamaCloudAccessEligibility
+        refresh()
+    }
+
+    /// Overrides standalone API-key eligibility for hosts that can execute
+    /// Ollama Cloud requests through another transport, such as an app proxy.
+    /// Pass `nil` to restore the standalone `.ollama` API-key policy.
+    public func configureOllamaCloudAccessEligibilityOverride(
+        _ eligibility: OllamaCloudAccessEligibility?
+    ) {
+        stateLock.lock()
+        ollamaCloudAccessEligibilityOverride = eligibility
+        stateLock.unlock()
         refresh()
     }
 
@@ -101,17 +127,37 @@ public final class ProviderAccessManager: ObservableObject {
     }
 
     public func availableChatModels() -> [Model] {
-        statesForAccessUI()
-            .flatMap(\.availableModels)
-            + state(for: .ollama).availableModels
+        availableChatModels(ollamaCloudAccessEligible: isOllamaCloudAccessEligible())
     }
 
     public func validateSelectedModel(_ model: Model) -> Model {
-        let available = availableChatModels()
-        if available.contains(model) || model.apiService == .ollama {
+        let cloudAccessEligible = isOllamaCloudAccessEligible()
+        let available = availableChatModels(ollamaCloudAccessEligible: cloudAccessEligible)
+        switch model {
+        case .ollama, .ollamaCloud:
+            // Preserve explicit local and Cloud preferences even when discovery
+            // or access is temporarily unavailable. Neither becomes a new fallback.
             return model
+        default:
+            return available.contains(model) ? model : (available.first ?? model)
         }
-        return available.first ?? model
+    }
+
+    private func availableChatModels(ollamaCloudAccessEligible: Bool) -> [Model] {
+        let cloudModels = ollamaCloudAccessEligible
+            ? ollamaCloudModelStore.cachedModels().map { Model.ollamaCloud($0) }
+            : []
+        return statesForAccessUI()
+            .flatMap(\.availableModels)
+            + state(for: .ollama).availableModels
+            + cloudModels
+    }
+
+    private func isOllamaCloudAccessEligible() -> Bool {
+        stateLock.lock()
+        let eligibility = ollamaCloudAccessEligibilityOverride ?? defaultOllamaCloudAccessEligibility
+        stateLock.unlock()
+        return eligibility()
     }
 
     public func accessibleModelIDs(for service: APIService) -> [String] {
