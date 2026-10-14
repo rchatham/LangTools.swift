@@ -12,19 +12,29 @@ import Foundation
 public enum LoopbackURLSession {
     public static var shared: URLSession {
         #if DEBUG
-        if let fixtureSession { return fixtureSession }
+        fixtureSessionLock.lock()
+        let session = fixtureSession
+        fixtureSessionLock.unlock()
+        if let session { return session }
         #endif
         return defaultSession
     }
 
     #if DEBUG
+    private static let fixtureSessionLock = NSLock()
     private static var fixtureSession: URLSession?
 
-    /// Install before creating clients in an explicitly isolated test process.
+    /// Install before creating clients in an explicitly isolated test process,
+    /// or replace/reset only after requests using the previous session are quiescent.
+    /// The lock synchronizes selection and replacement, not request lifecycle safety.
     /// The fixture can replace transport protocols, never redirect policy.
     public static func installFixtureProtocols(_ protocols: [AnyClass]?) {
-        fixtureSession?.invalidateAndCancel()
-        fixtureSession = protocols.map { makeSession(protocols: $0) }
+        let replacement = protocols.map { makeSession(protocols: $0) }
+        fixtureSessionLock.lock()
+        let displacedSession = fixtureSession
+        fixtureSession = replacement
+        fixtureSessionLock.unlock()
+        displacedSession?.invalidateAndCancel()
     }
     #endif
 

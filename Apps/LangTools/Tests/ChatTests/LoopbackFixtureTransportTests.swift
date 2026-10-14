@@ -28,6 +28,66 @@ final class LoopbackFixtureTransportTests: XCTestCase {
         super.tearDown()
     }
 
+    func testConcurrentFixtureGetInstallAndResetRetainSnapshotsWithoutCreatingTasks() throws {
+        #if DEBUG
+        // Run this class in an isolated process, without other fixture installers.
+        // No tasks are created or resumed: invalidated snapshots are retained only
+        // for identity/configuration checks, never used as request transports.
+        let defaultSession = try XCTUnwrap(originalSession)
+        let snapshots = RetainedFixtureSessionSnapshots()
+        snapshots.append(defaultSession)
+        LoopbackURLSession.installFixtureProtocols([FixtureLoopbackProtocol.self])
+        let initialFixture = LoopbackURLSession.shared
+        snapshots.append(initialFixture)
+        XCTAssertNotIdentical(initialFixture, defaultSession)
+        XCTAssertNotNil(initialFixture.delegate as? URLSessionTaskDelegate)
+        defer { LoopbackURLSession.installFixtureProtocols(nil) }
+
+        let workerCount = 4
+        let iterationsPerWorker = 24
+        // concurrentPerform joins every worker before returning. Each performs
+        // bounded synchronous operations; there are no detached tasks to outlive reset.
+        DispatchQueue.concurrentPerform(iterations: workerCount) { worker in
+            for iteration in 0..<iterationsPerWorker {
+                switch (worker + iteration) % 3 {
+                case 0:
+                    LoopbackURLSession.installFixtureProtocols([FixtureLoopbackProtocol.self])
+                case 1:
+                    LoopbackURLSession.installFixtureProtocols(nil)
+                default:
+                    break
+                }
+                snapshots.append(LoopbackURLSession.shared)
+            }
+        }
+
+        let retainedSessions = snapshots.snapshot()
+        XCTAssertEqual(retainedSessions.count, 2 + workerCount * iterationsPerWorker)
+        XCTAssertIdentical(retainedSessions.first, defaultSession)
+        XCTAssertIdentical(retainedSessions[1], initialFixture)
+        for session in retainedSessions where session !== defaultSession {
+            // Invalidation may release the delegate asynchronously; only active
+            // fixtures are required to retain it. Configuration remains inspectable.
+            XCTAssertTrue(session.configuration.protocolClasses?.contains {
+                ObjectIdentifier($0) == ObjectIdentifier(FixtureLoopbackProtocol.self)
+            } == true)
+        }
+
+        // All workers have joined; reset must recover the same default instance.
+        LoopbackURLSession.installFixtureProtocols(nil)
+        XCTAssertIdentical(LoopbackURLSession.shared, defaultSession)
+        LoopbackURLSession.installFixtureProtocols([FixtureLoopbackProtocol.self])
+        let finalFixture = LoopbackURLSession.shared
+        XCTAssertNotIdentical(finalFixture, defaultSession)
+        XCTAssertNotIdentical(finalFixture, initialFixture)
+        XCTAssertNotNil(finalFixture.delegate as? URLSessionTaskDelegate)
+        LoopbackURLSession.installFixtureProtocols(nil)
+        XCTAssertIdentical(LoopbackURLSession.shared, defaultSession)
+        #else
+        throw XCTSkip("Fixture protocol injection is only available in DEBUG builds")
+        #endif
+    }
+
     @MainActor
     func testFixtureProtocolInterceptsCustomSchemeAndResetRestoresOriginalInstance() async throws {
         #if DEBUG
@@ -138,6 +198,27 @@ final class LoopbackFixtureTransportTests: XCTestCase {
         wait(for: [redirectCompletion], timeout: 2)
     }
 }
+
+#if DEBUG
+/// The only mutable state shared by concurrent workers is protected by this lock.
+/// Strong references keep displaced sessions alive until all workers have joined.
+private final class RetainedFixtureSessionSnapshots: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sessions: [URLSession] = []
+
+    func append(_ session: URLSession) {
+        lock.lock()
+        sessions.append(session)
+        lock.unlock()
+    }
+
+    func snapshot() -> [URLSession] {
+        lock.lock()
+        defer { lock.unlock() }
+        return sessions
+    }
+}
+#endif
 
 /// A `URLProtocol` that answers `fixture-loopback://` URLs with a static 200 JSON
 /// body and refuses every other scheme. Never performs real network I/O.
