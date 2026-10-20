@@ -26,9 +26,9 @@ Codex Mac-account authentication failures use a sanitized **503** response with 
 
 See [helper README](../cli/README.md#optional-account-capabilities) for routes and [Ollama verification history](helper-ollama-verification.md) for prior acceptance evidence.
 
-## Current verification (2026-10-09–13)
+## Current verification (2026-10-09–20)
 
-All results below are local runs, not a claim about remote CI or live subscriptions. Root/app/build/UI results are from October 9; the helper filter was rerun on October 13 after the test/fixture-only cold-start observation adjustment.
+All results below are local runs, not a claim about remote CI or live subscriptions. Root/app/build/UI results are from October 9; the helper filter was rerun on October 13 after the test/fixture-only cold-start observation adjustment. The October 19–20 observer work and narrowed client-test verification are recorded separately below and did not change production or UI code.
 
 | Verification | Result |
 |---|---|
@@ -54,6 +54,14 @@ Fresh normal startup and pre-cancel/recovery both succeeded with controlled 3.25
 Latest verification: **20/20** serial cancellation-regression repetitions, **2/2** dedicated entry-delay tests and **108/108** tests in the exact helper filter. Independent scoped review found no actionable issues in the corrected test/fixture changes. Production and UI are unchanged.
 
 **Unresolved verification caveat:** standalone client-suite runs also failed in unchanged cases. An earlier run passed 20/22 (oversized-line subscription timeout and unexpected restart count); the latest standalone run passed 22/24 with unexpected process exits in `testInitializationUsesSeparateTimeoutFromOperationalRequests` and `testProcessExitIsReportedAndNextRequestRestartsServer`. The later helper-filter run passed all 24 client tests, but does not explain or clear those failures. No unrelated test/runtime fix was made. At pushed head `0af9ab68`, remote helper CI still failed the original cold-start test's three-second expectation plus missing-log error; both idle regressions and all 16 provider tests passed. Fresh remote checks are required for this adjustment and tracked on the PR, not inferred from local success.
+
+### October 19–20 observer and client-suite verification
+
+A temporary debug-only metadata observer was built to locate where the oversized-output path loses work. The first version invalidated its own trace (contention loss), so that run proves nothing and is retained only as a failed experiment. A corrected recorder — fixed typed slots, checked zero-based atomic reservations, full-width seal, failure flags published before writer completion, and quiescent-only snapshot reads — passed independent code and security review before a single run. That run produced a valid 558-event window: every read, yield, delivery and consume stage carried the same 1,048,577 unterminated bytes after the operational timer, the matching-generation buffer reached the limit plus one, `invalidResponse` was thrown, and generation-2 recovery succeeded with exactly two launches. Initialization completed 5.519 s after its timer, after the intentionally prestarted five-second waiter expired. All temporary instrumentation was then removed by exact owned segments back to the pre-instrumentation hashes, and the restored source rebuilt without executing tests.
+
+Those observations describe one instrumented invocation. They do **not** reproduce or explain the earlier 20/22 and 22/24 failures, and they say nothing about an OS read-size policy, observer overhead, or production stability.
+
+Verification then ran locally against the restored source: **20/20** serial repetitions each of the initialization-timeout, process-restart and oversized-unterminated tests, **5/5** each of three ordered pairs, every dedicated control/diagnostic case, and the full 27-case client suite (twice, including once without `PR77_TEST_EVIDENCE` to match CI). All green, with no production change. Independent review rejected publishing the entire diagnostic scaffold — one test froze the startup-producing-getter hazard as an accepted contract, and the prestarted-waiter ordering assertion is scheduler-sensitive — so only a hardened finite flush-then-exit test was kept: it decodes just newline-terminated fixture records and starts shutdown independently of observation-task joins with an explicit bounded-cleanup failure. Final check of that narrowed file: **20/20** repetitions plus the three affected tests and two full client suites, all green. The historical failures remain unexplained and no production fix is implied.
 
 Reproduce the focused checks:
 
