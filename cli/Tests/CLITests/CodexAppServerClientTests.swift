@@ -217,6 +217,39 @@ final class CodexAppServerClientTests: XCTestCase {
         XCTAssertEqual(values, ["one", "two"])
     }
 
+    // The dedicated finite fixture leaves inherited fixture defaults intact.
+    func testFiniteResponseFlushThenExitDiagnostic() async throws {
+        try await withPass4Fixture() { client, observation in
+            _ = try await observation.generation(client)
+            let primary: Result<Response, Error>
+            do {
+                let response: Response = try await client.request(
+                    method: "test/delayed", params: RequestParams(value: "request")
+                )
+                primary = .success(response)
+            } catch { primary = .failure(error) }
+            observation.mark("primary/finite-response", detail: String(reflecting: primary))
+            // On BOTH success and error, observe natural disappearance before any
+            // invalidation can terminate the child. exitIntent is not OS status.
+            var naturalExitError: Error?
+            do {
+                // Request cancellation must not cancel this natural-exit observer.
+                let observingExit = Task.detached {
+                    try await observation.waitForExitIntent(launch: 1)
+                    try await observation.waitForChildExit(launch: 1)
+                }
+                try await observingExit.value
+            } catch {
+                naturalExitError = error
+                observation.mark("finite/natural-exit-observation-error", detail: String(reflecting: error))
+                XCTFail("Finite child natural exit was not observed before teardown: \(error)")
+            }
+            let response = try primary.get() // Preserve the original request error.
+            XCTAssertEqual(response.value, "test/delayed")
+            if let naturalExitError { throw naturalExitError }
+        }
+    }
+
     func testOversizedCompleteStdoutLineFailsPendingWorkAndRecovers() async throws {
         try await assertOversizedStdoutFailsClosed(mode: "complete")
     }
@@ -866,6 +899,96 @@ final class CodexAppServerClientTests: XCTestCase {
         await client.shutdown()
     }
 
+    private func withPass4Fixture(
+        body: (CodexAppServerClient, Pass4Observation) async throws -> Void
+    ) async throws {
+        let observation = try Pass4Observation()
+        try Data(Self.pass4DiagnosticServer.utf8).write(to: observation.scriptURL)
+        let client = CodexAppServerClient(
+            commandResolver: {
+                observation.resolve()
+                return ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", observation.scriptURL.path])
+            },
+            environment: [
+                "TRACE": observation.traceURL.path, "COUNT_FILE": observation.countURL.path
+            ],
+            defaultTimeout: .seconds(5),
+            initializationTimeout: .seconds(8),
+            requestTimeoutSleeper: { method, duration in
+                observation.mark("timer/\(method)", detail: String(describing: duration))
+                try await Task.sleep(for: duration)
+            },
+            containmentMode: .disabledForTesting
+        )
+        var primaryError: Error?
+        do { try await body(client, observation) }
+        catch { primaryError = error }
+        // Primary result, both separate clock origins and protocol transcript are
+        // durable BEFORE cancellation/invalidation, on every outcome.
+        do { try observation.snapshot(stage: "before-teardown", primaryError: primaryError) }
+        catch { XCTFail("Pass4 evidence failure: \(error)"); if primaryError == nil { primaryError = error } }
+        let cleanupError = await observation.cleanup(client)
+        if let cleanupError { XCTFail("PASS4_STOP cleanup failure: \(cleanupError); retain \(observation.directory.path)") }
+        do { try observation.snapshot(stage: "after-teardown", primaryError: primaryError) }
+        catch { XCTFail("Pass4 final evidence failure: \(error)"); if primaryError == nil { primaryError = error } }
+        if let primaryError { throw primaryError }
+        if let cleanupError { throw cleanupError }
+    }
+
+    private static let pass4DiagnosticServer = #"""
+import json
+import os
+import sys
+import time
+
+origin = time.monotonic_ns()
+count_file = os.environ["COUNT_FILE"]
+try:
+    launch = int(open(count_file).read()) + 1
+except FileNotFoundError:
+    launch = 1
+with open(count_file, "w") as count:
+    count.write(str(launch))
+
+def mark(stage, message=None):
+    record = {"stage": stage, "pid": os.getpid(), "launch": launch,
+              "monotonicNanoseconds": time.monotonic_ns() - origin, "message": message}
+    with open(os.environ["TRACE"], "a") as trace:
+        trace.write(json.dumps(record) + "\n")
+
+def read():
+    line = sys.stdin.readline()
+    if not line:
+        mark("stdinEOF")
+        raise SystemExit(0)
+    message = json.loads(line)
+    mark("requestReceived", json.dumps(message))
+    return message
+
+def write(value):
+    print(json.dumps(value), flush=True)
+    mark("responseFlushed", json.dumps(value))
+
+try:
+    mark("fixtureEntry")
+    initialize = read()
+    assert initialize["method"] == "initialize"
+    time.sleep(0.05)
+    write({"id": initialize["id"], "result": {"userAgent": "fake", "codexHome": "/tmp", "platformFamily": "unix", "platformOs": "macos"}})
+    assert read()["method"] == "initialized"
+    request = read()
+    time.sleep(0.05)
+    write({"id": request["id"], "result": {"value": request["method"]}})
+    mark("exitIntent", "0")
+    raise SystemExit(0)
+except SystemExit:
+    raise
+except Exception as error:
+    mark("fixtureError", repr(error))
+    print("pass4 fixture: " + repr(error), file=sys.stderr, flush=True)
+    raise
+"""#
+
     private struct ThreadEvent: Decodable {
         let threadId: String
     }
@@ -1267,6 +1390,192 @@ private final class TimeoutRecorder: @unchecked Sendable {
 
     func duration(for method: String) -> Duration? {
         lock.withLock { durations[method] }
+    }
+}
+
+private final class Pass4Observation: @unchecked Sendable {
+    private struct FixtureEvent: Decodable {
+        let stage: String
+        let pid: Int32
+        let launch: Int
+        let monotonicNanoseconds: UInt64
+        let message: String?
+    }
+    private struct HostEvent: Encodable {
+        let stage: String
+        let elapsed: String
+        let detail: String
+    }
+    private struct KnownChild {
+        let generation: UUID
+        let launch: Int
+        let pid: Int32
+    }
+    private let origin = ContinuousClock.now
+    private let lock = NSLock()
+    private var events: [HostEvent] = []
+    private var instants: [String: ContinuousClock.Instant] = [:]
+    private var resolutions = 0
+    private var children: [KnownChild] = []
+    let directory: URL
+    var scriptURL: URL { directory.appendingPathComponent("fixture.py") }
+    var traceURL: URL { directory.appendingPathComponent("fixture.ndjson") }
+    var countURL: URL { directory.appendingPathComponent("count") }
+    var launchCount: Int { lock.withLock { resolutions } }
+
+    init() throws {
+        let root = ProcessInfo.processInfo.environment["PR77_TEST_EVIDENCE"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory
+        directory = root.appendingPathComponent("pass4-timer-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        mark("host/origin", detail: "ContinuousClock origin; fixture nanoseconds are independently relative to each PID's fixture-entry origin")
+    }
+
+    static func failure(_ message: String) -> NSError {
+        NSError(domain: "PR77Pass4Observation", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    func mark(_ stage: String, detail: String = "") {
+        let now = ContinuousClock.now
+        lock.withLock {
+            instants[stage] = now
+            events.append(HostEvent(stage: stage, elapsed: String(describing: origin.duration(to: now)), detail: detail))
+        }
+    }
+
+    func instant(_ stage: String) -> ContinuousClock.Instant? { lock.withLock { instants[stage] } }
+
+    func resolve() {
+        let count = lock.withLock { resolutions += 1; return resolutions }
+        mark("resolver/\(count)")
+    }
+
+    private func fixtureEvents() throws -> [FixtureEvent] {
+        let data = try Data(contentsOf: traceURL)
+        // An append may be visible before its terminating newline. Decode only
+        // committed records; bounded callers retry for the record they need.
+        guard let newline = data.lastIndex(of: 10) else { return [] }
+        return try data[..<newline].split(separator: 10).map {
+            try JSONDecoder().decode(FixtureEvent.self, from: Data($0))
+        }
+    }
+
+    func generation(_ client: CodexAppServerClient) async throws -> UUID {
+        mark("generation/getter-begin")
+        let generation = try await client.initializedProcessGeneration()
+        let launch = launchCount
+        let entry = try await waitForFixtureEntry(launch: launch)
+        lock.withLock {
+            if !children.contains(where: { $0.generation == generation }) {
+                children.append(KnownChild(generation: generation, launch: launch, pid: entry.pid))
+            }
+        }
+        mark("generation/known", detail: "launch=\(launch) PID=\(entry.pid) UUID=\(generation)")
+        return generation
+    }
+
+    private func waitForFixtureEntry(launch: Int) async throws -> FixtureEvent {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while ContinuousClock.now < deadline {
+            if let entry = try fixtureEvents().first(where: { $0.launch == launch && $0.stage == "fixtureEntry" }) {
+                return entry
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        throw Self.failure("Missing complete fixture entry for launch \(launch) within 2s")
+    }
+
+    func waitForExitIntent(launch: Int) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while ContinuousClock.now < deadline {
+            if try fixtureEvents().contains(where: { $0.launch == launch && $0.stage == "exitIntent" }) { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        throw Self.failure("Missing finite exit intent for launch \(launch)")
+    }
+
+    private static func isAlive(_ pid: Int32) throws -> Bool {
+        if kill(pid, 0) == 0 { return true }
+        guard errno == ESRCH else { throw failure("Cannot observe PID \(pid), errno \(errno)") }
+        return false
+    }
+
+    func waitForChildExit(launch: Int) async throws {
+        let child = try XCTUnwrap(lock.withLock { children.first { $0.launch == launch } })
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while try Self.isAlive(child.pid) && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        guard try !Self.isAlive(child.pid) else { throw Self.failure("Finite child PID \(child.pid) still alive") }
+        mark("finite/child-exited", detail: "launch=\(launch) PID=\(child.pid) UUID=\(child.generation)")
+    }
+
+    func snapshot(stage: String, primaryError: Error?) throws {
+        mark(stage, detail: primaryError.map { String(reflecting: $0) } ?? "body-completed")
+        let host = try JSONEncoder().encode(lock.withLock { events })
+        try host.write(to: directory.appendingPathComponent("\(stage)-host.json"))
+        if FileManager.default.fileExists(atPath: traceURL.path) {
+            try Data(contentsOf: traceURL).write(to: directory.appendingPathComponent("\(stage)-fixture.ndjson"))
+        } else {
+            try Data("fixture trace missing\n".utf8).write(to: directory.appendingPathComponent("\(stage)-fixture-missing.txt"))
+        }
+        print("PASS4 \(stage) scratch=\(directory.path) primary=\(primaryError.map { String(reflecting: $0) } ?? "body-completed") launches=\(launchCount)")
+    }
+
+    func cleanup(_ client: CodexAppServerClient) async -> Error? {
+        // Await a cancellation-independent supervisor. A cancelled test still
+        // observes the real cleanup deadline and actual PID disappearance,
+        // preserving its primary CancellationError even if cleanup fails.
+        let supervisor = Task.detached { await self.superviseCleanup(client) }
+        return await supervisor.value
+    }
+
+    private func superviseCleanup(_ client: CodexAppServerClient) async -> Error? {
+        // Separate absolute cleanup budget, never the primary request clock.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        let known = lock.withLock { children }
+        let completed = ThreadSafeCounter()
+        // Start shutdown independently of observation-task completion. Neither
+        // this task's completion nor shutdown alone proves the child has exited.
+        let invalidating = Task.detached {
+            self.mark("cleanup/shutdown-begin")
+            await client.shutdown()
+            self.mark("cleanup/shutdown-returned")
+            for child in known {
+                self.mark("cleanup/invalidate-begin", detail: "launch=\(child.launch) PID=\(child.pid) UUID=\(child.generation)")
+                await client.invalidateProcessAndWait(expectedGeneration: child.generation)
+                self.mark("cleanup/invalidate-returned", detail: "launch=\(child.launch) PID=\(child.pid) UUID=\(child.generation)")
+            }
+            self.mark("cleanup/invalidation-completed")
+            completed.increment()
+        }
+        while completed.value == 0 && ContinuousClock.now < deadline {
+            do { try await Task.sleep(for: .milliseconds(5)) }
+            catch { mark("cleanup/observer-cancelled", detail: String(reflecting: error)); break }
+        }
+        guard completed.value == 1 else {
+            invalidating.cancel()
+            return Self.failure("Cleanup exceeded separate 3s budget; shutdown/invalidation incomplete and child exit unconfirmed, scratch retained")
+        }
+        guard let completion = instant("cleanup/invalidation-completed"), completion <= deadline else {
+            return Self.failure("Cleanup invalidation completed after the separate 3s deadline; child exit unconfirmed, scratch retained")
+        }
+        guard Set(known.map(\.launch)).count == launchCount else {
+            return Self.failure("Unknown generation: \(launchCount) launches but \(known.count) known children; no new generation getter in teardown")
+        }
+        do {
+            for child in known {
+                while try Self.isAlive(child.pid) && ContinuousClock.now < deadline {
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+                guard try !Self.isAlive(child.pid) else { throw Self.failure("Cleanup failed within separate 3s budget: PID \(child.pid) still observable; scratch retained") }
+                mark("cleanup/actual-child-absent", detail: "launch=\(child.launch) PID=\(child.pid) UUID=\(child.generation)")
+                guard ContinuousClock.now <= deadline else {
+                    throw Self.failure("Child disappearance observed after separate 3s cleanup deadline")
+                }
+            }
+        } catch { return error }
+        return nil
     }
 }
 
