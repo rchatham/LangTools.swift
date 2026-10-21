@@ -287,6 +287,32 @@ let request = OpenAI.ChatCompletionRequest(
 )
 ```
 
+### OpenAI-Compatible Providers
+
+The OpenAI client can target any OpenAI-compatible API, including gateways such as OpenRouter and Vercel AI Gateway.
+
+Provider-specific body fields with no typed property go in `additionalParameters`, and extra headers go in the configuration:
+
+```swift
+let openRouter = OpenAI(configuration: .init(
+    baseURL: URL(string: "https://openrouter.ai/api/v1/")!,
+    apiKey: key,
+    additionalHeaders: ["HTTP-Referer": "https://example.com", "X-Title": "My App"]
+))
+
+var request = OpenAI.ChatCompletionRequest(
+    model: OpenAI.Model(customModelID: "anthropic/claude-sonnet-4.5"),
+    messages: messages
+)
+request.additionalParameters = ["provider": ["order": ["anthropic"]]]
+```
+
+Keys in `ChatCompletionRequest.reservedParameterKeys` and headers in `OpenAIConfiguration.reservedHeaderNames` throw `LangToolsError.invalidArgument` instead of overriding typed fields or credentials.
+
+When several gateways serve the same `creator/model` slugs through `LangToolchain`, tag the model with `OpenAI.Model(customModelID:providerID:)` and match it in the gateway's validator with `model.belongs(to:)`. OpenAI, XAI, and Gemini claim only untagged models. The tag is not encoded, so re-tag a decoded request with `routed(to:)`.
+
+Responses decode leniently: unknown finish reasons and service tiers become `nil`, and missing usage-detail counts become zero. A streamed chunk that carries an `error` object ends the stream by throwing `LangToolsError.apiError` with an `OpenAI.ChatCompletionResponse.ResponseError`.
+
 ## Error Handling
 
 OpenAI errors are typed for better handling:

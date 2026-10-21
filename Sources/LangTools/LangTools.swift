@@ -154,6 +154,10 @@ extension LangTools {
                             continue
                         }
                         if let response {
+                            // An in-band provider error must end the stream here; it is
+                            // outside the decode do/catch so it is not mistaken for an
+                            // incomplete buffer.
+                            try response.validateStreamChunk()
                             // If we were able to create a response object, enrich it with the accumulated stream state and request-specific information before adding it to the combined response used to handle tool completions.
                             let streamUpdatedResponse = response.updating(with: combinedResponse)
                             let updatedResponse = try request.update(response: streamUpdatedResponse)

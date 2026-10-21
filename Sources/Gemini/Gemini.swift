@@ -18,7 +18,7 @@ public final class Gemini: LangTools {
 
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         [
-            { ($0 as? OpenAI.ChatCompletionRequest).flatMap { OpenAIModel.geminiModels.contains($0.model) } ?? false },
+            { ($0 as? OpenAI.ChatCompletionRequest).flatMap { $0.model.providerID == nil && OpenAIModel.geminiModels.contains($0.model) } ?? false },
         ]
     }
 

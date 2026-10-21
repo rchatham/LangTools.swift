@@ -25,19 +25,34 @@ final public class OpenAI: LangTools {
         public let apiKey: String
         public var session: URLSession
         public var logger: LangToolsLogger?
+        /// Extra headers sent on every request, such as OpenRouter's `HTTP-Referer`
+        /// and `X-Title`. A name in `reservedHeaderNames` makes `prepare` throw
+        /// `LangToolsError.invalidArgument`.
+        public var additionalHeaders: [String: String]
 
-        public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil) {
+        /// Header names, lowercased, that `additionalHeaders` may not set: credentials,
+        /// message framing, and hop-by-hop headers. Matching is case-insensitive.
+        public static let reservedHeaderNames: Set<String> = [
+            "authorization", "proxy-authorization", "cookie", "x-api-key",
+            "host", "content-type", "content-length", "transfer-encoding",
+            "connection", "te", "trailer", "upgrade",
+        ]
+
+        public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil, additionalHeaders: [String: String] = [:]) {
             self.baseURL = baseURL
             self.apiKey = apiKey
             self.session = session
             self.logger = logger
+            self.additionalHeaders = additionalHeaders
         }
     }
 
+    /// OpenAI claims only untagged models. A request whose model carries a provider
+    /// tag belongs to the provider named by that tag.
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
-            { ($0 as? ChatCompletionRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
-            { ($0 as? ResponsesRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
+            { ($0 as? ChatCompletionRequest).flatMap { $0.model.providerID == nil && OpenAIModel.openAIModels.contains($0.model) } ?? false },
+            { ($0 as? ResponsesRequest).flatMap { $0.model.providerID == nil && OpenAIModel.openAIModels.contains($0.model) } ?? false },
             { $0 is AudioSpeechRequest },
             { $0 is AudioTranscriptionRequest },
             { $0 is ListModelDataRequest },
@@ -71,6 +86,12 @@ final public class OpenAI: LangTools {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = Request.httpMethod.rawValue
         urlRequest.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        for (name, value) in configuration.additionalHeaders {
+            guard !OpenAIConfiguration.reservedHeaderNames.contains(name.lowercased()) else {
+                throw LangToolsError.invalidArgument("additionalHeaders cannot set '\(name)'")
+            }
+            urlRequest.setValue(value, forHTTPHeaderField: name)
+        }
 
         if Request.httpMethod == .get { return urlRequest }
 
@@ -80,7 +101,9 @@ final public class OpenAI: LangTools {
             urlRequest.httpBody = formData.body
         } else {
             urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolsError.invalidData }
+            do { urlRequest.httpBody = try JSONEncoder().encode(request) }
+            catch let error as LangToolsError { throw error }
+            catch { throw LangToolsError.invalidData }
         }
 
         return urlRequest
@@ -131,8 +154,27 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         id = customModelID
     }
 
+    /// Creates a model routed to a specific OpenAI-compatible provider, such as a
+    /// gateway whose `creator/model` slugs other gateways also serve.
+    public init(customModelID: String, providerID: LangToolsProviderID) {
+        id = customModelID
+        self.providerID = providerID
+    }
+
     public var id: String
     public var rawValue: String { id }
+
+    /// The provider this model is routed to, used only by request validators.
+    ///
+    /// The tag is not encoded and does not take part in equality, so a tagged model
+    /// equals the same ID reloaded from storage. A decoded request is untagged; see
+    /// `ChatCompletionRequest.routed(to:)`.
+    public var providerID: LangToolsProviderID? = nil
+
+    /// Whether this model is tagged for `provider`.
+    public func belongs(to provider: LangToolsProviderID) -> Bool {
+        providerID == provider
+    }
 
     public var type: OpenAIModelType {
         id.hasPrefix("text") ? .embedding :

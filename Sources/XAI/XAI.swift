@@ -18,7 +18,7 @@ public final class XAI: LangTools {
 
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         [
-            { ($0 as? OpenAI.ChatCompletionRequest).flatMap { OpenAIModel.xAIModels.contains($0.model) } ?? false },
+            { ($0 as? OpenAI.ChatCompletionRequest).flatMap { $0.model.providerID == nil && OpenAIModel.xAIModels.contains($0.model) } ?? false },
         ]
     }
 
