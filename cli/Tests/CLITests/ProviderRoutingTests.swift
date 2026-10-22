@@ -133,6 +133,25 @@ final class ProviderRoutingTests: XCTestCase {
         XCTAssertFalse(OpenAI.requestValidators.contains { $0(chatRequest) })
     }
 
+    func testResponsesOnlyProviderGetsATaggedResponsesRequest() {
+        let request = NetworkClient.shared.request(
+            messages: [Message(text: "hi", role: .user)],
+            model: .compatible(.perplexity, "medium"),
+            stream: true,
+            tools: nil,
+            toolChoice: nil
+        )
+
+        guard let responsesRequest = request as? OpenAI.ResponsesRequest else {
+            return XCTFail("Expected OpenAI.ResponsesRequest for Perplexity")
+        }
+        XCTAssertEqual(responsesRequest.model.id, "medium")
+        XCTAssertTrue(responsesRequest.model.belongs(to: CompatibleProvider.perplexity.providerID))
+        XCTAssertFalse(OpenAI.requestValidators.contains { $0(responsesRequest) })
+        XCTAssertFalse(CompatibleProvider.perplexity.servesChatCompletions)
+        XCTAssertTrue(CompatibleProvider.cohere.servesChatCompletions)
+    }
+
     // MARK: - Keys
 
     func testEnvironmentAPIKeysIncludeOpenRouterAndCompatibleProviders() {

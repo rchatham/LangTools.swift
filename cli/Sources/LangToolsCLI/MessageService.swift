@@ -235,7 +235,7 @@ class MessageService: ObservableObject {
         case .openRouter:
             envVar = "OPENROUTER_API_KEY"
             serviceName = "OpenRouter"
-        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
+        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
             let compatible = CompatibleProvider(category: provider)!
             envVar = compatible.environmentVariable
             serviceName = compatible.displayName

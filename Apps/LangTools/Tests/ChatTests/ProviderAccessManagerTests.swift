@@ -333,14 +333,14 @@ final class ProviderAccessManagerTests: XCTestCase {
 
     func testCompatibleProviderWithoutAModelCatalogKeepsSuggestedModels() async throws {
         let catalog = makeCompatibleCatalog { _, _ in
-            XCTFail("Cohere has no catalog endpoint")
+            XCTFail("Perplexity has no catalog endpoint")
             return []
         }
 
-        let entries = try await catalog.refresh(.cohere, apiKey: "co-key")
+        let entries = try await catalog.refresh(.perplexity, apiKey: "pplx-key")
 
         XCTAssertTrue(entries.isEmpty)
-        XCTAssertEqual(catalog.modelIDs(for: .cohere), CompatibleProvider.cohere.knownModelIDs)
+        XCTAssertEqual(catalog.modelIDs(for: .perplexity), CompatibleProvider.perplexity.knownModelIDs)
     }
 
     func testCompatibleCatalogFailureKeepsTheCachedCatalog() async {

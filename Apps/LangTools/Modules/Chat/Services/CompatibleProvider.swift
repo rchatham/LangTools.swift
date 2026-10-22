@@ -18,14 +18,17 @@ import Cerebras
 import TogetherAI
 import Fireworks
 import Cohere
+import Perplexity
 
 public enum CompatibleProvider: String, CaseIterable, Codable, Identifiable, Sendable {
-    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere
+    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
 
     public var id: String { rawValue }
     public var displayName: String { operations.type.displayName }
     public var providerID: LangToolsProviderID { operations.type.providerID }
     public var supportsModelListing: Bool { operations.type.supportsModelListing }
+    /// False for a provider that serves only OpenAI's Responses format (Perplexity).
+    public var servesChatCompletions: Bool { operations.type.compatibleFormats.contains(.chatCompletions) }
     /// Suggested models, offered before (or instead of) a catalog fetch.
     public var knownModelIDs: [String] { operations.knownModelIDs }
 
@@ -70,6 +73,7 @@ public enum CompatibleProvider: String, CaseIterable, Codable, Identifiable, Sen
         case .together: return Operations(TogetherAI.self) { TogetherAI(apiKey: $0) }
         case .fireworks: return Operations(Fireworks.self) { Fireworks(apiKey: $0) }
         case .cohere: return Operations(Cohere.self) { Cohere(apiKey: $0) }
+        case .perplexity: return Operations(Perplexity.self) { Perplexity(apiKey: $0) }
         }
     }
 

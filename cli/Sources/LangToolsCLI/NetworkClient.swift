@@ -73,6 +73,9 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice, toolEventHandler: toolEventHandler)
         } else if case .compatible(let provider, let id) = model {
             // The tagged model routes to the provider rather than to OpenAI.
+            if !provider.servesChatCompletions {
+                return OpenAI.ResponsesRequest(model: provider.openAIModel(id: id), messages: messages.toOpenAIMessages(), stream: stream, tools: tools, toolEventHandler: toolEventHandler)
+            }
             return OpenAI.ChatCompletionRequest(model: provider.openAIModel(id: id), messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice, toolEventHandler: toolEventHandler)
         } else {
             return Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages.toAnthropicMessages(), stream: stream, system: messages.toAnthropicSystemMessage(), tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice(), toolEventHandler: toolEventHandler)
@@ -158,7 +161,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
         case .ollama: return Ollama()
         case .openRouter: return if let baseURL { OpenRouter(baseURL: baseURL, apiKey: apiKey, appTitle: "LangTools CLI") } else { OpenRouter(apiKey: apiKey, appTitle: "LangTools CLI") }
-        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
+        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
             return CompatibleProvider(apiService: llm)!.makeClient(apiKey: apiKey)
         }
     }
@@ -171,7 +174,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 enum APIService: String, CaseIterable {
     case openAI, anthropic, xAI, gemini, ollama, openRouter
     // OpenAI-compatible providers; raw values match `CompatibleProvider`.
-    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere
+    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
 }
 
 extension NetworkClient {

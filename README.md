@@ -4,7 +4,7 @@ LangTools is a Swift framework for working with Large Language Models (LLMs) and
 
 ## Features
 
-- 🤖 **Multiple LLM Support**: OpenAI, Anthropic, X.AI, Google Gemini, Ollama, OpenRouter, Vercel AI Gateway, Groq, Mistral, DeepSeek, Cerebras, Together AI, Fireworks AI, and Cohere
+- 🤖 **Multiple LLM Support**: OpenAI, Anthropic, X.AI, Google Gemini, Ollama, OpenRouter, Vercel AI Gateway, Groq, Mistral, DeepSeek, Cerebras, Together AI, Fireworks AI, Cohere, and Perplexity
 - 🔧 **Unified Interface**: Common protocols for working with different AI providers
 - 🤝 **Extensible Agent System**: Build specialized AI assistants with tools and delegation
 - 📝 **Streaming Support**: Handle streaming responses from AI models
@@ -131,7 +131,7 @@ See individual module README files for detailed documentation and examples:
 - [XAI](Sources/XAI/README.md)
 - [Gemini](Sources/Gemini/README.md)
 - [Ollama](Sources/Ollama/README.md)
-- [OpenAICompatible](Sources/OpenAICompatible/README.md) - Shared support for providers serving OpenAI's format
+- [OpenAICompatible](Sources/OpenAICompatible/README.md) - Shared support for providers serving OpenAI's Chat Completions or Responses format
 - [AnthropicCompatible](Sources/AnthropicCompatible/README.md) - Shared support for providers serving Anthropic's Messages format
 - [OpenRouter](Sources/OpenRouter/README.md)
 - [Vercel AI Gateway](Sources/VercelAIGateway/README.md)
@@ -141,7 +141,8 @@ See individual module README files for detailed documentation and examples:
 - [Cerebras](Sources/Cerebras/README.md)
 - [Together AI](Sources/TogetherAI/README.md)
 - [Fireworks AI](Sources/Fireworks/README.md)
-- [Cohere](Sources/Cohere/README.md)
+- [Cohere](Sources/Cohere/README.md) - Compatibility API and native v2 Chat API
+- [Perplexity](Sources/Perplexity/README.md) - Agent API, in OpenAI's Responses format
 - [Performance comparison snapshot](docs/performance-comparison.html)
 
 ## Contributing

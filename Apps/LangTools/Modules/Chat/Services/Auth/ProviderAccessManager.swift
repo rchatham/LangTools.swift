@@ -249,7 +249,7 @@ public final class ProviderAccessManager: ObservableObject {
                     guard let model = Anthropic.Model(rawValue: slug) else { return nil }
                     return .claudeCode(model)
                 }
-            case .xAI, .gemini, .ollama, .serper, .openRouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
+            case .xAI, .gemini, .ollama, .serper, .openRouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
                 parsed = session.accessibleModelIDs.compactMap(Model.init(rawValue:))
             }
             return parsed
@@ -268,7 +268,7 @@ public final class ProviderAccessManager: ObservableObject {
                 return Gemini.Model.allCases.map { .gemini($0) }
             case .openRouter:
                 return openRouterCatalog.models().map { .openRouter($0) }
-            case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
+            case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
                 let provider = CompatibleProvider(service: service)!
                 return compatibleCatalog.modelIDs(for: provider).map { .compatible(provider, $0) }
             case .ollama:

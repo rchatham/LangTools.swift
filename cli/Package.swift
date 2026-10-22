@@ -47,6 +47,7 @@ let package = Package(
                 .product(name: "TogetherAI", package: "langtools-cli"),
                 .product(name: "Fireworks", package: "langtools-cli"),
                 .product(name: "Cohere", package: "langtools-cli"),
+                .product(name: "Perplexity", package: "langtools-cli"),
                 .product(name: "Agents", package: "langtools-cli"),
                 .product(name: "SwiftTUI", package: "SwiftTUI"),
             ],

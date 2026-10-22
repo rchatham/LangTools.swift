@@ -30,6 +30,7 @@ enum Provider: String, CaseIterable {
     case together = "Together AI"
     case fireworks = "Fireworks AI"
     case cohere = "Cohere"
+    case perplexity = "Perplexity"
 }
 
 enum ToolReliabilityTier: String {

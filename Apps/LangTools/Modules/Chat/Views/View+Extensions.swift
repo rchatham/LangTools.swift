@@ -66,7 +66,7 @@ extension APIService {
         case .ollama: return "Ollama"
         case .serper: return "Serper"
         case .openRouter: return "OpenRouter"
-        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
+        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
             return CompatibleProvider(service: self)!.displayName
         }
     }

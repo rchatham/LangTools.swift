@@ -22,7 +22,7 @@ public enum ModelRoute: String, Codable, Hashable {
     case ollama = "ollama"
     case openRouter = "openrouter"
     // OpenAI-compatible providers; raw values match `CompatibleProvider`.
-    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere
+    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
 }
 
 public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equatable {
@@ -322,10 +322,11 @@ public extension Model {
                 maximumOutputWarning: "The app guard is not a model limit. \(provider.displayName) output capacity depends on the selected model.",
                 supportsTemperature: true,
                 supportsTopP: true,
-                supportsFrequencyPenalty: provider != .groq,
-                supportsPresencePenalty: provider != .groq,
-                supportsSeed: provider != .deepseek,
-                supportsStop: true,
+                // The Responses format has no penalties, seed, or stop sequences.
+                supportsFrequencyPenalty: provider != .groq && provider.servesChatCompletions,
+                supportsPresencePenalty: provider != .groq && provider.servesChatCompletions,
+                supportsSeed: provider != .deepseek && provider.servesChatCompletions,
+                supportsStop: provider.servesChatCompletions,
                 contextWindowTokens: CompatibleModelCatalog.shared.entry(for: provider, id: id)?.contextLength
             )
         case .xAI(let model):

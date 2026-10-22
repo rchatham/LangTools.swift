@@ -364,6 +364,18 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             // As with OpenRouter, tools go only to models the catalog does not
             // list as lacking tool support.
             let supportsTools = compatibleCatalog.entry(for: provider, id: id)?.supportsTools ?? true
+            guard provider.servesChatCompletions else {
+                return OpenAI.ResponsesRequest(
+                    model: provider.openAIModel(id: id),
+                    messages: replayMessages.toOpenAIMessages(),
+                    stream: stream,
+                    max_output_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                    temperature: temperature,
+                    top_p: topP,
+                    tools: supportsTools ? tools?.convertTools() : nil,
+                    toolEventHandler: toolEventHandler
+                )
+            }
             return OpenAI.ChatCompletionRequest(
                 model: provider.openAIModel(id: id),
                 messages: replayMessages.toOpenAIMessages(),
@@ -580,7 +592,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
         case .openRouter: return if let baseURL { OpenRouter(baseURL: baseURL, apiKey: apiKey, appTitle: "LangTools") } else { OpenRouter(apiKey: apiKey, appTitle: "LangTools") }
-        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
+        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
             return CompatibleProvider(service: llm)?.makeClient(apiKey: apiKey)
         case .ollama: return nil
         default: return nil
@@ -630,7 +642,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
 public enum APIService: String, CaseIterable, Codable, Identifiable {
     case openAI, anthropic, xAI, gemini, ollama, serper, openRouter
     // OpenAI-compatible providers; raw values match `CompatibleProvider`.
-    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere
+    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
 
     public var id: String { rawValue }
 
