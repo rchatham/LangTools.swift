@@ -307,6 +307,8 @@ extension MessageService: @retroactive ChatMessageService {
                 return ChatAlertInfo(title: "Decoding Error", message: "Failed to decode function arguments.")
             case .missingRequiredFunctionArguments:
                 return ChatAlertInfo(title: "Missing Arguments", message: "Required function arguments are missing.")
+            case .toolIterationLimitReached:
+                return ChatAlertInfo(title: "Tool Iteration Limit", message: error.localizedDescription)
             }
 
         case is LangToolchainError:

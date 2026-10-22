@@ -50,8 +50,19 @@ public struct MobileHelperPairingPayload: Codable, Equatable, Sendable {
     }
 
     public static func parse(_ url: URL) throws -> Self {
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              components.scheme == "langtools-example-auth", components.host == "helper",
+        try parse(url, scheme: "langtools-example-auth")
+    }
+
+    /// The owning app chooses the expected scheme; never infer it from the QR.
+    ///
+    /// The `scheme` parameter is used for strict exact-case validation during parsing.
+    /// While OS-level URL routing and classification are often case-insensitive, the parser
+    /// requires the link's scheme to exactly match the provided `scheme` string.
+    /// It is recommended to use lowercase schemes.
+    public static func parse(_ url: URL, scheme: String) throws -> Self {
+        guard isValidScheme(scheme),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme == scheme, components.host == "helper",
               components.path == "/pair", components.user == nil, components.password == nil,
               components.port == nil, components.fragment == nil,
               let items = components.queryItems, items.count == 6
@@ -74,9 +85,19 @@ public struct MobileHelperPairingPayload: Codable, Equatable, Sendable {
     }
 
     public func pairingURL() throws -> URL {
+        try pairingURL(scheme: "langtools-example-auth")
+    }
+
+    /// Returns a pairing URL for the given scheme.
+    ///
+    /// The `scheme` parameter is used for exact-case generation. While OS-level
+    /// classification is case-insensitive, the link is generated using the exact spelling
+    /// provided. It is recommended to use lowercase schemes.
+    public func pairingURL(scheme: String) throws -> URL {
+        guard Self.isValidScheme(scheme) else { throw MobileHelperLinkError.invalidPayload }
         try validate()
         var components = URLComponents()
-        components.scheme = "langtools-example-auth"
+        components.scheme = scheme
         components.host = "helper"
         components.path = "/pair"
         components.queryItems = [
@@ -86,6 +107,23 @@ public struct MobileHelperPairingPayload: Codable, Equatable, Sendable {
         ]
         guard let url = components.url else { throw MobileHelperLinkError.invalidPayload }
         return url
+    }
+
+    /// Validates a custom URL scheme according to RFC 3986 ASCII grammar.
+    ///
+    /// The scheme must start with an ASCII letter and contain only ASCII letters,
+    /// digits, plus, minus, or dots.
+    /// Grammar: `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`
+    ///
+    /// - Parameter value: The scheme string to validate.
+    /// - Returns: True if the scheme is valid.
+    public static func isValidScheme(_ value: String) -> Bool {
+        guard let first = value.utf8.first,
+              (65...90).contains(first) || (97...122).contains(first) else { return false }
+        return value.utf8.dropFirst().allSatisfy { byte in
+            (65...90).contains(byte) || (97...122).contains(byte) || (48...57).contains(byte)
+                || byte == 43 || byte == 45 || byte == 46
+        }
     }
 
     public static func isHexSecret(_ value: String) -> Bool {
