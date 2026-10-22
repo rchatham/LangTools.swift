@@ -265,6 +265,7 @@ final class OpenRouterTests: XCTestCase {
     func testModelSlugValidationAndCoding() throws {
         XCTAssertNil(OpenRouter.Model(rawValue: ""))
         XCTAssertNil(OpenRouter.Model(rawValue: "  "))
+        XCTAssertNil(OpenRouter.Model(rawValue: " anthropic/claude-sonnet-4.5 "), "padded slugs are rejected")
         XCTAssertEqual(OpenRouter.Model(rawValue: "openai/gpt-5:free")?.rawValue, "openai/gpt-5:free")
 
         let encoded = try JSONEncoder().encode(OpenRouter.Model.auto)

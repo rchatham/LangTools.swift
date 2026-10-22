@@ -165,6 +165,24 @@ final class OpenAICompatibleProviderTests: XCTestCase {
         XCTAssertEqual(results.first?.choices.first?.delta?.content, "Hello")
     }
 
+    func testPerformThrowsAnInBandErrorFromACompleteResponse() async throws {
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
+            (.success(Data(#"""
+            {"id":"gen-1","object":"chat.completion","created":1,"model":"openai/gpt-5",
+             "error":{"code":502,"message":"Upstream provider error"},
+             "choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"error"}]}
+            """#.utf8)), 200)
+        }
+
+        do {
+            _ = try await api.perform(request: makeRequest())
+            XCTFail("A 200 response carrying an error must throw")
+        } catch LangToolsError.apiError(let error as OpenAI.ChatCompletionResponse.ResponseError) {
+            XCTAssertEqual(error.code, "502")
+            XCTAssertEqual(error.message, "Upstream provider error")
+        }
+    }
+
     func testValidateStreamChunkThrowsOnlyWhenErrorIsPresent() throws {
         XCTAssertNoThrow(try OpenAI.ChatCompletionResponse.empty.validateStreamChunk())
 

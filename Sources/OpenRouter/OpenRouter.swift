@@ -93,9 +93,9 @@ public struct OpenRouterErrorResponse: Error, Codable, LocalizedError {
 public struct OpenRouterModel: RawRepresentable, Codable, Hashable, Sendable, ExpressibleByStringLiteral, CustomStringConvertible {
     public let rawValue: String
 
-    /// Returns nil for an empty or whitespace-only slug.
+    /// Returns nil for an empty slug or one with leading or trailing whitespace.
     public init?(rawValue: String) {
-        guard !rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        guard !rawValue.isEmpty, rawValue == rawValue.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
         self.rawValue = rawValue
     }
 

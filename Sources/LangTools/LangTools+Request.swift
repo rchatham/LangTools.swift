@@ -60,6 +60,7 @@ public protocol LangToolsStreamableResponse: Decodable {
     /// Validate one decoded chunk before it is yielded. Providers that report failures
     /// inside an HTTP 200 stream (an error chunk sent after headers were committed)
     /// throw here so the stream ends with that error instead of an empty delta.
+    /// A complete non-streaming response is validated the same way.
     func validateStreamChunk() throws
 }
 

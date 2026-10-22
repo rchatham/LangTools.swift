@@ -498,7 +498,8 @@ extension OpenAI {
         public let service_tier: ServiceTier?
         /// An error reported inside a successful response. Gateways such as OpenRouter
         /// send this on a streaming chunk when generation fails after the HTTP 200
-        /// status was committed; the stream then ends by throwing it.
+        /// status was committed. A stream ends by throwing it, and `perform` throws it
+        /// from a complete response.
         public let error: ResponseError?
 
         @CodableIgnored
