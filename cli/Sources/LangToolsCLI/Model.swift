@@ -78,7 +78,14 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
 
     /// The OpenRouter catalog, populated at runtime by
     /// `NetworkClient.fetchOpenRouterModels()` once an API key is configured.
-    static var openRouterCatalog: [OpenRouter.ModelInfo] = []
+    /// The fetch runs in a background task while the UI reads the catalog, so
+    /// access is serialized.
+    static var openRouterCatalog: [OpenRouter.ModelInfo] {
+        get { openRouterCatalogLock.lock(); defer { openRouterCatalogLock.unlock() }; return _openRouterCatalog }
+        set { openRouterCatalogLock.lock(); defer { openRouterCatalogLock.unlock() }; _openRouterCatalog = newValue }
+    }
+    private static let openRouterCatalogLock = NSLock()
+    private static var _openRouterCatalog: [OpenRouter.ModelInfo] = []
 
     init?(rawValue: String) {
         if rawValue.hasPrefix(Self.openRouterPrefix) {
@@ -109,7 +116,8 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
     /// `openrouter/auto` router, so the full string is kept as the slug.
     static func openRouterModel(fromPrefixed rawValue: String) -> OpenRouter.Model? {
         let slug = String(rawValue.dropFirst(openRouterPrefix.count))
-        guard !slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        // Reject empty and whitespace-padded slugs, as the app does.
+        guard !slug.isEmpty, slug == slug.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
         return OpenRouter.Model(rawValue: slug.contains("/") ? slug : rawValue)
     }
 

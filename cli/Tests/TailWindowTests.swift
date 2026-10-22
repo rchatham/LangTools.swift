@@ -258,6 +258,7 @@ final class TailWindowTests: XCTestCase {
         XCTAssertEqual(CLI.model(fromArgument: "openrouter/anthropic/claude-sonnet-4.5"), .openRouter("anthropic/claude-sonnet-4.5"))
         XCTAssertEqual(CLI.model(fromArgument: "openrouter/openai/gpt-5:free"), .openRouter("openai/gpt-5:free"))
         XCTAssertEqual(CLI.model(fromArgument: "openrouter/auto"), .openRouter(.auto), "a bare remainder is OpenRouter's own router slug")
+        XCTAssertNil(CLI.model(fromArgument: "openrouter/ anthropic/claude-sonnet-4.5"), "padded slugs are rejected")
     }
 
     func testOpenRouterModelRawValueRoundTripsAheadOfOllamaFallback() {

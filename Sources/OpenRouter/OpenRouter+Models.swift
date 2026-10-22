@@ -63,15 +63,16 @@ extension OpenRouter {
 
         private enum CodingKeys: String, CodingKey { case data }
 
-        /// Skips an entry that fails to decode rather than failing the whole
-        /// catalog, since OpenRouter adds fields and model types over time.
+        /// Skips an entry that fails to decode, or whose id is not a usable slug,
+        /// rather than failing the whole catalog, since OpenRouter adds fields and
+        /// model types over time.
         public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             var entries = try container.nestedUnkeyedContainer(forKey: .data)
             var models: [ModelInfo] = []
             while !entries.isAtEnd {
                 if let model = try? entries.decode(ModelInfo.self) {
-                    models.append(model)
+                    if OpenRouterModel(rawValue: model.id) != nil { models.append(model) }
                 } else {
                     _ = try entries.decode(JSON.self)
                 }

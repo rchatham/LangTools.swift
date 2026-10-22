@@ -169,7 +169,7 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     /// The tag is not encoded and does not take part in equality, so a tagged model
     /// equals the same ID reloaded from storage. A decoded request is untagged; see
     /// `ChatCompletionRequest.routed(to:)`.
-    public var providerID: LangToolsProviderID? = nil
+    public internal(set) var providerID: LangToolsProviderID? = nil
 
     /// Whether this model is tagged for `provider`.
     public func belongs(to provider: LangToolsProviderID) -> Bool {

@@ -101,6 +101,7 @@ public final class OpenRouterModelCatalog: @unchecked Sendable {
                 accessManager.refresh()
             } catch {
                 // Keep the cached catalog; models can still be used by slug.
+                NSLog("OpenRouter catalog refresh failed; keeping the cached catalog: %@", error.localizedDescription)
             }
         }
     }
