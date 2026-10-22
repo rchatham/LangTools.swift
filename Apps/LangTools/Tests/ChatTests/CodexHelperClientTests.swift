@@ -39,6 +39,28 @@ final class CodexHelperClientTests: XCTestCase {
         XCTAssertEqual(status.accessibleModelIDs, ["gpt-5.5", "gpt-5.3-codex-spark"])
     }
 
+    func testReadsUpdatedHelperConfigurationForEachRequest() async throws {
+        var port = 9999
+        var token = "first-token"
+        let session = makeURLSession { request in
+            XCTAssertEqual(request.url?.port, port)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(token)")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(#"{"status":"ok","version":1}"#.utf8))
+        }
+        let client = CodexHelperClient(configurationProvider: {
+            AccountBackendConfiguration(
+                codexHelperBaseURL: URL(string: "http://127.0.0.1:\(port)")!,
+                codexHelperToken: token
+            )
+        }, urlSession: session)
+
+        _ = try await client.healthCheck()
+        port = 8765
+        token = "paired-token"
+        _ = try await client.healthCheck()
+    }
+
     func testLoginDecodesAccountSession() async throws {
         let session = makeURLSession { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
@@ -114,7 +136,7 @@ final class CodexHelperClientTests: XCTestCase {
         let session = makeURLSession { request in
             XCTAssertEqual(request.url?.path, "/health")
             let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
-            return (response, Data("unauthorized".utf8))
+            return (response, Data(#"{"error":"Unauthorized."}"#.utf8))
         }
         let client = CodexHelperClient(
             configuration: AccountBackendConfiguration(
@@ -129,7 +151,41 @@ final class CodexHelperClientTests: XCTestCase {
             _ = try await client.loginOpenAI()
             XCTFail("Expected health-check error")
         } catch let error as AccountLoginError {
-            XCTAssertEqual(error, .sessionExchangeFailed("Codex helper rejected the request. Check the helper token in Settings."))
+            XCTAssertEqual(
+                error,
+                .sessionExchangeFailed("Codex helper rejected the request. Check the helper token in Settings. (Unauthorized.)")
+            )
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testLoginIncludesCodexAuthenticationErrorAfterSuccessfulHealthCheck() async {
+        let session = makeURLSession { request in
+            if request.url?.path == "/health" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (response, Data(#"{"status":"ok","version":1}"#.utf8))
+            }
+            XCTAssertEqual(request.url?.path, "/v1/auth/login")
+            let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
+            return (response, Data(#"{"error":"Codex did not report an authenticated ChatGPT account."}"#.utf8))
+        }
+        let client = CodexHelperClient(
+            configuration: AccountBackendConfiguration(
+                codexHelperBaseURL: URL(string: "http://127.0.0.1:9999")!,
+                codexHelperToken: "helper-token"
+            ),
+            urlSession: session
+        )
+
+        do {
+            _ = try await client.loginOpenAI()
+            XCTFail("Expected Codex authentication error")
+        } catch let error as AccountLoginError {
+            XCTAssertEqual(
+                error,
+                .sessionExchangeFailed("Codex did not report an authenticated ChatGPT account.")
+            )
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
@@ -186,7 +242,7 @@ final class CodexHelperClientTests: XCTestCase {
     func testUnauthorizedStatusReturnsHelpfulError() async {
         let session = makeURLSession { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
-            return (response, Data("unauthorized".utf8))
+            return (response, Data(#"{"error":"Unauthorized."}"#.utf8))
         }
 
         let client = CodexHelperClient(
@@ -202,7 +258,10 @@ final class CodexHelperClientTests: XCTestCase {
             _ = try await client.statusOpenAI()
             XCTFail("Expected unauthorized error")
         } catch let error as AccountLoginError {
-            XCTAssertEqual(error, .sessionExchangeFailed("Codex helper rejected the request. Check the helper token in Settings."))
+            XCTAssertEqual(
+                error,
+                .sessionExchangeFailed("Codex helper rejected the request. Check the helper token in Settings. (Unauthorized.)")
+            )
         } catch {
             XCTFail("Unexpected error: \(error)")
         }

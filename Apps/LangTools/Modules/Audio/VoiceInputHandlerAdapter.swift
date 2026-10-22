@@ -16,6 +16,7 @@ import OpenAI
 public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
     private let sttService: STTService
     private let settings: any VoiceInputSettingsProviding
+    private let realProvidersEnabled: Bool
     private var cancellables = Set<AnyCancellable>()
 
     /// Unified audio level monitor for UI visualization (separate from transcription)
@@ -34,9 +35,21 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
         self.init(sttService: .shared, settings: settings)
     }
 
-    public init(sttService: STTService, settings: any VoiceInputSettingsProviding) {
+    /// - Parameters:
+    ///   - sttService: The STT service to bridge.
+    ///   - settings: Voice input configuration.
+    ///   - startupRealProvidersEnabled: When `false`, provider registration,
+    ///     permission requests, and settings-change callbacks that re-activate
+    ///     providers are all skipped. The adapter remains a valid, inactive
+    ///     `VoiceInputHandler`. Normal app behavior is unchanged when `true`.
+    public init(
+        sttService: STTService,
+        settings: any VoiceInputSettingsProviding,
+        startupRealProvidersEnabled: Bool = true
+    ) {
         self.sttService = sttService
         self.settings = settings
+        self.realProvidersEnabled = startupRealProvidersEnabled
 
         sttService.configure(
             STTServiceConfiguration(
@@ -45,6 +58,12 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
                 openAIStreamingChunkInterval: { [weak settings] in settings?.openAIStreamingChunkInterval ?? 3.0 }
             )
         )
+
+        guard startupRealProvidersEnabled else {
+            // Fixture mode: no provider setup, no permission prompts, no
+            // settings-change callbacks that would re-activate real providers.
+            return
+        }
 
         // Setup providers
         setupProviders()
@@ -159,36 +178,38 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
 
     /// Preload WhisperKit model (for settings UI)
     public func preloadWhisperKit() {
+        guard realProvidersEnabled else { return }
         sttService.preloadWhisperKit()
     }
 
     // MARK: - VoiceInputHandler Protocol
 
     public var isRecording: Bool {
-        sttService.isRecording
+        realProvidersEnabled && sttService.isRecording
     }
 
     public var isProcessing: Bool {
-        sttService.isProcessing
+        realProvidersEnabled && sttService.isProcessing
     }
 
     public var audioLevel: Float {
-        audioLevelMonitor.audioLevel
+        realProvidersEnabled ? audioLevelMonitor.audioLevel : 0
     }
 
     public var statusDescription: String {
-        sttService.status.description
+        realProvidersEnabled ? sttService.status.description : "Voice input disabled"
     }
 
     public var isEnabled: Bool {
-        settings.voiceInputEnabled
+        realProvidersEnabled && settings.voiceInputEnabled
     }
 
     public var replaceSendButton: Bool {
-        settings.voiceButtonReplaceSend
+        realProvidersEnabled && settings.voiceButtonReplaceSend
     }
 
     public func toggleRecording() async {
+        guard realProvidersEnabled else { return }
         if sttService.isRecording {
             // Stop recording and transcribe
             if let transcription = await sttService.stopRecording() {
@@ -207,6 +228,7 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
     }
 
     public func cancelRecording() {
+        guard realProvidersEnabled else { return }
         // Stop audio level monitoring immediately
         audioLevelMonitor.stop()
 
@@ -220,6 +242,7 @@ public class VoiceInputHandlerAdapter: ObservableObject, VoiceInputHandler {
     }
 
     public func getTranscribedText() -> String? {
+        guard realProvidersEnabled else { return nil }
         let text = sttService.transcribedText
         print("[VoiceInputHandlerAdapter] getTranscribedText: '\(text)'")
         return text.isEmpty ? nil : text

@@ -1,4 +1,5 @@
 import Foundation
+import HelperCore
 import LangTools
 import OpenAI
 import Anthropic

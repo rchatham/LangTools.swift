@@ -54,10 +54,16 @@ public protocol LangToolsStreamableResponse: Decodable {
     static var empty: Self { get }
     func combining(with: Self) -> Self
     func updating(with accumulated: Self) -> Self
+    /// Validate the accumulated response at EOF, before executing tools or completing
+    /// the stream. Providers that require a terminal record should throw if it is absent.
+    func validateStreamCompletion() throws
 }
 
 extension LangToolsStreamableResponse {
     public func updating(with accumulated: Self) -> Self { self }
+
+    /// By default, EOF is sufficient. Providers opt in to stricter validation.
+    public func validateStreamCompletion() throws {}
 
     public var content: (any LangToolsContent)? { (self as? any LangToolsStreamableChatResponse)?.delta?.content.map { LangToolsTextContent(text: $0) }  ?? (self as? any LangToolsChatResponse)?.message?.content }
 }
@@ -186,6 +192,12 @@ public struct LangToolsRequestInfo {
     public var langTool: any LangTools
     public var model: any RawRepresentable
     public var messages: [any LangToolsMessage]
+
+    public init(langTool: any LangTools, model: any RawRepresentable, messages: [any LangToolsMessage]) {
+        self.langTool = langTool
+        self.model = model
+        self.messages = messages
+    }
 }
 
 extension LangToolsToolCallingRequest {
@@ -193,21 +205,36 @@ extension LangToolsToolCallingRequest {
         guard let tool_selections = response.tool_selection as? [Message.ToolSelection], !tool_selections.isEmpty else { return nil }
         var tool_results: [Message.ToolResult] = []
         for tool_selection in tool_selections {
+            try Task.checkCancellation()
             toolEventHandler?(.toolCalled(tool_selection))
-            guard let tool = tools?.first(where: { $0.name == tool_selection.name }) else { continue }
             do {
+                guard let tool = tools?.first(where: { $0.name == tool_selection.name }) else {
+                    toolEventHandler?(.toolCompleted(nil))
+                    continue
+                }
                 guard let args = tool_selection.arguments.isEmpty ? [:] : try? JSON(string: tool_selection.arguments).objectValue
                     else { throw LangToolsRequestError.failedToDecodeFunctionArguments(tool_selection.arguments) }
                 let missing = tool.tool_schema.required?.filter({ !args.keys.contains($0) })
                 guard missing?.isEmpty ?? true
                 else { throw LangToolsRequestError.missingRequiredFunctionArguments(missing!.joined(separator: ",")) }
                 let info = LangToolsRequestInfo(langTool: langTool, model: model, messages: messages)
-                guard let str = try await tool.callback?(info, args) else { toolEventHandler?(.toolCompleted(nil)); continue }
-                tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: str))
+                guard let str = try await tool.callback?(info, args) else {
+                    try Task.checkCancellation()
+                    toolEventHandler?(.toolCompleted(nil))
+                    continue
+                }
+                try Task.checkCancellation()
+                let result = Message.ToolResult(tool_selection_id: tool_selection.id!, result: str)
+                tool_results.append(result)
+                toolEventHandler?(.toolCompleted(result))
+            } catch let error as CancellationError {
+                toolEventHandler?(.toolCompleted(nil))
+                throw error
             } catch {
-                tool_results.append(Message.ToolResult(tool_selection_id: tool_selection.id!, result: "\(error.localizedDescription)", is_error: true))
+                let result = Message.ToolResult(tool_selection_id: tool_selection.id!, result: "\(error.localizedDescription)", is_error: true)
+                tool_results.append(result)
+                toolEventHandler?(.toolCompleted(result))
             }
-            toolEventHandler?(.toolCompleted(tool_results.last))
         }
         guard !tool_results.isEmpty else { return nil }
         var results: [Message] = []
@@ -220,16 +247,18 @@ extension LangToolsToolCallingRequest {
     }
 }
 
-public enum LangToolsRequestError: Error {
+public enum LangToolsRequestError: LocalizedError {
     case failedToDecodeFunctionArguments(String)
     case missingRequiredFunctionArguments(String)
     case multipleChoiceIndexOutOfBounds(Int)
+    case toolIterationLimitReached
 
-    var localizedDescription: String {
+    public var errorDescription: String? {
         switch self {
         case .failedToDecodeFunctionArguments(let str): return "Failed to decode function arguments: " + str
         case .missingRequiredFunctionArguments(let str): return "Missing required function arguments: " + str
         case .multipleChoiceIndexOutOfBounds(let int): return "Multiple choice index out of bounds: \(int)"
+        case .toolIterationLimitReached: return "Tool iteration limit reached."
         }
     }
 }

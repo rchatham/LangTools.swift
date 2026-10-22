@@ -27,7 +27,7 @@ let package = Package(
     dependencies: [
         .package(name: "langtools.swift", path: "../../"),
         .package(name: "ChatUI", path: "./ChatUI"),
-        .package(url: "https://github.com/rchatham/JSON.swift.git", from: "1.0.3"),
+        .package(url: "https://github.com/rchatham/JSON.swift.git", from: "1.0.4"),
         .package(url: "https://github.com/kishikawakatsumi/KeychainAccess.git", from: "4.0.0"),
         .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.6.0"),
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.18.0"),
@@ -50,6 +50,7 @@ let package = Package(
                 .product(name: "XAI", package: "langtools.swift"),
                 .product(name: "Gemini", package: "langtools.swift"),
                 .product(name: "Ollama", package: "langtools.swift"),
+                .product(name: "HelperLink", package: "langtools.swift"),
                 .product(name: "ChatUI", package: "ChatUI"),
                 "ToolKit",
                 "KeychainAccess",
@@ -88,6 +89,12 @@ let package = Package(
             ],
             path: "Tests/ToolKitTests"),
         .testTarget(
+            name: "AudioTests",
+            dependencies: [
+                "Audio",
+            ],
+            path: "Tests/AudioTests"),
+        .testTarget(
             name: "ChatTests",
             dependencies: [
                 "Chat",
@@ -95,9 +102,11 @@ let package = Package(
                 .product(name: "OpenAI", package: "langtools.swift"),
                 .product(name: "Anthropic", package: "langtools.swift"),
                 .product(name: "Ollama", package: "langtools.swift"),
+                .product(name: "HelperLink", package: "langtools.swift"),
                 "KeychainAccess",
             ],
-            path: "Tests/ChatTests"),
+            path: "Tests/ChatTests",
+            resources: [.copy("Resources/HelperCertificates")]),
         .testTarget(
             name: "ExampleAgentsTests",
             dependencies: [

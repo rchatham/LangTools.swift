@@ -15,6 +15,7 @@ let package = Package(
     ],
     products: [
         .library(name: "LangTools", targets: ["LangTools"]),
+        .library(name: "HelperLink", targets: ["HelperLink"]),
         .library(name: "Agents", targets: ["Agents"]),
         .library(name: "OpenAI", targets: ["OpenAI"]),
         .library(name: "Anthropic", targets: ["Anthropic"]),
@@ -25,7 +26,7 @@ let package = Package(
         .library(name: "WhisperKitLangTools", targets: ["WhisperKitLangTools"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/rchatham/JSON.swift.git", from: "1.0.3"),
+        .package(url: "https://github.com/rchatham/JSON.swift.git", from: "1.0.4"),
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.18.0"),
         // Benchmark comparison deps — only used by BenchmarkTests, not linked into any library product.
         // To run competitor benchmarks: uncomment these and the BenchmarkTests product deps below.
@@ -34,6 +35,8 @@ let package = Package(
         // .package(url: "https://github.com/MacPaw/OpenAI.git", from: "0.5.1"),
     ],
     targets: [
+        .target(name: "HelperLink"),
+        .testTarget(name: "HelperLinkTests", dependencies: ["HelperLink"]),
         .target(name: "LangTools", dependencies: [.product(name: "JSON", package: "JSON.swift")], resources: [.process("README.md")]),
         .target(name: "Agents", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),
         .target(name: "OpenAI", dependencies: [.target(name: "LangTools")], resources: [.process("README.md")]),

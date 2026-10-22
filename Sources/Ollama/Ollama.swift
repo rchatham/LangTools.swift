@@ -18,6 +18,7 @@ public final class Ollama: LangTools {
 
     public var configuration: OllamaConfiguration
     public var session: URLSession { configuration.session }
+    private let sessionLease: LangToolsSessionLease?
 
     public struct OllamaConfiguration {
         public var baseURL: URL
@@ -75,6 +76,7 @@ public final class Ollama: LangTools {
         session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
     ) {
         configuration = OllamaConfiguration(baseURL: baseURL, session: session)
+        sessionLease = nil
     }
 
     public init(
@@ -83,6 +85,7 @@ public final class Ollama: LangTools {
         session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)
     ) {
         configuration = OllamaConfiguration(baseURL: baseURL, apiKey: apiKey, session: session)
+        sessionLease = nil
     }
 
     public init(
@@ -99,10 +102,19 @@ public final class Ollama: LangTools {
         )
         configuration.cloudBaseURL = cloudBaseURL
         configuration.cloudAPIKey = cloudAPIKey
+        sessionLease = nil
     }
 
     public init(configuration: OllamaConfiguration) {
         self.configuration = configuration
+        sessionLease = nil
+    }
+
+    /// Retains shared retirement ownership of a captured transport session.
+    /// Default and raw-session initializers do not adopt retirement ownership.
+    public init(baseURL: URL, apiKey: String, sessionLease: LangToolsSessionLease) {
+        configuration = OllamaConfiguration(baseURL: baseURL, apiKey: apiKey, session: sessionLease.session)
+        self.sessionLease = sessionLease
     }
 
     /// Whether the request targets an Ollama-hosted cloud model (":cloud"

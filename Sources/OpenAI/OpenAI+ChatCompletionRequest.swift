@@ -192,6 +192,8 @@ extension OpenAI {
 
         public struct StreamOptions: Codable {
             let include_usage: Bool
+
+            public init(include_usage: Bool) { self.include_usage = include_usage }
         }
 
         public enum ReasoningEffort: String, Codable {
