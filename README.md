@@ -4,7 +4,7 @@ LangTools is a Swift framework for working with Large Language Models (LLMs) and
 
 ## Features
 
-- 🤖 **Multiple LLM Support**: OpenAI, Anthropic, X.AI, Google Gemini, Ollama, and OpenRouter
+- 🤖 **Multiple LLM Support**: OpenAI, Anthropic, X.AI, Google Gemini, Ollama, OpenRouter, Vercel AI Gateway, Groq, Mistral, DeepSeek, Cerebras, Together AI, Fireworks AI, and Cohere
 - 🔧 **Unified Interface**: Common protocols for working with different AI providers
 - 🤝 **Extensible Agent System**: Build specialized AI assistants with tools and delegation
 - 📝 **Streaming Support**: Handle streaming responses from AI models
@@ -132,6 +132,14 @@ See individual module README files for detailed documentation and examples:
 - [Gemini](Sources/Gemini/README.md)
 - [Ollama](Sources/Ollama/README.md)
 - [OpenRouter](Sources/OpenRouter/README.md)
+- [Vercel AI Gateway](Sources/VercelAIGateway/README.md)
+- [Groq](Sources/Groq/README.md)
+- [Mistral](Sources/Mistral/README.md)
+- [DeepSeek](Sources/DeepSeek/README.md)
+- [Cerebras](Sources/Cerebras/README.md)
+- [Together AI](Sources/TogetherAI/README.md)
+- [Fireworks AI](Sources/Fireworks/README.md)
+- [Cohere](Sources/Cohere/README.md)
 - [Performance comparison snapshot](docs/performance-comparison.html)
 
 ## Contributing

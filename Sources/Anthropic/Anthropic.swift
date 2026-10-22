@@ -25,18 +25,30 @@ public final class Anthropic: LangTools {
         public let apiKey: String
         public var session: URLSession
         public var logger: LangToolsLogger?
+        /// How the key is sent. Anthropic uses `x-api-key`; some gateways also
+        /// accept, or for tokens require, `Authorization: Bearer`.
+        public var authentication: Authentication
 
-        public init(baseURL: URL = URL(string: "https://api.anthropic.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil) {
+        public enum Authentication: Sendable {
+            /// `x-api-key: <key>`
+            case apiKeyHeader
+            /// `Authorization: Bearer <key>`
+            case bearer
+        }
+
+        public init(baseURL: URL = URL(string: "https://api.anthropic.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil, authentication: Authentication = .apiKeyHeader) {
             self.baseURL = baseURL
             self.apiKey = apiKey
             self.session = session
             self.logger = logger
+            self.authentication = authentication
         }
     }
 
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
-            { $0 is MessageRequest }
+            // Requests routed to a Messages-format gateway belong to that gateway.
+            { ($0 as? MessageRequest).map { $0.gatewayProviderID == nil } ?? false }
         ]
     }
 
@@ -72,7 +84,10 @@ public final class Anthropic: LangTools {
         urlRequest.httpMethod = "POST"
         urlRequest.addValue("application/json", forHTTPHeaderField: "content-type")
         urlRequest.addValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        urlRequest.addValue(apiKey, forHTTPHeaderField: "x-api-key")
+        switch configuration.authentication {
+        case .apiKeyHeader: urlRequest.addValue(apiKey, forHTTPHeaderField: "x-api-key")
+        case .bearer: urlRequest.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
 
         do {
             let encoder = JSONEncoder()

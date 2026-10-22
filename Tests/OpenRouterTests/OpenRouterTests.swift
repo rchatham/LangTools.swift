@@ -11,6 +11,7 @@ import LangTools
 @testable import TestUtils
 @testable import OpenRouter
 @testable import OpenAI
+import Anthropic
 
 final class OpenRouterTests: XCTestCase {
 
@@ -278,5 +279,21 @@ extension OpenRouter {
     internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
         _ = openAI.configure(testURLSessionConfiguration: testURLSessionConfiguration)
         return self
+    }
+}
+
+final class OpenRouterAnthropicGatewayTests: XCTestCase {
+    func testPrepareTargetsOpenRoutersMessagesEndpoint() throws {
+        let request = Anthropic.MessageRequest(model: .claude45Sonnet_20250929, messages: [.init(role: .user, content: "Hi")])
+            .routed(to: OpenRouterAnthropicGateway.anthropicProviderID)
+
+        let urlRequest = try OpenRouterAnthropicGateway(apiKey: "or-key").prepare(request: request)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(urlRequest.httpBody)) as? [String: Any])
+
+        XCTAssertEqual(urlRequest.url?.absoluteString, "https://openrouter.ai/api/v1/messages")
+        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "x-api-key"), "or-key")
+        XCTAssertEqual(body["model"] as? String, "anthropic/claude-sonnet-4.5")
+        XCTAssertFalse(Anthropic(apiKey: "key").canHandleRequest(request))
+        XCTAssertFalse(OpenRouter(apiKey: "or-key").canHandleRequest(request))
     }
 }

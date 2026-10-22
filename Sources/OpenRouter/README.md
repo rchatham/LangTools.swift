@@ -90,3 +90,19 @@ Set `OPENROUTER_TEST_MODEL` to override the default model, `openai/gpt-4o-mini`.
 See also:
 - [OpenRouter API reference](https://openrouter.ai/docs/api-reference/overview)
 - [Provider routing](https://openrouter.ai/docs/features/provider-routing)
+
+## Anthropic Messages format
+
+OpenRouter also accepts Anthropic's Messages format at `https://openrouter.ai/api/v1/messages`:
+
+```swift
+import Anthropic
+import OpenRouter
+
+let gateway = OpenRouterAnthropicGateway(apiKey: key)
+let request = Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages)
+    .routed(to: OpenRouterAnthropicGateway.anthropicProviderID)
+let response = try await gateway.perform(request: request)
+```
+
+The model is sent as its OpenRouter slug, `anthropic/claude-sonnet-4.6` (see `Anthropic.Model.gatewayModelID`); pass `modelID:` to `routed(to:modelID:)` to override it. Unrouted requests stay with `Anthropic`.
