@@ -6,9 +6,11 @@
 //
 
 import XCTest
+import LangTools
+
+#if canImport(Speech)
 import Speech
 import AVFoundation
-import LangTools
 @testable import AppleLangTools
 
 final class TranscriptionRequestTests: XCTestCase {
@@ -223,3 +225,4 @@ final class TranscriptionRequestTests: XCTestCase {
         return fileURL
     }
 }
+#endif
