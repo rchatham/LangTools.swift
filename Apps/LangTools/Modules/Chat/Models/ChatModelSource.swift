@@ -55,6 +55,19 @@ public final class ChatModelSource: ObservableObject {
         return result
     }
 
+    /// Picker presentation only: keep exactly the current independent selection
+    /// tagged when absent. Never add it to allModels/models or authorize a send.
+    public func pickerModels(retaining selection: Model) -> [Model] {
+        let available = allModels
+        guard isRetainedUnavailableSelection(selection) else { return available }
+        return [selection] + available
+    }
+
+    public func isRetainedUnavailableSelection(_ selection: Model) -> Bool {
+        guard isProxy, selection.route == .ollama || selection.route == .ollamaCloud else { return false }
+        return !allModels.contains(selection)
+    }
+
     public func update(_ state: State) { self.state = state }
 
     /// Replace local/Cloud-specific independent models. Only ollama and ollamaCloud

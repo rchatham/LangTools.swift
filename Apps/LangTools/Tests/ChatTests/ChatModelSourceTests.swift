@@ -121,9 +121,10 @@ final class ChatModelSourceTests: XCTestCase {
         XCTAssertEqual(viewModel.modelPickerTitle(for: proxyModel), proxyModel.rawValue)
 
         source.update(.failed("catalog fixture"))
-        XCTAssertEqual(viewModel.availableModels, [])
+        XCTAssertEqual(viewModel.availableModels, [proxyModel])
         XCTAssertEqual(viewModel.model, proxyModel, "Catalog failures preserve the server selection")
-        XCTAssertEqual(viewModel.modelPickerTitle(for: proxyModel), proxyModel.rawValue)
+        XCTAssertEqual(viewModel.modelPickerTitle(for: proxyModel),
+                       "\(proxyModel.rawValue) — Unavailable in current catalog")
 
         source.update(.direct)
         XCTAssertTrue(viewModel.availableModels.contains(.ollama(directModel)))
@@ -205,6 +206,68 @@ final class ChatModelSourceTests: XCTestCase {
             for model in models {
                 XCTAssertEqual(source.effectiveGenerationCapabilities(for: model), model.generationCapabilities)
             }
+        }
+    }
+
+    func testPickerRetentionIsPresentationOnlyAndNeverAddsUnrelatedSelection() throws {
+        let hosted = Model.openAI(.gpt4o_mini)
+        let missingHosted = Model.codex(.gpt5_4)
+        let localTag = try XCTUnwrap(Model(rawValue: "ollama/vendor/model:cloud"))
+        let normalizedCloud = try XCTUnwrap(Model(rawValue: "ollama-cloud/glm-5.2:cloud"))
+        XCTAssertEqual(localTag.rawValue, "ollama/vendor/model:cloud")
+        XCTAssertEqual(normalizedCloud.rawValue, "ollama-cloud/glm-5.2")
+        let source = ChatModelSource()
+        source.updateIndependentModels([testOllamaModel])
+        for state: ChatModelSource.State in [.ready([hosted]), .loading, .failed("fixture"),
+                                            .empty, .authenticationRequired, .unsupportedCatalog] {
+            source.update(state)
+            let catalog = source.allModels
+            for selected in [localTag, normalizedCloud] {
+                XCTAssertEqual(source.pickerModels(retaining: selected), [selected] + catalog)
+                XCTAssertTrue(source.isRetainedUnavailableSelection(selected))
+                XCTAssertEqual(source.allModels, catalog, "Retaining a tag is not catalog admission")
+                XCTAssertFalse(source.models.contains(selected))
+                XCTAssertFalse(source.independentModels.contains(selected))
+                XCTAssertEqual(source.reconciledSelection(selected), selected)
+            }
+            XCTAssertEqual(source.pickerModels(retaining: missingHosted), catalog)
+            XCTAssertEqual(source.pickerModels(retaining: testOllamaModel), catalog)
+            XCTAssertFalse(source.isRetainedUnavailableSelection(testOllamaModel))
+        }
+        source.update(.direct)
+        XCTAssertFalse(source.isRetainedUnavailableSelection(localTag))
+        XCTAssertEqual(source.pickerModels(retaining: localTag), source.allModels)
+    }
+
+    func testSettingsRetainedPickerLabelsTrackOnlyCurrentIndependentSelection() throws {
+        let local = try XCTUnwrap(Model(rawValue: "ollama/vendor/model:cloud"))
+        let cloud = try XCTUnwrap(Model(rawValue: "ollama-cloud/glm-5.2:cloud"))
+        let hosted = Model.openAI(.gpt4o_mini)
+        let source = ChatModelSource()
+        try withIsolatedSettings(modelSource: source) { viewModel, _ in
+            for state: ChatModelSource.State in [.ready([hosted]), .loading, .failed("fixture")] {
+                source.update(state)
+                for selected in [local, cloud] {
+                    viewModel.model = selected
+                    XCTAssertEqual(viewModel.availableModels.filter { $0 == selected }.count, 1)
+                    XCTAssertEqual(viewModel.modelPickerTitle(for: selected),
+                                   "\(selected.rawValue) — Unavailable in current catalog")
+                    let other = selected == local ? cloud : local
+                    XCTAssertFalse(viewModel.availableModels.contains(other))
+                    XCTAssertEqual(viewModel.modelPickerTitle(for: other), other.rawValue)
+                    XCTAssertEqual(Model(rawValue: selected.rawValue), selected)
+                    XCTAssertFalse(source.allModels.contains(selected))
+                }
+                viewModel.model = hosted
+                XCTAssertEqual(viewModel.availableModels, source.allModels)
+            }
+            viewModel.model = cloud
+            source.updateIndependentModels([cloud])
+            XCTAssertEqual(viewModel.modelPickerTitle(for: cloud), cloud.rawValue)
+            XCTAssertEqual(viewModel.availableModels.filter { $0 == cloud }.count, 1)
+            source.updateIndependentModels([])
+            XCTAssertEqual(viewModel.modelPickerTitle(for: cloud),
+                           "ollama-cloud/glm-5.2 — Unavailable in current catalog")
         }
     }
 

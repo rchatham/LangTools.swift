@@ -1353,7 +1353,7 @@ extension ChatSettingsView {
         }
 
         public var availableModels: [Model] {
-            if let modelSource, modelSource.isProxy { return modelSource.allModels }
+            if let modelSource, modelSource.isProxy { return modelSource.pickerModels(retaining: model) }
             let available = accessManager.availableChatModels()
             guard model.apiService == .ollama, !available.contains(model) else { return available }
             return [model] + available
@@ -1643,7 +1643,12 @@ extension ChatSettingsView {
         }
 
         func modelPickerTitle(for model: Model) -> String {
-            if isProxyContext { return model.rawValue }
+            if let modelSource, modelSource.isProxy {
+                if model == self.model, modelSource.isRetainedUnavailableSelection(model) {
+                    return "\(model.rawValue) — Unavailable in current catalog"
+                }
+                return model.rawValue
+            }
             if model.apiService == .ollama,
                !accessManager.availableChatModels().contains(model) {
                 return "\(model.rawValue) — Unavailable on current Ollama server"
