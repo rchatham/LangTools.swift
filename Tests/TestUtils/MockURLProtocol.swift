@@ -63,7 +63,7 @@ class MockURLProtocol: URLProtocol {
         "api.cerebras.ai",
         "api.together.xyz",
         "api.fireworks.ai",
-        "api.cohere.ai",
+        "api.cohere.com",
     ]
 
     private static func hasHandler(forPath path: String) -> Bool {

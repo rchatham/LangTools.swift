@@ -1,6 +1,6 @@
 # Cohere
 
-Cohere support for LangTools, built on the OpenAI chat format. Base URL: `https://api.cohere.ai/compatibility/v1/`.
+Cohere support for LangTools, built on the OpenAI chat format. Base URL: `https://api.cohere.com/compatibility/v1/`.
 
 ## Usage
 

@@ -19,7 +19,7 @@ public final class Cohere: OpenAICompatibleProvider {
 
     public static let providerID = LangToolsProviderID(rawValue: "cohere")
     public static let displayName = "Cohere"
-    public static let defaultBaseURL = URL(string: "https://api.cohere.ai/compatibility/v1/")!
+    public static let defaultBaseURL = URL(string: "https://api.cohere.com/compatibility/v1/")!
     public static let apiKeyEnvironmentVariable = "COHERE_API_KEY"
     public static let supportsModelListing = false
 

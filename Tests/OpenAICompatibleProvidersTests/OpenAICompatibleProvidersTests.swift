@@ -62,7 +62,7 @@ final class OpenAICompatibleProvidersTests: XCTestCase {
         try check(Cerebras(apiKey: "key"), "gpt-oss-120b", "https://api.cerebras.ai/v1/chat/completions")
         try check(TogetherAI(apiKey: "key"), "meta-llama/Llama-3.3-70B-Instruct-Turbo", "https://api.together.xyz/v1/chat/completions")
         try check(Fireworks(apiKey: "key"), "accounts/fireworks/models/deepseek-v3", "https://api.fireworks.ai/inference/v1/chat/completions")
-        try check(Cohere(apiKey: "key"), "command-a-03-2025", "https://api.cohere.ai/compatibility/v1/chat/completions")
+        try check(Cohere(apiKey: "key"), "command-a-03-2025", "https://api.cohere.com/compatibility/v1/chat/completions")
     }
 
     func testToolchainRoutesTaggedModelsToTheirProvider() throws {
