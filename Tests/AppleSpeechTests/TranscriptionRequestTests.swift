@@ -5,6 +5,8 @@
 //  Tests for TranscriptionRequest functionality
 //
 
+// Apple's Speech framework is unavailable on Linux; the module builds empty there.
+#if canImport(Speech)
 import XCTest
 import Speech
 import AVFoundation
@@ -223,3 +225,4 @@ final class TranscriptionRequestTests: XCTestCase {
         return fileURL
     }
 }
+#endif

@@ -5,6 +5,8 @@
 //  On-device speech recognition using Apple's Speech framework
 //
 
+// Apple's Speech framework is unavailable on Linux; the module builds empty there.
+#if canImport(Speech)
 import Foundation
 import Speech
 
@@ -46,3 +48,4 @@ public enum AppleSpeech {
         SFSpeechRecognizer.authorizationStatus()
     }
 }
+#endif

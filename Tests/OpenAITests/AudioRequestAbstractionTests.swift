@@ -52,7 +52,7 @@ final class AudioRequestAbstractionTests: XCTestCase {
     }
 
     @MainActor
-    func testOpenAISpeechRecognitionProviderExposesReusableSpeechRecognitionProvider() {
+    func testOpenAISpeechRecognitionProviderExposesReusableSpeechRecognitionProvider() async {
         let provider = OpenAISpeechRecognitionProvider(openAI: OpenAI(apiKey: "test"), defaultFileType: .mp3)
 
         XCTAssertTrue(provider.isAvailable)
@@ -62,7 +62,7 @@ final class AudioRequestAbstractionTests: XCTestCase {
     }
 
     @MainActor
-    func testOpenAISpeechRecognitionProviderDoesNotRequireAVFoundationConversion() {
+    func testOpenAISpeechRecognitionProviderDoesNotRequireAVFoundationConversion() async {
         let provider = OpenAISpeechRecognitionProvider(defaultFileType: .mp3)
 
         provider.updateDefaultFileType(.m4a)
@@ -73,7 +73,7 @@ final class AudioRequestAbstractionTests: XCTestCase {
     }
 
     @MainActor
-    func testOpenAISpeechRecognitionProviderPreservesInjectedClientWhenRefreshing() {
+    func testOpenAISpeechRecognitionProviderPreservesInjectedClientWhenRefreshing() async {
         let provider = OpenAISpeechRecognitionProvider(openAI: OpenAI(apiKey: "test"))
 
         provider.refreshApiKey()
@@ -84,7 +84,7 @@ final class AudioRequestAbstractionTests: XCTestCase {
     }
 
     @MainActor
-    func testOpenAISpeechRecognitionProviderPreservesUpdatedClientWhenRefreshing() {
+    func testOpenAISpeechRecognitionProviderPreservesUpdatedClientWhenRefreshing() async {
         let provider = OpenAISpeechRecognitionProvider()
 
         provider.updateOpenAI(OpenAI(apiKey: "test"))

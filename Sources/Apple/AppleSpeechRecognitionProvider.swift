@@ -1,3 +1,5 @@
+// Apple's Speech framework is unavailable on Linux; the module builds empty there.
+#if canImport(Speech)
 import AVFoundation
 import Foundation
 import LangTools
@@ -466,3 +468,4 @@ enum AppleLangToolsAudioConverter {
         return try Data(contentsOf: tempWAV)
     }
 }
+#endif

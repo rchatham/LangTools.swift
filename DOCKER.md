@@ -113,14 +113,18 @@ Optimizes Docker builds by excluding:
 
 ## Linux Compatibility
 
-The library includes compatibility shims for Linux in `Sources/LangTools/URL+Compatibility.swift`:
+The library includes compatibility shims for Linux, compiled only where Darwin is unavailable:
 
-1. **URLSession.data(for:)**: Wraps `dataTask` for async/await support
-2. **URL.appending(path:)**: Uses `appendingPathComponent` on Swift < 5.10
+1. **URLSession.data(for:)** and **URLSession.bytes(for:)** (`Sources/LangTools/URLSession+AsyncBytes.swift`): stream the response body through a session-level data delegate, so streamed responses arrive incrementally, cancelling the consumer cancels the request, and authentication challenges and redirects are forwarded to the caller's session delegate
+2. **URL.appending(path:)** (`Sources/LangTools/URL+Compatibility.swift`): Uses `appendingPathComponent` on Swift < 5.10
 3. **URL.appending(queryItems:)**: Uses `URLComponents` on Swift < 5.10
 4. **URL(filePath:)**: Uses `URL(fileURLWithPath:)` on Swift < 5.10
 
 These extensions are conditionally compiled with `#if !canImport(Darwin)` to ensure they only apply to Linux.
+
+The `AppleLangTools` module and `AppleSpeechTests` build empty on Linux because Apple's Speech framework is unavailable there.
+
+Tests run serially (`--no-parallel`) because several suites share process-global `MockURLProtocol` state. CI runs the full suite on Linux with Swift 6.0 (the `linux-tests` job); the other Swift versions here are best-effort.
 
 ## Troubleshooting
 

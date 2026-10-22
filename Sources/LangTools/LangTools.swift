@@ -101,7 +101,8 @@ extension LangTools {
                         delegate: session.delegate as? any URLSessionTaskDelegate
                     )
                     #else
-                    // FoundationNetworking uses the package's compatibility shim.
+                    // FoundationNetworking uses the package's streaming shim, which forwards
+                    // challenges and redirects to the session delegate.
                     let (bytes, response) = try await session.bytes(for: httpRequest)
                     #endif
                     log?.debug("Got response from server")

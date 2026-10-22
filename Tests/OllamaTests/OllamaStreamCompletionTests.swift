@@ -316,9 +316,6 @@ final class OllamaStreamCompletionTests: XCTestCase {
         }
     }
 
-    #if canImport(Darwin)
-    // The Linux compatibility shim buffers the entire HTTP body, so a blocked
-    // response cannot deliver partial content before EOF there.
     func testCancellingIncompleteStreamDoesNotBecomeCompletionFailure() async {
         for endpoint in Endpoint.allCases {
             let received = DispatchSemaphore(value: 0)
@@ -341,8 +338,6 @@ final class OllamaStreamCompletionTests: XCTestCase {
             XCTAssertTrue(CompletionStreamingURLProtocol.waitForStop())
         }
     }
-
-    #endif
 
     private enum Endpoint: CaseIterable {
         case chat, generate

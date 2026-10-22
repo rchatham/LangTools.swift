@@ -5,6 +5,8 @@
 //  Model definitions for AppleSpeech provider
 //
 
+// Apple's Speech framework is unavailable on Linux; the module builds empty there.
+#if canImport(Speech)
 import Foundation
 
 extension AppleSpeech {
@@ -21,3 +23,4 @@ extension AppleSpeech {
         public var displayName: String { "Apple Speech (On-Device)" }
     }
 }
+#endif

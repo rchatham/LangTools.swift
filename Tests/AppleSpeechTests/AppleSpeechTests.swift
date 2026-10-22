@@ -5,6 +5,8 @@
 //  Tests for AppleSpeech module functionality
 //
 
+// Apple's Speech framework is unavailable on Linux; the module builds empty there.
+#if canImport(Speech)
 import XCTest
 import Speech
 import LangTools
@@ -159,3 +161,4 @@ final class AppleSpeechTests: XCTestCase {
         XCTAssertEqual(decoded, model)
     }
 }
+#endif

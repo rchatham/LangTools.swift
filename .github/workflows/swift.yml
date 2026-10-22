@@ -54,6 +54,23 @@ jobs:
       # Follow-up for MockURLProtocol hardening: https://github.com/rchatham/LangTools.swift/issues/41
       run: swift test -v --no-parallel --skip AppleSpeechTests --skip WhisperKitLangToolsTests
 
+  linux-tests:
+    runs-on: ubuntu-latest
+    container: swift:6.0.3-jammy
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - name: Build
+      run: swift build --build-tests
+    - name: Run tests
+      # FoundationNetworking path: exercises the streaming URLSession shim.
+      # Serial for the same MockURLProtocol reasons as the macOS job; Apple
+      # speech targets build empty on Linux.
+      run: swift test --skip-build --no-parallel
+
   helper-mobile-tests:
     runs-on: macos-latest
     timeout-minutes: 30

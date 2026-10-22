@@ -5,6 +5,8 @@
 //  Speech-to-text transcription request for Apple Speech framework
 //
 
+// Apple's Speech framework is unavailable on Linux; the module builds empty there.
+#if canImport(Speech)
 import Foundation
 import Speech
 import AVFoundation
@@ -199,3 +201,4 @@ public enum AppleSpeechError: Error, LocalizedError {
         }
     }
 }
+#endif
