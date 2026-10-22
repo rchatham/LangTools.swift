@@ -196,6 +196,79 @@ final class ChatModelSourceTests: XCTestCase {
         XCTAssertNil(viewModel.generationSettingsError)
     }
 
+    func testDefaultEffectiveCapabilitiesPreserveModelAPIInEveryCatalogState() throws {
+        let source = ChatModelSource()
+        let models: [Model] = [.openAI(.gpt4o_mini), .codex(.gpt5_4),
+                              testOllamaModel, testOllamaCloudModel]
+        for state: ChatModelSource.State in [.direct, .loading, .ready(models), .failed("fixture")] {
+            source.update(state)
+            for model in models {
+                XCTAssertEqual(source.effectiveGenerationCapabilities(for: model), model.generationCapabilities)
+            }
+        }
+    }
+
+    func testEffectiveCapabilitiesChangeWithoutClearingSavedGenerationSettings() throws {
+        let cloud = testOllamaCloudModel
+        var nativeTransport = true
+        let source = ChatModelSource(generationCapabilities: { model in
+            nativeTransport ? model.generationCapabilities : Model.openAI(.gpt4o_mini).generationCapabilities
+        })
+        try withIsolatedSettings(modelSource: source) { viewModel, store in
+            viewModel.model = cloud
+            viewModel.updateTopK(37)
+            XCTAssertEqual(viewModel.generationSettings.topK, 37)
+            XCTAssertTrue(viewModel.effectiveGenerationCapabilities.supportsTopK)
+            nativeTransport = false
+            source.update(.ready([.openAI(.gpt4o_mini)]))
+            XCTAssertFalse(viewModel.effectiveGenerationCapabilities.supportsTopK)
+            viewModel.saveSettings()
+            XCTAssertEqual(store.settings.topK, 37)
+            viewModel.loadSettings()
+            XCTAssertEqual(viewModel.generationSettings.topK, 37)
+            nativeTransport = true
+            source.update(.direct)
+            XCTAssertTrue(viewModel.effectiveGenerationCapabilities.supportsTopK)
+            XCTAssertEqual(viewModel.generationSettings.topK, 37)
+            XCTAssertTrue(cloud.generationCapabilities.supportsTopK, "Public Model semantics are unchanged")
+        }
+    }
+
+    /// No successful credential operation is required. Named suites are removed
+    /// only after the ViewModel (and its nested-store consumers) has been released.
+    private func withIsolatedSettings(
+        modelSource: ChatModelSource,
+        body: (ChatSettingsView.ViewModel, FakeGenSettingsStore) throws -> Void
+    ) throws {
+        let suiteName = "ChatModelSourceTests.settings.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        weak var consumer: ChatSettingsView.ViewModel?
+        defer {
+            if consumer == nil { defaults.removePersistentDomain(forName: suiteName) }
+            else { XCTFail("Settings consumer outlived the fixture; suite retained for diagnosis") }
+        }
+        try autoreleasepool {
+            let keychain = Keychain(service: suiteName)
+            let keys = KeychainService(keychain: keychain)
+            let endpoint = OllamaEndpointConfiguration(
+                userDefaults: defaults, credentialStore: MobileHelperCredentialStore(keychain: keychain)
+            )
+            let access = ProviderAccessManager(
+                keychainService: keys, sessionStore: AuthSessionStore(keychain: keychain),
+                ollamaEndpointConfiguration: endpoint, ollamaCloudAccessEligibility: { false }
+            )
+            let store = FakeGenSettingsStore()
+            let viewModel = ChatSettingsView.ViewModel(
+                clearMessages: {}, modelSource: modelSource, generationSettingsStore: store,
+                conversationSettingsStore: ChatConversationSettingsStore(userDefaults: defaults),
+                accessManager: access, codexHelperTokenStore: CodexHelperTokenStore(defaults: defaults, keychain: keys)
+            )
+            consumer = viewModel
+            try body(viewModel, store)
+        }
+        XCTAssertNil(consumer)
+    }
+
     // MARK: - Independent model preservation
 
     private var testOllamaModel: Model {

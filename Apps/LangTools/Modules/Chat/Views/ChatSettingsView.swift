@@ -966,7 +966,8 @@ public struct ChatSettingsView: View {
         }
     }
 
-    private var generationSettingsControls: some View {
+    // Internal composition seam also used by the guarded host render harness.
+    var generationSettingsControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             ChatGenerationSettingsView(
                 maxOutputTokens: Binding(
@@ -1001,9 +1002,16 @@ public struct ChatSettingsView: View {
                     get: { viewModel.generationSettings.stop },
                     set: { viewModel.updateStop($0) }
                 ),
-                capabilities: viewModel.model.generationCapabilities,
+                capabilities: viewModel.effectiveGenerationCapabilities,
                 reset: viewModel.resetGenerationSettings
             )
+            if viewModel.model.generationCapabilities.supportsTopK,
+               !viewModel.effectiveGenerationCapabilities.supportsTopK {
+                Text("Top K is inactive for this transport. Its saved value is retained for supported transports.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .accessibilityIdentifier("generation.topK.inactive")
+            }
             if let error = viewModel.generationSettingsError {
                 Text(error)
                     .font(.caption)
@@ -1338,6 +1346,10 @@ extension ChatSettingsView {
             accessManager.objectWillChange
                 .sink { [weak self] _ in self?.objectWillChange.send() }
                 .store(in: &cancellables)
+        }
+
+        public var effectiveGenerationCapabilities: ChatGenerationCapabilities {
+            modelSource?.effectiveGenerationCapabilities(for: model) ?? model.generationCapabilities
         }
 
         public var availableModels: [Model] {

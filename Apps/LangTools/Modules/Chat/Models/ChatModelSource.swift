@@ -22,7 +22,21 @@ public final class ChatModelSource: ObservableObject {
     public var retry: () -> Void = {}
     public var signIn: () -> Void = {}
 
-    public init(state: State = .loading) { self.state = state }
+    private let capabilityResolver: (Model) -> ChatGenerationCapabilities
+
+    /// Hosts may narrow model capabilities to match their transport. Without a
+    /// resolver, existing model-only behavior is unchanged in every catalog state.
+    public init(
+        state: State = .loading,
+        generationCapabilities: @escaping (Model) -> ChatGenerationCapabilities = { $0.generationCapabilities }
+    ) {
+        self.state = state
+        self.capabilityResolver = generationCapabilities
+    }
+
+    public func effectiveGenerationCapabilities(for model: Model) -> ChatGenerationCapabilities {
+        capabilityResolver(model)
+    }
 
     public var isProxy: Bool { state != .direct }
 
