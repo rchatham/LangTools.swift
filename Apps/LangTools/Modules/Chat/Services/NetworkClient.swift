@@ -459,7 +459,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             guard let context = provider.providerContext(id: id, toolchain: toolchainSnapshot()) else {
                 throw NetworkError.langToolNotRegistered(provider.displayName)
             }
-            return AgentContext(langTool: context.langTool, model: context.model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
+            // The existential initializer: the provider's concrete type is erased here.
+            return AgentContext(langTool: context.langTool, model: context.model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler, parent: nil, tools: nil)
         case .ollama(let model):
             let snapshot = ollamaEndpointConfiguration.snapshot()
             return AgentContext(langTool: try snapshot.provider(directSession: ollamaSession), model: model, messages: replayMessages.toOllamaMessages(), eventHandler: eventHandler)
