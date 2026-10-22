@@ -63,6 +63,18 @@ Those observations describe one instrumented invocation. They do **not** reprodu
 
 Verification then ran locally against the restored source: **20/20** serial repetitions each of the initialization-timeout, process-restart and oversized-unterminated tests, **5/5** each of three ordered pairs, every dedicated control/diagnostic case, and the full 27-case client suite (twice, including once without `PR77_TEST_EVIDENCE` to match CI). All green, with no production change. Independent review rejected publishing the entire diagnostic scaffold — one test froze the startup-producing-getter hazard as an accepted contract, and the prestarted-waiter ordering assertion is scheduler-sensitive — so only a hardened finite flush-then-exit test was kept: it decodes just newline-terminated fixture records and starts shutdown independently of observation-task joins with an explicit bounded-cleanup failure. Final check of that narrowed file: **20/20** repetitions plus the three affected tests and two full client suites, all green. The historical failures remain unexplained and no production fix is implied.
 
+### October 22 exit-status attribution fix
+
+Remote CI then reproduced the historical "unexpected process exit" class rather than clearing it: at head `00ab9133`, `helper-mobile-tests` failed **2/2 attempts** (first run and one rerun) on `testProcessExitIsReportedAndNextRequestRestartsServer` with `Expected exited error, got transport("Codex app-server closed stdout.")`. The same code passed 20/20 locally, so this is an ordering race the runner reliably hits.
+
+Cause: `stdoutClosed` classified EOF solely through `process.isRunning`. When the stdout EOF was observed before the reaper flipped that flag, pending requests resumed with a transport failure and the exit status was lost; the later termination callback could not correct an already-resumed error.
+
+The fix waits a **bounded grace** after EOF before classifying it: an absolute 250 ms `ContinuousClock` deadline, sleeping at most 10 ms at a time, then attributing `.exited(status:stderr:)` through the existing termination path. A child that closes stdout and keeps running still fails closed once the grace expires. The grace task is generation-scoped, detached from caller cancellation, and joined by `invalidateProcessAndWait` so teardown cannot race it. Production timers, ownership and buffering are unchanged.
+
+`testStdoutCloseBeforeProcessReapingAttributesExitStatus` covers it with a fixture that flushes and closes OS descriptor 1 while still alive, waits 150 ms, then exits 7. Against the unfixed runtime that test fails **3/3** with the exact CI error; with the fix it passes, and post-correction verification was **63/63** green (20/20 new test, 20/20 restart, 20/20 oversized-unterminated, the separate-timeout case, and two full client suites including one without `PR77_TEST_EVIDENCE`). Independent code and security review both returned PASS. Fresh remote checks for this change are tracked on the PR, not assumed here.
+
+The fix does not explain the separate oversized request-timeout reds, and a bounded grace is not a strict wall-clock guarantee under actor scheduling contention.
+
 Reproduce the focused checks:
 
 ```sh
