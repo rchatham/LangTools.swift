@@ -273,45 +273,6 @@ final class OpenAICompatibleProviderTests: XCTestCase {
         XCTAssertFalse(reserved.contains("toolEventHandler"))
     }
 
-    // MARK: - additionalHeaders
-
-    func testAdditionalHeadersAreSentAlongsideAuthorization() throws {
-        let openAI = OpenAI(configuration: .init(
-            baseURL: URL(string: "https://openrouter.ai/api/v1/")!, apiKey: "k",
-            additionalHeaders: ["HTTP-Referer": "https://example.com", "X-OpenRouter-Title": "LangTools"]))
-
-        let urlRequest = try openAI.prepare(request: makeRequest())
-
-        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "HTTP-Referer"), "https://example.com")
-        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "X-OpenRouter-Title"), "LangTools")
-        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "Authorization"), "Bearer k")
-        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "Content-Type"), "application/json")
-        XCTAssertEqual(urlRequest.url?.absoluteString, "https://openrouter.ai/api/v1/chat/completions")
-    }
-
-    func testReservedHeadersAreRejectedCaseInsensitively() throws {
-        for name in ["authorization", "AUTHORIZATION", "Content-Length", "x-api-key", "Transfer-Encoding", "Host"] {
-            let openAI = OpenAI(configuration: .init(apiKey: "k", additionalHeaders: [name: "value"]))
-            assertInvalidArgument(try openAI.prepare(request: makeRequest()), containing: name)
-        }
-    }
-
-    func testHeaderValuesWithLineBreaksAreRejected() throws {
-        for value in ["LangTools\r\nX-Injected: 1", "LangTools\nX-Injected: 1"] {
-            let openAI = OpenAI(configuration: .init(apiKey: "k", additionalHeaders: ["X-OpenRouter-Title": value]))
-            assertInvalidArgument(try openAI.prepare(request: makeRequest()), containing: "line break")
-        }
-    }
-
-    func testHeaderNamesMustBeTokens() throws {
-        for name in ["X-Title\r\nX-Injected", "X Title", "X-Title:", "", "Tïtle"] {
-            let openAI = OpenAI(configuration: .init(apiKey: "k", additionalHeaders: [name: "value"]))
-            assertInvalidArgument(try openAI.prepare(request: makeRequest()), containing: "not a valid header name")
-        }
-        let openAI = OpenAI(configuration: .init(apiKey: "k", additionalHeaders: ["X-OpenRouter-Title": "ok", "HTTP-Referer": "https://example.com"]))
-        XCTAssertNoThrow(try openAI.prepare(request: makeRequest()))
-    }
-
     // MARK: - Provider tag
 
     private let gateway = LangToolsProviderID(rawValue: "example.gateway")

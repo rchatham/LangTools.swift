@@ -12,6 +12,7 @@ import FoundationNetworking
 #endif
 import LangTools
 import OpenAI
+import OpenAICompatible
 
 public final class Cohere: OpenAICompatibleProvider {
     public typealias Model = OpenAICompatibleModel<Cohere>

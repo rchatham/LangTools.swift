@@ -131,6 +131,8 @@ See individual module README files for detailed documentation and examples:
 - [XAI](Sources/XAI/README.md)
 - [Gemini](Sources/Gemini/README.md)
 - [Ollama](Sources/Ollama/README.md)
+- [OpenAICompatible](Sources/OpenAICompatible/README.md) - Shared support for providers serving OpenAI's format
+- [AnthropicCompatible](Sources/AnthropicCompatible/README.md) - Shared support for providers serving Anthropic's Messages format
 - [OpenRouter](Sources/OpenRouter/README.md)
 - [Vercel AI Gateway](Sources/VercelAIGateway/README.md)
 - [Groq](Sources/Groq/README.md)

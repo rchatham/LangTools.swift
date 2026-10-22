@@ -9,6 +9,7 @@
 import Foundation
 import LangTools
 import OpenAI
+import OpenAICompatible
 import VercelAIGateway
 import Groq
 import Mistral

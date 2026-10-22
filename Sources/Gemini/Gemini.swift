@@ -11,31 +11,43 @@ import FoundationNetworking
 #endif
 import LangTools
 import OpenAI
+import OpenAICompatible
 
-public final class Gemini: LangTools {
+/// Serves Gemini's OpenAI-compatible API. Requests for `Gemini.Model` cases
+/// route here untagged, as before; any other Gemini model ID can be sent as an
+/// `OpenAICompatibleModel<Gemini>`, which is tagged for Gemini.
+public final class Gemini: OpenAICompatibleProvider {
     public typealias Model = GeminiModel
     public typealias ErrorResponse = GeminiErrorResponse
 
+    public static let providerID = LangToolsProviderID(rawValue: "gemini")
+    public static let displayName = "Gemini"
+    public static let defaultBaseURL = URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/")!
+    public static let apiKeyEnvironmentVariable = "GEMINI_API_KEY"
+
+    /// The models of `Gemini.Model`, as tagged compatible models.
+    public static var knownModels: [OpenAICompatibleModel<Gemini>] {
+        Model.allCases.compactMap { OpenAICompatibleModel(rawValue: $0.rawValue) }
+    }
+
+    /// Claims untagged requests for `Gemini.Model` cases, as before, and
+    /// requests tagged for Gemini.
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         [
             { ($0 as? OpenAI.ChatCompletionRequest).flatMap { $0.model.providerID == nil && OpenAIModel.geminiModels.contains($0.model) } ?? false },
-        ]
+        ] + compatibleRequestValidators
     }
 
-    public var session: URLSession { openAI.session }
-    public var logger: LangToolsLogger? { openAI.logger }
+    public let openAI: OpenAI
 
-    let openAI: OpenAI
-
-    public init(baseURL: URL = URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil) {
+    public init(baseURL: URL = Gemini.defaultBaseURL, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil) {
         openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey, session: session, logger: logger))
     }
 
-    public func prepare(request: some LangToolsRequest) throws -> URLRequest {
-        try openAI.prepare(request: request)
-    }
-
     public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        if let model = model as? OpenAICompatibleModel<Gemini> {
+            return try compatibleChatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
+        }
         guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
         return try OpenAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
     }

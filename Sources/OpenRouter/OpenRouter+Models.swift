@@ -8,6 +8,7 @@ import Foundation
 import FoundationNetworking
 #endif
 import LangTools
+import OpenAICompatible
 
 extension OpenRouter {
     /// Lists the catalog with `GET /models`. With no paging parameters the

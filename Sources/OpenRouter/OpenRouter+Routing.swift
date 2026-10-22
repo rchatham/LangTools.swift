@@ -9,6 +9,7 @@
 import Foundation
 import LangTools
 import OpenAI
+import OpenAICompatible
 
 extension OpenRouter {
     /// Controls which upstream providers serve a request (the `provider` field).

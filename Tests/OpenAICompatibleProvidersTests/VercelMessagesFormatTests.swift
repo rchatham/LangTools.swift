@@ -1,5 +1,5 @@
 //
-//  VercelAnthropicGatewayTests.swift
+//  VercelMessagesFormatTests.swift
 //  OpenAICompatibleProvidersTests
 //
 
@@ -12,8 +12,9 @@ import LangTools
 @testable import Anthropic
 import OpenAI
 import VercelAIGateway
+import OpenAICompatible
 
-final class VercelAnthropicGatewayTests: XCTestCase {
+final class VercelMessagesFormatTests: XCTestCase {
 
     var session: URLSession!
 
@@ -33,23 +34,24 @@ final class VercelAnthropicGatewayTests: XCTestCase {
 
     private func request() -> Anthropic.MessageRequest {
         Anthropic.MessageRequest(model: .claude46Sonnet, messages: [.init(role: .user, content: "Hi")])
-            .routed(to: VercelAnthropicGateway.anthropicProviderID)
+            .routed(to: VercelAIGateway.providerID)
     }
 
     func testPrepareTargetsTheGatewayWithItsModelID() throws {
-        let urlRequest = try VercelAnthropicGateway(apiKey: "key").prepare(request: request())
+        let urlRequest = try VercelAIGateway(apiKey: "key").prepare(request: request())
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(urlRequest.httpBody)) as? [String: Any])
 
         XCTAssertEqual(urlRequest.url?.absoluteString, "https://ai-gateway.vercel.sh/v1/messages")
-        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "x-api-key"), "key")
+        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "Authorization"), "Bearer key")
+        XCTAssertNil(urlRequest.value(forHTTPHeaderField: "x-api-key"))
         XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "anthropic-version"), "2023-06-01")
         XCTAssertEqual(body["model"] as? String, "anthropic/claude-sonnet-4.6")
         XCTAssertEqual(body["max_tokens"] as? Int, 4096)
     }
 
-    func testExplicitModelIDAndBearerAuthentication() throws {
-        let gateway = VercelAnthropicGateway(apiKey: "oidc-token", authentication: .bearer)
-        let routed = request().routed(to: VercelAnthropicGateway.anthropicProviderID, modelID: "anthropic/claude-opus-5.5")
+    func testExplicitModelIDWithAnOIDCToken() throws {
+        let gateway = VercelAIGateway(apiKey: "oidc-token")
+        let routed = request().routed(to: VercelAIGateway.providerID, modelID: "anthropic/claude-opus-5.5")
 
         let urlRequest = try gateway.prepare(request: routed)
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(urlRequest.httpBody)) as? [String: Any])
@@ -62,19 +64,20 @@ final class VercelAnthropicGatewayTests: XCTestCase {
     func testToolchainKeepsDirectAndGatewayRequestsApart() throws {
         var toolchain = LangToolchain()
         toolchain.register(Anthropic(apiKey: "anthropic"))
-        toolchain.register(VercelAnthropicGateway(apiKey: "vercel"))
         toolchain.register(VercelAIGateway(apiKey: "vercel"))
         let direct = Anthropic.MessageRequest(model: .claude46Sonnet, messages: [.init(role: .user, content: "Hi")])
+        let chat = OpenAI.ChatCompletionRequest(model: "anthropic/claude-sonnet-4.5" as VercelAIGateway.Model, messages: [.init(role: .user, content: "Hi")])
 
         XCTAssertEqual(try toolchain.prepare(request: direct).url?.host, "api.anthropic.com")
-        XCTAssertEqual(try toolchain.prepare(request: request()).url?.host, "ai-gateway.vercel.sh")
+        XCTAssertEqual(try toolchain.prepare(request: request()).url?.absoluteString, "https://ai-gateway.vercel.sh/v1/messages")
+        XCTAssertEqual(try toolchain.prepare(request: chat).url?.absoluteString, "https://ai-gateway.vercel.sh/v1/chat/completions")
     }
 
     func testChatRequestIsRoutedToTheGateway() throws {
-        let chat = try VercelAnthropicGateway.chatRequest(model: Anthropic.Model.claude46Sonnet, messages: [], tools: nil, responseSchema: nil, toolEventHandler: { _ in })
+        let chat = try VercelAIGateway.chatRequest(model: Anthropic.Model.claude46Sonnet, messages: [], tools: nil, responseSchema: nil, toolEventHandler: { _ in })
         let request = try XCTUnwrap(chat as? Anthropic.MessageRequest)
 
-        XCTAssertTrue(VercelAnthropicGateway(apiKey: "key").canHandleRequest(request))
+        XCTAssertTrue(VercelAIGateway(apiKey: "key").canHandleRequest(request))
         XCTAssertFalse(Anthropic(apiKey: "key").canHandleRequest(request))
     }
 
@@ -84,7 +87,7 @@ final class VercelAnthropicGatewayTests: XCTestCase {
             XCTAssertEqual(request.url?.host, "ai-gateway.vercel.sh")
             return (.success(try response.streamData()), 200)
         }
-        let gateway = VercelAnthropicGateway(apiKey: "key", session: session)
+        let gateway = VercelAIGateway(apiKey: "key", session: session)
 
         var text = ""
         for try await chunk in gateway.stream(request: request()) {
@@ -98,7 +101,7 @@ final class VercelAnthropicGatewayTests: XCTestCase {
         do {
             _ = try await gateway.perform(request: request())
             XCTFail("Expected a 404")
-        } catch LangToolsError.responseUnsuccessful(let status, let error as AnthropicGatewayErrorResponse) {
+        } catch LangToolsError.responseUnsuccessful(let status, let error as OpenAICompatibleErrorResponse) {
             XCTAssertEqual(status, 404)
             XCTAssertEqual(error.type, "model_not_found")
         }

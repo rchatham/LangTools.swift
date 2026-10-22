@@ -12,6 +12,7 @@ import FoundationNetworking
 import Gemini
 import LangTools
 import OpenAI
+import OpenAICompatible
 import OpenRouter
 import XAI
 import Combine

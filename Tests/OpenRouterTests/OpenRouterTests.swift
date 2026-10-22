@@ -282,18 +282,49 @@ extension OpenRouter {
     }
 }
 
-final class OpenRouterAnthropicGatewayTests: XCTestCase {
-    func testPrepareTargetsOpenRoutersMessagesEndpoint() throws {
-        let request = Anthropic.MessageRequest(model: .claude45Sonnet_20250929, messages: [.init(role: .user, content: "Hi")])
-            .routed(to: OpenRouterAnthropicGateway.anthropicProviderID)
+final class OpenRouterMessagesFormatTests: XCTestCase {
+    private func messagesRequest() -> Anthropic.MessageRequest {
+        Anthropic.MessageRequest(model: .claude45Sonnet_20250929, messages: [.init(role: .user, content: "Hi")])
+            .routed(to: OpenRouter.providerID)
+    }
 
-        let urlRequest = try OpenRouterAnthropicGateway(apiKey: "or-key").prepare(request: request)
+    func testMessagesRequestsTargetTheMessagesEndpointWithBearerAuth() throws {
+        let urlRequest = try OpenRouter(apiKey: "or-key", appTitle: "LangTools").prepare(request: messagesRequest())
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(urlRequest.httpBody)) as? [String: Any])
 
         XCTAssertEqual(urlRequest.url?.absoluteString, "https://openrouter.ai/api/v1/messages")
-        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "x-api-key"), "or-key")
+        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "Authorization"), "Bearer or-key")
+        XCTAssertNil(urlRequest.value(forHTTPHeaderField: "x-api-key"))
+        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "anthropic-version"), "2023-06-01")
+        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "X-OpenRouter-Title"), "LangTools", "attribution applies to every format")
         XCTAssertEqual(body["model"] as? String, "anthropic/claude-sonnet-4.5")
-        XCTAssertFalse(Anthropic(apiKey: "key").canHandleRequest(request))
-        XCTAssertFalse(OpenRouter(apiKey: "or-key").canHandleRequest(request))
+    }
+
+    func testOneClassServesBothFormatsInAToolchain() throws {
+        var toolchain = LangToolchain()
+        toolchain.register(Anthropic(apiKey: "anthropic"))
+        toolchain.register(OpenAI(apiKey: "openai"))
+        toolchain.register(OpenRouter(apiKey: "or-key"))
+        let direct = Anthropic.MessageRequest(model: .claude45Sonnet_20250929, messages: [.init(role: .user, content: "Hi")])
+        let chat = OpenAI.ChatCompletionRequest(model: "openai/gpt-4o" as OpenRouter.Model, messages: [.init(role: .user, content: "Hi")])
+
+        XCTAssertEqual(try toolchain.prepare(request: direct).url?.host, "api.anthropic.com")
+        XCTAssertEqual(try toolchain.prepare(request: messagesRequest()).url?.absoluteString, "https://openrouter.ai/api/v1/messages")
+        XCTAssertEqual(try toolchain.prepare(request: chat).url?.absoluteString, "https://openrouter.ai/api/v1/chat/completions")
+        XCTAssertFalse(Anthropic(apiKey: "key").canHandleRequest(messagesRequest()))
+    }
+
+    func testChatRequestBuildsTheFormatOfTheModelType() throws {
+        let messages = try OpenRouter.chatRequest(model: Anthropic.Model.claude46Sonnet, messages: [], tools: nil, responseSchema: nil, toolEventHandler: { _ in })
+        let chat = try OpenRouter.chatRequest(model: OpenRouter.Model.auto, messages: [], tools: nil, responseSchema: nil, toolEventHandler: { _ in })
+
+        XCTAssertEqual((messages as? Anthropic.MessageRequest)?.providerID, OpenRouter.providerID)
+        XCTAssertTrue((chat as? OpenAI.ChatCompletionRequest)?.model.belongs(to: OpenRouter.providerID) ?? false)
+    }
+
+    func testMessagesErrorBodyDecodes() throws {
+        let error = try JSONDecoder().decode(OpenRouterErrorResponse.self, from: Data(#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#.utf8))
+        XCTAssertEqual(error.error.message, "Overloaded")
+        XCTAssertEqual(error.error.type, "overloaded_error")
     }
 }

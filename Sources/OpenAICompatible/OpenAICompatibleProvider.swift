@@ -1,12 +1,14 @@
 //
 //  OpenAICompatibleProvider.swift
-//  OpenAI
+//  OpenAICompatible
 //
-//  Shared plumbing for providers that serve OpenAI's Chat Completions API at
-//  their own base URL (Groq, Mistral, DeepSeek, Vercel AI Gateway, ...). A
-//  provider supplies its identity and an `OpenAI` client configured for its
-//  endpoint; routing, request preparation, error decoding, and model listing
-//  come from the extensions below.
+//  Shared plumbing for providers that serve OpenAI's Chat Completions format
+//  at their own base URL (OpenRouter, Groq, Mistral, Vercel AI Gateway, ...).
+//  A provider supplies its identity and an `OpenAI` client configured for its
+//  endpoint; routing, request preparation, headers, error decoding, and model
+//  listing come from the extensions below. The OpenAI module itself only
+//  provides the hooks this layer builds on: the model's provider tag,
+//  `additionalParameters`, and tolerant response decoding.
 //
 
 import Foundation
@@ -14,6 +16,7 @@ import Foundation
 import FoundationNetworking
 #endif
 import LangTools
+@_exported import OpenAI
 
 /// A provider whose chat endpoint is wire-compatible with OpenAI's.
 ///
@@ -21,9 +24,16 @@ import LangTools
 /// provider's tag (see `OpenAICompatibleModel.openAIModel`), so several
 /// providers serving the same model names can share one `LangToolchain`.
 ///
-/// Conforming types declare `typealias Model = OpenAICompatibleModel<Self>`
-/// and `typealias ErrorResponse = OpenAICompatibleErrorResponse`.
-public protocol OpenAICompatibleProvider: LangTools where ErrorResponse == OpenAICompatibleErrorResponse {
+/// A provider that also has request types of its own (a native API, a
+/// catalog with filters) serves them from the same class: it adds validators
+/// to `compatibleRequestValidators` and routes the rest of `prepare` through
+/// `prepareCompatible(request:)`.
+///
+/// Most conforming types declare `typealias Model = OpenAICompatibleModel<Self>`
+/// and `typealias ErrorResponse = OpenAICompatibleErrorResponse`; a provider
+/// with an established model enum or error type keeps its own and overrides
+/// `chatRequest`.
+public protocol OpenAICompatibleProvider: LangTools {
     /// The tag carried by this provider's models.
     static var providerID: LangToolsProviderID { get }
     /// A human-readable name, such as `"Groq"`.
@@ -40,6 +50,12 @@ public protocol OpenAICompatibleProvider: LangTools where ErrorResponse == OpenA
     /// The client that prepares requests for this provider's endpoint.
     var openAI: OpenAI { get }
 
+    /// Extra headers sent on every request, such as attribution headers. A name
+    /// that is not an HTTP token or is in `OpenAICompatibleHeaders.reservedNames`,
+    /// or a value containing a line break, makes `prepare` throw
+    /// `LangToolsError.invalidArgument`.
+    var additionalHeaders: [String: String] { get }
+
     /// Adjusts an encoded chat completion body for this provider's dialect,
     /// such as dropping parameters it rejects. The default changes nothing.
     /// See `OpenAICompatibleBody` for helpers.
@@ -50,6 +66,7 @@ extension OpenAICompatibleProvider {
     public static var supportsModelListing: Bool { true }
     public static var knownModels: [OpenAICompatibleModel<Self>] { [] }
     public static func adaptChatBody(_ body: inout [String: JSON]) {}
+    public var additionalHeaders: [String: String] { [:] }
 
     public var session: URLSession { openAI.session }
     public var logger: LangToolsLogger? { openAI.logger }
@@ -57,15 +74,21 @@ extension OpenAICompatibleProvider {
     /// Claims chat requests whose model is tagged for this provider, and this
     /// provider's catalog request. Untagged models are left to OpenAI, XAI,
     /// and Gemini.
-    public static var requestValidators: [(any LangToolsRequest) -> Bool] {
+    public static var compatibleRequestValidators: [(any LangToolsRequest) -> Bool] {
         [
             { ($0 as? OpenAI.ChatCompletionRequest)?.model.belongs(to: providerID) ?? false },
             { $0 is OpenAICompatibleListModelsRequest<Self> },
         ]
     }
 
-    public func prepare(request: some LangToolsRequest) throws -> URLRequest {
+    public static var requestValidators: [(any LangToolsRequest) -> Bool] { compatibleRequestValidators }
+
+    /// Prepares a request for the OpenAI-compatible endpoint: the OpenAI
+    /// client's request with `additionalHeaders` added and, for chat, the body
+    /// adapted by `adaptChatBody(_:)`.
+    public func prepareCompatible(request: some LangToolsRequest) throws -> URLRequest {
         var urlRequest = try openAI.prepare(request: request)
+        try OpenAICompatibleHeaders.apply(additionalHeaders, to: &urlRequest)
         if request is OpenAI.ChatCompletionRequest, let data = urlRequest.httpBody,
            case .object(var body) = try JSONDecoder().decode(JSON.self, from: data) {
             let original = body
@@ -75,9 +98,22 @@ extension OpenAICompatibleProvider {
         return urlRequest
     }
 
+    public func prepare(request: some LangToolsRequest) throws -> URLRequest {
+        try prepareCompatible(request: request)
+    }
+
+    /// A chat completion request for one of this provider's models, tagged so
+    /// the toolchain routes it here.
+    public static func compatibleChatRequest(model: OpenAICompatibleModel<Self>, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> OpenAI.ChatCompletionRequest {
+        guard let request = try OpenAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler) as? OpenAI.ChatCompletionRequest else {
+            throw LangToolsError.invalidArgument("Unsupported model \(model)")
+        }
+        return request
+    }
+
     public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
         guard let model = model as? OpenAICompatibleModel<Self> else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
-        return try OpenAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
+        return try compatibleChatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
     }
 
     /// Lists the provider's catalog with `GET /models`. Entries that fail to
@@ -91,8 +127,48 @@ extension OpenAICompatibleProvider {
     }
 
     /// Builds the `OpenAI` client for an OpenAI-compatible endpoint.
-    public static func makeClient(baseURL: URL, apiKey: String, session: URLSession, logger: LangToolsLogger?, additionalHeaders: [String: String] = [:]) -> OpenAI {
-        OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey, session: session, logger: logger, additionalHeaders: additionalHeaders))
+    public static func makeClient(baseURL: URL, apiKey: String, session: URLSession, logger: LangToolsLogger?) -> OpenAI {
+        OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey, session: session, logger: logger))
+    }
+}
+
+// MARK: - Headers
+
+/// Validation for `OpenAICompatibleProvider.additionalHeaders`.
+public enum OpenAICompatibleHeaders {
+    /// Header names, lowercased, that may not be set: credentials, message
+    /// framing, and hop-by-hop headers. Matching is case-insensitive.
+    public static let reservedNames: Set<String> = [
+        "authorization", "proxy-authorization", "cookie", "x-api-key",
+        "host", "content-type", "content-length", "transfer-encoding",
+        "connection", "te", "trailer", "upgrade",
+    ]
+
+    /// Whether `name` is an HTTP field name: a non-empty token of letters,
+    /// digits, and ``!#$%&'*+-.^_`|~`` (RFC 9110). Rules out separators,
+    /// whitespace, and line breaks.
+    public static func isToken(_ name: String) -> Bool {
+        !name.isEmpty && name.unicodeScalars.allSatisfy { scalar in
+            scalar.isASCII && (CharacterSet.alphanumerics.contains(scalar) || "!#$%&'*+-.^_`|~".unicodeScalars.contains(scalar))
+        }
+    }
+
+    /// Sets `headers` on `request`, rejecting invalid or reserved names and
+    /// values containing line breaks.
+    public static func apply(_ headers: [String: String], to request: inout URLRequest) throws {
+        for (name, value) in headers {
+            guard isToken(name) else {
+                throw LangToolsError.invalidArgument("additionalHeaders name '\(name)' is not a valid header name")
+            }
+            guard !reservedNames.contains(name.lowercased()) else {
+                throw LangToolsError.invalidArgument("additionalHeaders cannot set '\(name)'")
+            }
+            // Scalars, not Characters: "\r\n" is a single Character in Swift.
+            guard !value.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) else {
+                throw LangToolsError.invalidArgument("additionalHeaders value for '\(name)' contains a line break")
+            }
+            request.setValue(value, forHTTPHeaderField: name)
+        }
     }
 }
 

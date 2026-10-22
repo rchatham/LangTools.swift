@@ -10,6 +10,7 @@
 
 import Foundation
 import OpenAI
+import OpenAICompatible
 
 public final class CompatibleModelCatalog: @unchecked Sendable {
     public static let shared = CompatibleModelCatalog()

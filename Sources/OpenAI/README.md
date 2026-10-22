@@ -289,61 +289,11 @@ let request = OpenAI.ChatCompletionRequest(
 
 ### OpenAI-Compatible Providers
 
-The OpenAI client can target any OpenAI-compatible API, including gateways such as OpenRouter and Vercel AI Gateway.
+Providers that serve OpenAI's format at their own base URL are built in the [OpenAICompatible module](../OpenAICompatible/README.md) on top of three hooks in this module:
 
-Provider-specific body fields with no typed property go in `additionalParameters`, and extra headers go in the configuration:
-
-```swift
-let openRouter = OpenAI(configuration: .init(
-    baseURL: URL(string: "https://openrouter.ai/api/v1/")!,
-    apiKey: key,
-    additionalHeaders: ["HTTP-Referer": "https://example.com", "X-OpenRouter-Title": "My App"]
-))
-
-var request = OpenAI.ChatCompletionRequest(
-    model: OpenAI.Model(customModelID: "anthropic/claude-sonnet-4.5"),
-    messages: messages
-)
-request.additionalParameters = ["provider": ["order": ["anthropic"]]]
-```
-
-Keys in `ChatCompletionRequest.reservedParameterKeys` and headers in `OpenAIConfiguration.reservedHeaderNames` throw `LangToolsError.invalidArgument` instead of overriding typed fields or credentials.
-
-When several gateways serve the same `creator/model` slugs through `LangToolchain`, tag the model with `OpenAI.Model(customModelID:providerID:)` and match it in the gateway's validator with `model.belongs(to:)`. OpenAI, XAI, and Gemini claim only untagged models. The tag is not encoded, so re-tag a decoded request with `routed(to:)`.
-
-#### Adding a provider with `OpenAICompatibleProvider`
-
-The Groq, Mistral, DeepSeek, Cerebras, TogetherAI, Fireworks, Cohere, and VercelAIGateway modules are built on `OpenAICompatibleProvider`. A conforming class supplies its identity and an `OpenAI` client; routing, request preparation, model listing, and error decoding come from the protocol:
-
-```swift
-public final class MyProvider: OpenAICompatibleProvider {
-    public typealias Model = OpenAICompatibleModel<MyProvider>
-    public typealias ErrorResponse = OpenAICompatibleErrorResponse
-    public static let providerID = LangToolsProviderID(rawValue: "myprovider")
-    public static let displayName = "My Provider"
-    public static let defaultBaseURL = URL(string: "https://api.example.com/v1/")!
-    public static let apiKeyEnvironmentVariable = "MY_PROVIDER_API_KEY"
-    public let openAI: OpenAI
-
-    public init(apiKey: String) {
-        openAI = Self.makeClient(baseURL: Self.defaultBaseURL, apiKey: apiKey, session: .shared, logger: nil)
-    }
-
-    // Optional: drop or rename fields the provider rejects.
-    public static func adaptChatBody(_ body: inout [String: JSON]) {
-        OpenAICompatibleBody.remove(["stream_options"], from: &body)
-    }
-}
-
-let request = OpenAI.ChatCompletionRequest(model: "some-model" as MyProvider.Model, messages: messages)
-let models = try await MyProvider(apiKey: key).listModels()   // GET /models, normalized
-```
-
-`OpenAICompatibleModelInfo` normalizes catalog entries (`{"data": [...]}` or a bare array) into `contextWindow`, `maxOutputTokens`, `supportsTools` (nil when unknown), and `isChatModel`. `OpenAICompatibleErrorResponse` decodes nested `{"error": {...}}`, top-level `{"message": ...}`, and `{"detail": ...}` error bodies.
-
-Message content given as an array of typed parts decodes leniently: unknown part types such as `thinking` are skipped, and a streamed delta's text parts are concatenated.
-
-Responses decode leniently: unknown finish reasons and service tiers become `nil`, and missing usage-detail counts become zero. A streamed chunk that carries an `error` object ends the stream by throwing `LangToolsError.apiError` with an `OpenAI.ChatCompletionResponse.ResponseError`.
+- **Provider tag.** `OpenAI.Model(customModelID:providerID:)` tags a model for one provider, so `LangToolchain` routes it there even when other providers serve the same ID. OpenAI, XAI, and Gemini claim only untagged models. The tag is not encoded, so re-tag a decoded request with `routed(to:)`.
+- **`additionalParameters`.** Body fields with no typed property, such as OpenRouter's `provider`. Keys in `ChatCompletionRequest.reservedParameterKeys` throw `LangToolsError.invalidArgument` instead of overriding typed fields.
+- **Tolerant decoding.** Unknown finish reasons and service tiers become `nil`, missing usage-detail counts become zero, and content given as an array of typed parts skips unknown part types (a streamed delta's text parts are concatenated). A response or streamed chunk that carries an `error` object throws `LangToolsError.apiError` with an `OpenAI.ChatCompletionResponse.ResponseError`.
 
 ## Error Handling
 

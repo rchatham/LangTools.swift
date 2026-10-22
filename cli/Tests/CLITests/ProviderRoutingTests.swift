@@ -9,6 +9,7 @@
 import XCTest
 import Ollama
 import OpenAI
+import OpenAICompatible
 import OpenRouter
 @testable import CLI
 

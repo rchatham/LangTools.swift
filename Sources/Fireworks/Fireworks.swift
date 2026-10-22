@@ -11,6 +11,7 @@ import FoundationNetworking
 #endif
 import LangTools
 import OpenAI
+import OpenAICompatible
 
 public final class Fireworks: OpenAICompatibleProvider {
     public typealias Model = OpenAICompatibleModel<Fireworks>

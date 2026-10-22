@@ -11,6 +11,7 @@ import FoundationNetworking
 #endif
 import LangTools
 import OpenAI
+import OpenAICompatible
 import Anthropic
 import XAI
 import Gemini

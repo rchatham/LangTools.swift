@@ -11,6 +11,7 @@ import FoundationNetworking
 #endif
 import LangTools
 import OpenAI
+import OpenAICompatible
 
 public final class DeepSeek: OpenAICompatibleProvider {
     public typealias Model = OpenAICompatibleModel<DeepSeek>

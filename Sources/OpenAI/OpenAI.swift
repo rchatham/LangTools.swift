@@ -25,34 +25,12 @@ final public class OpenAI: LangTools {
         public let apiKey: String
         public var session: URLSession
         public var logger: LangToolsLogger?
-        /// Extra headers sent on every request, such as OpenRouter's `HTTP-Referer`
-        /// and `X-OpenRouter-Title`. A name in `reservedHeaderNames`, or a value
-        /// containing a line break, makes `prepare` throw `LangToolsError.invalidArgument`.
-        public var additionalHeaders: [String: String]
 
-        /// Header names, lowercased, that `additionalHeaders` may not set: credentials,
-        /// message framing, and hop-by-hop headers. Matching is case-insensitive.
-        public static let reservedHeaderNames: Set<String> = [
-            "authorization", "proxy-authorization", "cookie", "x-api-key",
-            "host", "content-type", "content-length", "transfer-encoding",
-            "connection", "te", "trailer", "upgrade",
-        ]
-
-        /// Whether `name` is an HTTP field name: a non-empty token of letters,
-        /// digits, and ``!#$%&'*+-.^_`|~`` (RFC 9110). Rules out separators,
-        /// whitespace, and line breaks.
-        static func isHeaderToken(_ name: String) -> Bool {
-            !name.isEmpty && name.unicodeScalars.allSatisfy { scalar in
-                scalar.isASCII && (CharacterSet.alphanumerics.contains(scalar) || "!#$%&'*+-.^_`|~".unicodeScalars.contains(scalar))
-            }
-        }
-
-        public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil, additionalHeaders: [String: String] = [:]) {
+        public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil) {
             self.baseURL = baseURL
             self.apiKey = apiKey
             self.session = session
             self.logger = logger
-            self.additionalHeaders = additionalHeaders
         }
     }
 
@@ -95,19 +73,6 @@ final public class OpenAI: LangTools {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = Request.httpMethod.rawValue
         urlRequest.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        for (name, value) in configuration.additionalHeaders {
-            guard OpenAIConfiguration.isHeaderToken(name) else {
-                throw LangToolsError.invalidArgument("additionalHeaders name '\(name)' is not a valid header name")
-            }
-            guard !OpenAIConfiguration.reservedHeaderNames.contains(name.lowercased()) else {
-                throw LangToolsError.invalidArgument("additionalHeaders cannot set '\(name)'")
-            }
-            // Scalars, not Characters: "\r\n" is a single Character in Swift.
-            guard !value.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) else {
-                throw LangToolsError.invalidArgument("additionalHeaders value for '\(name)' contains a line break")
-            }
-            urlRequest.setValue(value, forHTTPHeaderField: name)
-        }
 
         if Request.httpMethod == .get { return urlRequest }
 

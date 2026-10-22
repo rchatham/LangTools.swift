@@ -12,6 +12,7 @@ import FoundationNetworking
 #endif
 import LangTools
 import OpenAI
+import OpenAICompatible
 
 public final class Mistral: OpenAICompatibleProvider {
     public typealias Model = OpenAICompatibleModel<Mistral>

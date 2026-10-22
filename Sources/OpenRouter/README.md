@@ -99,10 +99,10 @@ OpenRouter also accepts Anthropic's Messages format at `https://openrouter.ai/ap
 import Anthropic
 import OpenRouter
 
-let gateway = OpenRouterAnthropicGateway(apiKey: key)
+let openRouter = OpenRouter(apiKey: key)
 let request = Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages)
-    .routed(to: OpenRouterAnthropicGateway.anthropicProviderID)
-let response = try await gateway.perform(request: request)
+    .routed(to: OpenRouter.providerID)
+let response = try await openRouter.perform(request: request)
 ```
 
-The model is sent as its OpenRouter slug, `anthropic/claude-sonnet-4.6` (see `Anthropic.Model.gatewayModelID`); pass `modelID:` to `routed(to:modelID:)` to override it. Unrouted requests stay with `Anthropic`.
+The model is sent as its OpenRouter slug, `anthropic/claude-sonnet-4.6` (see `Anthropic.Model.gatewayModelID`); pass `modelID:` to `routed(to:modelID:)` to override it. The same `OpenRouter` instance serves both formats and its catalog request; the attribution headers apply to all of them. Unrouted requests stay with `Anthropic`.

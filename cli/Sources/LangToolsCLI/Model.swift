@@ -6,6 +6,7 @@
 //
 import Foundation
 import OpenAI
+import OpenAICompatible
 import Anthropic
 import XAI
 import Gemini

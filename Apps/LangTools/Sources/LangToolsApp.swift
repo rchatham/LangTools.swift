@@ -14,6 +14,7 @@ import ExampleAgents
 import LangTools
 import Agents
 import OpenAI
+import OpenAICompatible
 import Anthropic
 import Gemini
 import XAI

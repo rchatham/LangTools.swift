@@ -12,8 +12,14 @@ import FoundationNetworking
 #endif
 import LangTools
 import OpenAI
+import OpenAICompatible
+import Anthropic
+import AnthropicCompatible
 
-public final class VercelAIGateway: OpenAICompatibleProvider {
+/// Serves both the OpenAI format (`OpenAI.ChatCompletionRequest` with a
+/// `VercelAIGateway.Model`) and Anthropic's Messages format
+/// (`Anthropic.MessageRequest` routed with `routed(to: VercelAIGateway.providerID)`).
+public final class VercelAIGateway: OpenAICompatibleProvider, AnthropicCompatibleProvider {
     public typealias Model = OpenAICompatibleModel<VercelAIGateway>
     public typealias ErrorResponse = OpenAICompatibleErrorResponse
 
@@ -37,7 +43,10 @@ public final class VercelAIGateway: OpenAICompatibleProvider {
     }
 
     public let openAI: OpenAI
+    public let anthropic: Anthropic
 
+    /// - Parameter apiKey: An AI Gateway API key or a Vercel OIDC token. Both
+    ///   formats send it as `Authorization: Bearer`.
     public init(
         baseURL: URL = VercelAIGateway.defaultBaseURL,
         apiKey: String,
@@ -45,6 +54,33 @@ public final class VercelAIGateway: OpenAICompatibleProvider {
         logger: LangToolsLogger? = nil
     ) {
         openAI = Self.makeClient(baseURL: baseURL, apiKey: apiKey, session: session, logger: logger)
+        anthropic = Anthropic(baseURL: baseURL, apiKey: apiKey, session: session, logger: logger)
+    }
+
+    // The gateway accepts a key or an OIDC token as a bearer token on both formats.
+    public var anthropicAuthentication: AnthropicCompatibleAuthentication { .bearer }
+
+    // MARK: Serving both formats
+
+    public var session: URLSession { openAI.session }
+    public var logger: LangToolsLogger? { openAI.logger }
+
+    public static var requestValidators: [(any LangToolsRequest) -> Bool] {
+        compatibleRequestValidators + anthropicRequestValidators
+    }
+
+    public func prepare(request: some LangToolsRequest) throws -> URLRequest {
+        request is Anthropic.MessageRequest ? try prepareAnthropicCompatible(request: request) : try prepareCompatible(request: request)
+    }
+
+    /// An Anthropic `Model` builds a Messages request; a gateway `Model` builds
+    /// a chat completion request.
+    public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        if let model = model as? Anthropic.Model {
+            return try anthropicChatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
+        }
+        guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
+        return try compatibleChatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
     }
 
     /// The gateway documents `max_tokens` but not `max_completion_tokens`.

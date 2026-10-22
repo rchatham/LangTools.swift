@@ -10,6 +10,7 @@ import FoundationNetworking
 import LangTools
 @testable import TestUtils
 @testable import OpenAI
+import OpenAICompatible
 import VercelAIGateway
 import Groq
 import Mistral

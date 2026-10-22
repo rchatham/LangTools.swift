@@ -2,10 +2,11 @@
 //  OpenRouter.swift
 //  LangTools
 //
-//  OpenRouter is an OpenAI-compatible gateway to models from many vendors.
-//  Requests are `OpenAI.ChatCompletionRequest`s whose model carries the
-//  OpenRouter provider tag, so they never collide with OpenAI, XAI, Gemini,
-//  or another gateway serving the same `creator/model` slugs.
+//  OpenRouter is a gateway to models from many vendors. It serves OpenAI's
+//  chat format, Anthropic's Messages format, and its own catalog request.
+//  Chat requests carry the OpenRouter provider tag, so they never collide with
+//  OpenAI, XAI, Gemini, or another gateway serving the same `creator/model`
+//  slugs.
 //
 
 import Foundation
@@ -14,28 +15,27 @@ import FoundationNetworking
 #endif
 import LangTools
 import OpenAI
+import OpenAICompatible
+import Anthropic
+import AnthropicCompatible
 
-public final class OpenRouter: LangTools {
+public final class OpenRouter: OpenAICompatibleProvider, AnthropicCompatibleProvider {
     public typealias Model = OpenRouterModel
     public typealias ErrorResponse = OpenRouterErrorResponse
 
-    /// The provider tag carried by every OpenRouter model.
+    /// The provider tag carried by every OpenRouter request.
     public static let providerID = LangToolsProviderID(rawValue: "openrouter")
+    public static let displayName = "OpenRouter"
     public static let defaultBaseURL = URL(string: "https://openrouter.ai/api/v1/")!
+    public static let apiKeyEnvironmentVariable = "OPENROUTER_API_KEY"
 
-    /// Claims chat requests whose model is tagged for OpenRouter, and OpenRouter's
-    /// own catalog request. Untagged models are left to OpenAI, XAI, and Gemini.
-    public static var requestValidators: [(any LangToolsRequest) -> Bool] {
-        [
-            { ($0 as? OpenAI.ChatCompletionRequest)?.model.belongs(to: providerID) ?? false },
-            { $0 is ListModelsRequest },
-        ]
-    }
+    /// OpenRouter's router. The catalog is too large and changes too often for
+    /// a static list; use `listModels()`.
+    public static var knownModels: [Model] { [.auto] }
 
-    public var session: URLSession { openAI.session }
-    public var logger: LangToolsLogger? { openAI.logger }
-
-    let openAI: OpenAI
+    public let openAI: OpenAI
+    public let anthropic: Anthropic
+    public let additionalHeaders: [String: String]
     private let baseURL: URL
 
     /// - Parameters:
@@ -54,12 +54,33 @@ public final class OpenRouter: LangTools {
         if let appURL { headers["HTTP-Referer"] = appURL.absoluteString }
         if let appTitle, !appTitle.isEmpty { headers["X-OpenRouter-Title"] = appTitle }
         self.baseURL = baseURL
-        openAI = OpenAI(configuration: .init(
-            baseURL: baseURL, apiKey: apiKey, session: session, logger: logger, additionalHeaders: headers))
+        additionalHeaders = headers
+        openAI = Self.makeClient(baseURL: baseURL, apiKey: apiKey, session: session, logger: logger)
+        anthropic = Anthropic(baseURL: baseURL, apiKey: apiKey, session: session, logger: logger)
+    }
+
+    // OpenRouter accepts the key as a bearer token on every format.
+    public var anthropicAuthentication: AnthropicCompatibleAuthentication { .bearer }
+
+    // MARK: Serving every format
+
+    public var session: URLSession { openAI.session }
+    public var logger: LangToolsLogger? { openAI.logger }
+
+    /// Claims tagged chat requests, Messages requests routed to OpenRouter, and
+    /// OpenRouter's catalog request. Untagged models are left to OpenAI, XAI,
+    /// and Gemini.
+    public static var requestValidators: [(any LangToolsRequest) -> Bool] {
+        compatibleRequestValidators + anthropicRequestValidators + [{ $0 is ListModelsRequest }]
     }
 
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
-        var urlRequest = try openAI.prepare(request: request)
+        if request is Anthropic.MessageRequest {
+            var urlRequest = try prepareAnthropicCompatible(request: request)
+            try OpenAICompatibleHeaders.apply(additionalHeaders, to: &urlRequest)
+            return urlRequest
+        }
+        var urlRequest = try prepareCompatible(request: request)
         // The OpenAI client derives GET query items from every stored property,
         // including nil optionals, so the catalog request builds its own URL.
         if let listModels = request as? ListModelsRequest {
@@ -68,13 +89,20 @@ public final class OpenRouter: LangTools {
         return urlRequest
     }
 
+    /// An Anthropic `Model` builds a Messages request; an OpenRouter `Model`
+    /// builds a chat completion request.
     public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        if let model = model as? Anthropic.Model {
+            return try anthropicChatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
+        }
         guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
-        return try OpenAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
+        return try compatibleChatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
     }
 }
 
-/// An OpenRouter error body: `{"error": {"code": 402, "message": "..."}}`.
+/// An OpenRouter error body: `{"error": {"code": 402, "message": "..."}}`. The
+/// Messages endpoint's `{"type": "error", "error": {"type": ..., "message": ...}}`
+/// decodes into the same shape.
 public struct OpenRouterErrorResponse: Error, Codable, LocalizedError {
     public let error: OpenAI.ChatCompletionResponse.ResponseError
 
@@ -86,44 +114,14 @@ public struct OpenRouterErrorResponse: Error, Codable, LocalizedError {
 }
 
 /// An OpenRouter model slug such as `"anthropic/claude-sonnet-4.5"`, optionally
-/// with a variant suffix such as `":free"`.
+/// with a variant suffix such as `":free"`. Empty and whitespace-padded slugs
+/// are rejected.
 ///
 /// OpenRouter's catalog changes often, so models are plain slugs rather than an
 /// enum. Use `OpenRouter.listModels()` to discover them.
-public struct OpenRouterModel: RawRepresentable, Codable, Hashable, Sendable, ExpressibleByStringLiteral, CustomStringConvertible {
-    public let rawValue: String
+public typealias OpenRouterModel = OpenAICompatibleModel<OpenRouter>
 
-    /// Returns nil for an empty slug or one with leading or trailing whitespace.
-    public init?(rawValue: String) {
-        guard !rawValue.isEmpty, rawValue == rawValue.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
-        self.rawValue = rawValue
-    }
-
-    public init(stringLiteral value: String) {
-        rawValue = value
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let slug = try container.decode(String.self)
-        guard let model = OpenRouterModel(rawValue: slug) else {
-            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Empty OpenRouter model slug")
-        }
-        self = model
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(rawValue)
-    }
-
-    public var description: String { rawValue }
-
+extension OpenAICompatibleModel where Provider == OpenRouter {
     /// OpenRouter's router, which picks a model for each prompt.
-    public static let auto: OpenRouterModel = "openrouter/auto"
-
-    /// The tagged OpenAI-compatible model used on the wire and for routing.
-    public var openAIModel: OpenAIModel {
-        OpenAIModel(customModelID: rawValue, providerID: OpenRouter.providerID)
-    }
+    public static var auto: OpenRouterModel { "openrouter/auto" }
 }

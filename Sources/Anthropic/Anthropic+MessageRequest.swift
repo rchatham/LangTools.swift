@@ -57,22 +57,23 @@ extension Anthropic {
         @CodableIgnored
         public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
 
-        /// The Messages-format gateway this request is routed to, or nil for
-        /// Anthropic's API. Not encoded; see `routed(to:modelID:)`.
+        /// The provider this request is routed to, for a provider that also
+        /// serves Anthropic's Messages format; nil for Anthropic's API. Not
+        /// encoded; see `routed(to:modelID:)`.
         @CodableIgnored
-        public internal(set) var gatewayProviderID: LangToolsProviderID?
+        public internal(set) var providerID: LangToolsProviderID?
 
-        /// The model ID sent to a gateway in place of `model`, such as
-        /// `"anthropic/claude-sonnet-4.5"`. Nil uses `model.gatewayModelID`.
+        /// The model ID sent to that provider in place of `model`, such as
+        /// `"anthropic/claude-sonnet-4.5"`. Nil lets the provider choose.
         @CodableIgnored
-        public internal(set) var gatewayModelID: String?
+        public internal(set) var providerModelID: String?
 
-        /// Returns a copy routed to a Messages-format gateway, optionally with a
-        /// gateway-specific model ID.
+        /// Returns a copy routed to another provider's Messages endpoint,
+        /// optionally with that provider's model ID.
         public func routed(to providerID: LangToolsProviderID, modelID: String? = nil) -> Self {
             var request = self
-            request.gatewayProviderID = providerID
-            request.gatewayModelID = modelID
+            request.providerID = providerID
+            request.providerModelID = modelID
             return request
         }
 

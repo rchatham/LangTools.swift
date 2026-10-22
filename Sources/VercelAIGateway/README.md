@@ -44,10 +44,10 @@ Claude models can also be called in Anthropic's own format, keeping Anthropic fe
 import Anthropic
 import VercelAIGateway
 
-let gateway = VercelAnthropicGateway(apiKey: key)      // or authentication: .bearer for an OIDC token
+let gateway = VercelAIGateway(apiKey: key)      // an API key or a Vercel OIDC token
 let request = Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages)
-    .routed(to: VercelAnthropicGateway.anthropicProviderID)
+    .routed(to: VercelAIGateway.providerID)
 let response = try await gateway.perform(request: request)
 ```
 
-The request is sent to `https://ai-gateway.vercel.sh/v1/messages` with the model `anthropic/claude-sonnet-4.6` (see `Anthropic.Model.gatewayModelID`). Pass `modelID:` to `routed(to:modelID:)` to send any other gateway model ID. Unrouted requests stay with `Anthropic`, so both can share a `LangToolchain`.
+The request is sent to `https://ai-gateway.vercel.sh/v1/messages` with the model `anthropic/claude-sonnet-4.6` (see `Anthropic.Model.gatewayModelID`). Pass `modelID:` to `routed(to:modelID:)` to send any other gateway model ID. The same `VercelAIGateway` instance serves both formats, sending the key as `Authorization: Bearer` on each. Unrouted requests stay with `Anthropic`, so both can share a `LangToolchain`.
