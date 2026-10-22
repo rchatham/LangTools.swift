@@ -1,78 +1,69 @@
 # Gemini
 
-Swift interface for Google's Gemini models, part of the LangTools framework. The Gemini module uses OpenAI's request and response formats, allowing for easy integration with existing OpenAI-style code.
+Google's Gemini models for LangTools, in two formats from one `Gemini` client:
 
-## Key Differences from OpenAI
+- The **OpenAI-compatible API** (`https://generativelanguage.googleapis.com/v1beta/openai/`) takes `OpenAI.ChatCompletionRequest`s. `Gemini.chatRequest(...)` builds these.
+- The **native API** (`models/{model}:generateContent`) takes `Gemini.GenerateContentRequest`s, adding grounding with Google Search, thinking configuration and thought signatures, safety settings, top-k sampling, cached content, and inline media parts.
 
-1. **Model Selection**:
 ```swift
-// Available Gemini models
-.gemini2Flash           // "gemini-2.0-flash-exp"
-.gemini15Flash          // "gemini-1.5-flash"
-.gemini15Flash8B        // "gemini-1.5-flash-8b"
-.gemini15Pro            // "gemini-1.5-pro"
-.gemini10Pro            // "gemini-1.0-pro"
-
-// Versioned models
-.gemini15FlashLatest    // "gemini-1.5-flash-latest"
-.gemini15Flash001       // "gemini-1.5-flash-001"
-.gemini15Flash002       // "gemini-1.5-flash-002"
-.gemini15Flash8BLatest  // "gemini-1.5-flash-8b-latest"
-.gemini15Flash8B001     // "gemini-1.5-flash-8b-001"
-.gemini15ProLatest      // "gemini-1.5-pro-latest"
-.gemini15Pro001         // "gemini-1.5-pro-001"
-.gemini15Pro002         // "gemini-1.5-pro-002"
+let gemini = Gemini(apiKey: ProcessInfo.processInfo.environment["GEMINI_API_KEY"]!)
 ```
 
-2. **Initialization**:
-```swift
-let gemini = Gemini(apiKey: "your-api-key")
-```
-
-3. **Base URL**:
-- Default base URL is `https://generativelanguage.googleapis.com/v1beta/openai/`
-- Uses Google's API infrastructure
-
-4. **Request Limitations**:
-- Some OpenAI-specific parameters may not be available
-
-## Basic Usage
-
-Since Gemini uses OpenAI's request format, you can use the same request structure:
+## OpenAI format
 
 ```swift
 let request = OpenAI.ChatCompletionRequest(
-    model: Gemini.Model.gemini15Pro,  // Use Gemini model
-    messages: [
-        Message(role: .user, content: "Tell me about quantum computing.")
-    ]
+    model: Gemini.Model.gemini3Flash,
+    messages: [.init(role: .user, content: "Tell me about quantum computing.")]
 )
-
 let response = try await gemini.perform(request: request)
 ```
 
-## Error Handling
+`Gemini.Model` cases route here untagged. Any other model ID can be sent as `"gemini-3.5-flash-preview" as OpenAICompatibleModel<Gemini>`; streaming, tool calling, and structured output work as in the [OpenAI module](../OpenAI/README.md).
 
-Gemini errors have their own type:
+## Native format
+
+```swift
+let request = Gemini.GenerateContentRequest(
+    model: .gemini3Flash,                     // or modelID: "gemini-3.5-flash-preview"
+    messages: [.init(role: .user, content: "What changed in Swift 6.2?")],
+    googleSearch: true,
+    generationConfig: .init(thinkingConfig: .init(thinkingLevel: "low"))
+)
+for try await chunk in gemini.stream(request: request) {
+    print(chunk.delta?.content ?? "", terminator: "")
+}
+```
+
+- **Grounding:** `googleSearch: true` adds the Google Search tool; sources and supported spans arrive in `candidates[0].groundingMetadata`.
+- **Function calling:** `tools` takes `OpenAI.Tool`s, sent as `functionDeclarations`, and runs them through the LangTools tool loop. `functionCallingMode` sets `AUTO`, `ANY`, `NONE`, or `VALIDATED`.
+- **Thought signatures:** Gemini 3 requires the signature it returned with a function call to come back with that call. Messages keep them, and a call replayed without one (for example, from another provider's history) gets Google's documented `skip_thought_signature_validator` placeholder.
+- **Structured output:** `responseSchema` sets `responseMimeType` and `responseJsonSchema`. `const` is sent as a one-value `enum`, which Gemini accepts.
+- **Thinking:** `thinkingConfig` takes `thinkingLevel` (Gemini 3) or `thinkingBudget` (Gemini 2.5); with `includeThoughts`, thought summaries arrive as `thought` parts and are left out of `content`.
+- **Media:** build a `Gemini.Message` from `Part`s with `inlineData` or `fileData`.
+- **Failures:** a blocked prompt, a candidate stopped for safety, recitation, or a malformed function call, and an error sent mid-stream throw `LangToolsError.apiError` (`Gemini.NativeError`). A stream must end with a finish reason.
+
+The model travels in the URL, so a request can name any model by `modelID`, including `tunedModels/...`. Its `model` property is the matching `Gemini.Model` case, or `.gemini3Flash` for IDs outside the enum.
+
+## Models
+
+```swift
+let models = try await gemini.listModels()   // GET v1beta/models, all pages
+let chatModels = models.filter(\.isChatModel) // supports generateContent
+```
+
+Entries carry `contextWindow` (`inputTokenLimit`) and `maxOutputTokens` (`outputTokenLimit`).
+
+## Errors
+
+`GeminiErrorResponse` decodes both the OpenAI-compatible error body and the native `{"error": {"code", "message", "status"}}` body, where `error.type` is the status:
+
 ```swift
 do {
     let response = try await gemini.perform(request: request)
-} catch let error as GeminiErrorResponse {
+} catch LangToolsError.responseUnsuccessful(_, let error as GeminiErrorResponse) {
     print("Gemini API error:", error.error.message)
 }
 ```
 
-## For More Information
-
-Refer to the [OpenAI Module Documentation](Sources/OpenAI/README.md) for detailed information about:
-- Chat completion requests
-- Streaming
-- Message formats
-- Response handling
-- Best practices
-
-The same patterns apply to Gemini, just use Gemini models and initialization.
-
-See also:
-- [Google Generative AI Documentation](https://ai.google.dev/docs)
-- [Gemini API Reference](https://ai.google.dev/api/rest/v1)
+See also the [Gemini API reference](https://ai.google.dev/api).

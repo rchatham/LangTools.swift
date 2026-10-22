@@ -331,6 +331,22 @@ final class ProviderAccessManagerTests: XCTestCase {
         XCTAssertEqual(catalog.entry(for: .groq, id: "llama-3.3-70b-versatile")?.contextLength, 131_072)
     }
 
+    /// `CompatibleProvider`, `APIService`, `ModelRoute`, and `AccessDestination`
+    /// share raw values and convert with force unwraps; a case missing from one
+    /// of them would trap at runtime.
+    func testCompatibleProviderCasesExistInEveryProviderEnum() {
+        for provider in CompatibleProvider.allCases {
+            XCTAssertEqual(provider.service.rawValue, provider.rawValue)
+            XCTAssertEqual(provider.route.rawValue, provider.rawValue)
+            XCTAssertEqual(provider.accessDestination.rawValue, provider.rawValue)
+            XCTAssertEqual(CompatibleProvider(service: provider.service), provider)
+            XCTAssertEqual(provider.accessDestination.service, provider.service)
+            XCTAssertEqual(provider.accessDestination.displayName, provider.displayName)
+            XCTAssertEqual(AccessDestination.destination(for: .compatible(provider, "model")), provider.accessDestination)
+            XCTAssertEqual(AccessDestination.platform(for: provider.service), provider.accessDestination)
+        }
+    }
+
     func testCompatibleProviderWithoutAModelCatalogKeepsSuggestedModels() async throws {
         let catalog = makeCompatibleCatalog { _, _ in
             XCTFail("Perplexity has no catalog endpoint")

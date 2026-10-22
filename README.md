@@ -129,7 +129,7 @@ See individual module README files for detailed documentation and examples:
 - [OpenAI](Sources/OpenAI/README.md)
 - [Anthropic](Sources/Anthropic/README.md)
 - [XAI](Sources/XAI/README.md)
-- [Gemini](Sources/Gemini/README.md)
+- [Gemini](Sources/Gemini/README.md) - OpenAI-compatible API and native generateContent API
 - [Ollama](Sources/Ollama/README.md)
 - [OpenAICompatible](Sources/OpenAICompatible/README.md) - Shared support for providers serving OpenAI's Chat Completions or Responses format
 - [AnthropicCompatible](Sources/AnthropicCompatible/README.md) - Shared support for providers serving Anthropic's Messages format
