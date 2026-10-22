@@ -297,6 +297,49 @@ final class CodexAppServerClientTests: XCTestCase {
         await client.shutdown()
     }
 
+    func testStdoutCloseBeforeProcessReapingAttributesExitStatus() async throws {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-app-server-stdout-close-\(UUID().uuidString).py")
+        let countURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("langtools-app-server-stdout-close-count-\(UUID().uuidString)")
+        try Data(Self.stdoutClosingServer.utf8).write(to: scriptURL)
+        defer {
+            try? FileManager.default.removeItem(at: scriptURL)
+            try? FileManager.default.removeItem(at: countURL)
+        }
+
+        let client = CodexAppServerClient(
+            commandResolver: {
+                ResolvedCodexCommand(executable: "/usr/bin/python3", arguments: ["-u", scriptURL.path])
+            },
+            environment: ["COUNT_FILE": countURL.path],
+            defaultTimeout: .seconds(2),
+            containmentMode: .disabledForTesting
+        )
+
+        let initialGeneration = try await client.initializedProcessGeneration()
+        do {
+            let _: Response = try await client.request(method: "stdout/close", params: RequestParams(value: "one"))
+            XCTFail("Expected process exit")
+        } catch let error as CodexAppServerError {
+            // The fixture closes stdout while it is still running, so EOF reaches the client
+            // before the reaper observes termination. The exit status must still win.
+            guard case .exited(let status, _) = error else {
+                return XCTFail("Expected exited error, got \(error)")
+            }
+            XCTAssertEqual(status, 7)
+        }
+
+        let restarted: Response = try await client.request(
+            method: "stdout/close/restarted", params: RequestParams(value: "two")
+        )
+        XCTAssertEqual(restarted.value, "stdout/close/restarted")
+        let restartedGeneration = try await client.initializedProcessGeneration()
+        XCTAssertNotEqual(restartedGeneration, initialGeneration)
+        XCTAssertEqual(try String(contentsOf: countURL, encoding: .utf8), "2")
+        await client.shutdown()
+    }
+
     func testAlreadyCancelledTurnDoesNotLaunchClientOrStrandSubsequentStartup() async throws {
         try await observeColdStartup(preCancelled: true)
     }
@@ -1263,6 +1306,39 @@ assert read()["method"] == "initialized"
 request = read()
 if count == 1:
     print("intentional fake-server exit", file=sys.stderr, flush=True)
+    raise SystemExit(7)
+write({"id":request["id"], "result":{"value":request["method"]}})
+"""#
+
+    /// Closes the OS stdout descriptor while still running, then exits 7 shortly
+    /// afterwards, so EOF is observed before reaping rather than only when the reaper loses.
+    private static let stdoutClosingServer = #"""
+import json
+import os
+import sys
+import time
+
+count_file = os.environ["COUNT_FILE"]
+try:
+    count = int(open(count_file).read()) + 1
+except FileNotFoundError:
+    count = 1
+open(count_file, "w").write(str(count))
+
+def read():
+    return json.loads(sys.stdin.readline())
+
+def write(value):
+    print(json.dumps(value), flush=True)
+
+initialize = read()
+write({"id":initialize["id"], "result":{"userAgent":"fake", "codexHome":"/tmp", "platformFamily":"unix", "platformOs":"macos"}})
+assert read()["method"] == "initialized"
+request = read()
+if count == 1:
+    sys.stdout.flush()
+    os.close(1)
+    time.sleep(0.15)
     raise SystemExit(7)
 write({"id":request["id"], "result":{"value":request["method"]}})
 """#

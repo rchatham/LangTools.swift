@@ -133,6 +133,11 @@ actor CodexAppServerClient {
     private var stderrTail = ""
     private var processGeneration: UUID?
     private var processTerminationTasks: [UUID: Task<Void, Never>] = [:]
+    /// Bounded wait for termination after stdout EOF, so the exit status wins the race
+    /// with reaping. The deadline is absolute: actor scheduling can still delay
+    /// resolution, so this is not a strict wall-clock guarantee.
+    private static let stdoutCloseGraceMilliseconds = 250
+    private var stdoutCloseGraceTasks: [UUID: Task<Void, Never>] = [:]
     private var stdoutPump: ProcessChunkPump?
     private var stderrPump: ProcessChunkPump?
     private var stdoutReaderTask: Task<Void, Never>?
@@ -327,6 +332,11 @@ actor CodexAppServerClient {
         }
         if let termination = processTerminationTasks[expectedGeneration] {
             await termination.value
+        }
+        // A bounded stdout-close grace task may still attribute this generation's exit;
+        // joining it keeps cleanup from returning while it can still act.
+        if let grace = stdoutCloseGraceTasks[expectedGeneration] {
+            await grace.value
         }
     }
 
@@ -756,7 +766,31 @@ actor CodexAppServerClient {
 
     private func stdoutClosed(generation: UUID) {
         guard processGeneration == generation, shuttingDown == false else { return }
-        if let process, process.isRunning == false {
+        guard let process else { return }
+        if process.isRunning == false {
+            processExited(process)
+            return
+        }
+        // EOF can be observed before the reaper flips `isRunning`. Give termination a
+        // bounded grace so the child's exit status is attributed instead of being lost to
+        // a transport failure. A child that closes stdout and keeps running still fails
+        // closed once the grace expires.
+        guard stdoutCloseGraceTasks[generation] == nil else { return }
+        stdoutCloseGraceTasks[generation] = Task.detached { [weak self] in
+            let deadline = ContinuousClock.now.advanced(by: .milliseconds(Self.stdoutCloseGraceMilliseconds))
+            while process.isRunning {
+                let remaining = ContinuousClock.now.duration(to: deadline)
+                guard remaining > .zero else { break }
+                try? await Task.sleep(for: min(remaining, .milliseconds(10)))
+            }
+            await self?.resolveStdoutClose(generation: generation, process: process)
+        }
+    }
+
+    private func resolveStdoutClose(generation: UUID, process: Process) {
+        stdoutCloseGraceTasks.removeValue(forKey: generation)
+        guard processGeneration == generation, shuttingDown == false else { return }
+        if process.isRunning == false {
             processExited(process)
         } else {
             shutdownProcess(error: CodexAppServerError.transport("Codex app-server closed stdout."))
