@@ -2,16 +2,63 @@
 
 Actual public `ChatSettingsView` rendered in a consuming host with isolated synthetic fixtures. These images show only shared package views and fake/default model state—not credentials, standalone LangTools transport, or live providers.
 
-## Current macOS rendered evidence — 2026-10-13 local unpublished fix-all
+## Current shared Chat status — 2026-10-22
 
-Current images below replace exactly the three public shared-view PNGs using the
-previously inspected guarded host run. They show actual synthetic
-NSHostingView bitmaps captured using the renderer's own briefly visible NSWindows,
-closed afterward: **not desktop screenshots, offscreen-only rendering, interactive
-host app workflows or standalone LangTools transport proof**. No window/code
-changes were needed or made. Only these three shared-view images belong in this
-public evidence set. Publication SHA is **awaiting atomic commits**, not guessed or
-published. This 2026-10-14 reconciliation changes documentation only, not images.
+Recorded public [PR #67](https://github.com/rchatham/LangTools.swift/pull/67) CI
+baseline at published `6994d3d`: **7 successes / 2 Cloud skips**. New-head CI and
+publication receipts are separate from this prepublication verification checkpoint;
+current source does not inherit historical checks. The PR remains draft, unmerged
+and not merge-ready.
+
+Shared settings now resolve effective generation capabilities through a
+default-compatible host seam. Unsupported Cloud Top K is inactive without deleting
+the saved value for a capable Direct transport. Missing selected local/Cloud models
+retain a labeled unavailable picker entry across ready/loading/error catalogs;
+retention is presentation only, not catalog expansion or dispatch authorization.
+Public Model semantics remain unchanged. Original macOS fixture-management action
+guards and disabled modifiers are retained; the fixture environment is nil outside
+macOS.
+
+Fresh standalone build-tests after guard restoration **PASS (10.18s)**. The **five
+selected shared Chat capability/picker methods** and **two shared-view render methods**
+passed with **0 failures, 0 skips and no timeouts**. Runs used four-SecItem denial,
+outer network denial, isolated HOME, scrubbed environment and a process watchdog.
+These bounded selections are not full-suite, credential-positive/helper TLS/account/
+live-provider or interactive workflow proof. Historical **73** shared Chat and **335**
+provider results below are not current reruns. Host package compilation does not
+compile native UI assertions; no new native compilation occurred. Current iOS
+outcomes and screenshots remain missing; native execution is stopped, with host-driver
+guard activation/environment nonforwarding unestablished. No native permission is implied.
+
+## Current synthetic shared-view evidence — 2026-10-22
+
+All eight images were individually visually inspected and byte-verified on copying.
+Unavailable labels are complete across ready/loading/failed states, with distinct
+local versus Cloud explanations. Direct shows saved Top K **37**; proxy controls show
+Top K inactive with its saved value preserved. No secrets, private views, operational
+identifiers or host paths are visible. These are own-NSWindow view bitmaps, **not
+desktop screenshots, interactive workflows or native iOS verification**.
+
+| Local missing: ready | Loading | Failed |
+|---|---|---|
+| ![Local ready](shared-settings-macos-missing-local-cloud-tag-ready.png) | ![Local loading](shared-settings-macos-missing-local-cloud-tag-loading.png) | ![Local failed](shared-settings-macos-missing-local-cloud-tag-failed.png) |
+
+| Cloud missing: ready | Loading | Failed |
+|---|---|---|
+| ![Cloud ready](shared-settings-macos-missing-cloud-ready.png) | ![Cloud loading](shared-settings-macos-missing-cloud-loading.png) | ![Cloud failed](shared-settings-macos-missing-cloud-failed.png) |
+
+| Direct: saved Top K 37 | Proxy: inactive, value retained |
+|---|---|
+| ![Direct Top K](shared-settings-macos-cloud-top-k-direct.png) | ![Proxy Top K inactive](shared-settings-macos-cloud-top-k-proxy-inactive.png) |
+
+## Historical macOS rendered evidence — 2026-10-13, published at `6994d3d`
+
+These three images depict the previous published revision, not the new settings
+changes above. They show actual synthetic NSHostingView bitmaps captured using the
+renderer’s own briefly visible NSWindows, closed afterward: **not desktop
+screenshots, offscreen-only rendering, interactive host app workflows or standalone
+LangTools transport proof**. Only shared views and fake/default state are included.
+These historical image files are unchanged; the current captures use separate filenames above.
 
 | Local daemon | Local `:cloud` ID | Distinct Cloud |
 |---|---|---|
@@ -21,10 +68,10 @@ Captions: `ollama/llama3` has the local explanation; `ollama/llama3:cloud` retai
 that local explanation and route; `ollama-cloud/glm-5.2` has an independent Cloud
 description. Fake/default state only, not current live-provider availability.
 
-## Current results / gates — 2026-10-14, draft-only and not merge-ready
+## Historical results / gates — 2026-10-14 (superseded)
 
-- Local dependency target merge `514f071` remains unpublished; last recorded remote
-  draft is `cf15ec9`. Preserve history. Final publication SHA awaits atomic commits.
+These receipts predate the current source pass. The subsequent publication at
+`6994d3d` includes target merge `514f071`; the earlier `cf15ec9` draft is historical.
 - Implemented source fixes: HTTPS synthetic CI fixture without weakening endpoint
   policy; all THREE approved P3 fixes—DEBUG session read/swap locking with invalidation
   outside the lock, explicit local/Cloud preference retention using one eligibility
@@ -56,19 +103,19 @@ description. Fake/default state only, not current live-provider availability.
   fixture group was statically resolved from `__TEXT/__entitlements`; no actual
   signing occurred. Accepted simulator framework-egress residual does not waive host
   guards. No native continuation is authorized by this documentation pass.
-- Last recorded CI at OLD `cf15ec9`: six successes, one app-helper failure, two Cloud
-  skips. The repaired local fixture is not new-head CI. Both dependency and consuming
-  integration remain **Draft, unmerged and not merge-ready** pending native outcomes,
-  current iOS images, final review and new-head checks. No remote state was refreshed.
+- Historical CI at `cf15ec9`: six successes, one app-helper failure, two Cloud
+  skips. Preserve that failure as an earlier receipt; later published `6994d3d`
+  has seven successes and two Cloud skips. Neither establishes checks for the
+  2026-10-22 source pass at this verification checkpoint.
 
-Existing receipts only; this offline reconciliation ran no tests/builds, probes or
-publication. Current source and images are unchanged. Public evidence is limited to
-shared Chat scope; operational identifiers and host-only evidence are not included.
+Existing receipts only; this offline documentation reconciliation ran no tests/builds,
+probes or publication. Public evidence is limited to shared Chat scope; operational
+identifiers and host-only evidence are not included.
 
 ## Historical macOS source-remediation evidence — 2026-10-08
 
-The prior three images remain identifiable at published child `cf15ec9`; current
-filenames above now hold the 2026-10-13 renders, not those old captures:
+The older three images remain identifiable at published `cf15ec9`; filenames above
+hold the historical 2026-10-13 renders published at `6994d3d`, not these older captures:
 [local](https://github.com/rchatham/LangTools.swift/blob/cf15ec9c460255ef4b7226ddc642cf3f660625c8/docs/ollama-integration/shared-settings-macos.png),
 [local cloud tag](https://github.com/rchatham/LangTools.swift/blob/cf15ec9c460255ef4b7226ddc642cf3f660625c8/docs/ollama-integration/shared-settings-macos-local-cloud-tag.png),
 [Cloud](https://github.com/rchatham/LangTools.swift/blob/cf15ec9c460255ef4b7226ddc642cf3f660625c8/docs/ollama-integration/shared-settings-macos-cloud.png).
@@ -91,4 +138,4 @@ These files remain pre-merge captures. Historical native fixtures passed 12 case
 
 Standalone Chat refuses Cloud completion/stream/agents without a host Cloud-capable transport; a consuming application must supply that integration. Snapshot exposes no direct raw helper credential/lease/session getter, but returned `AgentContext` retains normal `LangTools` semantics: trusted holders can access its session and prepared requests. This is not a transitive secrecy sandbox.
 
-Do not use real host stores/providers to force green tests. Simulator fixtures use fake credentials in owned devices; never inject the host deny interposer into simulator apps. Current iOS Release fixture exclusion is verified, but live-provider/deployed-TLS, complete UI runtime verification and merge readiness are not. Previously exposed credentials require rotation through a separately authorized process; no values or credential operations belong in this evidence.
+Do not use real host stores/providers to force green tests. Simulator fixtures use fake credentials in owned devices; never inject the host deny interposer into simulator apps. Historical iOS Release fixture exclusion was verified, but it does not verify the new source pass; live-provider/deployed-TLS, complete UI runtime verification and merge readiness are not established. Previously exposed credentials require rotation through a separately authorized process; no values or credential operations belong in this evidence.
