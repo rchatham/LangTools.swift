@@ -4,7 +4,7 @@ LangTools is a Swift framework for working with Large Language Models (LLMs) and
 
 ## Features
 
-- 🤖 **Multiple LLM Support**: OpenAI, Anthropic, X.AI, Google Gemini, and Ollama
+- 🤖 **Multiple LLM Support**: OpenAI, Anthropic, X.AI, Google Gemini, Ollama, and OpenRouter
 - 🔧 **Unified Interface**: Common protocols for working with different AI providers
 - 🤝 **Extensible Agent System**: Build specialized AI assistants with tools and delegation
 - 📝 **Streaming Support**: Handle streaming responses from AI models
@@ -131,6 +131,7 @@ See individual module README files for detailed documentation and examples:
 - [XAI](Sources/XAI/README.md)
 - [Gemini](Sources/Gemini/README.md)
 - [Ollama](Sources/Ollama/README.md)
+- [OpenRouter](Sources/OpenRouter/README.md)
 - [Performance comparison snapshot](docs/performance-comparison.html)
 
 ## Contributing

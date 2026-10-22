@@ -55,6 +55,7 @@ class MockURLProtocol: URLProtocol {
         "api.anthropic.com",
         "api.x.ai",
         "generativelanguage.googleapis.com",
+        "openrouter.ai",
     ]
 
     private static func hasHandler(forPath path: String) -> Bool {

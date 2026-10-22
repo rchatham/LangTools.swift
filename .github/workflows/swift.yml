@@ -14,6 +14,10 @@ on:
         description: Run the paid live Ollama Cloud smoke test (main only)
         type: boolean
         default: false
+      run_openrouter_tests:
+        description: Run the paid live OpenRouter smoke test (main only)
+        type: boolean
+        default: false
       run_pi_cloud_test:
         description: Run the pinned Pi Ollama Cloud smoke test (main only)
         type: boolean
@@ -255,3 +259,29 @@ jobs:
         set -euo pipefail
         test -n "$OLLAMA_API_KEY"
         swift test --filter OllamaCloudIntegrationTests
+
+  openrouter-smoke:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.run_openrouter_tests
+    runs-on: macos-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      LANGTOOLS_RUN_OPENROUTER_TESTS: "1"
+      OPENROUTER_TEST_MODEL: ${{ vars.OPENROUTER_TEST_MODEL || 'openai/gpt-4o-mini' }}
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+    - name: Run live OpenRouter smoke test
+      env:
+        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -n "$OPENROUTER_API_KEY"
+        swift test --filter OpenRouterIntegrationTests

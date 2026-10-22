@@ -550,9 +550,9 @@ extension OpenAI {
 
         /// An error object embedded in a chat completion response or chunk.
         ///
-        /// OpenRouter uses an integer HTTP status for `code` in error bodies and a
-        /// string such as `"server_error"` in streamed error chunks; both decode
-        /// into `code` as a string.
+        /// Providers send `code` as an integer HTTP status (OpenRouter's current API,
+        /// in both error bodies and streamed error chunks) or as a string such as
+        /// `"server_error"`; both decode into `code` as a string.
         public struct ResponseError: Error, Codable, LocalizedError {
             public let message: String
             public let code: String?
