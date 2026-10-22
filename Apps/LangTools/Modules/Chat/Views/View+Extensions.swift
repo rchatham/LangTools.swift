@@ -41,7 +41,7 @@ extension View {
             case .openAI, .codex: return .openAI
             case .xAI: return .xAI
             case .gemini: return .gemini
-            case .ollama: return .ollama
+            case .ollama, .ollamaCloud: return .ollama
             }
         }()
         return enterAPIKeyAlert(isPresented: isPresented, apiKey: apiKey, service: service)

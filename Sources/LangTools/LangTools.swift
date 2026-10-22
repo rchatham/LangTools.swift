@@ -20,6 +20,7 @@ public protocol LangTools {
     var session: URLSession { get }
     func prepare(request: some LangToolsRequest) throws -> URLRequest
     func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response
+    func perform<Request: LangToolsRequest>(request: Request, onResponse: @escaping (Request.Response) -> Void) async throws -> Request.Response
     func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error>
     ///  When implementing decodeStream yourself, throw an error when the buffer is incomplete and additional lines of data from the response are needed to decode the buffer. If the buffer can be handled it should at least return nil to indicate that the buffer can be cleared. If a nil response is returned the buffer will be cleared and then it will continue reading the data stream, throwing an error will continue appending the data stream to the current buffer.
     static func decodeStream<T: Decodable>(_ buffer: String) throws -> T?

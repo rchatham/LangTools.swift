@@ -113,7 +113,7 @@ final class ChatModelSourceTests: XCTestCase {
         XCTAssertFalse(access.availableChatModels().contains(proxyModel))
         XCTAssertEqual(viewModel.modelPickerTitle(for: proxyModel), proxyModel.rawValue)
 
-        let snapshot = try endpoint.update("http://local-fixture.local:11434")
+        let snapshot = try endpoint.update("https://local-fixture.local:11434")
         XCTAssertTrue(endpoint.storeModels([directModel], for: snapshot))
         access.refresh()
         XCTAssertTrue(access.availableChatModels().contains(.ollama(directModel)))
@@ -121,9 +121,10 @@ final class ChatModelSourceTests: XCTestCase {
         XCTAssertEqual(viewModel.modelPickerTitle(for: proxyModel), proxyModel.rawValue)
 
         source.update(.failed("catalog fixture"))
-        XCTAssertEqual(viewModel.availableModels, [])
+        XCTAssertEqual(viewModel.availableModels, [proxyModel])
         XCTAssertEqual(viewModel.model, proxyModel, "Catalog failures preserve the server selection")
-        XCTAssertEqual(viewModel.modelPickerTitle(for: proxyModel), proxyModel.rawValue)
+        XCTAssertEqual(viewModel.modelPickerTitle(for: proxyModel),
+                       "\(proxyModel.rawValue) — Unavailable in current catalog")
 
         source.update(.direct)
         XCTAssertTrue(viewModel.availableModels.contains(.ollama(directModel)))
@@ -194,6 +195,239 @@ final class ChatModelSourceTests: XCTestCase {
         XCTAssertEqual(store.settings.maxOutputTokens, 1024)
         XCTAssertEqual(store.settings.temperature, 0.6)
         XCTAssertNil(viewModel.generationSettingsError)
+    }
+
+    func testDefaultEffectiveCapabilitiesPreserveModelAPIInEveryCatalogState() throws {
+        let source = ChatModelSource()
+        let models: [Model] = [.openAI(.gpt4o_mini), .codex(.gpt5_4),
+                              testOllamaModel, testOllamaCloudModel]
+        for state: ChatModelSource.State in [.direct, .loading, .ready(models), .failed("fixture")] {
+            source.update(state)
+            for model in models {
+                XCTAssertEqual(source.effectiveGenerationCapabilities(for: model), model.generationCapabilities)
+            }
+        }
+    }
+
+    func testPickerRetentionIsPresentationOnlyAndNeverAddsUnrelatedSelection() throws {
+        let hosted = Model.openAI(.gpt4o_mini)
+        let missingHosted = Model.codex(.gpt5_4)
+        let localTag = try XCTUnwrap(Model(rawValue: "ollama/vendor/model:cloud"))
+        let normalizedCloud = try XCTUnwrap(Model(rawValue: "ollama-cloud/glm-5.2:cloud"))
+        XCTAssertEqual(localTag.rawValue, "ollama/vendor/model:cloud")
+        XCTAssertEqual(normalizedCloud.rawValue, "ollama-cloud/glm-5.2")
+        let source = ChatModelSource()
+        source.updateIndependentModels([testOllamaModel])
+        for state: ChatModelSource.State in [.ready([hosted]), .loading, .failed("fixture"),
+                                            .empty, .authenticationRequired, .unsupportedCatalog] {
+            source.update(state)
+            let catalog = source.allModels
+            for selected in [localTag, normalizedCloud] {
+                XCTAssertEqual(source.pickerModels(retaining: selected), [selected] + catalog)
+                XCTAssertTrue(source.isRetainedUnavailableSelection(selected))
+                XCTAssertEqual(source.allModels, catalog, "Retaining a tag is not catalog admission")
+                XCTAssertFalse(source.models.contains(selected))
+                XCTAssertFalse(source.independentModels.contains(selected))
+                XCTAssertEqual(source.reconciledSelection(selected), selected)
+            }
+            XCTAssertEqual(source.pickerModels(retaining: missingHosted), catalog)
+            XCTAssertEqual(source.pickerModels(retaining: testOllamaModel), catalog)
+            XCTAssertFalse(source.isRetainedUnavailableSelection(testOllamaModel))
+        }
+        source.update(.direct)
+        XCTAssertFalse(source.isRetainedUnavailableSelection(localTag))
+        XCTAssertEqual(source.pickerModels(retaining: localTag), source.allModels)
+    }
+
+    func testSettingsRetainedPickerLabelsTrackOnlyCurrentIndependentSelection() throws {
+        let local = try XCTUnwrap(Model(rawValue: "ollama/vendor/model:cloud"))
+        let cloud = try XCTUnwrap(Model(rawValue: "ollama-cloud/glm-5.2:cloud"))
+        let hosted = Model.openAI(.gpt4o_mini)
+        let source = ChatModelSource()
+        try withIsolatedSettings(modelSource: source) { viewModel, _ in
+            for state: ChatModelSource.State in [.ready([hosted]), .loading, .failed("fixture")] {
+                source.update(state)
+                for selected in [local, cloud] {
+                    viewModel.model = selected
+                    XCTAssertEqual(viewModel.availableModels.filter { $0 == selected }.count, 1)
+                    XCTAssertEqual(viewModel.modelPickerTitle(for: selected),
+                                   "\(selected.rawValue) — Unavailable in current catalog")
+                    let other = selected == local ? cloud : local
+                    XCTAssertFalse(viewModel.availableModels.contains(other))
+                    XCTAssertEqual(viewModel.modelPickerTitle(for: other), other.rawValue)
+                    XCTAssertEqual(Model(rawValue: selected.rawValue), selected)
+                    XCTAssertFalse(source.allModels.contains(selected))
+                }
+                viewModel.model = hosted
+                XCTAssertEqual(viewModel.availableModels, source.allModels)
+            }
+            viewModel.model = cloud
+            source.updateIndependentModels([cloud])
+            XCTAssertEqual(viewModel.modelPickerTitle(for: cloud), cloud.rawValue)
+            XCTAssertEqual(viewModel.availableModels.filter { $0 == cloud }.count, 1)
+            source.updateIndependentModels([])
+            XCTAssertEqual(viewModel.modelPickerTitle(for: cloud),
+                           "ollama-cloud/glm-5.2 — Unavailable in current catalog")
+        }
+    }
+
+    func testEffectiveCapabilitiesChangeWithoutClearingSavedGenerationSettings() throws {
+        let cloud = testOllamaCloudModel
+        var nativeTransport = true
+        let source = ChatModelSource(generationCapabilities: { model in
+            nativeTransport ? model.generationCapabilities : Model.openAI(.gpt4o_mini).generationCapabilities
+        })
+        try withIsolatedSettings(modelSource: source) { viewModel, store in
+            viewModel.model = cloud
+            viewModel.updateTopK(37)
+            XCTAssertEqual(viewModel.generationSettings.topK, 37)
+            XCTAssertTrue(viewModel.effectiveGenerationCapabilities.supportsTopK)
+            nativeTransport = false
+            source.update(.ready([.openAI(.gpt4o_mini)]))
+            XCTAssertFalse(viewModel.effectiveGenerationCapabilities.supportsTopK)
+            viewModel.saveSettings()
+            XCTAssertEqual(store.settings.topK, 37)
+            viewModel.loadSettings()
+            XCTAssertEqual(viewModel.generationSettings.topK, 37)
+            nativeTransport = true
+            source.update(.direct)
+            XCTAssertTrue(viewModel.effectiveGenerationCapabilities.supportsTopK)
+            XCTAssertEqual(viewModel.generationSettings.topK, 37)
+            XCTAssertTrue(cloud.generationCapabilities.supportsTopK, "Public Model semantics are unchanged")
+        }
+    }
+
+    /// No successful credential operation is required. Named suites are removed
+    /// only after the ViewModel (and its nested-store consumers) has been released.
+    private func withIsolatedSettings(
+        modelSource: ChatModelSource,
+        body: (ChatSettingsView.ViewModel, FakeGenSettingsStore) throws -> Void
+    ) throws {
+        let suiteName = "ChatModelSourceTests.settings.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        weak var consumer: ChatSettingsView.ViewModel?
+        defer {
+            if consumer == nil { defaults.removePersistentDomain(forName: suiteName) }
+            else { XCTFail("Settings consumer outlived the fixture; suite retained for diagnosis") }
+        }
+        try autoreleasepool {
+            let keychain = Keychain(service: suiteName)
+            let keys = KeychainService(keychain: keychain)
+            let endpoint = OllamaEndpointConfiguration(
+                userDefaults: defaults, credentialStore: MobileHelperCredentialStore(keychain: keychain)
+            )
+            let access = ProviderAccessManager(
+                keychainService: keys, sessionStore: AuthSessionStore(keychain: keychain),
+                ollamaEndpointConfiguration: endpoint, ollamaCloudAccessEligibility: { false }
+            )
+            let store = FakeGenSettingsStore()
+            let viewModel = ChatSettingsView.ViewModel(
+                clearMessages: {}, modelSource: modelSource, generationSettingsStore: store,
+                conversationSettingsStore: ChatConversationSettingsStore(userDefaults: defaults),
+                accessManager: access, codexHelperTokenStore: CodexHelperTokenStore(defaults: defaults, keychain: keys)
+            )
+            consumer = viewModel
+            try body(viewModel, store)
+        }
+        XCTAssertNil(consumer)
+    }
+
+    // MARK: - Independent model preservation
+
+    private var testOllamaModel: Model {
+        Model(rawValue: "ollama/test-model")!
+    }
+    private var testOllamaCloudModel: Model {
+        Model(rawValue: "ollama-cloud/test-cloud")!
+    }
+
+    func testIndependentModelsDoNotAppearInHostedModels() {
+        let source = ChatModelSource()
+        source.updateIndependentModels([testOllamaModel])
+        source.update(.ready([.openAI(.gpt4o_mini)]))
+        // Hosted models should not include ollama
+        XCTAssertFalse(source.models.contains(testOllamaModel))
+        // allModels should include both
+        XCTAssertTrue(source.allModels.contains(testOllamaModel))
+        XCTAssertTrue(source.allModels.contains(.openAI(.gpt4o_mini)))
+    }
+
+    func testIndependentModelsRejectsOrdinaryHostedRoutes() {
+        let source = ChatModelSource()
+        source.updateIndependentModels([
+            testOllamaModel,
+            testOllamaCloudModel,
+            .openAI(.gpt4o_mini), // should be filtered out
+            .anthropic(.claude46Sonnet)  // should be filtered out
+        ])
+        XCTAssertEqual(source.independentModels.count, 2)
+        XCTAssertTrue(source.independentModels.contains(testOllamaModel))
+        XCTAssertTrue(source.independentModels.contains(testOllamaCloudModel))
+        XCTAssertFalse(source.independentModels.contains(.openAI(.gpt4o_mini)))
+    }
+
+    func testOllamaSelectionSurvivesCatalogStateChanges() {
+        UserDefaults.model = testOllamaModel
+        let source = ChatModelSource()
+        for state: ChatModelSource.State in [
+            .loading, .authenticationRequired, .empty,
+            .failed("fixture"), .unsupportedCatalog, .ready([]), .direct,
+            .ready([.openAI(.gpt4o_mini)])
+        ] {
+            source.update(state)
+            XCTAssertEqual(source.reconciledSelection(testOllamaModel), testOllamaModel,
+                           "ollama selection must survive state: \(state)")
+        }
+    }
+
+    func testOllamaCloudSelectionSurvivesCatalogStateChanges() {
+        UserDefaults.model = testOllamaCloudModel
+        let source = ChatModelSource()
+        for state: ChatModelSource.State in [
+            .loading, .authenticationRequired, .empty,
+            .failed("fixture"), .unsupportedCatalog, .ready([]), .direct,
+            .ready([.openAI(.gpt4o_mini)])
+        ] {
+            source.update(state)
+            XCTAssertEqual(source.reconciledSelection(testOllamaCloudModel), testOllamaCloudModel,
+                           "ollamaCloud selection must survive state: \(state)")
+        }
+    }
+
+    func testOrdinarySelectionReconcilesNormally() {
+        let source = ChatModelSource()
+        let selected = Model.codex(.gpt5_4)
+        source.update(.ready([.openAI(.gpt4o_mini)]))
+        XCTAssertEqual(source.reconciledSelection(selected), .openAI(.gpt4o_mini))
+    }
+
+    func testVMStateSinkReconcilesOrdinarySelectionUsingEmittedReadyState() {
+        UserDefaults.model = .openAI(.gpt4o)
+        let source = ChatModelSource()
+        let vm = ChatSettingsView.ViewModel(clearMessages: {}, modelSource: source)
+        vm.loadSettings()
+        source.update(.ready([.openAI(.gpt4o_mini)]))
+        XCTAssertEqual(vm.model, .openAI(.gpt4o_mini))
+    }
+
+    func testVMStateSinkPreservesLocalCloudSelectionThroughReady() {
+        UserDefaults.model = testOllamaModel
+        let source = ChatModelSource()
+        let vm = ChatSettingsView.ViewModel(clearMessages: {}, modelSource: source)
+        vm.loadSettings()
+        source.update(.ready([.openAI(.gpt4o_mini)]))
+        XCTAssertEqual(vm.model, testOllamaModel,
+                       "ollama model should not be replaced by first hosted model")
+    }
+
+    func testVMStateSinkPreservesCloudSelectionThroughReady() {
+        UserDefaults.model = testOllamaCloudModel
+        let source = ChatModelSource()
+        let vm = ChatSettingsView.ViewModel(clearMessages: {}, modelSource: source)
+        vm.loadSettings()
+        source.update(.ready([.openAI(.gpt4o_mini)]))
+        XCTAssertEqual(vm.model, testOllamaCloudModel,
+                       "cloud model should not be replaced by first hosted model")
     }
 
     func testDefaultAndDirectCatalogUseExistingProviderAccessManager() throws {
