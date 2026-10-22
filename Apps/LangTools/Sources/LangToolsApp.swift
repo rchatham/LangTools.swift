@@ -408,6 +408,9 @@ extension MessageService: @retroactive ChatMessageService {
             return ChatAlertInfo(title: "OpenRouter API Error", button: ButtonInfo(text: "OK", role: .cancel), message: error.error.message)
         case let error as OpenAICompatibleErrorResponse:
             return ChatAlertInfo(title: "API Error", button: ButtonInfo(text: "OK", role: .cancel), message: error.message)
+        case let error as OpenAI.ChatCompletionResponse.ResponseError:
+            // An error the provider reported inside a 200 response or stream.
+            return ChatAlertInfo(title: "API Error", button: ButtonInfo(text: "OK", role: .cancel), message: error.errorDescription ?? error.message)
         default:
             return ChatAlertInfo(title: "API Error", button: ButtonInfo(text: "OK", role: .cancel), message: "An unexpected API error occurred.\n\(error.localizedDescription)")
         }
