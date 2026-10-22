@@ -303,6 +303,15 @@ final class OpenAICompatibleProviderTests: XCTestCase {
         }
     }
 
+    func testHeaderNamesMustBeTokens() throws {
+        for name in ["X-Title\r\nX-Injected", "X Title", "X-Title:", "", "Tïtle"] {
+            let openAI = OpenAI(configuration: .init(apiKey: "k", additionalHeaders: [name: "value"]))
+            assertInvalidArgument(try openAI.prepare(request: makeRequest()), containing: "not a valid header name")
+        }
+        let openAI = OpenAI(configuration: .init(apiKey: "k", additionalHeaders: ["X-OpenRouter-Title": "ok", "HTTP-Referer": "https://example.com"]))
+        XCTAssertNoThrow(try openAI.prepare(request: makeRequest()))
+    }
+
     // MARK: - Provider tag
 
     private let gateway = LangToolsProviderID(rawValue: "example.gateway")

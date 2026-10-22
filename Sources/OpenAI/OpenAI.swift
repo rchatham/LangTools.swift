@@ -38,6 +38,15 @@ final public class OpenAI: LangTools {
             "connection", "te", "trailer", "upgrade",
         ]
 
+        /// Whether `name` is an HTTP field name: a non-empty token of letters,
+        /// digits, and ``!#$%&'*+-.^_`|~`` (RFC 9110). Rules out separators,
+        /// whitespace, and line breaks.
+        static func isHeaderToken(_ name: String) -> Bool {
+            !name.isEmpty && name.unicodeScalars.allSatisfy { scalar in
+                scalar.isASCII && (CharacterSet.alphanumerics.contains(scalar) || "!#$%&'*+-.^_`|~".unicodeScalars.contains(scalar))
+            }
+        }
+
         public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil, additionalHeaders: [String: String] = [:]) {
             self.baseURL = baseURL
             self.apiKey = apiKey
@@ -87,6 +96,9 @@ final public class OpenAI: LangTools {
         urlRequest.httpMethod = Request.httpMethod.rawValue
         urlRequest.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         for (name, value) in configuration.additionalHeaders {
+            guard OpenAIConfiguration.isHeaderToken(name) else {
+                throw LangToolsError.invalidArgument("additionalHeaders name '\(name)' is not a valid header name")
+            }
             guard !OpenAIConfiguration.reservedHeaderNames.contains(name.lowercased()) else {
                 throw LangToolsError.invalidArgument("additionalHeaders cannot set '\(name)'")
             }

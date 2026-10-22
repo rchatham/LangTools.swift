@@ -115,9 +115,10 @@ final class OpenAICompatibleProvidersTests: XCTestCase {
 
     func testUnadaptedProvidersSendTheEncodedBodyUnchanged() throws {
         let request = OpenAI.ChatCompletionRequest(model: "gpt-oss-120b" as Cerebras.Model, messages: [.init(role: .user, content: "Hi")], max_tokens: 100, seed: 7)
-        let expected = try JSONEncoder().encode(request)
+        // Compare parsed JSON: key order differs between JSONEncoder runs on Darwin.
+        let expected = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? NSDictionary)
 
-        XCTAssertEqual(try Cerebras(apiKey: "key").prepare(request: request).httpBody, expected)
+        XCTAssertEqual(try body(of: Cerebras(apiKey: "key").prepare(request: request)) as NSDictionary, expected)
     }
 
     func testMistralRemovesAndRenamesFieldsItRejects() throws {
