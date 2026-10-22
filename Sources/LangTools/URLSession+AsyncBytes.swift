@@ -99,6 +99,7 @@ private final class StreamingTransfer: NSObject, URLSessionDataDelegate, @unchec
     private var task: URLSessionDataTask?
     private var responseContinuation: CheckedContinuation<URLResponse, Error>?
     private var responseDelivered = false
+    private var cancelled = false
 
     init(request: URLRequest, configuration: URLSessionConfiguration, forwardingDelegate: URLSessionDelegate?) {
         self.request = request
@@ -115,6 +116,17 @@ private final class StreamingTransfer: NSObject, URLSessionDataDelegate, @unchec
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 lock.lock()
+                // `cancel()` sets `cancelled` under the same lock, so it either
+                // runs first (the task never starts) or finds a running task.
+                guard !cancelled else {
+                    lock.unlock()
+                    // No task started, so no delegate callback will report the
+                    // cancellation; fail the transfer here.
+                    let error = URLError(.cancelled)
+                    continuation.resume(throwing: error)
+                    chunkContinuation.finish(throwing: error)
+                    return
+                }
                 responseContinuation = continuation
                 let queue = OperationQueue()
                 queue.maxConcurrentOperationCount = 1
@@ -122,17 +134,8 @@ private final class StreamingTransfer: NSObject, URLSessionDataDelegate, @unchec
                 let task = session.dataTask(with: request)
                 self.session = session
                 self.task = task
-                lock.unlock()
-                guard !Task.isCancelled else {
-                    // The task never started, so no delegate callback will
-                    // report the cancellation; fail the transfer here.
-                    let error = URLError(.cancelled)
-                    deliverResponse(.failure(error))
-                    chunkContinuation.finish(throwing: error)
-                    session.invalidateAndCancel()
-                    return
-                }
                 task.resume()
+                lock.unlock()
             }
         } onCancel: {
             cancel()
@@ -141,6 +144,7 @@ private final class StreamingTransfer: NSObject, URLSessionDataDelegate, @unchec
 
     private func cancel() {
         lock.lock()
+        cancelled = true
         let session = self.session
         lock.unlock()
         // Invalidating cancels the task; didCompleteWithError then finishes
