@@ -1,6 +1,7 @@
 import XCTest
 import KeychainAccess
 import Anthropic
+import OpenAI
 import OpenRouter
 @testable import Chat
 
@@ -124,6 +125,7 @@ final class ProviderAccessManagerTests: XCTestCase {
         XCTAssertEqual(
             accessManager.statesForAccessUI().compactMap(\.accessDestination),
             [.openAI, .codex, .anthropic, .claudeCode, .xAI, .gemini, .openRouter]
+                + CompatibleProvider.allCases.map(\.accessDestination)
         )
     }
 
@@ -279,5 +281,101 @@ final class ProviderAccessManagerTests: XCTestCase {
         XCTAssertEqual(AccessDestination.destination(for: .openRouter("x/y")), .openRouter)
         XCTAssertEqual(AccessDestination.platform(for: .openRouter), .openRouter)
         XCTAssertEqual(AccessDestination.openRouter.service, .openRouter)
+    }
+
+    // MARK: - OpenAI-compatible providers
+
+    private func makeCompatibleCatalog(fetcher: @escaping CompatibleModelCatalog.Fetcher = { _, _ in [] }) -> CompatibleModelCatalog {
+        let suiteName = "ProviderAccessManagerTests.Compatible.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        return CompatibleModelCatalog(userDefaults: defaults, fetcher: fetcher)
+    }
+
+    func testCompatibleProviderKeyOffersSuggestedModelsBeforeTheCatalogLoads() throws {
+        let manager = ProviderAccessManager(keychainService: keychainService, sessionStore: sessionStore, compatibleCatalog: makeCompatibleCatalog())
+        XCTAssertTrue(manager.state(for: .groq).availableModels.isEmpty, "no key means no Groq models")
+
+        keychainService.saveApiKey(apiKey: "groq-key", for: .groq)
+        manager.refresh()
+
+        XCTAssertEqual(manager.state(for: .groq).availableModels, CompatibleProvider.groq.knownModelIDs.map { .compatible(.groq, $0) })
+        let accessState = try XCTUnwrap(manager.statesForAccessUI().first { $0.accessDestination == .groq })
+        XCTAssertEqual(accessState.authStatus, .apiKeyConfigured)
+        XCTAssertEqual(accessState.displayName, "Groq")
+        XCTAssertNil(manager.unavailableReason(for: accessState))
+        XCTAssertTrue(manager.state(for: .mistral).availableModels.isEmpty, "keys are per provider")
+    }
+
+    @MainActor
+    func testCompatibleCatalogRefreshKeepsOnlyChatModels() async throws {
+        let catalog = makeCompatibleCatalog { provider, apiKey in
+            XCTAssertEqual(provider, .groq)
+            XCTAssertEqual(apiKey, "groq-key")
+            return [
+                .init(id: "llama-3.3-70b-versatile", contextWindow: 131_072),
+                .init(id: "whisper-large-v3", isChatModel: false),
+                .init(id: "openai/gpt-oss-120b", supportsTools: true),
+            ]
+        }
+        keychainService.saveApiKey(apiKey: "groq-key", for: .groq)
+        let manager = ProviderAccessManager(keychainService: keychainService, sessionStore: sessionStore, compatibleCatalog: catalog)
+
+        try await catalog.refresh(.groq, apiKey: "groq-key")
+        manager.refresh()
+
+        XCTAssertEqual(manager.state(for: .groq).availableModels.map(\.rawValue), [
+            "groq/llama-3.3-70b-versatile",
+            "groq/openai/gpt-oss-120b",
+        ])
+        XCTAssertEqual(catalog.entry(for: .groq, id: "llama-3.3-70b-versatile")?.contextLength, 131_072)
+    }
+
+    func testCompatibleProviderWithoutAModelCatalogKeepsSuggestedModels() async throws {
+        let catalog = makeCompatibleCatalog { _, _ in
+            XCTFail("Cohere has no catalog endpoint")
+            return []
+        }
+
+        let entries = try await catalog.refresh(.cohere, apiKey: "co-key")
+
+        XCTAssertTrue(entries.isEmpty)
+        XCTAssertEqual(catalog.modelIDs(for: .cohere), CompatibleProvider.cohere.knownModelIDs)
+    }
+
+    func testCompatibleCatalogFailureKeepsTheCachedCatalog() async {
+        struct Unreachable: Error {}
+        let catalog = makeCompatibleCatalog { _, _ in throw Unreachable() }
+        catalog.store([.init(id: "mistral-large-latest", supportsTools: true)], for: .mistral)
+
+        do {
+            try await catalog.refresh(.mistral, apiKey: "key")
+            XCTFail("Expected the fetch to fail")
+        } catch {}
+
+        XCTAssertEqual(catalog.modelIDs(for: .mistral), ["mistral-large-latest"])
+    }
+
+    func testCompatibleModelsRoundTripThroughRoutedRawValues() {
+        for provider in CompatibleProvider.allCases {
+            let model = Model.compatible(provider, provider.knownModelIDs[0])
+            XCTAssertEqual(Model(rawValue: model.rawValue), model, model.rawValue)
+            XCTAssertEqual(model.apiService, provider.service)
+            XCTAssertEqual(AccessDestination.destination(for: model), provider.accessDestination)
+            XCTAssertEqual(AccessDestination.platform(for: provider.service), provider.accessDestination)
+            XCTAssertEqual(provider.accessDestination.service, provider.service)
+        }
+        XCTAssertEqual(Model.compatible(.vercel, "anthropic/claude-sonnet-4.5").rawValue, "vercel/anthropic/claude-sonnet-4.5")
+        XCTAssertNil(Model(rawValue: "groq/"), "an empty slug is not an Ollama model name")
+        XCTAssertNil(Model(rawValue: "groq/ llama"), "padded slugs are rejected")
+    }
+
+    func testPickerGroupsModelsByProviderAndFilters() {
+        let models: [Model] = [.openAI(.gpt4o), .compatible(.groq, "llama-3.3-70b-versatile"), .openAI(.gpt4o_mini), .openRouter(.auto)]
+
+        XCTAssertEqual(Model.pickerGroups(models).map(\.title), ["OpenAI Platform", "Groq", "OpenRouter"])
+        XCTAssertEqual(Model.pickerGroups(models, matching: "groq llama").flatMap(\.models), [.compatible(.groq, "llama-3.3-70b-versatile")])
+        XCTAssertEqual(Model.pickerGroups(models, matching: "GPT-4O-MINI").flatMap(\.models), [.openAI(.gpt4o_mini)])
+        XCTAssertEqual(Model.pickerGroups(models, matching: "no match", keeping: .openRouter(.auto)).flatMap(\.models), [.openRouter(.auto)], "the selection stays visible")
     }
 }

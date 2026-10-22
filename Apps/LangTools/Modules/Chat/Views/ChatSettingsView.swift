@@ -206,10 +206,13 @@ public struct ChatSettingsView: View {
                 // Note: OllamaService might not be available on all platforms
                 #endif
 
+                if viewModel.showsModelSearch {
+                    TextField("Filter models", text: $viewModel.modelSearchText)
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("settings.modelSearch")
+                }
                 Picker("Chat Models", selection: $viewModel.model) {
-                    ForEach(viewModel.availableModels, id: \.self) { model in
-                        Text(viewModel.modelPickerTitle(for: model)).tag(model)
-                    }
+                    modelPickerContent
                 }
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("settings.modelPicker")
@@ -525,10 +528,14 @@ public struct ChatSettingsView: View {
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 16) {
+                        if viewModel.showsModelSearch {
+                            TextField("Filter models", text: $viewModel.modelSearchText)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 400)
+                                .accessibilityIdentifier("settings.modelSearch")
+                        }
                         Picker("", selection: $viewModel.model) {
-                            ForEach(viewModel.availableModels, id: \.self) { model in
-                                Text(viewModel.modelPickerTitle(for: model)).tag(model)
-                            }
+                            modelPickerContent
                         }
                         .pickerStyle(.menu)
                         .frame(maxWidth: 400)
@@ -1090,11 +1097,30 @@ public struct ChatSettingsView: View {
         }
     }
 
-    // Helper function to provide model descriptions
+    /// Picker rows grouped by provider, filtered by the search text.
+    @ViewBuilder
+    private var modelPickerContent: some View {
+        let groups = viewModel.modelPickerGroups
+        if groups.count == 1, let group = groups.first {
+            ForEach(group.models, id: \.self) { model in
+                Text(viewModel.modelPickerTitle(for: model)).tag(model)
+            }
+        } else {
+            ForEach(groups) { group in
+                Section(group.title) {
+                    ForEach(group.models, id: \.self) { model in
+                        Text(viewModel.modelPickerTitle(for: model)).tag(model)
+                    }
+                }
+            }
+        }
+    }
+
     private func accessActionTitle(for state: ProviderAccessState) -> String {
         "Manage \(state.displayName) Access"
     }
 
+    // Helper function to provide model descriptions
     private func modelDescription(for model: Model) -> String {
         switch model {
         case .codex:
@@ -1117,6 +1143,8 @@ public struct ChatSettingsView: View {
             return "OpenRouter's router picks a model for each prompt."
         case .openRouter:
             return "Served through OpenRouter. Capabilities and pricing depend on the model and the upstream provider."
+        case .compatible(let provider, _):
+            return "Served through \(provider.displayName)'s OpenAI-compatible API. Capabilities depend on the model."
         case .ollama:
             return "This is a locally-hosted model running through Ollama. Performance and capabilities depend on the model and your local hardware."
         default:
@@ -1339,6 +1367,16 @@ extension ChatSettingsView {
             accessManager.objectWillChange
                 .sink { [weak self] _ in self?.objectWillChange.send() }
                 .store(in: &cancellables)
+        }
+
+        /// Narrows the model picker; matched against model IDs and provider names.
+        @Published public var modelSearchText = ""
+
+        /// The search field appears once the list is long enough to need it.
+        public var showsModelSearch: Bool { availableModels.count > 12 }
+
+        public var modelPickerGroups: [ModelPickerGroup] {
+            Model.pickerGroups(availableModels, matching: modelSearchText, keeping: model)
         }
 
         public var availableModels: [Model] {

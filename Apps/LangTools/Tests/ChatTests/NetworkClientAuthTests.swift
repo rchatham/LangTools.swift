@@ -125,6 +125,7 @@ final class NetworkClientAuthTests: XCTestCase {
             .gemini(geminiModel),
             .ollama(ollamaModel),
             .openRouter("openai/gpt-4o"),
+            .compatible(.groq, "llama-3.3-70b-versatile"),
         ]
         let event = LangToolsToolEvent.toolCalled(TestToolSelection())
         var receivedEventCount = 0
@@ -1552,5 +1553,85 @@ private final class TestOpenAIAccountChatBridge: OpenAIAccountChatBridging {
             throw error
         }
         return Message(text: "cli response", role: .assistant)
+    }
+
+    // MARK: - OpenAI-compatible providers
+
+    private func compatibleClient(_ provider: CompatibleProvider, catalogEntries: [CompatibleModelCatalog.Entry]) -> NetworkClient {
+        let suiteName = "NetworkClientAuthTests.Compatible.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        let catalog = CompatibleModelCatalog(userDefaults: defaults, fetcher: { _, _ in [] })
+        catalog.store(catalogEntries, for: provider)
+        return NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager,
+            compatibleCatalog: catalog
+        )
+    }
+
+    func testCompatibleRequestIsTaggedForItsProvider() throws {
+        let client = compatibleClient(.groq, catalogEntries: [.init(id: "openai/gpt-oss-120b", supportsTools: true)])
+        let tool = Tool(name: "lookup_weather", description: "Look up weather", tool_schema: ToolSchema())
+
+        let request = try XCTUnwrap(client.request(
+            messages: [Message(text: "What is the weather?", role: .user)],
+            model: .compatible(.groq, "openai/gpt-oss-120b"),
+            tools: [tool],
+            toolChoice: .required
+        ) as? OpenAI.ChatCompletionRequest)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+
+        XCTAssertEqual(object["model"] as? String, "openai/gpt-oss-120b")
+        XCTAssertTrue(request.model.belongs(to: CompatibleProvider.groq.providerID))
+        XCTAssertFalse(OpenAI.requestValidators.contains { $0(request) }, "an OpenAI-looking ID must still route to Groq")
+        XCTAssertFalse(OpenRouter.requestValidators.contains { $0(request) })
+        XCTAssertEqual((object["tools"] as? [Any])?.count, 1)
+    }
+
+    func testCompatibleRequestOmitsToolsForModelsWithoutToolSupport() throws {
+        let client = compatibleClient(.mistral, catalogEntries: [.init(id: "mistral-embed-chat", supportsTools: false)])
+        let tool = Tool(name: "lookup_weather", description: "Look up weather", tool_schema: ToolSchema())
+
+        let request = try XCTUnwrap(client.request(
+            messages: [Message(text: "Hi", role: .user)],
+            model: .compatible(.mistral, "mistral-embed-chat"),
+            tools: [tool],
+            toolChoice: .required
+        ) as? OpenAI.ChatCompletionRequest)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+
+        XCTAssertNil(object["tools"])
+        XCTAssertNil(object["tool_choice"])
+    }
+
+    func testSavingACompatibleProviderKeyRefreshesItsCatalog() async throws {
+        let suiteName = "NetworkClientAuthTests.Compatible.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let fetched = expectation(description: "catalog fetched with the saved key")
+        let catalog = CompatibleModelCatalog(userDefaults: defaults, fetcher: { provider, apiKey in
+            XCTAssertEqual(provider, .together)
+            XCTAssertEqual(apiKey, "together-key")
+            fetched.fulfill()
+            return [.init(id: "meta-llama/Llama-3.3-70B-Instruct-Turbo")]
+        })
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager,
+            compatibleCatalog: catalog
+        )
+
+        try client.updateApiKey("together-key", for: .together)
+
+        await fulfillment(of: [fetched], timeout: 5)
+        for _ in 0..<50 where catalog.entries(for: .together).isEmpty {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(catalog.modelIDs(for: .together), ["meta-llama/Llama-3.3-70B-Instruct-Turbo"])
     }
 }

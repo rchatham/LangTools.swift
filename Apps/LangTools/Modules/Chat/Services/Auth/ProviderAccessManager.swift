@@ -16,6 +16,7 @@ public final class ProviderAccessManager: ObservableObject {
     private let sessionStore: AuthSessionStore
     private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
     private let openRouterCatalog: OpenRouterModelCatalog
+    private let compatibleCatalog: CompatibleModelCatalog
     private let stateLock = NSLock()
     private var refreshGeneration: UInt64 = 0
 
@@ -23,12 +24,14 @@ public final class ProviderAccessManager: ObservableObject {
         keychainService: KeychainService = .shared,
         sessionStore: AuthSessionStore = .shared,
         ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared,
-        openRouterCatalog: OpenRouterModelCatalog = .shared
+        openRouterCatalog: OpenRouterModelCatalog = .shared,
+        compatibleCatalog: CompatibleModelCatalog = .shared
     ) {
         self.keychainService = keychainService
         self.sessionStore = sessionStore
         self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
         self.openRouterCatalog = openRouterCatalog
+        self.compatibleCatalog = compatibleCatalog
         refresh()
     }
 
@@ -160,7 +163,7 @@ public final class ProviderAccessManager: ObservableObject {
             accessState(for: .xAI),
             accessState(for: .gemini),
             accessState(for: .openRouter)
-        ]
+        ] + CompatibleProvider.allCases.map { accessState(for: $0.accessDestination) }
     }
 
     private func accessState(for destination: AccessDestination) -> ProviderAccessState {
@@ -246,7 +249,7 @@ public final class ProviderAccessManager: ObservableObject {
                     guard let model = Anthropic.Model(rawValue: slug) else { return nil }
                     return .claudeCode(model)
                 }
-            case .xAI, .gemini, .ollama, .serper, .openRouter:
+            case .xAI, .gemini, .ollama, .serper, .openRouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
                 parsed = session.accessibleModelIDs.compactMap(Model.init(rawValue:))
             }
             return parsed
@@ -265,6 +268,9 @@ public final class ProviderAccessManager: ObservableObject {
                 return Gemini.Model.allCases.map { .gemini($0) }
             case .openRouter:
                 return openRouterCatalog.models().map { .openRouter($0) }
+            case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
+                let provider = CompatibleProvider(service: service)!
+                return compatibleCatalog.modelIDs(for: provider).map { .compatible(provider, $0) }
             case .ollama:
                 return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
             case .serper:

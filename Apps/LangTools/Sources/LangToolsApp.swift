@@ -57,6 +57,7 @@ struct LangToolsApp: App {
         if !fixtureActive {
             initializeOllama()
             OpenRouterModelCatalog.shared.refreshInBackground()
+            CompatibleModelCatalog.shared.refreshInBackground()
         }
     }
 
@@ -405,6 +406,8 @@ extension MessageService: @retroactive ChatMessageService {
             return ChatAlertInfo(title: "Ollama API Error", button: ButtonInfo(text: "OK", role: .cancel), message: error.error.message)
         case let error as OpenRouterErrorResponse:
             return ChatAlertInfo(title: "OpenRouter API Error", button: ButtonInfo(text: "OK", role: .cancel), message: error.error.message)
+        case let error as OpenAICompatibleErrorResponse:
+            return ChatAlertInfo(title: "API Error", button: ButtonInfo(text: "OK", role: .cancel), message: error.message)
         default:
             return ChatAlertInfo(title: "API Error", button: ButtonInfo(text: "OK", role: .cancel), message: "An unexpected API error occurred.\n\(error.localizedDescription)")
         }

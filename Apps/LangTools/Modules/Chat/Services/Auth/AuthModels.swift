@@ -38,6 +38,8 @@ public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
     case xAI
     case gemini
     case openRouter
+    // OpenAI-compatible providers; raw values match `CompatibleProvider`.
+    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere
 
     public var id: String { rawValue }
 
@@ -48,6 +50,8 @@ public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
         case .xAI: return .xAI
         case .gemini: return .gemini
         case .openRouter: return .openRouter
+        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
+            return CompatibleProvider(rawValue: rawValue)!.service
         }
     }
 
@@ -76,6 +80,8 @@ public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
         case .xAI: return "xAI"
         case .gemini: return "Gemini"
         case .openRouter: return "OpenRouter"
+        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
+            return CompatibleProvider(rawValue: rawValue)!.displayName
         }
     }
 
@@ -88,6 +94,8 @@ public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
         case .xAI: return .xAI
         case .gemini: return .gemini
         case .openRouter: return .openRouter
+        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
+            return CompatibleProvider(rawValue: model.route.rawValue)!.accessDestination
         case .ollama: return nil
         }
     }
@@ -99,6 +107,8 @@ public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
         case .xAI: return .xAI
         case .gemini: return .gemini
         case .openRouter: return .openRouter
+        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
+            return CompatibleProvider(service: service)!.accessDestination
         case .ollama, .serper: return nil
         }
     }
@@ -327,7 +337,7 @@ public struct ProviderAccessState: Equatable, Identifiable {
             return "Add an API key for API requests or sign in with OpenAI to unlock account-based model access."
         case .anthropic:
             return "Add an Anthropic API key or sign in with Claude Code for account-based access."
-        case .xAI, .gemini, .openRouter:
+        case .xAI, .gemini, .openRouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
             return "Add an API key to enable this provider."
         case .ollama:
             return "Local models do not require sign-in."

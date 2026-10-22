@@ -43,6 +43,7 @@ extension View {
             case .gemini: return .gemini
             case .ollama: return .ollama
             case .openRouter: return .openRouter
+            case .compatible(let provider, _): return provider.service
             }
         }()
         return enterAPIKeyAlert(isPresented: isPresented, apiKey: apiKey, service: service)
@@ -65,6 +66,8 @@ extension APIService {
         case .ollama: return "Ollama"
         case .serper: return "Serper"
         case .openRouter: return "OpenRouter"
+        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
+            return CompatibleProvider(service: self)!.displayName
         }
     }
     

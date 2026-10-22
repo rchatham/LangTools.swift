@@ -70,6 +70,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     private let openAIAccountChatBridge: OpenAIAccountChatBridging
     private let generationSettingsProvider: @Sendable () -> ChatGenerationSettings
     private let openRouterCatalog: OpenRouterModelCatalog
+    private let compatibleCatalog: CompatibleModelCatalog
     public let providerAccessManager: ProviderAccessManager
     private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
     private let ollamaSession: URLSession
@@ -91,7 +92,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         generationSettingsProvider: @escaping @Sendable () -> ChatGenerationSettings = {
             ChatGenerationSettingsStore().load()
         },
-        openRouterCatalog: OpenRouterModelCatalog = .shared
+        openRouterCatalog: OpenRouterModelCatalog = .shared,
+        compatibleCatalog: CompatibleModelCatalog = .shared
     ) {
         self.keychainService = keychainService
         self.accountLoginService = accountLoginService
@@ -102,6 +104,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         self.ollamaSession = ollamaSession
         self.generationSettingsProvider = generationSettingsProvider
         self.openRouterCatalog = openRouterCatalog
+        self.compatibleCatalog = compatibleCatalog
         super.init()
         APIService.llms.forEach { llm in keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) } }
         providerAccessManager.refresh()
@@ -357,6 +360,25 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                 tool_choice: supportsTools ? toolChoice : nil,
                 toolEventHandler: toolEventHandler
             )
+        case .compatible(let provider, let id):
+            // As with OpenRouter, tools go only to models the catalog does not
+            // list as lacking tool support.
+            let supportsTools = compatibleCatalog.entry(for: provider, id: id)?.supportsTools ?? true
+            return OpenAI.ChatCompletionRequest(
+                model: provider.openAIModel(id: id),
+                messages: replayMessages.toOpenAIMessages(),
+                temperature: temperature,
+                top_p: topP,
+                stream: stream,
+                stop: stop.map { .array($0) },
+                max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                presence_penalty: presencePenalty,
+                frequency_penalty: frequencyPenalty,
+                seed: seed,
+                tools: supportsTools ? tools?.convertTools() : nil,
+                tool_choice: supportsTools ? toolChoice : nil,
+                toolEventHandler: toolEventHandler
+            )
         case .xAI(let providerModel):
             return OpenAI.ChatCompletionRequest(
                 model: providerModel,
@@ -433,6 +455,11 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .openAI(let model), .codex(let model): return AgentContext(langTool: try requiredLangTool(OpenAI.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
         case .xAI(let model): return AgentContext(langTool: try requiredLangTool(XAI.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
         case .openRouter(let model): return AgentContext(langTool: try requiredLangTool(OpenRouter.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .compatible(let provider, let id):
+            guard let context = provider.providerContext(id: id, toolchain: toolchainSnapshot()) else {
+                throw NetworkError.langToolNotRegistered(provider.displayName)
+            }
+            return AgentContext(langTool: context.langTool, model: context.model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
         case .ollama(let model):
             let snapshot = ollamaEndpointConfiguration.snapshot()
             return AgentContext(langTool: try snapshot.provider(directSession: ollamaSession), model: model, messages: replayMessages.toOllamaMessages(), eventHandler: eventHandler)
@@ -470,6 +497,9 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         providerAccessManager.refresh()
         if llm == .openRouter {
             openRouterCatalog.refreshInBackground(keychainService: keychainService, accessManager: providerAccessManager)
+        }
+        if let provider = CompatibleProvider(service: llm) {
+            compatibleCatalog.refreshInBackground(provider, keychainService: keychainService, accessManager: providerAccessManager)
         }
     }
 
@@ -549,6 +579,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
         case .openRouter: return if let baseURL { OpenRouter(baseURL: baseURL, apiKey: apiKey, appTitle: "LangTools") } else { OpenRouter(apiKey: apiKey, appTitle: "LangTools") }
+        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
+            return CompatibleProvider(service: llm)?.makeClient(apiKey: apiKey)
         case .ollama: return nil
         default: return nil
         }
@@ -596,10 +628,12 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
 
 public enum APIService: String, CaseIterable, Codable, Identifiable {
     case openAI, anthropic, xAI, gemini, ollama, serper, openRouter
+    // OpenAI-compatible providers; raw values match `CompatibleProvider`.
+    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere
 
     public var id: String { rawValue }
 
-    static var llms: [APIService] = [.openAI, .anthropic, .xAI, .gemini, .ollama, .openRouter]
+    static var llms: [APIService] = [.openAI, .anthropic, .xAI, .gemini, .ollama, .openRouter] + CompatibleProvider.allCases.map(\.service)
 }
 
 extension NetworkClient {
