@@ -1,6 +1,6 @@
 # OpenAICompatible
 
-Shared support for providers that serve OpenAI's Chat Completions format at their own base URL. OpenRouter, Vercel AI Gateway, Groq, Mistral, DeepSeek, Cerebras, Together AI, Fireworks AI, Cohere, xAI, and Gemini are built on it.
+Shared support for providers that serve OpenAI's Chat Completions or Responses format at their own base URL. OpenRouter, Vercel AI Gateway, Groq, Mistral, DeepSeek, Cerebras, Together AI, Fireworks AI, Cohere, Perplexity, xAI, and Gemini are built on it.
 
 The OpenAI module only supplies the hooks this layer needs: the model's provider tag, `additionalParameters`, and tolerant response decoding. Everything provider-specific lives here or in the provider's own module.
 
@@ -41,6 +41,19 @@ let models = try await MyProvider(apiKey: key).listModels()   // GET /models, no
 
 A provider with an established model enum or error type keeps it: declare your own `Model` and `ErrorResponse`, and override `chatRequest` to build requests from your model type (xAI and Gemini do this, and still accept `OpenAICompatibleModel<Self>` for IDs outside their enums).
 
+## Responses format
+
+A provider that serves OpenAI's Responses API declares it, and tagged `OpenAI.ResponsesRequest`s route to it. `chatRequest` builds Responses requests when the provider does not serve Chat Completions:
+
+```swift
+public static var compatibleFormats: OpenAICompatibleFormats { .responses }   // or [.chatCompletions, .responses]
+
+// Optional: rewrite the encoded body for the provider's dialect.
+public static func adaptResponsesBody(_ body: inout [String: JSON]) { ... }
+```
+
+Perplexity's Agent API is built this way: it sends presets as `preset`, moves structured output to `response_format`, and overrides `prepare` to post to `/v1/agent`.
+
 ## Serving more than one format
 
 A provider that also has request types of its own, or serves Anthropic's Messages format through `AnthropicCompatibleProvider`, handles them in the same class. Combine the building blocks each protocol exposes:
@@ -75,4 +88,4 @@ OpenRouter and Vercel AI Gateway are built this way. The class's `ErrorResponse`
 
 ## Model catalogs
 
-`listModels()` reads `GET /models` as `{"data": [...]}` or a bare array and normalizes each entry into `OpenAICompatibleModelInfo`: `contextWindow`, `maxOutputTokens`, `supportsTools` (nil when the catalog does not say), and `isChatModel`. Entries that fail to decode are skipped. A provider without a catalog sets `supportsModelListing` to `false` and lists `knownModels`.
+`listModels()` is a protocol requirement whose default reads `GET /models` as `{"data": [...]}` or a bare array and normalizes each entry into `OpenAICompatibleModelInfo`: `contextWindow`, `maxOutputTokens`, `supportsTools` (nil when the catalog does not say), and `isChatModel`. Entries that fail to decode are skipped. A provider with its own catalog API implements `listModels()` (Cohere does), and generic callers reach it. A provider without a catalog sets `supportsModelListing` to `false` and lists `knownModels`.

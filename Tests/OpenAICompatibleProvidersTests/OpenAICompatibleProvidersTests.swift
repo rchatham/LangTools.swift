@@ -388,14 +388,27 @@ final class OpenAICompatibleProvidersTests: XCTestCase {
         XCTAssertEqual(models[0].contextWindow, 163_840)
     }
 
-    func testCohereDoesNotListModels() async {
-        XCTAssertFalse(Cohere.supportsModelListing)
-        do {
-            _ = try await Cohere(apiKey: "key", session: session).listModels()
-            XCTFail("Expected Cohere to refuse listing")
-        } catch LangToolsError.invalidArgument {
-        } catch {
-            XCTFail("Unexpected error \(error)")
+    func testCohereListsModelsFromItsNativeCatalog() async throws {
+        let catalog = """
+        {"models":[{"name":"command-a-03-2025","endpoints":["generate","chat","summarize"],"features":["json_mode","json_schema","tools","strict_tools"],"context_length":256000,"is_deprecated":false},{"name":"command-light","endpoints":["chat"],"features":null,"context_length":4096,"is_deprecated":true},{"name":"broken"},{"endpoints":["chat"]}],"next_page_token":null}
+        """
+        MockURLProtocol.setHandler(for: "v1/models") { request in
+            XCTAssertEqual(request.url?.host, "api.cohere.com")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertEqual(query.first(where: { $0.name == "endpoint" })?.value, "chat")
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer key")
+            return (.success(Data(catalog.utf8)), 200)
         }
+
+        // Called through the protocol, as the CLI and app do.
+        func list<P: OpenAICompatibleProvider>(_ provider: P) async throws -> [OpenAICompatibleModelInfo] { try await provider.listModels() }
+        let models = try await list(Cohere(apiKey: "key", session: session))
+
+        XCTAssertTrue(Cohere.supportsModelListing)
+        XCTAssertEqual(models.map(\.id), ["command-a-03-2025", "broken"])
+        XCTAssertEqual(models[0].contextWindow, 256_000)
+        XCTAssertEqual(models[0].supportsTools, true)
+        XCTAssertNil(models[1].supportsTools)
     }
 }

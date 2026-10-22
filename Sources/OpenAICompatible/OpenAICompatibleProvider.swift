@@ -2,8 +2,9 @@
 //  OpenAICompatibleProvider.swift
 //  OpenAICompatible
 //
-//  Shared plumbing for providers that serve OpenAI's Chat Completions format
-//  at their own base URL (OpenRouter, Groq, Mistral, Vercel AI Gateway, ...).
+//  Shared plumbing for providers that serve OpenAI's Chat Completions or
+//  Responses format at their own base URL (OpenRouter, Groq, Mistral, Vercel
+//  AI Gateway, Perplexity, ...).
 //  A provider supplies its identity and an `OpenAI` client configured for its
 //  endpoint; routing, request preparation, headers, error decoding, and model
 //  listing come from the extensions below. The OpenAI module itself only
@@ -20,9 +21,10 @@ import LangTools
 
 /// A provider whose chat endpoint is wire-compatible with OpenAI's.
 ///
-/// Requests are `OpenAI.ChatCompletionRequest`s whose model carries the
-/// provider's tag (see `OpenAICompatibleModel.openAIModel`), so several
-/// providers serving the same model names can share one `LangToolchain`.
+/// Requests are `OpenAI.ChatCompletionRequest`s (or `OpenAI.ResponsesRequest`s,
+/// see `compatibleFormats`) whose model carries the provider's tag (see
+/// `OpenAICompatibleModel.openAIModel`), so several providers serving the same
+/// model names can share one `LangToolchain`.
 ///
 /// A provider that also has request types of its own (a native API, a
 /// catalog with filters) serves them from the same class: it adds validators
@@ -42,6 +44,9 @@ public protocol OpenAICompatibleProvider: LangTools {
     /// The environment variable conventionally holding the API key, such as
     /// `"GROQ_API_KEY"`.
     static var apiKeyEnvironmentVariable: String { get }
+    /// The OpenAI request formats the provider serves. The default is
+    /// `.chatCompletions`.
+    static var compatibleFormats: OpenAICompatibleFormats { get }
     /// Whether the provider serves `GET /models` at its base URL.
     static var supportsModelListing: Bool { get }
     /// Models to offer before, or instead of, a catalog fetch.
@@ -60,39 +65,70 @@ public protocol OpenAICompatibleProvider: LangTools {
     /// such as dropping parameters it rejects. The default changes nothing.
     /// See `OpenAICompatibleBody` for helpers.
     static func adaptChatBody(_ body: inout [String: JSON])
+
+    /// Adjusts an encoded Responses body the same way. The default changes
+    /// nothing.
+    static func adaptResponsesBody(_ body: inout [String: JSON])
+
+    /// Lists the provider's chat models. The default reads `GET /models`; a
+    /// provider with its own catalog API overrides it.
+    func listModels() async throws -> [OpenAICompatibleModelInfo]
+}
+
+/// The OpenAI request formats an `OpenAICompatibleProvider` serves.
+public struct OpenAICompatibleFormats: OptionSet, Sendable {
+    public let rawValue: Int
+    public init(rawValue: Int) { self.rawValue = rawValue }
+
+    /// `POST chat/completions` with `OpenAI.ChatCompletionRequest`.
+    public static let chatCompletions = OpenAICompatibleFormats(rawValue: 1 << 0)
+    /// `POST responses` with `OpenAI.ResponsesRequest`.
+    public static let responses = OpenAICompatibleFormats(rawValue: 1 << 1)
 }
 
 extension OpenAICompatibleProvider {
+    public static var compatibleFormats: OpenAICompatibleFormats { .chatCompletions }
     public static var supportsModelListing: Bool { true }
     public static var knownModels: [OpenAICompatibleModel<Self>] { [] }
     public static func adaptChatBody(_ body: inout [String: JSON]) {}
+    public static func adaptResponsesBody(_ body: inout [String: JSON]) {}
     public var additionalHeaders: [String: String] { [:] }
 
     public var session: URLSession { openAI.session }
     public var logger: LangToolsLogger? { openAI.logger }
 
-    /// Claims chat requests whose model is tagged for this provider, and this
-    /// provider's catalog request. Untagged models are left to OpenAI, XAI,
-    /// and Gemini.
+    /// Claims requests in `compatibleFormats` whose model is tagged for this
+    /// provider, and this provider's catalog request. Untagged models are left
+    /// to OpenAI, XAI, and Gemini.
     public static var compatibleRequestValidators: [(any LangToolsRequest) -> Bool] {
-        [
-            { ($0 as? OpenAI.ChatCompletionRequest)?.model.belongs(to: providerID) ?? false },
-            { $0 is OpenAICompatibleListModelsRequest<Self> },
-        ]
+        var validators: [(any LangToolsRequest) -> Bool] = [{ $0 is OpenAICompatibleListModelsRequest<Self> }]
+        if compatibleFormats.contains(.chatCompletions) {
+            validators.append { ($0 as? OpenAI.ChatCompletionRequest)?.model.belongs(to: providerID) ?? false }
+        }
+        if compatibleFormats.contains(.responses) {
+            validators.append { ($0 as? OpenAI.ResponsesRequest)?.model.belongs(to: providerID) ?? false }
+        }
+        return validators
     }
 
     public static var requestValidators: [(any LangToolsRequest) -> Bool] { compatibleRequestValidators }
 
     /// Prepares a request for the OpenAI-compatible endpoint: the OpenAI
-    /// client's request with `additionalHeaders` added and, for chat, the body
-    /// adapted by `adaptChatBody(_:)`.
+    /// client's request with `additionalHeaders` added and the body adapted by
+    /// `adaptChatBody(_:)` or `adaptResponsesBody(_:)`.
     public func prepareCompatible(request: some LangToolsRequest) throws -> URLRequest {
         var urlRequest = try openAI.prepare(request: request)
         try OpenAICompatibleHeaders.apply(additionalHeaders, to: &urlRequest)
-        if request is OpenAI.ChatCompletionRequest, let data = urlRequest.httpBody,
+        let adapt: ((inout [String: JSON]) -> Void)?
+        switch request {
+        case is OpenAI.ChatCompletionRequest: adapt = Self.adaptChatBody
+        case is OpenAI.ResponsesRequest: adapt = Self.adaptResponsesBody
+        default: adapt = nil
+        }
+        if let adapt, let data = urlRequest.httpBody,
            case .object(var body) = try JSONDecoder().decode(JSON.self, from: data) {
             let original = body
-            Self.adaptChatBody(&body)
+            adapt(&body)
             if body != original { urlRequest.httpBody = try JSONEncoder().encode(JSON.object(body)) }
         }
         return urlRequest
@@ -111,8 +147,19 @@ extension OpenAICompatibleProvider {
         return request
     }
 
+    /// A Responses request for one of this provider's models, tagged so the
+    /// toolchain routes it here.
+    public static func compatibleResponsesRequest(model: OpenAICompatibleModel<Self>, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> OpenAI.ResponsesRequest {
+        try OpenAI.responsesRequest(model: model.openAIModel, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
+    }
+
+    /// Builds a chat completion request, or a Responses request for a
+    /// provider that serves only that format.
     public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
         guard let model = model as? OpenAICompatibleModel<Self> else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
+        if !compatibleFormats.contains(.chatCompletions), compatibleFormats.contains(.responses) {
+            return try compatibleResponsesRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
+        }
         return try compatibleChatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
     }
 
@@ -124,6 +171,16 @@ extension OpenAICompatibleProvider {
             throw LangToolsError.invalidArgument("\(Self.displayName) does not list models; use knownModels")
         }
         return try await perform(request: OpenAICompatibleListModelsRequest<Self>()).data
+    }
+
+    /// Decodes SSE `data:` lines, skipping `event:` lines and the `[DONE]`
+    /// sentinel. Unlike the LangTools default, a chunk whose text merely
+    /// contains "[DONE]" is still decoded.
+    public static func decodeStream<T: Decodable>(_ buffer: String) throws -> T? {
+        guard buffer.hasPrefix("data:") else { return nil }
+        let payload = buffer.dropFirst(5).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard payload != "[DONE]", let data = payload.data(using: .utf8) else { return nil }
+        return try decodeResponse(data: data)
     }
 
     /// Builds the `OpenAI` client for an OpenAI-compatible endpoint.
@@ -433,5 +490,13 @@ extension OpenAI.ChatCompletionRequest {
     /// tagged with the provider, so a `LangToolchain` routes the request there.
     public init<Provider>(model: OpenAICompatibleModel<Provider>, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, max_completion_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [OpenAI.Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, reasoning_effort: ReasoningEffort? = nil, choose: @escaping ([Response.Choice]) -> Int = { _ in 0 }, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) {
         self.init(model: model.openAIModel, messages: messages, temperature: temperature, top_p: top_p, n: n, stream: stream, stream_options: stream_options, stop: stop, max_tokens: max_tokens, max_completion_tokens: max_completion_tokens, presence_penalty: presence_penalty, frequency_penalty: frequency_penalty, logit_bias: logit_bias, logprobs: logprobs, top_logprobs: top_logprobs, user: user, response_type: response_type, seed: seed, tools: tools, tool_choice: tool_choice, parallel_tool_calls: parallel_tool_calls, reasoning_effort: reasoning_effort, choose: choose, toolEventHandler: toolEventHandler)
+    }
+}
+
+extension OpenAI.ResponsesRequest {
+    /// A Responses request for an OpenAI-compatible provider's model. The model
+    /// is tagged with the provider, so a `LangToolchain` routes the request there.
+    public init<Provider>(model: OpenAICompatibleModel<Provider>, messages: [Message], stream: Bool? = nil, instructions: String? = nil, previous_response_id: String? = nil, max_output_tokens: Int? = nil, temperature: Double? = nil, top_p: Double? = nil, tools: [OpenAI.Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, text: TextConfig? = nil, metadata: [String: String]? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) {
+        self.init(model: model.openAIModel, messages: messages, stream: stream, instructions: instructions, previous_response_id: previous_response_id, max_output_tokens: max_output_tokens, temperature: temperature, top_p: top_p, tools: tools, tool_choice: tool_choice, parallel_tool_calls: parallel_tool_calls, text: text, metadata: metadata, toolEventHandler: toolEventHandler)
     }
 }
