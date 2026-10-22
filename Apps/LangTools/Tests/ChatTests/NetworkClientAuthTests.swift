@@ -165,6 +165,33 @@ final class NetworkClientAuthTests: XCTestCase {
         )
     }
 
+    func testSavingAnOpenRouterKeyRefreshesTheCatalog() async throws {
+        let suiteName = "NetworkClientAuthTests.OpenRouter.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let fetched = expectation(description: "catalog fetched with the saved key")
+        let catalog = OpenRouterModelCatalog(userDefaults: defaults, fetcher: { apiKey in
+            XCTAssertEqual(apiKey, "or-key")
+            fetched.fulfill()
+            return [.init(id: "openai/gpt-4o", supportedParameters: ["tools"])]
+        })
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager,
+            openRouterCatalog: catalog
+        )
+
+        try client.updateApiKey("or-key", for: .openRouter)
+
+        await fulfillment(of: [fetched], timeout: 5)
+        for _ in 0..<50 where catalog.entries().isEmpty {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(catalog.entries().map(\.id), ["openai/gpt-4o"])
+    }
+
     func testOpenRouterRequestIsTaggedForOpenRouterRouting() throws {
         let client = openRouterClient(catalogEntries: [.init(id: "openai/gpt-4o", supportsTools: true)])
         let tool = Tool(name: "lookup_weather", description: "Look up weather", tool_schema: ToolSchema())

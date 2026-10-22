@@ -69,11 +69,12 @@ public final class OpenRouterModelCatalog: @unchecked Sendable {
     /// OpenRouter's `openrouter/auto` router first, then the cached catalog.
     /// The router is always offered so the provider works before the first fetch.
     public func models() -> [OpenRouter.Model] {
-        [.auto] + entries().map(\.model).filter { $0 != .auto }
+        [.auto] + entries().compactMap { OpenRouter.Model(rawValue: $0.id) }.filter { $0 != .auto }
     }
 
+    /// Stores entries whose id is a valid slug, sorted by slug.
     public func store(_ entries: [Entry]) {
-        let sorted = entries.sorted { $0.id < $1.id }
+        let sorted = entries.filter { OpenRouter.Model(rawValue: $0.id) != nil }.sorted { $0.id < $1.id }
         lock.lock()
         defer { lock.unlock() }
         decoded = sorted

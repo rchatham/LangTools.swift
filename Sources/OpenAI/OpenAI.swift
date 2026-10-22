@@ -26,8 +26,8 @@ final public class OpenAI: LangTools {
         public var session: URLSession
         public var logger: LangToolsLogger?
         /// Extra headers sent on every request, such as OpenRouter's `HTTP-Referer`
-        /// and `X-Title`. A name in `reservedHeaderNames` makes `prepare` throw
-        /// `LangToolsError.invalidArgument`.
+        /// and `X-OpenRouter-Title`. A name in `reservedHeaderNames`, or a value
+        /// containing a line break, makes `prepare` throw `LangToolsError.invalidArgument`.
         public var additionalHeaders: [String: String]
 
         /// Header names, lowercased, that `additionalHeaders` may not set: credentials,
@@ -89,6 +89,10 @@ final public class OpenAI: LangTools {
         for (name, value) in configuration.additionalHeaders {
             guard !OpenAIConfiguration.reservedHeaderNames.contains(name.lowercased()) else {
                 throw LangToolsError.invalidArgument("additionalHeaders cannot set '\(name)'")
+            }
+            // Scalars, not Characters: "\r\n" is a single Character in Swift.
+            guard !value.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) else {
+                throw LangToolsError.invalidArgument("additionalHeaders value for '\(name)' contains a line break")
             }
             urlRequest.setValue(value, forHTTPHeaderField: name)
         }

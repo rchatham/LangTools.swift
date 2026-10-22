@@ -297,7 +297,7 @@ Provider-specific body fields with no typed property go in `additionalParameters
 let openRouter = OpenAI(configuration: .init(
     baseURL: URL(string: "https://openrouter.ai/api/v1/")!,
     apiKey: key,
-    additionalHeaders: ["HTTP-Referer": "https://example.com", "X-Title": "My App"]
+    additionalHeaders: ["HTTP-Referer": "https://example.com", "X-OpenRouter-Title": "My App"]
 ))
 
 var request = OpenAI.ChatCompletionRequest(

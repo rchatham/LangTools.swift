@@ -536,7 +536,8 @@ extension OpenAI {
             created = try container.decode(Int.self, forKey: .created)
             model = try container.decodeIfPresent(String.self, forKey: .model)
             system_fingerprint = try container.decodeIfPresent(String.self, forKey: .system_fingerprint)
-            choices = try container.decode([Choice].self, forKey: .choices)
+            // An error chunk may omit `choices`; it must still decode so its error surfaces.
+            choices = try container.decodeIfPresent([Choice].self, forKey: .choices) ?? []
             usage = try container.decodeIfPresent(Usage.self, forKey: .usage)
             // An unrecognized tier echoed by an OpenAI-compatible provider decodes as nil.
             service_tier = try? container.decodeIfPresent(ServiceTier.self, forKey: .service_tier)
@@ -580,7 +581,9 @@ extension OpenAI {
                 if let code = try? container.decodeIfPresent(String.self, forKey: .code) {
                     self.code = code
                 } else {
-                    self.code = try container.decodeIfPresent(Int.self, forKey: .code).map(String.init)
+                    // Any other type (a float, an object) degrades to nil rather than
+                    // failing the whole response.
+                    self.code = (try? container.decodeIfPresent(Int.self, forKey: .code)).map(String.init)
                 }
                 type = try container.decodeIfPresent(String.self, forKey: .type)
                 param = try container.decodeIfPresent(String.self, forKey: .param)

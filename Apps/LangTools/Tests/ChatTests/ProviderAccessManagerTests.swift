@@ -255,6 +255,19 @@ final class ProviderAccessManagerTests: XCTestCase {
         XCTAssertEqual(OpenRouterModelCatalog(userDefaults: defaults).models(), [.auto, "a/model", "b/model"])
     }
 
+    func testOpenRouterCatalogDropsEntriesWithInvalidSlugs() {
+        let catalog = makeOpenRouterCatalog()
+        catalog.store([
+            .init(id: "openai/gpt-4o", supportsTools: true),
+            .init(id: "", supportsTools: true),
+            .init(id: "  ", supportsTools: true),
+            .init(id: " padded/model ", supportsTools: true),
+        ])
+
+        XCTAssertEqual(catalog.entries().map(\.id), ["openai/gpt-4o"])
+        XCTAssertEqual(catalog.models(), [.auto, "openai/gpt-4o"])
+    }
+
     func testOpenRouterModelsRoundTripThroughRoutedRawValues() {
         for model in [Model.openRouter("anthropic/claude-sonnet-4.5"), .openRouter(.auto), .openRouter("meta-llama/llama-3.2-3b-instruct:free")] {
             XCTAssertEqual(Model(rawValue: model.rawValue), model, model.rawValue)

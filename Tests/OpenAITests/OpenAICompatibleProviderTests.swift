@@ -115,6 +115,27 @@ final class OpenAICompatibleProviderTests: XCTestCase {
         XCTAssertEqual(bare.errorDescription, "Oops")
     }
 
+    func testErrorChunkWithoutChoicesStillSurfacesItsError() throws {
+        let chunk = try decodeResponse(#"{"id":"x","object":"chat.completion.chunk","created":0,"error":{"code":502,"message":"Upstream failed"}}"#)
+
+        XCTAssertTrue(chunk.choices.isEmpty)
+        XCTAssertThrowsError(try chunk.validateStreamChunk()) { error in
+            guard case LangToolsError.apiError(let apiError as OpenAI.ChatCompletionResponse.ResponseError) = error else {
+                return XCTFail("Expected apiError, got \(error)")
+            }
+            XCTAssertEqual(apiError.message, "Upstream failed")
+        }
+    }
+
+    func testResponseErrorWithAnUnusualCodeTypeDegradesToNil() throws {
+        let decoder = JSONDecoder()
+        for body in [#"{"code":402.5,"message":"Float code"}"#, #"{"code":{"value":1},"message":"Object code"}"#] {
+            let error = try decoder.decode(OpenAI.ChatCompletionResponse.ResponseError.self, from: Data(body.utf8))
+            XCTAssertNil(error.code, body)
+            XCTAssertFalse(error.message.isEmpty)
+        }
+    }
+
     func testResponseWithoutErrorRoundTripsUnchanged() throws {
         let response = try decodeResponse(try XCTUnwrap(getData(filename: "chat_completion_response")).string)
         let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(response)) as? [String: Any])
@@ -257,12 +278,12 @@ final class OpenAICompatibleProviderTests: XCTestCase {
     func testAdditionalHeadersAreSentAlongsideAuthorization() throws {
         let openAI = OpenAI(configuration: .init(
             baseURL: URL(string: "https://openrouter.ai/api/v1/")!, apiKey: "k",
-            additionalHeaders: ["HTTP-Referer": "https://example.com", "X-Title": "LangTools"]))
+            additionalHeaders: ["HTTP-Referer": "https://example.com", "X-OpenRouter-Title": "LangTools"]))
 
         let urlRequest = try openAI.prepare(request: makeRequest())
 
         XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "HTTP-Referer"), "https://example.com")
-        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "X-Title"), "LangTools")
+        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "X-OpenRouter-Title"), "LangTools")
         XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "Authorization"), "Bearer k")
         XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "Content-Type"), "application/json")
         XCTAssertEqual(urlRequest.url?.absoluteString, "https://openrouter.ai/api/v1/chat/completions")
@@ -272,6 +293,13 @@ final class OpenAICompatibleProviderTests: XCTestCase {
         for name in ["authorization", "AUTHORIZATION", "Content-Length", "x-api-key", "Transfer-Encoding", "Host"] {
             let openAI = OpenAI(configuration: .init(apiKey: "k", additionalHeaders: [name: "value"]))
             assertInvalidArgument(try openAI.prepare(request: makeRequest()), containing: name)
+        }
+    }
+
+    func testHeaderValuesWithLineBreaksAreRejected() throws {
+        for value in ["LangTools\r\nX-Injected: 1", "LangTools\nX-Injected: 1"] {
+            let openAI = OpenAI(configuration: .init(apiKey: "k", additionalHeaders: ["X-OpenRouter-Title": value]))
+            assertInvalidArgument(try openAI.prepare(request: makeRequest()), containing: "line break")
         }
     }
 
