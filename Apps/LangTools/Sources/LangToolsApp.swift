@@ -18,6 +18,7 @@ import Anthropic
 import Gemini
 import XAI
 import Ollama
+import OpenRouter
 import ChatUI
 import ToolKit
 
@@ -55,6 +56,7 @@ struct LangToolsApp: App {
         // fixture mode so no real network or process interaction occurs.
         if !fixtureActive {
             initializeOllama()
+            OpenRouterModelCatalog.shared.refreshInBackground()
         }
     }
 
@@ -401,6 +403,8 @@ extension MessageService: @retroactive ChatMessageService {
             return ChatAlertInfo(title: "Anthropic API Error", button: ButtonInfo(text: "OK", role: .cancel), message: error.error.message)
         case let error as OllamaErrorResponse:
             return ChatAlertInfo(title: "Ollama API Error", button: ButtonInfo(text: "OK", role: .cancel), message: error.error.message)
+        case let error as OpenRouterErrorResponse:
+            return ChatAlertInfo(title: "OpenRouter API Error", button: ButtonInfo(text: "OK", role: .cancel), message: error.error.message)
         default:
             return ChatAlertInfo(title: "API Error", button: ButtonInfo(text: "OK", role: .cancel), message: "An unexpected API error occurred.\n\(error.localizedDescription)")
         }

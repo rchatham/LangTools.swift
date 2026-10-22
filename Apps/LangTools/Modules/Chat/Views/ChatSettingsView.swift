@@ -4,6 +4,7 @@
 
 import Combine
 import OpenAI
+import OpenRouter
 import SwiftUI
 import ToolKit
 
@@ -1112,6 +1113,10 @@ public struct ChatSettingsView: View {
             return "Grok is xAI's model designed to be conversational and witty while still providing accurate information."
         case .gemini where model.slug.contains("gemini"):
             return "Gemini is Google's multimodal AI model with strong reasoning and multimodal capabilities."
+        case .openRouter(let openRouterModel) where openRouterModel == .auto:
+            return "OpenRouter's router picks a model for each prompt."
+        case .openRouter:
+            return "Served through OpenRouter. Capabilities and pricing depend on the model and the upstream provider."
         case .ollama:
             return "This is a locally-hosted model running through Ollama. Performance and capabilities depend on the model and your local hardware."
         default:

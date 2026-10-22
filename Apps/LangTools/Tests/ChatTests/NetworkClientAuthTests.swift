@@ -5,6 +5,7 @@ import KeychainAccess
 import LangTools
 import Ollama
 import OpenAI
+import OpenRouter
 import XAI
 import XCTest
 @testable import Chat
@@ -123,6 +124,7 @@ final class NetworkClientAuthTests: XCTestCase {
             .xAI(xAIModel),
             .gemini(geminiModel),
             .ollama(ollamaModel),
+            .openRouter("openai/gpt-4o"),
         ]
         let event = LangToolsToolEvent.toolCalled(TestToolSelection())
         var receivedEventCount = 0
@@ -146,6 +148,70 @@ final class NetworkClientAuthTests: XCTestCase {
         }
 
         XCTAssertEqual(receivedEventCount, models.count)
+    }
+
+    private func openRouterClient(catalogEntries: [OpenRouterModelCatalog.Entry]) -> NetworkClient {
+        let suiteName = "NetworkClientAuthTests.OpenRouter.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        let catalog = OpenRouterModelCatalog(userDefaults: defaults, fetcher: { _ in [] })
+        catalog.store(catalogEntries)
+        return NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager,
+            openRouterCatalog: catalog
+        )
+    }
+
+    func testOpenRouterRequestIsTaggedForOpenRouterRouting() throws {
+        let client = openRouterClient(catalogEntries: [.init(id: "openai/gpt-4o", supportsTools: true)])
+        let tool = Tool(name: "lookup_weather", description: "Look up weather", tool_schema: ToolSchema())
+
+        let request = try XCTUnwrap(client.request(
+            messages: [Message(text: "What is the weather?", role: .user)],
+            model: .openRouter("openai/gpt-4o"),
+            tools: [tool],
+            toolChoice: .required
+        ) as? OpenAI.ChatCompletionRequest)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+
+        XCTAssertEqual(object["model"] as? String, "openai/gpt-4o")
+        XCTAssertTrue(request.model.belongs(to: OpenRouter.providerID))
+        XCTAssertTrue(OpenRouter.requestValidators.contains { $0(request) })
+        XCTAssertFalse(OpenAI.requestValidators.contains { $0(request) }, "an OpenAI-looking slug must still route to OpenRouter")
+        XCTAssertEqual((object["tools"] as? [Any])?.count, 1)
+        XCTAssertEqual(object["tool_choice"] as? String, "required")
+    }
+
+    func testOpenRouterRequestOmitsToolsForModelsWithoutToolSupport() throws {
+        let client = openRouterClient(catalogEntries: [.init(id: "meta-llama/llama-3.2-3b-instruct:free", supportsTools: false)])
+        let tool = Tool(name: "lookup_weather", description: "Look up weather", tool_schema: ToolSchema())
+
+        let request = try XCTUnwrap(client.request(
+            messages: [Message(text: "Hi", role: .user)],
+            model: .openRouter("meta-llama/llama-3.2-3b-instruct:free"),
+            tools: [tool],
+            toolChoice: .required
+        ) as? OpenAI.ChatCompletionRequest)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+
+        XCTAssertNil(object["tools"], "OpenRouter rejects tools for models that do not support them")
+        XCTAssertNil(object["tool_choice"])
+    }
+
+    func testOpenRouterRequestSendsToolsForModelsMissingFromTheCatalog() throws {
+        let client = openRouterClient(catalogEntries: [])
+        let tool = Tool(name: "lookup_weather", description: "Look up weather", tool_schema: ToolSchema())
+
+        let request = try XCTUnwrap(client.request(
+            messages: [Message(text: "Hi", role: .user)],
+            model: .openRouter("new/model"),
+            tools: [tool]
+        ) as? OpenAI.ChatCompletionRequest)
+
+        XCTAssertEqual(request.tools?.count, 1)
     }
 
     func testGeminiRequestEncodesToolsAndToolChoiceAndWiresHandler() throws {

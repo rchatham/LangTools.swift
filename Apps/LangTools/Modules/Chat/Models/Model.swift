@@ -10,6 +10,7 @@ import Anthropic
 import XAI
 import Gemini
 import Ollama
+import OpenRouter
 
 public enum ModelRoute: String, Codable, Hashable {
     case openAI = "openai"
@@ -19,6 +20,7 @@ public enum ModelRoute: String, Codable, Hashable {
     case xAI = "xai"
     case gemini = "gemini"
     case ollama = "ollama"
+    case openRouter = "openrouter"
 }
 
 public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equatable {
@@ -29,6 +31,9 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
     case xAI(XAI.Model)
     case gemini(Gemini.Model)
     case ollama(Ollama.Model)
+    /// An OpenRouter slug such as `anthropic/claude-sonnet-4.5`, stored as
+    /// `openrouter/anthropic/claude-sonnet-4.5`.
+    case openRouter(OpenRouter.Model)
 
     public init?(rawValue: String) {
         let components = rawValue.split(separator: "/", maxSplits: 1).map(String.init)
@@ -58,6 +63,10 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             case ModelRoute.ollama.rawValue:
                 guard let model = Ollama.Model(rawValue: slug) else { return nil }
                 self = .ollama(model)
+            case ModelRoute.openRouter.rawValue:
+                guard slug == slug.trimmingCharacters(in: .whitespacesAndNewlines),
+                      let model = OpenRouter.Model(rawValue: slug) else { return nil }
+                self = .openRouter(model)
             default:
                 return nil
             }
@@ -88,6 +97,8 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             return model.rawValue
         case .ollama(let model):
             return model.rawValue
+        case .openRouter(let model):
+            return model.rawValue
         }
     }
 
@@ -107,6 +118,8 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             return .gemini
         case .ollama:
             return .ollama
+        case .openRouter:
+            return .openRouter
         }
     }
 
@@ -119,8 +132,9 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         + Gemini.Model.allCases.map { .gemini($0) }
 
         let ollamaModels = OllamaEndpointConfiguration.shared.cachedModels().map { Model.ollama($0) }
+        let openRouterModels = OpenRouterModelCatalog.shared.models().map { Model.openRouter($0) }
 
-        return standardModels + ollamaModels
+        return standardModels + ollamaModels + openRouterModels
     }
 
     public static var chatModels: [Model] {
@@ -129,6 +143,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
         + OllamaEndpointConfiguration.shared.cachedModels().map { .ollama($0) }
+        + OpenRouterModelCatalog.shared.models().map { .openRouter($0) }
     }
 
     public var apiService: APIService {
@@ -138,6 +153,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         case .xAI: return .xAI
         case .gemini: return .gemini
         case .ollama: return .ollama
+        case .openRouter: return .openRouter
         }
     }
 
@@ -257,6 +273,20 @@ public extension Model {
                 supportsSeed: true,
                 supportsStop: true,
                 contextWindowTokens: Self.geminiContextWindows[model.rawValue]
+            )
+        case .openRouter(let model):
+            // Limits vary by model and upstream provider, so only the app guard applies.
+            return .init(
+                maximumOutputField: .openAIMaxTokens,
+                maximumOutputTokenBound: ChatGenerationSettings.tokenRange.upperBound,
+                maximumOutputWarning: "The app guard is not a model limit. OpenRouter output capacity depends on the selected model and provider.",
+                supportsTemperature: true,
+                supportsTopP: true,
+                supportsFrequencyPenalty: true,
+                supportsPresencePenalty: true,
+                supportsSeed: true,
+                supportsStop: true,
+                contextWindowTokens: OpenRouterModelCatalog.shared.entry(for: model)?.contextLength
             )
         case .xAI(let model):
             guard Self.xAIGenerationModels.contains(model.rawValue) else {

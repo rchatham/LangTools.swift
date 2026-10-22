@@ -2,6 +2,7 @@ import Anthropic
 import Gemini
 import Ollama
 import OpenAI
+import OpenRouter
 import XAI
 import XCTest
 @testable import Chat
@@ -194,6 +195,22 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
             XCTAssertTrue(capabilities.supportsStop, providerModel.rawValue)
         }
         XCTAssertEqual(Set(Gemini.Model.allCases.map(\.rawValue)).intersection(geminiBounds.keys), Set(geminiBounds.keys))
+    }
+
+    func testOpenRouterModelsUseAppCeilingWithOpenAIParameters() {
+        let capabilities = Model.openRouter("vendor/model-not-in-any-catalog").generationCapabilities
+        XCTAssertEqual(capabilities.maximumOutputField, .openAIMaxTokens)
+        XCTAssertEqual(capabilities.maximumOutputTokenBound, ChatGenerationSettings.tokenRange.upperBound)
+        XCTAssertTrue(capabilities.supportsTemperature)
+        XCTAssertTrue(capabilities.supportsTopP)
+        XCTAssertTrue(capabilities.supportsFrequencyPenalty)
+        XCTAssertTrue(capabilities.supportsPresencePenalty)
+        XCTAssertFalse(capabilities.supportsTopK, "the OpenAI request type has no top_k field")
+        XCTAssertTrue(capabilities.supportsSeed)
+        XCTAssertTrue(capabilities.supportsStop)
+        XCTAssertNil(capabilities.contextWindowTokens, "unknown models have no catalog context length")
+        XCTAssertNil(capabilities.unsupportedReason)
+        XCTAssertTrue(capabilities.maximumOutputWarning?.contains("not a model limit") == true)
     }
 
     func testArbitraryOllamaModelsUseAppCeilingWithWarning() throws {

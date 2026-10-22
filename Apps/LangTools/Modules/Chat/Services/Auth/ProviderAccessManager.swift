@@ -5,6 +5,7 @@ import Anthropic
 import XAI
 import Gemini
 import Ollama
+import OpenRouter
 
 public final class ProviderAccessManager: ObservableObject {
     public static let shared = ProviderAccessManager()
@@ -14,17 +15,20 @@ public final class ProviderAccessManager: ObservableObject {
     private let keychainService: KeychainService
     private let sessionStore: AuthSessionStore
     private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
+    private let openRouterCatalog: OpenRouterModelCatalog
     private let stateLock = NSLock()
     private var refreshGeneration: UInt64 = 0
 
     public init(
         keychainService: KeychainService = .shared,
         sessionStore: AuthSessionStore = .shared,
-        ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared
+        ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared,
+        openRouterCatalog: OpenRouterModelCatalog = .shared
     ) {
         self.keychainService = keychainService
         self.sessionStore = sessionStore
         self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
+        self.openRouterCatalog = openRouterCatalog
         refresh()
     }
 
@@ -154,7 +158,8 @@ public final class ProviderAccessManager: ObservableObject {
                 accountIdentifier: claudeCodeSession?.accountIdentifier
             ),
             accessState(for: .xAI),
-            accessState(for: .gemini)
+            accessState(for: .gemini),
+            accessState(for: .openRouter)
         ]
     }
 
@@ -241,7 +246,7 @@ public final class ProviderAccessManager: ObservableObject {
                     guard let model = Anthropic.Model(rawValue: slug) else { return nil }
                     return .claudeCode(model)
                 }
-            case .xAI, .gemini, .ollama, .serper:
+            case .xAI, .gemini, .ollama, .serper, .openRouter:
                 parsed = session.accessibleModelIDs.compactMap(Model.init(rawValue:))
             }
             return parsed
@@ -258,6 +263,8 @@ public final class ProviderAccessManager: ObservableObject {
                 return XAI.Model.allCases.map { .xAI($0) }
             case .gemini:
                 return Gemini.Model.allCases.map { .gemini($0) }
+            case .openRouter:
+                return openRouterCatalog.models().map { .openRouter($0) }
             case .ollama:
                 return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
             case .serper:
