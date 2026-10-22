@@ -6,6 +6,7 @@ import Anthropic
 import XAI
 import Gemini
 import Ollama
+import OpenRouter
 import SwiftTUI
 #if canImport(Darwin)
 import Darwin
@@ -159,6 +160,7 @@ struct CLI {
           OPENAI_API_KEY      OpenAI API key
           XAI_API_KEY         xAI (Grok) API key
           GEMINI_API_KEY      Google Gemini API key
+          OPENROUTER_API_KEY  OpenRouter API key (models: openrouter/<creator>/<model>)
           OLLAMA_HOST         Ollama base URL (default: http://localhost:11434)
 
         COMMANDS (in chat)
@@ -219,6 +221,8 @@ struct CLI {
             return Gemini.Model(rawValue: id).map { .gemini($0) }
         case "xai", "grok":
             return XAI.Model(rawValue: id).map { .xAI($0) }
+        case "openrouter":
+            return Model.openRouterModel(fromPrefixed: Model.openRouterPrefix + id).map { .openRouter($0) }
         default:
             return nil
         }
@@ -226,6 +230,7 @@ struct CLI {
 
     static func runTraditionalCLI(runMode: CLIRunMode) async throws {
         await networkClient.fetchOllamaModels()
+        await networkClient.fetchOpenRouterModels()
         try await checkAndRequestAPIKeys(runMode: runMode)
 
         print("LangTools \(cliVersion)")
@@ -339,6 +344,7 @@ struct CLI {
             .openAI: "OPENAI_API_KEY",
             .xAI: "XAI_API_KEY",
             .gemini: "GEMINI_API_KEY",
+            .openRouter: "OPENROUTER_API_KEY",
         ]
 
         return variableByService.reduce(into: [:]) { result, entry in
@@ -686,6 +692,7 @@ struct CLI {
         case .openAI:    defaultService = .openAI
         case .xAI:       defaultService = .xAI
         case .gemini:    defaultService = .gemini
+        case .openRouter: defaultService = .openRouter
         case .ollama:    return // Ollama is local — no API key needed
         }
 
@@ -748,6 +755,10 @@ struct CLI {
             ollamaManualIndex = nil
         }
 
+        // OpenRouter's catalog is too large to number, so models are entered by slug.
+        let openRouterManualIndex = models.count
+        models.append(("OpenRouter (enter model slug)", .openRouter(.auto)))
+
         print("\n\("Available models".blue)")
         print("─────────────────")
         for (i, (name, _)) in models.enumerated() {
@@ -771,6 +782,18 @@ struct CLI {
             } else {
                 print("Invalid model name. Keeping current model.".yellow)
                 return
+            }
+        }
+
+        if idx - 1 == openRouterManualIndex {
+            print("Enter OpenRouter model slug (e.g. anthropic/claude-sonnet-4.5, or press Enter for openrouter/auto): ", terminator: "")
+            let slug = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !slug.isEmpty {
+                guard let m = OpenRouter.Model(rawValue: slug) else {
+                    print("Invalid model slug. Keeping current model.".yellow)
+                    return
+                }
+                newModel = .openRouter(m)
             }
         }
 

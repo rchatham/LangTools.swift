@@ -15,6 +15,7 @@ import Anthropic
 import XAI
 import Gemini
 import Ollama
+import OpenRouter
 #if canImport(AVFAudio)
 import AVFAudio
 #endif
@@ -65,6 +66,10 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
             return OpenAI.ChatCompletionRequest(model: OpenAI.Model(customModelID: model.rawValue), messages: messages.toOpenAIMessages(), stream: stream, toolEventHandler: toolEventHandler)
         } else if case .ollama(let model) = model {
             return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), stream: stream, tools: tools, toolEventHandler: toolEventHandler)
+        } else if case .openRouter(let model) = model {
+            // The OpenRouter overload tags the model so the toolchain routes it
+            // to OpenRouter rather than to OpenAI, XAI, or Gemini.
+            return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice, toolEventHandler: toolEventHandler)
         } else {
             return Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages.toAnthropicMessages(), stream: stream, system: messages.toAnthropicSystemMessage(), tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice(), toolEventHandler: toolEventHandler)
         }
@@ -112,6 +117,17 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    /// Loads the OpenRouter catalog into `Model.openRouterCatalog` when an
+    /// OpenRouter key is configured. Failures leave the previous catalog intact.
+    func fetchOpenRouterModels() async {
+        guard let openRouter = langToolchain.langTool(OpenRouter.self) else { return }
+        do {
+            Model.openRouterCatalog = try await openRouter.listModels()
+        } catch {
+            // OpenRouter may be unreachable; models can still be entered by slug.
+        }
+    }
+
     func langTool(for llm: APIService, with apiKey: String) -> any LangTools {
         let baseURL: URL? = nil
         switch llm {
@@ -120,6 +136,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
         case .ollama: return Ollama()
+        case .openRouter: return if let baseURL { OpenRouter(baseURL: baseURL, apiKey: apiKey, appTitle: "LangTools CLI") } else { OpenRouter(apiKey: apiKey, appTitle: "LangTools CLI") }
         }
     }
 
@@ -129,7 +146,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 }
 
 enum APIService: String, CaseIterable {
-    case openAI, anthropic, xAI, gemini, ollama
+    case openAI, anthropic, xAI, gemini, ollama, openRouter
 }
 
 extension NetworkClient {

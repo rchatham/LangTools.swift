@@ -9,6 +9,7 @@ import XCTest
 @testable import CLI
 import Ollama
 import OpenAI
+import OpenRouter
 import Foundation
 
 final class ChatFlowTests: XCTestCase {
@@ -490,6 +491,31 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertTrue(lines.contains("No configured provider could handle the current model 'gpt-5.2'."))
         XCTAssertTrue(lines.contains("OPENAI_API_KEY"))
         XCTAssertTrue(lines.contains("Use /status to inspect configuration or /model to switch models."))
+    }
+
+    func testMissingProviderMessageForOpenRouterModel() {
+        let lines = MessageService().missingProviderMessageLines(for: .openRouter("anthropic/claude-sonnet-4.5")).joined(separator: "\n")
+
+        XCTAssertTrue(lines.contains("'openrouter/anthropic/claude-sonnet-4.5'"))
+        XCTAssertTrue(lines.contains("OPENROUTER_API_KEY"))
+    }
+
+    func testOpenRouterRequestIsTaggedForOpenRouter() {
+        let request = NetworkClient.shared.request(
+            messages: [Message(text: "hi", role: .user)],
+            model: .openRouter("openai/gpt-4o"),
+            stream: true,
+            tools: nil,
+            toolChoice: nil
+        )
+
+        guard let chatRequest = request as? OpenAI.ChatCompletionRequest else {
+            return XCTFail("Expected OpenAI.ChatCompletionRequest for OpenRouter models")
+        }
+        XCTAssertEqual(chatRequest.model.id, "openai/gpt-4o")
+        XCTAssertTrue(chatRequest.model.belongs(to: OpenRouter.providerID))
+        XCTAssertTrue(OpenRouter.requestValidators.contains { $0(chatRequest) })
+        XCTAssertFalse(OpenAI.requestValidators.contains { $0(chatRequest) })
     }
 
     func testOllamaRequestUsesOllamaChatRequest() {

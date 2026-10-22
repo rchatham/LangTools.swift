@@ -10,6 +10,7 @@ import Anthropic
 import XAI
 import Gemini
 import Ollama
+import OpenRouter
 
 /// Provider categories for grouping models in the UI
 enum Provider: String, CaseIterable {
@@ -18,6 +19,7 @@ enum Provider: String, CaseIterable {
     case xAI = "XAI"
     case gemini = "Gemini"
     case ollama = "Ollama"
+    case openRouter = "OpenRouter"
 }
 
 enum ToolReliabilityTier: String {
@@ -67,9 +69,23 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
     case gemini(Gemini.Model)
     /// A locally-served Ollama model (e.g. "llama3", "mistral", "phi3").
     case ollama(Ollama.Model)
+    /// An OpenRouter model slug (e.g. "anthropic/claude-sonnet-4.5"). Its raw
+    /// value carries an `openrouter/` prefix so it never falls through to the
+    /// Ollama case, which accepts any string.
+    case openRouter(OpenRouter.Model)
+
+    static let openRouterPrefix = "openrouter/"
+
+    /// The OpenRouter catalog, populated at runtime by
+    /// `NetworkClient.fetchOpenRouterModels()` once an API key is configured.
+    static var openRouterCatalog: [OpenRouter.ModelInfo] = []
 
     init?(rawValue: String) {
-        if let model = OpenAI.Model(rawValue: rawValue) { self = .openAI(model) }
+        if rawValue.hasPrefix(Self.openRouterPrefix) {
+            guard let model = Self.openRouterModel(fromPrefixed: rawValue) else { return nil }
+            self = .openRouter(model)
+        }
+        else if let model = OpenAI.Model(rawValue: rawValue) { self = .openAI(model) }
         else if let model = Anthropic.Model(rawValue: rawValue) { self = .anthropic(model) }
         else if let model = XAI.Model(rawValue: rawValue) { self = .xAI(model) }
         else if let model = Gemini.Model(rawValue: rawValue) { self = .gemini(model) }
@@ -84,7 +100,17 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
         case .xAI(let model): return model.rawValue
         case .gemini(let model): return model.rawValue
         case .ollama(let model): return model.rawValue
+        case .openRouter(let model): return Self.openRouterPrefix + model.rawValue
         }
+    }
+
+    /// Parses `openrouter/<slug>`. OpenRouter slugs normally contain a slash
+    /// (`creator/model`); a bare remainder such as `auto` is OpenRouter's own
+    /// `openrouter/auto` router, so the full string is kept as the slug.
+    static func openRouterModel(fromPrefixed rawValue: String) -> OpenRouter.Model? {
+        let slug = String(rawValue.dropFirst(openRouterPrefix.count))
+        guard !slug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return OpenRouter.Model(rawValue: slug.contains("/") ? slug : rawValue)
     }
 
     var id: String { rawValue }
@@ -95,6 +121,7 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
         + Ollama.Model.allCases.map { .ollama($0) }
+        + openRouterCatalog.map { .openRouter($0.model) }
     }
 
     static var chatModels: [Model] {
@@ -103,6 +130,7 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
         + Ollama.Model.allCases.map { .ollama($0) }
+        + openRouterCatalog.map { .openRouter($0.model) }
     }
 
     func hash(into hasher: inout Hasher) {
@@ -117,6 +145,7 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
         case .xAI: return .xAI
         case .gemini: return .gemini
         case .ollama: return .ollama
+        case .openRouter: return .openRouter
         }
     }
 
@@ -142,6 +171,17 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
                 toolReliability: .limited,
                 supportsStreaming: true,
                 supportsStructuredOutput: false
+            )
+        case .openRouter(let model):
+            // Support varies by model. The catalog says which models accept
+            // tools; a model missing from it is assumed to.
+            let info = Self.openRouterCatalog.first { $0.model == model }
+            let supportsTools = info?.supportsTools ?? true
+            return ModelCapabilities(
+                supportsTools: supportsTools,
+                toolReliability: supportsTools ? .recommended : .unavailable,
+                supportsStreaming: true,
+                supportsStructuredOutput: info?.supportsStructuredOutput ?? false
             )
         }
     }

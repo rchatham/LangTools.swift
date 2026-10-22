@@ -11,6 +11,7 @@ import OpenAI
 import Anthropic
 import Gemini
 import Ollama
+import OpenRouter
 import XAI
 import Agents
 
@@ -313,6 +314,9 @@ actor TaskManager {
             return ProviderContext(langTool: provider, model: providerModel)
         case .ollama(let providerModel):
             guard let provider = toolchain.langTool(Ollama.self) else { throw ProviderError.unavailable(model) }
+            return ProviderContext(langTool: provider, model: providerModel)
+        case .openRouter(let providerModel):
+            guard let provider = toolchain.langTool(OpenRouter.self) else { throw ProviderError.unavailable(model) }
             return ProviderContext(langTool: provider, model: providerModel)
         }
     }
