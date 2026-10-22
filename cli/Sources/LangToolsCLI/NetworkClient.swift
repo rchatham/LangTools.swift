@@ -70,6 +70,9 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
             // The OpenRouter overload tags the model so the toolchain routes it
             // to OpenRouter rather than to OpenAI, XAI, or Gemini.
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice, toolEventHandler: toolEventHandler)
+        } else if case .compatible(let provider, let id) = model {
+            // The tagged model routes to the provider rather than to OpenAI.
+            return OpenAI.ChatCompletionRequest(model: provider.openAIModel(id: id), messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice, toolEventHandler: toolEventHandler)
         } else {
             return Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages.toAnthropicMessages(), stream: stream, system: messages.toAnthropicSystemMessage(), tools: tools?.toAnthropicTools(), tool_choice: toolChoice?.toAnthropicToolChoice(), toolEventHandler: toolEventHandler)
         }
@@ -128,6 +131,23 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    /// Loads chat-model catalogs for the configured OpenAI-compatible providers
+    /// into `Model.compatibleCatalogs`. A provider without a catalog endpoint,
+    /// or one that cannot be reached, offers its suggested models.
+    func fetchCompatibleModels() async {
+        let toolchain = langToolchain
+        var catalogs: [CompatibleProvider: [OpenAICompatibleModelInfo]] = [:]
+        await withTaskGroup(of: (CompatibleProvider, [OpenAICompatibleModelInfo]?).self) { group in
+            for provider in CompatibleProvider.allCases {
+                group.addTask { (provider, await provider.chatModelCatalog(toolchain: toolchain)) }
+            }
+            for await (provider, catalog) in group {
+                if let catalog { catalogs[provider] = catalog }
+            }
+        }
+        Model.compatibleCatalogs = catalogs
+    }
+
     func langTool(for llm: APIService, with apiKey: String) -> any LangTools {
         let baseURL: URL? = nil
         switch llm {
@@ -137,6 +157,8 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
         case .ollama: return Ollama()
         case .openRouter: return if let baseURL { OpenRouter(baseURL: baseURL, apiKey: apiKey, appTitle: "LangTools CLI") } else { OpenRouter(apiKey: apiKey, appTitle: "LangTools CLI") }
+        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere:
+            return CompatibleProvider(apiService: llm)!.makeClient(apiKey: apiKey)
         }
     }
 
@@ -147,6 +169,8 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 
 enum APIService: String, CaseIterable {
     case openAI, anthropic, xAI, gemini, ollama, openRouter
+    // OpenAI-compatible providers; raw values match `CompatibleProvider`.
+    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere
 }
 
 extension NetworkClient {

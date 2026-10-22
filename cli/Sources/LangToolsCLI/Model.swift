@@ -20,6 +20,15 @@ enum Provider: String, CaseIterable {
     case gemini = "Gemini"
     case ollama = "Ollama"
     case openRouter = "OpenRouter"
+    // OpenAI-compatible providers; raw values match each `displayName`.
+    case vercel = "Vercel AI Gateway"
+    case groq = "Groq"
+    case mistral = "Mistral"
+    case deepseek = "DeepSeek"
+    case cerebras = "Cerebras"
+    case together = "Together AI"
+    case fireworks = "Fireworks AI"
+    case cohere = "Cohere"
 }
 
 enum ToolReliabilityTier: String {
@@ -73,8 +82,20 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
     /// value carries an `openrouter/` prefix so it never falls through to the
     /// Ollama case, which accepts any string.
     case openRouter(OpenRouter.Model)
+    /// A model on an OpenAI-compatible provider. Its raw value is
+    /// `<provider>/<model-id>`, e.g. `groq/llama-3.3-70b-versatile`.
+    case compatible(CompatibleProvider, String)
 
     static let openRouterPrefix = "openrouter/"
+
+    /// Chat-model catalogs of the configured OpenAI-compatible providers,
+    /// populated by `NetworkClient.fetchCompatibleModels()`. Access is
+    /// serialized for the same reason as `openRouterCatalog`.
+    static var compatibleCatalogs: [CompatibleProvider: [OpenAICompatibleModelInfo]] {
+        get { openRouterCatalogLock.lock(); defer { openRouterCatalogLock.unlock() }; return _compatibleCatalogs }
+        set { openRouterCatalogLock.lock(); defer { openRouterCatalogLock.unlock() }; _compatibleCatalogs = newValue }
+    }
+    private static var _compatibleCatalogs: [CompatibleProvider: [OpenAICompatibleModelInfo]] = [:]
 
     /// The OpenRouter catalog, populated at runtime by
     /// `NetworkClient.fetchOpenRouterModels()` once an API key is configured.
@@ -92,6 +113,10 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
             guard let model = Self.openRouterModel(fromPrefixed: rawValue) else { return nil }
             self = .openRouter(model)
         }
+        else if let provider = CompatibleProvider.allCases.first(where: { rawValue.hasPrefix($0.prefix) }) {
+            guard let id = CompatibleProvider.validModelID(String(rawValue.dropFirst(provider.prefix.count))) else { return nil }
+            self = .compatible(provider, id)
+        }
         else if let model = OpenAI.Model(rawValue: rawValue) { self = .openAI(model) }
         else if let model = Anthropic.Model(rawValue: rawValue) { self = .anthropic(model) }
         else if let model = XAI.Model(rawValue: rawValue) { self = .xAI(model) }
@@ -108,6 +133,7 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
         case .gemini(let model): return model.rawValue
         case .ollama(let model): return model.rawValue
         case .openRouter(let model): return Self.openRouterPrefix + model.rawValue
+        case .compatible(let provider, let id): return provider.prefix + id
         }
     }
 
@@ -130,6 +156,7 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
         + Gemini.Model.allCases.map { .gemini($0) }
         + Ollama.Model.allCases.map { .ollama($0) }
         + openRouterCatalog.map { .openRouter($0.model) }
+        + compatibleChatModels
     }
 
     static var chatModels: [Model] {
@@ -139,6 +166,14 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
         + Gemini.Model.allCases.map { .gemini($0) }
         + Ollama.Model.allCases.map { .ollama($0) }
         + openRouterCatalog.map { .openRouter($0.model) }
+        + compatibleChatModels
+    }
+
+    private static var compatibleChatModels: [Model] {
+        let catalogs = compatibleCatalogs
+        return CompatibleProvider.allCases.flatMap { provider in
+            (catalogs[provider] ?? []).map { .compatible(provider, $0.id) }
+        }
     }
 
     func hash(into hasher: inout Hasher) {
@@ -154,6 +189,7 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
         case .gemini: return .gemini
         case .ollama: return .ollama
         case .openRouter: return .openRouter
+        case .compatible(let provider, _): return provider.category
         }
     }
 
@@ -190,6 +226,15 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
                 toolReliability: supportsTools ? .recommended : .unavailable,
                 supportsStreaming: true,
                 supportsStructuredOutput: info?.supportsStructuredOutput ?? false
+            )
+        case .compatible(let provider, let id):
+            // Catalogs that report tool support decide; otherwise tools are assumed.
+            let supportsTools = Self.compatibleCatalogs[provider]?.first { $0.id == id }?.supportsTools ?? true
+            return ModelCapabilities(
+                supportsTools: supportsTools,
+                toolReliability: supportsTools ? .recommended : .unavailable,
+                supportsStreaming: true,
+                supportsStructuredOutput: false
             )
         }
     }

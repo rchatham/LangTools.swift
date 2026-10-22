@@ -65,7 +65,7 @@ struct MainView: @preconcurrency View {
             // Populate the Ollama model list for the /model picker (the
             // non-TUI CLI does this in changeModel(); the TUI must do it too).
             Task { await NetworkClient.shared.fetchOllamaModels() }
-            Task { await NetworkClient.shared.fetchOpenRouterModels() }
+            Task { await NetworkClient.shared.fetchOpenRouterModels(); await NetworkClient.shared.fetchCompatibleModels() }
         }
     }
 
@@ -428,7 +428,7 @@ struct MainView: @preconcurrency View {
         case "model":
             // Open settings overlay directly to model menu
             Task { await NetworkClient.shared.fetchOllamaModels() }
-            Task { await NetworkClient.shared.fetchOpenRouterModels() }
+            Task { await NetworkClient.shared.fetchOpenRouterModels(); await NetworkClient.shared.fetchCompatibleModels() }
             settingsMode = .model
             showSettingsOverlay = true
             statusMessage = "Settings"

@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 import Ollama
 import OpenRouter
+import OpenAI
 @testable import CLI
 @testable import SwiftTUI
 
@@ -287,6 +288,37 @@ final class TailWindowTests: XCTestCase {
         XCTAssertEqual(Model.chatModels(for: .openRouter).count, 2)
     }
 
+    func testModelFromArgumentAcceptsCompatibleProviderPrefixes() {
+        XCTAssertEqual(CLI.model(fromArgument: "groq/llama-3.3-70b-versatile"), .compatible(.groq, "llama-3.3-70b-versatile"))
+        XCTAssertEqual(CLI.model(fromArgument: "vercel/anthropic/claude-sonnet-4.5"), .compatible(.vercel, "anthropic/claude-sonnet-4.5"))
+        XCTAssertEqual(CLI.model(fromArgument: "Fireworks/accounts/fireworks/models/deepseek-v3"), .compatible(.fireworks, "accounts/fireworks/models/deepseek-v3"))
+        XCTAssertNil(CLI.model(fromArgument: "groq/ llama"), "padded IDs are rejected")
+    }
+
+    func testCompatibleModelRawValuesRoundTripAheadOfOllamaFallback() {
+        for provider in CompatibleProvider.allCases {
+            let model = Model.compatible(provider, provider.knownModelIDs[0])
+            XCTAssertEqual(Model(rawValue: model.rawValue), model, "\(model.rawValue) must not fall through to the Ollama case")
+            XCTAssertEqual(model.provider, provider.category)
+            XCTAssertEqual(CompatibleProvider(category: provider.category), provider)
+            XCTAssertEqual(CompatibleProvider(apiService: provider.apiService), provider)
+        }
+        XCTAssertNil(Model(rawValue: "groq/"))
+        XCTAssertEqual(Model(rawValue: "mistral"), .ollama(Ollama.Model(rawValue: "mistral")!), "an unprefixed name stays an Ollama model")
+    }
+
+    func testCompatibleCapabilitiesFollowTheCatalog() {
+        let previous = Model.compatibleCatalogs
+        defer { Model.compatibleCatalogs = previous }
+        Model.compatibleCatalogs = [.groq: [.init(id: "with-tools", supportsTools: true), .init(id: "without-tools", supportsTools: false)]]
+
+        XCTAssertEqual(Model.compatible(.groq, "with-tools").capabilities.toolReliability, .recommended)
+        XCTAssertEqual(Model.compatible(.groq, "without-tools").capabilities.toolReliability, .unavailable)
+        XCTAssertTrue(Model.compatible(.groq, "unlisted").capabilities.supportsTools)
+        XCTAssertEqual(Model.chatModels(for: .groq).count, 2)
+        XCTAssertTrue(Model.chatModels(for: .mistral).isEmpty)
+    }
+
     func testRequestedModelArgumentParsesFlagForms() {
         XCTAssertEqual(CLI.requestedModelArgument(["langtools", "--model", "llama3.2:latest"]), "llama3.2:latest")
         XCTAssertEqual(CLI.model(fromArgument: CLI.requestedModelArgument(["langtools", "--model=glm-5.2:cloud"]) ?? ""), .ollama(Ollama.Model(rawValue: "glm-5.2:cloud")!))
@@ -307,6 +339,14 @@ final class TailWindowTests: XCTestCase {
         XCTAssertEqual(keys[.openAI], "openai-key")
         XCTAssertNil(keys[.xAI])
         XCTAssertEqual(keys[.gemini], "gemini-key")
+    }
+
+    func testEnvironmentAPIKeysIncludeCompatibleProviders() {
+        let keys = CLI.apiKeysFromEnvironment(["GROQ_API_KEY": " groq-key ", "AI_GATEWAY_API_KEY": "vercel-key", "COHERE_API_KEY": ""])
+
+        XCTAssertEqual(keys[.groq], "groq-key")
+        XCTAssertEqual(keys[.vercel], "vercel-key")
+        XCTAssertNil(keys[.cohere])
     }
 
     func testEnvironmentLoaderRegistersEnvOnlyKey() {

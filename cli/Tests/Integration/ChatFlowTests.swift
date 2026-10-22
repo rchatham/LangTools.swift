@@ -500,6 +500,31 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertTrue(lines.contains("OPENROUTER_API_KEY"))
     }
 
+    func testMissingProviderMessageForCompatibleModel() {
+        let lines = MessageService().missingProviderMessageLines(for: .compatible(.groq, "llama-3.3-70b-versatile")).joined(separator: "\n")
+
+        XCTAssertTrue(lines.contains("'groq/llama-3.3-70b-versatile'"))
+        XCTAssertTrue(lines.contains("GROQ_API_KEY"))
+        XCTAssertTrue(lines.contains("Groq"))
+    }
+
+    func testCompatibleRequestIsTaggedForItsProvider() {
+        let request = NetworkClient.shared.request(
+            messages: [Message(text: "hi", role: .user)],
+            model: .compatible(.mistral, "mistral-large-latest"),
+            stream: true,
+            tools: nil,
+            toolChoice: nil
+        )
+
+        guard let chatRequest = request as? OpenAI.ChatCompletionRequest else {
+            return XCTFail("Expected OpenAI.ChatCompletionRequest for compatible providers")
+        }
+        XCTAssertEqual(chatRequest.model.id, "mistral-large-latest")
+        XCTAssertTrue(chatRequest.model.belongs(to: CompatibleProvider.mistral.providerID))
+        XCTAssertFalse(OpenAI.requestValidators.contains { $0(chatRequest) })
+    }
+
     func testOpenRouterRequestIsTaggedForOpenRouter() {
         let request = NetworkClient.shared.request(
             messages: [Message(text: "hi", role: .user)],

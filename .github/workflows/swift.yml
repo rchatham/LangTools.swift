@@ -91,6 +91,17 @@ jobs:
           echo 'Expected focused helper XCTest cases to execute.' >&2
           exit 1
         fi
+    - name: Run CLI provider and model routing tests
+      shell: bash
+      run: |
+        set -euo pipefail
+        swift test --package-path cli --jobs 2 --no-parallel \
+          --filter 'TailWindowTests/testModelFromArgument|TailWindowTests/testOpenRouter|TailWindowTests/testCompatible|TailWindowTests/testEnvironmentAPIKeys|ChatFlowTests/testMissingProviderMessage|ChatFlowTests/testOpenRouterRequest|ChatFlowTests/testCompatibleRequest' \
+          2>&1 | tee "$RUNNER_TEMP/cli-provider-tests.log"
+        if ! grep -Eq 'Executed [1-9][0-9]* tests?' "$RUNNER_TEMP/cli-provider-tests.log"; then
+          echo 'Expected CLI provider XCTest cases to execute.' >&2
+          exit 1
+        fi
     - name: Report helper execution and LAN-dependent skips
       if: ${{ always() }}
       shell: bash
