@@ -289,11 +289,7 @@ let request = OpenAI.ChatCompletionRequest(
 
 ### OpenAI-Compatible Providers
 
-Providers that serve OpenAI's format at their own base URL are built in the [OpenAICompatible module](../OpenAICompatible/README.md) on top of three hooks in this module:
-
-- **Provider tag.** `OpenAI.Model(customModelID:providerID:)` tags a model for one provider, so `LangToolchain` routes it there even when other providers serve the same ID. OpenAI, XAI, and Gemini claim only untagged models. The tag is not encoded, so re-tag a decoded request with `routed(to:)`.
-- **`additionalParameters`.** Body fields with no typed property, such as OpenRouter's `provider`. Keys in `ChatCompletionRequest.reservedParameterKeys` throw `LangToolsError.invalidArgument` instead of overriding typed fields.
-- **Tolerant decoding.** Unknown finish reasons and service tiers become `nil`, missing usage-detail counts become zero, and content given as an array of typed parts skips unknown part types (a streamed delta's text parts are concatenated). A response or streamed chunk that carries an `error` object throws `LangToolsError.apiError` with an `OpenAI.ChatCompletionResponse.ResponseError`.
+The [OpenAICompatible module](../OpenAICompatible/README.md) builds providers that serve this format on three hooks here: a model's provider tag (`OpenAI.Model(customModelID:providerID:)`, so `LangToolchain` routes it; re-tag decoded requests with `routed(to:)`), `additionalParameters` for untyped body fields, and tolerant decoding (unknown enum values read as `nil`, unknown content parts are skipped, and an in-band `error` throws `LangToolsError.apiError`).
 
 ## Error Handling
 

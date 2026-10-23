@@ -34,8 +34,7 @@ final public class OpenAI: LangTools {
         }
     }
 
-    /// OpenAI claims only untagged models. A request whose model carries a provider
-    /// tag belongs to the provider named by that tag.
+    /// OpenAI claims only untagged models; a tagged one belongs to its provider.
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
             { ($0 as? ChatCompletionRequest).flatMap { $0.model.providerID == nil && OpenAIModel.openAIModels.contains($0.model) } ?? false },
@@ -82,9 +81,7 @@ final public class OpenAI: LangTools {
             urlRequest.httpBody = formData.body
         } else {
             urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            do { urlRequest.httpBody = try JSONEncoder().encode(request) }
-            catch let error as LangToolsError { throw error }
-            catch { throw LangToolsError.invalidData }
+            do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw error as? LangToolsError ?? .invalidData }
         }
 
         return urlRequest
@@ -135,8 +132,7 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         id = customModelID
     }
 
-    /// Creates a model routed to a specific OpenAI-compatible provider, such as a
-    /// gateway whose `creator/model` slugs other gateways also serve.
+    /// A model routed to one OpenAI-compatible provider.
     public init(customModelID: String, providerID: LangToolsProviderID) {
         id = customModelID
         self.providerID = providerID
@@ -145,14 +141,9 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public var id: String
     public var rawValue: String { id }
 
-    /// The provider this model is routed to, used only by request validators.
-    ///
-    /// The tag is not encoded and does not take part in equality, so a tagged model
-    /// equals the same ID reloaded from storage. A decoded request is untagged; see
-    /// `ChatCompletionRequest.routed(to:)`.
+    /// The provider this model is routed to, for request validators; not encoded or compared.
     public internal(set) var providerID: LangToolsProviderID? = nil
 
-    /// Whether this model is tagged for `provider`.
     public func belongs(to provider: LangToolsProviderID) -> Bool {
         providerID == provider
     }

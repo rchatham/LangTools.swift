@@ -353,8 +353,7 @@ extension OpenAI {
         public var model: String?
         public var output: [OutputItem]
         public var usage: Usage?
-        /// The error carried by a failed response, a `response.failed` event,
-        /// or an `error` event.
+        /// From a failed response, a `response.failed` event, or an `error` event.
         public var error: ChatCompletionResponse.ResponseError?
 
         private var streamType: String?
@@ -368,10 +367,7 @@ extension OpenAI {
         private var refusalDelta: String?
         private var argumentsDelta: String?
 
-        /// The response's message. A single streamed event has none: its text
-        /// arrives through `delta`, and a terminal event's full output is read
-        /// from the accumulated response, so stream consumers do not see the
-        /// answer twice.
+        /// Nil for a single streamed event, whose text arrives through `delta`.
         public var message: OpenAI.Message? {
             guard streamType == nil else { return nil }
             let text = output.compactMap { $0.messageText }.joined()
@@ -504,7 +500,7 @@ extension OpenAI {
                 )
                 return
             }
-            if type == "response.output_item.added" || type == "response.output_item.done" {
+            if type?.hasPrefix("response.output_item.") == true {
                 self.init(
                     streamType: type ?? "",
                     outputIndex: try container.decodeIfPresent(Int.self, forKey: .output_index),
@@ -517,10 +513,8 @@ extension OpenAI {
                 )
                 return
             }
-            if type == "error" {
-                // A stream-level error event carries the error's fields at the top level.
-                self.init(id: nil, object: nil, created_at: nil, status: nil, model: nil, output: [], usage: nil,
-                          error: try? ChatCompletionResponse.ResponseError(from: decoder))
+            if type == "error" {  // The error's fields are at the top level.
+                self.init(id: nil, object: nil, created_at: nil, status: nil, model: nil, output: [], usage: nil, error: try? ChatCompletionResponse.ResponseError(from: decoder))
                 streamType = type
                 return
             }
@@ -548,8 +542,7 @@ extension OpenAI {
                     argumentsDelta: nil,
                     response: nestedResponse
                 )
-                // `response.failed` may carry the error beside the response.
-                if error == nil { error = Self.decodeError(container) }
+                error = error ?? (try? container.decode(ChatCompletionResponse.ResponseError.self, forKey: .error))  // `response.failed`
                 return
             }
 
@@ -561,7 +554,7 @@ extension OpenAI {
                 model: try container.decodeIfPresent(String.self, forKey: .model),
                 output: try container.decodeIfPresent([OutputItem].self, forKey: .output) ?? [],
                 usage: try container.decodeIfPresent(Usage.self, forKey: .usage),
-                error: Self.decodeError(container)
+                error: try? container.decode(ChatCompletionResponse.ResponseError.self, forKey: .error)
             )
             streamType = type
             outputIndex = try container.decodeIfPresent(Int.self, forKey: .output_index)
@@ -572,19 +565,8 @@ extension OpenAI {
             argumentsDelta = nil
         }
 
-        /// An error object, if present and well-formed; a malformed one does not
-        /// fail the response.
-        private static func decodeError(_ container: KeyedDecodingContainer<CodingKeys>) -> ChatCompletionResponse.ResponseError? {
-            (try? container.decodeIfPresent(ChatCompletionResponse.ResponseError.self, forKey: .error)) ?? nil
-        }
-
-        /// Ends a stream, or fails a complete response, that reports an error
-        /// in-band: an `error` event, `response.failed`, or `status: "failed"`.
         public func validateStreamChunk() throws {
-            if let error { throw LangToolsError.apiError(error) }
-            if status == "failed" {
-                throw LangToolsError.apiError(ChatCompletionResponse.ResponseError(message: "The response failed", code: status))
-            }
+            if let error = error ?? (status == "failed" ? ChatCompletionResponse.ResponseError(message: "The response failed", code: status) : nil) { throw LangToolsError.apiError(error) }
         }
 
         public func updating(with accumulated: ResponsesResponse) -> ResponsesResponse {
@@ -600,11 +582,7 @@ extension OpenAI {
 
         public func combining(with next: ResponsesResponse) -> ResponsesResponse {
             if output.isEmpty, id == nil, next.streamType == nil { return next }
-            if next.hasCompletedResponsePayload {
-                var completed = next
-                completed.streamType = nil
-                return completed
-            }
+            if next.hasCompletedResponsePayload { var completed = next; completed.streamType = nil; return completed }
 
             var combined = ResponsesResponse(
                 id: next.id ?? id,
@@ -616,7 +594,7 @@ extension OpenAI {
                 usage: next.usage ?? usage
             )
 
-            if next.streamType == "response.output_item.added" || next.streamType == "response.output_item.done", let item = next.item {
+            if next.streamType?.hasPrefix("response.output_item.") == true, let item = next.item {
                 let index = next.outputIndex ?? combined.output.count
                 combined.setOutputItem(item, at: index)
             } else if let delta = next.textDelta {
@@ -745,10 +723,9 @@ extension OpenAI {
             }
         }
 
-        /// A terminal event (`response.completed` or `response.incomplete`)
-        /// carrying the full response, which replaces the accumulated one.
+        /// A terminal event carrying the full response, which replaces the accumulated one.
         private var hasCompletedResponsePayload: Bool {
-            (streamType == "response.completed" || streamType == "response.incomplete") && (id != nil || object != nil || created_at != nil || status != nil || model != nil || !output.isEmpty || usage != nil)
+            ["response.completed", "response.incomplete"].contains(streamType) && (id != nil || object != nil || created_at != nil || status != nil || model != nil || !output.isEmpty || usage != nil)
         }
 
         enum CodingKeys: String, CodingKey {

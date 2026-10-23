@@ -50,7 +50,6 @@ extension LangTools {
 
     public func perform<Request: LangToolsRequest>(request: Request, onResponse: @escaping (Request.Response) -> Void) async throws -> Request.Response {
         let response: Request.Response = try await perform(request: try prepare(request: request.updating(stream: false)))
-        // A complete response body can carry the same in-band error as a stream chunk.
         try (response as? any LangToolsStreamableResponse)?.validateStreamChunk()
         return try await complete(request: request, response: try request.update(response: response), onResponse: onResponse)
     }
@@ -101,8 +100,7 @@ extension LangTools {
                         delegate: session.delegate as? any URLSessionTaskDelegate
                     )
                     #else
-                    // FoundationNetworking uses the package's streaming shim, which forwards
-                    // challenges and redirects to the session delegate.
+                    // FoundationNetworking uses the package's compatibility shim.
                     let (bytes, response) = try await session.bytes(for: httpRequest)
                     #endif
                     log?.debug("Got response from server")
@@ -158,10 +156,7 @@ extension LangTools {
                             continue
                         }
                         if let response {
-                            // An in-band provider error must end the stream here; it is
-                            // outside the decode do/catch so it is not mistaken for an
-                            // incomplete buffer.
-                            try response.validateStreamChunk()
+                            try response.validateStreamChunk()  // Outside the do/catch: not an incomplete buffer.
                             // If we were able to create a response object, enrich it with the accumulated stream state and request-specific information before adding it to the combined response used to handle tool completions.
                             let streamUpdatedResponse = response.updating(with: combinedResponse)
                             let updatedResponse = try request.update(response: streamUpdatedResponse)

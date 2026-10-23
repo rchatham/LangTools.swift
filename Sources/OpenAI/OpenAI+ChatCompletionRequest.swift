@@ -58,25 +58,16 @@ extension OpenAI {
         public let reasoning_effort: ReasoningEffort?
         public let metadata: [String: String]?
 
-        /// Provider-specific top-level body fields that have no typed property, such as
-        /// OpenRouter's `provider` or `models`. They are merged into the encoded body.
-        ///
-        /// A key in `reservedParameterKeys` throws `LangToolsError.invalidArgument` at
-        /// encode time rather than overriding, or being overridden by, a typed property.
-        /// These values are not decoded back from a serialized request.
+        /// Provider-specific body fields without a typed property, such as OpenRouter's
+        /// `provider`; encoding throws for a key in `reservedParameterKeys`. Not decoded.
         public var additionalParameters: [String: JSON]? = nil
 
-        /// Every top-level body key this request can encode from a typed property.
-        /// Derived from the encoder's own keys, so a new typed field is reserved
-        /// automatically.
+        /// The body keys typed properties encode.
         public static var reservedParameterKeys: Set<String> {
             Set(CodingKeys.allCases.filter { $0 != ._choose && $0 != .toolEventHandler }.map(\.stringValue))
         }
 
-        /// Returns a copy whose model carries `providerID` for toolchain routing.
-        ///
-        /// The provider tag is not encoded, so a request decoded from storage or a
-        /// transcript is untagged. The model ID, messages, and options are unchanged.
+        /// A copy whose model carries `providerID` for toolchain routing (not encoded).
         public func routed(to providerID: LangToolsProviderID) -> Self {
             var request = self
             request.model.providerID = providerID
@@ -203,25 +194,16 @@ extension OpenAI {
             if let audio { try container.encode(audio, forKey: .audio) }
             if let reasoning_effort { try container.encode(reasoning_effort, forKey: .reasoning_effort) }
             if let metadata { try container.encode(metadata, forKey: .metadata) }
-            if let additionalParameters, !additionalParameters.isEmpty {
-                try encode(additionalParameters, to: encoder)
-            }
-        }
-
-        private func encode(_ parameters: [String: JSON], to encoder: Encoder) throws {
-            let reserved = Self.reservedParameterKeys
-            if let conflict = parameters.keys.sorted().first(where: reserved.contains) {
+            guard let additionalParameters else { return }
+            if let conflict = additionalParameters.keys.sorted().first(where: Self.reservedParameterKeys.contains) {
                 throw LangToolsError.invalidArgument("additionalParameters cannot set '\(conflict)'; use the typed property instead")
             }
-            var container = encoder.container(keyedBy: AdditionalParameterKey.self)
-            for (key, value) in parameters {
-                try container.encode(value, forKey: AdditionalParameterKey(stringValue: key))
-            }
+            var extra = encoder.container(keyedBy: AdditionalParameterKey.self)
+            for (key, value) in additionalParameters { try extra.encode(value, forKey: AdditionalParameterKey(stringValue: key)) }
         }
 
         private struct AdditionalParameterKey: CodingKey {
-            let stringValue: String
-            var intValue: Int? { nil }
+            let stringValue: String, intValue: Int? = nil
             init(stringValue: String) { self.stringValue = stringValue }
             init?(intValue: Int) { nil }
         }
@@ -496,10 +478,7 @@ extension OpenAI {
         public var choices: [Choice]
         public let usage: Usage?
         public let service_tier: ServiceTier?
-        /// An error reported inside a successful response. Gateways such as OpenRouter
-        /// send this on a streaming chunk when generation fails after the HTTP 200
-        /// status was committed. A stream ends by throwing it, and `perform` throws it
-        /// from a complete response.
+        /// An error inside a 200 response or stream chunk, as gateways such as OpenRouter send.
         public let error: ResponseError?
 
         @CodableIgnored
@@ -524,10 +503,7 @@ extension OpenAI {
             self.choose = choose
         }
 
-        // `choose` is a client-side selector and is never encoded or decoded.
-        private enum CodingKeys: String, CodingKey {
-            case id, object, created, model, system_fingerprint, choices, usage, service_tier, error
-        }
+        private enum CodingKeys: String, CodingKey { case id, object, created, model, system_fingerprint, choices, usage, service_tier, error }
 
         public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -536,62 +512,33 @@ extension OpenAI {
             created = try container.decode(Int.self, forKey: .created)
             model = try container.decodeIfPresent(String.self, forKey: .model)
             system_fingerprint = try container.decodeIfPresent(String.self, forKey: .system_fingerprint)
-            // An error chunk may omit `choices`; it must still decode so its error surfaces.
-            choices = try container.decodeIfPresent([Choice].self, forKey: .choices) ?? []
+            choices = try container.decodeIfPresent([Choice].self, forKey: .choices) ?? []  // Absent from error chunks.
             usage = try container.decodeIfPresent(Usage.self, forKey: .usage)
-            // An unrecognized tier echoed by an OpenAI-compatible provider decodes as nil.
-            service_tier = try? container.decodeIfPresent(ServiceTier.self, forKey: .service_tier)
+            service_tier = try? container.decodeIfPresent(ServiceTier.self, forKey: .service_tier)  // Unknown tiers read as nil.
             error = try container.decodeIfPresent(ResponseError.self, forKey: .error)
             choose = nil
         }
 
-        /// Ends a stream with the in-band error when a chunk carries one.
         public func validateStreamChunk() throws {
             if let error { throw LangToolsError.apiError(error) }
         }
 
-        /// An error object embedded in a chat completion response or chunk.
-        ///
-        /// Providers send `code` as an integer HTTP status (OpenRouter's current API,
-        /// in both error bodies and streamed error chunks) or as a string such as
-        /// `"server_error"`; both decode into `code` as a string.
+        /// An in-band error. `code` is a string such as `"server_error"`, or an integer
+        /// status (OpenRouter) as text; `metadata` carries provider detail.
         public struct ResponseError: Error, Codable, LocalizedError {
-            public let message: String
-            public let code: String?
-            public let type: String?
-            public let param: String?
-            /// Provider-specific detail, such as the upstream provider's raw error.
-            public let metadata: JSON?
+            public let message: String, code: String?, type: String?, param: String?, metadata: JSON?
+            public var errorDescription: String? { code.map { "\(message) (\($0))" } ?? message }
 
             public init(message: String, code: String? = nil, type: String? = nil, param: String? = nil, metadata: JSON? = nil) {
-                self.message = message
-                self.code = code
-                self.type = type
-                self.param = param
-                self.metadata = metadata
+                (self.message, self.code, self.type, self.param, self.metadata) = (message, code, type, param, metadata)
             }
 
-            private enum CodingKeys: String, CodingKey {
-                case message, code, type, param, metadata
-            }
+            private enum CodingKeys: String, CodingKey { case message, code, type, param, metadata }
 
             public init(from decoder: Decoder) throws {
                 let container = try decoder.container(keyedBy: CodingKeys.self)
-                message = try container.decode(String.self, forKey: .message)
-                if let code = try? container.decodeIfPresent(String.self, forKey: .code) {
-                    self.code = code
-                } else {
-                    // Any other type (a float, an object) degrades to nil rather than
-                    // failing the whole response.
-                    self.code = (try? container.decodeIfPresent(Int.self, forKey: .code)).map(String.init)
-                }
-                type = try container.decodeIfPresent(String.self, forKey: .type)
-                param = try container.decodeIfPresent(String.self, forKey: .param)
-                metadata = try container.decodeIfPresent(JSON.self, forKey: .metadata)
-            }
-
-            public var errorDescription: String? {
-                code.map { "\(message) (\($0))" } ?? message
+                let code = (try? container.decodeIfPresent(String.self, forKey: .code)) ?? (try? container.decodeIfPresent(Int.self, forKey: .code)).map(String.init)
+                self.init(message: try container.decode(String.self, forKey: .message), code: code, type: try container.decodeIfPresent(String.self, forKey: .type), param: try container.decodeIfPresent(String.self, forKey: .param), metadata: try container.decodeIfPresent(JSON.self, forKey: .metadata))
             }
         }
 
@@ -610,17 +557,13 @@ extension OpenAI {
                 self.logprobs = logprobs
             }
 
-            private enum CodingKeys: String, CodingKey {
-                case index, message, finish_reason, delta, logprobs
-            }
+            private enum CodingKeys: String, CodingKey { case index, message, finish_reason, delta, logprobs }
 
             public init(from decoder: Decoder) throws {
                 let container = try decoder.container(keyedBy: CodingKeys.self)
                 index = try container.decode(Int.self, forKey: .index)
                 message = try container.decodeIfPresent(Message.self, forKey: .message)
-                // OpenAI-compatible providers add their own finish reasons. An unknown
-                // value decodes as nil instead of failing the whole response.
-                finish_reason = try? container.decodeIfPresent(FinishReason.self, forKey: .finish_reason)
+                finish_reason = try? container.decodeIfPresent(FinishReason.self, forKey: .finish_reason)  // Providers add their own.
                 delta = try container.decodeIfPresent(Message.Delta.self, forKey: .delta)
                 logprobs = try container.decodeIfPresent(LogProbs.self, forKey: .logprobs)
             }
@@ -628,9 +571,7 @@ extension OpenAI {
             public enum FinishReason: String, Codable {//, LangToolsFinishReason {
                 case stop, length, content_filter, tool_calls
                 case function_call // Deprecated
-                /// Reported by gateways such as OpenRouter when generation fails after
-                /// a streaming response has started. The chunk also carries `error`.
-                case error
+                case error // A gateway's in-stream failure; the chunk also carries `error`.
             }
 
             public struct LogProbs: Codable {
@@ -726,12 +667,9 @@ extension OpenAI {
                     self.audio_tokens = audio_tokens
                 }
 
-                private enum CodingKeys: String, CodingKey {
-                    case reasoning_tokens, accepted_prediction_tokens, rejected_prediction_tokens, audio_tokens
-                }
+                private enum CodingKeys: String, CodingKey { case reasoning_tokens, accepted_prediction_tokens, rejected_prediction_tokens, audio_tokens }
 
-                /// OpenAI-compatible providers report only the counts their upstream
-                /// model supplies. Absent counts decode as zero.
+                /// Compatible providers omit counts their upstream lacks; absent counts read as zero.
                 public init(from decoder: Decoder) throws {
                     let container = try decoder.container(keyedBy: CodingKeys.self)
                     reasoning_tokens = try container.decodeIfPresent(Int.self, forKey: .reasoning_tokens) ?? 0
@@ -750,11 +688,8 @@ extension OpenAI {
                     self.cached_tokens = cached_tokens
                 }
 
-                private enum CodingKeys: String, CodingKey {
-                    case audio_tokens, cached_tokens
-                }
+                private enum CodingKeys: String, CodingKey { case audio_tokens, cached_tokens }
 
-                /// Absent counts decode as zero; see `CompletionTokensDetails`.
                 public init(from decoder: Decoder) throws {
                     let container = try decoder.container(keyedBy: CodingKeys.self)
                     audio_tokens = try container.decodeIfPresent(Int.self, forKey: .audio_tokens) ?? 0

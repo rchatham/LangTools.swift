@@ -366,11 +366,7 @@ public extension OpenAI {
                 let container = try decoder.singleValueContainer()
                 if container.decodeNil() { self = .null }
                 else if let str = try? container.decode(String.self) { self = .string(str) }
-                else if let arr = try? container.decode([LenientContentType].self) {
-                    // Some compatible providers (Mistral reasoning models) mix in
-                    // part types such as `thinking` or `reference`; skip those.
-                    self = .array(arr.compactMap(\.part))
-                }
+                else if let arr = try? container.decode([LenientContentType].self) { self = .array(arr.compactMap(\.part)) }  // Skips unknown part types.
                 else { throw DecodingError.typeMismatch(Content.self, DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Unknown content type")) }
             }
 
@@ -466,19 +462,11 @@ extension OpenAI.Message.Delta {
     private enum DecodingKeys: String, CodingKey { case role, content, tool_calls, audio, refusal }
     private struct ContentPart: Decodable { let type: String?; let text: String? }
 
-    /// Decodes `content` as a string or, as some compatible providers stream it,
-    /// an array of parts whose `text` parts are concatenated. Other part types,
-    /// such as `thinking`, are skipped.
+    /// `content` may be a string or, from some compatible providers, typed parts whose text is joined.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: DecodingKeys.self)
-        let content: String?
-        if let text = try? container.decodeIfPresent(String.self, forKey: .content) {
-            content = text
-        } else if let parts = try? container.decode([ContentPart].self, forKey: .content) {
-            content = parts.filter { ($0.type ?? "text") == "text" }.compactMap(\.text).joined()
-        } else {
-            content = nil
-        }
+        let parts = try? container.decode([ContentPart].self, forKey: .content)
+        let content = (try? container.decodeIfPresent(String.self, forKey: .content)) ?? parts.map { $0.filter { ($0.type ?? "text") == "text" }.compactMap(\.text).joined() }
         self.init(
             role: try container.decodeIfPresent(OpenAI.Message.Role.self, forKey: .role),
             content: content,
