@@ -23,6 +23,7 @@ public final class OllamaService: ObservableObject {
     private let session: URLSession
     private let providerAccessManager: ProviderAccessManager
     private var refreshGeneration: UInt64 = 0
+    private var accountTransportSubscription: AnyCancellable?
 
     public init(
         endpointConfiguration: OllamaEndpointConfiguration = .shared,
@@ -34,6 +35,24 @@ public final class OllamaService: ObservableObject {
         self.providerAccessManager = providerAccessManager
         availableModels = endpointConfiguration.cachedModels()
         transportRevision = endpointConfiguration.snapshot().revision
+        accountTransportSubscription = NotificationCenter.default.publisher(for: AccountTransportSelectionStore.didChange,
+            object: providerAccessManager.accountTransports)
+            .sink { [weak self] _ in
+                guard let self, self.transportRevision != self.endpointConfiguration.snapshot().revision else { return }
+                self.transportDidChange()
+            }
+    }
+
+    /// Retire every selected capability of this device, not just the Ollama UI.
+    public func disconnectHelper() throws {
+        var firstError: Error?
+        if let id = endpointConfiguration.snapshot().helperID,
+           providerAccessManager.accountTransports.registeredHelperID == id {
+            do { try providerAccessManager.accountTransports.disconnectHelper() } catch { firstError = error }
+        }
+        do { try endpointConfiguration.disconnectHelper() } catch { if firstError == nil { firstError = error } }
+        transportDidChange()
+        if let firstError { throw firstError }
     }
 
     public func refreshModels() {
@@ -120,7 +139,7 @@ public final class OllamaService: ObservableObject {
         let capturedSnapshot = snapshot ?? endpointConfiguration.snapshot()
         do {
             if let helper = capturedSnapshot.helper {
-                try await MobileHelperPairingClient.verifyHealth(credential: helper.credential, session: helper.session)
+                try await MobileHelperPairingClient.verifyHealth(credential: helper.credential, session: helper.session, requiredCapability: "ollama")
             }
             _ = try await provider(for: capturedSnapshot).version()
         } catch { throw capturedSnapshot.isHelper ? MobileHelperError.actionable(error, session: capturedSnapshot.helper?.session) : error }

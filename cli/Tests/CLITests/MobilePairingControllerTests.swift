@@ -116,6 +116,106 @@ final class MobilePairingControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testOptionalScopeChangeInvalidatesQRStopsListenerAndPreservesOldGrants() async throws {
+        let fixture = try ControllerFixture()
+        defer { fixture.removeStore() }
+        let code = try await fixture.store.generatePairingCode()
+        let old = try await fixture.store.redeem(.init(code: code.code, name: "Saved Ollama Phone"))
+        let ready = ControllerReadyGate()
+        let controller = fixture.controller(ready: ready)
+        defer { controller.shutdown() }
+        XCTAssertFalse(controller.codexEnabled)
+        XCTAssertFalse(controller.claudeEnabled)
+        XCTAssertEqual(controller.capabilities, ["ollama"])
+        controller.setEnabled(true)
+        _ = try await ready.wait()
+        ready.release()
+        try await waitUntil { controller.qrImage != nil }
+        let pending = try XCTUnwrap(controller.activeCode)
+        controller.setCodexEnabled(true)
+        XCTAssertFalse(controller.enabled)
+        XCTAssertNil(controller.qrImage)
+        XCTAssertNil(controller.activeCode)
+        XCTAssertEqual(controller.capabilities, ["codex", "ollama"])
+        try await waitUntil { !controller.starting }
+        await fixture.assertCodeCancelled(pending)
+        let saved = await fixture.store.authenticate(old.token)
+        XCTAssertEqual(saved?.capabilities, ["ollama"])
+    }
+
+    @MainActor
+    func testClaudeBackendChangeInvalidatesPendingQRAndInvalidOriginCannotStart() async throws {
+        let fixture = try ControllerFixture()
+        defer { fixture.removeStore() }
+        let ready = ControllerReadyGate()
+        let controller = fixture.controller(ready: ready)
+        defer { controller.shutdown() }
+        controller.setEnabled(true)
+        _ = try await ready.wait()
+        ready.release()
+        try await waitUntil { controller.qrImage != nil }
+        let code = try XCTUnwrap(controller.activeCode)
+        controller.setClaudeBackendAddress("http://example.com:8080")
+        XCTAssertNil(controller.qrImage)
+        XCTAssertFalse(controller.enabled)
+        try await waitUntil { !controller.starting }
+        await fixture.assertCodeCancelled(code)
+        controller.setClaudeEnabled(true)
+        try await waitUntil { !controller.starting }
+        controller.setEnabled(true)
+        XCTAssertFalse(controller.enabled)
+        XCTAssertFalse(controller.starting)
+        XCTAssertNotNil(controller.errorText)
+    }
+
+    @MainActor
+    func testOptionalControlsDefaultOffAndRenderExplicitScopeWarnings() async throws {
+        let fixture = try ControllerFixture()
+        defer { fixture.removeStore() }
+        let controller = fixture.controller(ready: ControllerReadyGate())
+        defer { controller.shutdown() }
+        XCTAssertEqual(controller.capabilityLabel, "Ollama")
+        XCTAssertFalse(controller.codexEnabled)
+        XCTAssertFalse(controller.claudeEnabled)
+        // Opt-in capture exercises the actual SwiftUI/AppKit window, not a text/code snapshot.
+        if let path = ProcessInfo.processInfo.environment["MOBILE_HELPER_SCREENSHOT_DIRECTORY"] {
+            _ = NSApplication.shared
+            controller.show()
+            try await Task.sleep(for: .milliseconds(300))
+            let window = try XCTUnwrap(NSApp.windows.first(where: { $0.title == "Connect iPhone — LangToolsHelper" }))
+            window.setContentSize(NSSize(width: 640, height: 1040))
+            try capture(window: window, to: URL(fileURLWithPath: path).appendingPathComponent("helper-lan-default.png"))
+            controller.setCodexEnabled(true)
+            controller.setClaudeEnabled(true)
+            controller.setClaudeBackendAddress("http://example.com:8080")
+            try await waitUntil { !controller.starting }
+            controller.setEnabled(true)
+            try await Task.sleep(for: .milliseconds(300))
+            try capture(window: window, to: URL(fileURLWithPath: path).appendingPathComponent("helper-lan-opt-in-invalid-origin.png"))
+            window.close()
+        } else {
+            controller.setCodexEnabled(true)
+            controller.setClaudeEnabled(true)
+        }
+        XCTAssertEqual(controller.capabilities, ["claude", "codex", "ollama"])
+        XCTAssertEqual(controller.capabilityLabel, "Claude Code, Codex, Ollama")
+    }
+
+    @MainActor
+    private func capture(window: NSWindow, to url: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // WindowServer capture includes native controls/layers that cacheDisplay omits.
+        let capture = Process()
+        capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        capture.arguments = ["-x", "-l", String(window.windowNumber), url.path]
+        try capture.run()
+        capture.waitUntilExit()
+        XCTAssertEqual(capture.terminationStatus, 0, "Window capture requires screen-recording permission")
+        let png = try Data(contentsOf: url)
+        XCTAssertGreaterThan(png.count, 1000)
+    }
+
+    @MainActor
     private func waitUntil(_ condition: () async -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while !(await condition()) {

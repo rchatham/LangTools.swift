@@ -22,6 +22,7 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
         }
 
         func provider(directSession: URLSession) throws -> Ollama {
+            if let helper, !helper.credential.capabilities.contains("ollama") { throw MobileHelperError.missingCapability("ollama") }
             if let helperError { throw helperError }
             if let helper {
                 return Ollama(baseURL: baseURL, apiKey: helper.credential.token, sessionLease: helper.sessionLease)
@@ -102,13 +103,15 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
         }
         helperID = userDefaults.string(forKey: Self.helperSelectionKey)
         helperName = userDefaults.string(forKey: "ollamaSelectedMobileHelperName")
-        if let helperID {
+        if let helperID, !defaults.bool(forKey: "ollamaMobileHelperDisconnected") {
             do {
                 if let saved = try credentialStore.load(helperID: helperID) {
+                    try saved.validate()
+                    guard saved.capabilities.contains("ollama") else { throw MobileHelperError.missingCapability("ollama") }
                     helper = MobileHelperConnection(credential: saved)
                 } else { helperError = .disconnected }
-            } catch { helperError = .persistence(error.localizedDescription) }
-        }
+            } catch { helperError = error as? MobileHelperError ?? .persistence(error.localizedDescription) }
+        } else if helperID != nil { helperError = .disconnected }
     }
 
     public func snapshot() -> Snapshot { lock.withLock { snapshotLocked() } }
@@ -122,13 +125,15 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
     }
 
     /// Call only after pinned pairing and matching authenticated health verification.
-    func selectHelper(_ connection: MobileHelperConnection) throws {
+    func selectHelper(_ connection: MobileHelperConnection, persistCredential: Bool = true) throws {
         try connection.credential.validate()
-        try credentialStore.save(connection.credential)
+        guard connection.credential.capabilities.contains("ollama") else { throw MobileHelperError.missingCapability("ollama") }
+        if persistCredential { try credentialStore.save(connection.credential) }
         lock.withLock {
             helper = connection
             helperID = connection.credential.helperID
             helperName = connection.credential.name
+            defaults.set(false, forKey: "ollamaMobileHelperDisconnected")
             defaults.set(helperName, forKey: "ollamaSelectedMobileHelperName")
             helperError = nil
             revision &+= 1
@@ -139,9 +144,26 @@ public final class OllamaEndpointConfiguration: @unchecked Sendable {
     /// Disconnect is fail-closed, not an implicit switch to direct HTTP.
     public func disconnectHelper() throws {
         try lock.withLock {
-            if let helperID { try credentialStore.remove(helperID: helperID) }
+            var removalError: Error?
+            if let helperID {
+                do { try credentialStore.remove(helperID: helperID) } catch { removalError = error }
+            }
+            defaults.set(true, forKey: "ollamaMobileHelperDisconnected")
             helper = nil
             helperError = .disconnected
+            revision &+= 1
+            if let removalError { throw removalError }
+        }
+    }
+
+    /// A replacement pairing with account-only grants cannot keep a prior
+    /// Ollama connection/catalog usable under the same helper identity.
+    func rejectMissingOllamaGrant(helperID: String) {
+        lock.withLock {
+            guard self.helperID == helperID else { return }
+            helper = nil
+            helperError = .missingCapability("ollama")
+            defaults.set(true, forKey: "ollamaMobileHelperDisconnected")
             revision &+= 1
         }
     }

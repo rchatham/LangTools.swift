@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 final class ProcessChunkPump: @unchecked Sendable {
     let stream: AsyncStream<Data>
@@ -127,6 +132,12 @@ actor CodexAppServerClient {
     private var shuttingDown = false
     private var stderrTail = ""
     private var processGeneration: UUID?
+    private var processTerminationTasks: [UUID: Task<Void, Never>] = [:]
+    /// Bounded wait for termination after stdout EOF, so the exit status wins the race
+    /// with reaping. The deadline is absolute: actor scheduling can still delay
+    /// resolution, so this is not a strict wall-clock guarantee.
+    private static let stdoutCloseGraceMilliseconds = 250
+    private var stdoutCloseGraceTasks: [UUID: Task<Void, Never>] = [:]
     private var stdoutPump: ProcessChunkPump?
     private var stderrPump: ProcessChunkPump?
     private var stdoutReaderTask: Task<Void, Never>?
@@ -168,11 +179,17 @@ actor CodexAppServerClient {
         method: String,
         params: Params,
         timeout: Duration? = nil,
+        // Controls response waiting only; cancelled work must never be dispatched.
         cancelOnTaskCancellation: Bool = true,
-        cancellationScope: UUID? = nil
+        cancellationScope: UUID? = nil,
+        expectedProcessGeneration: UUID? = nil
     ) async throws -> Response {
+        try Task.checkCancellation()
+        try validateProcessGeneration(expectedProcessGeneration)
         try validateRequestScope(cancellationScope)
         try await ensureStarted(cancellationScope: cancellationScope)
+        try Task.checkCancellation()
+        try validateProcessGeneration(expectedProcessGeneration)
         try validateRequestScope(cancellationScope)
         let paramsData = try JSONEncoder().encode(params)
         let paramsObject = try JSONSerialization.jsonObject(with: paramsData)
@@ -307,27 +324,51 @@ actor CodexAppServerClient {
         try await ensureStarted()
     }
 
+    /// Invalidates only the affected generation and joins its actual process exit.
+    /// A concurrent restart cannot turn stale cleanup into termination of the new process.
+    func invalidateProcessAndWait(expectedGeneration: UUID) async {
+        if processGeneration == expectedGeneration {
+            shutdownProcess(error: CodexAppServerError.restarted)
+        }
+        if let termination = processTerminationTasks[expectedGeneration] {
+            await termination.value
+        }
+        // A bounded stdout-close grace task may still attribute this generation's exit;
+        // joining it keeps cleanup from returning while it can still act.
+        if let grace = stdoutCloseGraceTasks[expectedGeneration] {
+            await grace.value
+        }
+    }
+
+    private func validateProcessGeneration(_ expected: UUID?) throws {
+        if let expected, processGeneration != expected {
+            throw CodexAppServerError.restarted
+        }
+    }
+
     func shutdown() {
         shuttingDown = true
         shutdownProcess(error: CodexAppServerError.shutdown)
     }
 
     private func ensureStarted(cancellationScope: UUID? = nil) async throws {
+        try Task.checkCancellation()
         guard shuttingDown == false else { throw CodexAppServerError.shutdown }
         try validateRequestScope(cancellationScope)
         if isInitialized, let process, process.isRunning { return }
 
         let waiterID = UUID()
-        let shouldStart = isStarting == false
-        if shouldStart {
-            isStarting = true
-        }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                guard cancellationScope.map({ cancelledRequestScopes.contains($0) }) != true else {
+                guard !Task.isCancelled,
+                      cancellationScope.map({ cancelledRequestScopes.contains($0) }) != true else {
                     continuation.resume(throwing: CancellationError())
                     return
                 }
+                // Claim startup only after cancellation rejection, and schedule it
+                // without suspension. A rejected waiter must not strand isStarting.
+                let shouldStart = isStarting == false
+                if shouldStart { isStarting = true }
                 startupWaiters[waiterID] = StartupWaiter(
                     cancellationScope: cancellationScope,
                     continuation: continuation
@@ -343,6 +384,7 @@ actor CodexAppServerClient {
                 await self?.failStartupWaiter(id: waiterID, error: CancellationError())
             }
         }
+        try Task.checkCancellation()
         try validateRequestScope(cancellationScope)
     }
 
@@ -657,7 +699,10 @@ actor CodexAppServerClient {
                 cancellationScope: cancellationScope
             )
             do {
-                try writeJSONObject(["id": requestID, "method": method, "params": params])
+                try writeJSONObject(
+                    ["id": requestID, "method": method, "params": params],
+                    rejectTaskCancellation: true
+                )
             } catch {
                 failPending(id: requestID, error: error)
             }
@@ -670,10 +715,14 @@ actor CodexAppServerClient {
         }
     }
 
-    private func writeJSONObject(_ object: [String: Any]) throws {
+    private func writeJSONObject(_ object: [String: Any], rejectTaskCancellation: Bool = false) throws {
         guard let stdinHandle else { throw CodexAppServerError.unavailable }
         var data = try JSONSerialization.data(withJSONObject: object)
         data.append(0x0A)
+        // The synchronous check/write is the dispatch boundary: no actor suspension
+        // can admit cancelled work here. After writing, a noncancellable response
+        // waiter must still capture the turn ID so runtime cleanup can interrupt it.
+        if rejectTaskCancellation { try Task.checkCancellation() }
         do {
             try stdinHandle.write(contentsOf: data)
         } catch {
@@ -717,7 +766,31 @@ actor CodexAppServerClient {
 
     private func stdoutClosed(generation: UUID) {
         guard processGeneration == generation, shuttingDown == false else { return }
-        if let process, process.isRunning == false {
+        guard let process else { return }
+        if process.isRunning == false {
+            processExited(process)
+            return
+        }
+        // EOF can be observed before the reaper flips `isRunning`. Give termination a
+        // bounded grace so the child's exit status is attributed instead of being lost to
+        // a transport failure. A child that closes stdout and keeps running still fails
+        // closed once the grace expires.
+        guard stdoutCloseGraceTasks[generation] == nil else { return }
+        stdoutCloseGraceTasks[generation] = Task.detached { [weak self] in
+            let deadline = ContinuousClock.now.advanced(by: .milliseconds(Self.stdoutCloseGraceMilliseconds))
+            while process.isRunning {
+                let remaining = ContinuousClock.now.duration(to: deadline)
+                guard remaining > .zero else { break }
+                try? await Task.sleep(for: min(remaining, .milliseconds(10)))
+            }
+            await self?.resolveStdoutClose(generation: generation, process: process)
+        }
+    }
+
+    private func resolveStdoutClose(generation: UUID, process: Process) {
+        stdoutCloseGraceTasks.removeValue(forKey: generation)
+        guard processGeneration == generation, shuttingDown == false else { return }
+        if process.isRunning == false {
             processExited(process)
         } else {
             shutdownProcess(error: CodexAppServerError.transport("Codex app-server closed stdout."))
@@ -865,6 +938,7 @@ actor CodexAppServerClient {
 
     private func shutdownProcess(error: Error) {
         let oldProcess = process
+        let oldGeneration = processGeneration
         process = nil
         isInitialized = false
         try? stdinHandle?.close()
@@ -881,7 +955,24 @@ actor CodexAppServerClient {
         stderrReaderTask = nil
         oldProcess?.standardOutput.flatMap { $0 as? Pipe }?.fileHandleForReading.readabilityHandler = nil
         oldProcess?.standardError.flatMap { $0 as? Pipe }?.fileHandleForReading.readabilityHandler = nil
-        if oldProcess?.isRunning == true { oldProcess?.terminate() }
+        if let oldProcess, let oldGeneration {
+            if oldProcess.isRunning { oldProcess.terminate() }
+            // Detached cleanup survives caller cancellation. Escalate a process
+            // that ignores SIGTERM, and never declare it drained before exit.
+            processTerminationTasks[oldGeneration] = Task.detached { [weak self] in
+                for _ in 0..<25 {
+                    if oldProcess.isRunning == false { break }
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+                if oldProcess.isRunning {
+                    _ = kill(oldProcess.processIdentifier, SIGKILL)
+                }
+                while oldProcess.isRunning {
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+                await self?.processTerminationFinished(generation: oldGeneration)
+            }
+        }
         cleanupSeatbeltArtifacts()
 
         let requests = pending.values
@@ -896,6 +987,10 @@ actor CodexAppServerClient {
             $0.timeoutTask.cancel()
             $0.continuation.resume(throwing: error)
         }
+    }
+
+    private func processTerminationFinished(generation: UUID) {
+        processTerminationTasks.removeValue(forKey: generation)
     }
 
     private func cleanupSeatbeltArtifacts() {

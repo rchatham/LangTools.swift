@@ -14,6 +14,65 @@ public enum CodexChatStreamEvent: Equatable, Sendable {
     case complete(String)
 }
 
+/// Bridges caller cancellation before, during, and after actor-side producer creation.
+/// Registration records a cancellation tombstone even before a producer exists.
+final class CodexChatStreamCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var producer: Task<Void, Never>?
+
+    func checkCancellation() throws {
+        try lock.withLock {
+            if cancelled { throw CancellationError() }
+        }
+    }
+
+    func register(_ producer: Task<Void, Never>) {
+        let mustCancel = lock.withLock {
+            self.producer = producer
+            return cancelled
+        }
+        // Cancel outside the lock: Task.cancel may invoke handlers synchronously.
+        if mustCancel { producer.cancel() }
+    }
+
+    func cancel() {
+        let producer = lock.withLock {
+            cancelled = true
+            return self.producer
+        }
+        producer?.cancel()
+    }
+
+    func finish() {
+        lock.withLock { producer = nil }
+    }
+}
+
+/// Owns the producer independently of stream consumption. Callers must join it
+/// before releasing an active-turn slot: stream termination only requests cancellation.
+struct CodexChatStreamHandle: Sendable {
+    let stream: AsyncThrowingStream<CodexChatStreamEvent, Error>
+    private let producer: Task<Void, Never>
+
+    init(stream: AsyncThrowingStream<CodexChatStreamEvent, Error>, producer: Task<Void, Never>) {
+        self.stream = stream
+        self.producer = producer
+    }
+
+    /// Waits for response processing and runtime cleanup, without cancelling it.
+    func wait() async {
+        await producer.value
+    }
+
+    /// Cancels and joins the producer, including delayed turn/start and interrupt cleanup.
+    /// Joining still completes when the task invoking this method is itself cancelled.
+    func cancelAndWait() async {
+        producer.cancel()
+        await producer.value
+    }
+}
+
 private struct CodexThreadScopedNotificationParams: Decodable, Sendable {
     let threadId: String
 }
@@ -131,6 +190,7 @@ public actor CodexRuntimeService {
     private let loginStartTimeout: Duration
     private let loginCompletionTimeout: Duration
     private let turnCompletionTimeout: Duration
+    private let interruptionTimeout: Duration
     private let conversationIdleTimeout: Duration
     private let responseByteLimit: Int
     private let workspaces: CodexConversationWorkspace
@@ -150,7 +210,8 @@ public actor CodexRuntimeService {
         turnCompletionTimeout: Duration = .seconds(120),
         conversationIdleTimeout: Duration = .seconds(1_800),
         responseByteLimit: Int = CodexRuntimeService.maximumResponseBytes,
-        workspaces: CodexConversationWorkspace = CodexConversationWorkspace()
+        workspaces: CodexConversationWorkspace = CodexConversationWorkspace(),
+        interruptionTimeout: Duration = .seconds(5)
     ) {
         self.client = client
         self.browserOpener = browserOpener
@@ -158,6 +219,7 @@ public actor CodexRuntimeService {
         self.loginStartTimeout = loginStartTimeout
         self.loginCompletionTimeout = loginCompletionTimeout
         self.turnCompletionTimeout = turnCompletionTimeout
+        self.interruptionTimeout = interruptionTimeout
         self.conversationIdleTimeout = conversationIdleTimeout
         self.responseByteLimit = max(0, responseByteLimit)
         self.workspaces = workspaces
@@ -321,45 +383,71 @@ public actor CodexRuntimeService {
         messages: [HelperChatMessage],
         conversationID: UUID? = nil
     ) -> AsyncThrowingStream<CodexChatStreamEvent, Error> {
-        AsyncThrowingStream(bufferingPolicy: .bufferingOldest(Self.maximumBufferedStreamEvents)) { continuation in
-            let producer = Task { [weak self] in
-                guard let self else {
-                    continuation.finish(throwing: CancellationError())
-                    return
-                }
-                do {
-                    let response = try await self.chat(
-                        model: model,
-                        messages: messages,
-                        conversationID: conversationID,
-                        onDelta: { delta in
-                            switch continuation.yield(.delta(delta)) {
-                            case .enqueued: return
-                            case .dropped:
-                                throw CodexRuntimeError.runtime("The response stream consumer could not keep up.")
-                            case .terminated:
-                                throw CancellationError()
-                            @unknown default:
-                                throw CodexRuntimeError.runtime("The response stream entered an unknown state.")
-                            }
-                        }
-                    )
-                    switch continuation.yield(.complete(response)) {
-                    case .enqueued:
-                        continuation.finish()
-                    case .dropped:
-                        continuation.finish(throwing: CodexRuntimeError.runtime("The response stream consumer could not keep up."))
-                    case .terminated:
-                        return
-                    @unknown default:
-                        continuation.finish(throwing: CodexRuntimeError.runtime("The response stream entered an unknown state."))
-                    }
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { @Sendable _ in producer.cancel() }
+        do {
+            return try chatStreamHandle(model: model, messages: messages, conversationID: conversationID).stream
+        } catch {
+            return AsyncThrowingStream { $0.finish(throwing: error) }
         }
+    }
+
+    func chatStreamHandle(
+        model: String,
+        messages: [HelperChatMessage],
+        conversationID: UUID? = nil,
+        cancellation: CodexChatStreamCancellation = CodexChatStreamCancellation()
+    ) throws -> CodexChatStreamHandle {
+        // Unstructured Tasks do not inherit caller cancellation. Reject a caller
+        // cancelled while queued on this actor before creating any producer.
+        try Task.checkCancellation()
+        try cancellation.checkCancellation()
+        let (stream, continuation) = AsyncThrowingStream<CodexChatStreamEvent, Error>.makeStream(
+            bufferingPolicy: .bufferingOldest(Self.maximumBufferedStreamEvents)
+        )
+        let producer = Task { [weak self] in
+            defer { cancellation.finish() }
+            guard let self else {
+                continuation.finish(throwing: CancellationError())
+                return
+            }
+            do {
+                try cancellation.checkCancellation()
+                try Task.checkCancellation()
+                let response = try await self.chat(
+                    model: model,
+                    messages: messages,
+                    conversationID: conversationID,
+                    onDelta: { delta in
+                        switch continuation.yield(.delta(delta)) {
+                        case .enqueued: return
+                        case .dropped:
+                            throw CodexRuntimeError.runtime("The response stream consumer could not keep up.")
+                        case .terminated:
+                            throw CancellationError()
+                        @unknown default:
+                            throw CodexRuntimeError.runtime("The response stream entered an unknown state.")
+                        }
+                    }
+                )
+                switch continuation.yield(.complete(response)) {
+                case .enqueued:
+                    continuation.finish()
+                case .dropped:
+                    continuation.finish(throwing: CodexRuntimeError.runtime("The response stream consumer could not keep up."))
+                case .terminated:
+                    return
+                @unknown default:
+                    continuation.finish(throwing: CodexRuntimeError.runtime("The response stream entered an unknown state."))
+                }
+            } catch {
+                continuation.finish(throwing: error)
+            }
+        }
+        // This actor-isolated factory does not suspend between spawn and register:
+        // the actor-inherited producer cannot execute before a tombstoned reservation
+        // cancels it. Registration also owns cancellation before the caller resumes.
+        cancellation.register(producer)
+        continuation.onTermination = { @Sendable _ in producer.cancel() }
+        return CodexChatStreamHandle(stream: stream, producer: producer)
     }
 
     private func chat(
@@ -368,6 +456,7 @@ public actor CodexRuntimeService {
         conversationID: UUID?,
         onDelta: @escaping @Sendable (String) throws -> Void
     ) async throws -> String {
+        try Task.checkCancellation()
         guard servicePhase == .active else {
             throw CodexRuntimeError.accountConflict("Codex runtime is draining or shut down.")
         }
@@ -491,6 +580,7 @@ public actor CodexRuntimeService {
         messages: [HelperChatMessage],
         onDelta: @escaping @Sendable (String) throws -> Void
     ) async throws -> String {
+        try Task.checkCancellation()
         var state = try activeState(conversationID, lifecycleID: lifecycleID)
         let generation = try await client.initializedProcessGeneration()
         try validateActiveLifecycle(conversationID, lifecycleID: lifecycleID)
@@ -636,7 +726,10 @@ public actor CodexRuntimeService {
         allowStaleThreadMapping: Bool = true,
         onDelta: @escaping @Sendable (String) throws -> Void
     ) async throws -> String {
-        let context = ChatTurnContext(threadID: threadID)
+        try Task.checkCancellation()
+        let generation = try await client.initializedProcessGeneration()
+        try Task.checkCancellation()
+        let context = ChatTurnContext(threadID: threadID, processGeneration: generation)
         if let lifecycle {
             try validateActiveLifecycle(lifecycle.conversationID, lifecycleID: lifecycle.lifecycleID)
             conversations[lifecycle.conversationID]?.activeTurn = context
@@ -653,6 +746,9 @@ public actor CodexRuntimeService {
             }
             let started: CodexTurnStartResponse
             do {
+                // Reject cancellation before dispatch, but retain the response once
+                // dispatched: its turn ID is required for interruption and joining.
+                try Task.checkCancellation()
                 started = try await client.request(
                     method: "turn/start",
                     params: CodexTurnStartParams(
@@ -662,14 +758,19 @@ public actor CodexRuntimeService {
                         sandboxPolicy: CodexContainment.sandboxPolicy(workspace: workspace),
                         model: model
                     ),
-                    cancelOnTaskCancellation: false
+                    cancelOnTaskCancellation: false,
+                    expectedProcessGeneration: generation
                 )
             } catch {
                 if case CodexAppServerError.timeout(let method) = error, method == "turn/start" {
-                    // The server may have started a turn whose ID was lost with the
-                    // timed-out response. Restarting is the only fail-closed way to
-                    // guarantee that unknown turn cannot continue.
-                    try? await client.restart()
+                    // An unknown turn cannot be interrupted by ID. Confirm this
+                    // generation has exited before releasing conversation ownership.
+                    await Task.detached { [client] in
+                        await client.invalidateProcessAndWait(expectedGeneration: generation)
+                        // Preserve eager recovery; a launch failure is surfaced by
+                        // the next request, while the original timeout stays primary.
+                        _ = try? await client.initializedProcessGeneration()
+                    }.value
                     throw error
                 }
                 if allowStaleThreadMapping, Self.isStaleThreadError(error) {
@@ -1125,12 +1226,20 @@ public actor CodexRuntimeService {
     private func interruptTurnIfAvailable(_ context: ChatTurnContext) async {
         guard let turnID = context.turnID else { return }
         let client = self.client
+        let timeout = interruptionTimeout
         await Task.detached {
-            let _: CodexEmptyParams? = try? await client.request(
-                method: "turn/interrupt",
-                params: CodexTurnInterruptParams(threadId: context.threadID, turnId: turnID),
-                timeout: .seconds(5)
-            )
+            do {
+                let _: CodexEmptyParams = try await client.request(
+                    method: "turn/interrupt",
+                    params: CodexTurnInterruptParams(threadId: context.threadID, turnId: turnID),
+                    timeout: timeout,
+                    expectedProcessGeneration: context.processGeneration
+                )
+            } catch {
+                // Rejection, timeout, and transport failure leave upstream ownership
+                // uncertain. Do not let a cancelled caller bypass actual process exit.
+                await client.invalidateProcessAndWait(expectedGeneration: context.processGeneration)
+            }
         }.value
     }
 
@@ -1218,10 +1327,14 @@ private enum InternalTurnStartError: Error {
 
 private final class ChatTurnContext: @unchecked Sendable {
     let threadID: String
+    let processGeneration: UUID
     private let lock = NSLock()
     private var storedTurnID: String?
 
-    init(threadID: String) { self.threadID = threadID }
+    init(threadID: String, processGeneration: UUID) {
+        self.threadID = threadID
+        self.processGeneration = processGeneration
+    }
 
     var turnID: String? {
         lock.lock()
