@@ -134,11 +134,6 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
 
     public var id: String { rawValue }
 
-    var appleModel: AppleIntelligence.Model? {
-        if case .apple(let model) = self { return model }
-        return nil
-    }
-
     public static var allCases: [Model] {
         let standardModels: [Model] = OpenAI.Model.allCases.map { .openAI($0) }
         + Anthropic.Model.allCases.map { .anthropic($0) }

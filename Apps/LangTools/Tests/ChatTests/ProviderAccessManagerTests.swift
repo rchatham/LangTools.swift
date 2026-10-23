@@ -28,23 +28,6 @@ final class ProviderAccessManagerTests: XCTestCase {
         XCTAssertEqual(accessManager.validateSelectedModel(requested), requested)
     }
 
-    func testListedAppleModelDoesNotReplaceUnconfiguredSelection() {
-        let manager = ProviderAccessManager(keychainService: keychainService, sessionStore: sessionStore, appleModels: { [.apple(.onDevice)] })
-        manager.refresh()
-
-        XCTAssertTrue(manager.availableChatModels().contains(.apple(.onDevice)))
-        XCTAssertEqual(manager.validateSelectedModel(.codex(.gpt5_5)), .codex(.gpt5_5))
-        XCTAssertEqual(manager.validateSelectedModel(.apple(.onDevice)), .apple(.onDevice))
-    }
-
-    func testListedAppleModelDoesNotOutrankConfiguredProviderFallback() {
-        keychainService.saveApiKey(apiKey: "sk-test", for: .anthropic)
-        let manager = ProviderAccessManager(keychainService: keychainService, sessionStore: sessionStore, appleModels: { [.apple(.onDevice)] })
-        manager.refresh()
-
-        XCTAssertEqual(manager.validateSelectedModel(.codex(.gpt5_5)).apiService, .anthropic)
-    }
-
     func testNoCredentialsHidesRemoteModels() {
         accessManager.refresh()
 

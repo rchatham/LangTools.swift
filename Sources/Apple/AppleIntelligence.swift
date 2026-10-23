@@ -13,41 +13,14 @@ import LangTools
 
 /// On-device language provider backed by Apple's Foundation Models framework.
 ///
-/// `AppleIntelligence` conforms to `LangTools` so it can be registered in a
-/// `LangToolchain` next to network providers. It never performs network I/O:
-/// `perform` and `stream` are implemented directly on top of
-/// `LanguageModelSession` instead of the default HTTP pipeline.
-///
-/// The type is available on every platform the package supports so callers can
-/// reference it unconditionally. Check `availability` at runtime — generation
-/// requires iOS 26 / macOS 26 / visionOS 26 on Apple Intelligence-capable hardware
-/// with Apple Intelligence enabled.
-///
-/// ```swift
-/// let apple = AppleIntelligence()
-/// guard apple.availability == .available else { return }
-/// let request = AppleIntelligence.ChatRequest(
-///     model: .onDevice,
-///     messages: [apple.systemMessage("Be concise."), apple.userMessage("Hi!")]
-/// )
-/// for try await chunk in apple.stream(request: request) {
-///     print(chunk.delta?.content ?? "", terminator: "")
-/// }
-/// ```
-/// Stateless and immutable, so a single instance can be shared across actors.
+/// Conforms to `LangTools` so it can sit in a `LangToolchain` beside network
+/// providers; `perform` and `stream` run on `LanguageModelSession` instead of
+/// HTTP. The type compiles on every supported platform; generation needs
+/// iOS/macOS/visionOS 26 with Apple Intelligence enabled (see `availability`).
 public final class AppleIntelligence: LangTools, Sendable {
     public typealias Model = AppleIntelligenceModel
     public typealias ErrorResponse = AppleIntelligenceErrorResponse
     public typealias Message = LangToolsMessageImpl<LangToolsTextContent>
-
-    public let providerID = LangToolsProviderID(rawValue: "apple.foundation-models")
-    public let displayName = "Apple Intelligence"
-    public let capabilities = ProviderCapabilities(
-        runsOnDevice: true,
-        supportsStreamingPartials: true,
-        requiresNetwork: false,
-        requiresModelDownload: true
-    )
 
     /// Unused: generation happens on-device. Present to satisfy `LangTools`.
     public var session: URLSession { .shared }
@@ -66,25 +39,14 @@ public final class AppleIntelligence: LangTools, Sendable {
         return false
     }
 
-    /// Runtime readiness of the system language model for `model`.
-    public static func availability(for model: Model = .onDevice) -> Availability {
+    /// Runtime readiness of the on-device system language model.
+    public static var availability: Availability {
         #if canImport(FoundationModels) && !os(watchOS) && !os(tvOS)
         if #available(iOS 26.0, macOS 26.0, visionOS 26.0, *) {
-            return FoundationModelsEngine.availability(for: model)
+            return FoundationModelsEngine.availability
         }
         #endif
         return .unavailable(.unsupportedOS)
-    }
-
-    public var availability: Availability { Self.availability() }
-
-    /// Provider-neutral asset state, mirroring the speech providers in this module.
-    public var assetState: ProviderAssetState {
-        switch availability {
-        case .available: return .ready
-        case .unavailable(.modelNotReady): return .preparing
-        case .unavailable(let reason): return .failed(reason: reason.message)
-        }
     }
 
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
@@ -142,7 +104,7 @@ public final class AppleIntelligence: LangTools, Sendable {
     /// append-only. LangTools deltas cannot retract text, so if a snapshot ever
     /// rewrites earlier output only the part beyond what was already emitted is
     /// sent; re-sending the whole snapshot would duplicate it once deltas combine.
-    public static func streamDelta(emitted: String, snapshot: String) -> String {
+    static func streamDelta(emitted: String, snapshot: String) -> String {
         String(snapshot.dropFirst(emitted.count))
     }
 
@@ -169,12 +131,10 @@ public final class AppleIntelligence: LangTools, Sendable {
 
 // MARK: - Model
 
-/// System language model variants exposed by Foundation Models.
+/// System language models exposed by Foundation Models.
 public enum AppleIntelligenceModel: String, Codable, CaseIterable, Sendable {
-    /// `SystemLanguageModel.default` — general-purpose on-device model.
+    /// `SystemLanguageModel.default`, the general-purpose on-device model.
     case onDevice = "on-device"
-    /// `SystemLanguageModel(useCase: .contentTagging)` — tuned for tagging/extraction.
-    case contentTagging = "content-tagging"
 
     /// Approximate context window shared by prompt, history, and response.
     public static let contextWindowTokens = 4_096
@@ -246,7 +206,6 @@ public enum AppleIntelligenceError: Error, LocalizedError, Equatable {
 extension AppleIntelligence {
     /// Sampling strategy mirroring `GenerationOptions.SamplingMode`.
     public enum Sampling: Codable, Equatable, Sendable {
-        case greedy
         case topK(Int, seed: UInt64? = nil)
         case topP(Double, seed: UInt64? = nil)
     }
@@ -323,21 +282,21 @@ extension AppleIntelligence {
 extension AppleIntelligence {
     /// Provider-neutral plan for rebuilding a stateless message history as a
     /// Foundation Models transcript.
-    public struct TranscriptPlan: Equatable, Sendable {
-        public enum Turn: Equatable, Sendable {
+    struct TranscriptPlan: Equatable, Sendable {
+        enum Turn: Equatable, Sendable {
             case user(String)
             case assistant(String)
         }
 
         /// Joined system messages, used as session instructions.
-        public var instructions: String?
+        var instructions: String?
         /// Prior turns replayed into the transcript before `prompt`.
-        public var history: [Turn]
+        var history: [Turn]
         /// The final user message the model responds to.
-        public var prompt: String
+        var prompt: String
     }
 
-    public static func transcriptPlan(for messages: [Message]) throws -> TranscriptPlan {
+    static func transcriptPlan(for messages: [Message]) throws -> TranscriptPlan {
         let systemText = messages.filter { $0.role.isSystem }
             .map(\.content.text)
             .filter { !$0.isEmpty }

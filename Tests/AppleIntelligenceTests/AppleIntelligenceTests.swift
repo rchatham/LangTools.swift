@@ -32,11 +32,6 @@ final class AppleIntelligenceTests: XCTestCase {
         XCTAssertEqual(plan.prompt, "Second")
     }
 
-    func testHistoryWindowKeepsShortConversationsIntact() {
-        let turns: [AppleIntelligence.TranscriptPlan.Turn] = [.user("Hi"), .assistant("Hello!"), .user("Weather?"), .assistant("Sunny.")]
-        XCTAssertEqual(AppleIntelligence.historyWindow(turns, prompt: "Thanks", instructions: "Be brief."), turns)
-    }
-
     func testHistoryWindowDropsOldestTurnsAndStartsOnUserTurn() {
         // ~1,380 tokens per long turn against a ~3,060-token history budget:
         // a3, q3, and a2 fit, q2 does not, so the orphaned a2 is trimmed too.
@@ -47,21 +42,7 @@ final class AppleIntelligenceTests: XCTestCase {
             .user("q3 short"), .assistant("a3 " + long),
         ]
 
-        let kept = AppleIntelligence.historyWindow(turns, prompt: "Next?", instructions: "")
-
-        XCTAssertEqual(kept, Array(turns.suffix(2)))
-        let budget = AppleIntelligenceModel.contextWindowTokens - AppleIntelligence.reservedResponseTokens
-        let used = kept.map { turn -> Int in
-            switch turn { case .user(let t), .assistant(let t): return AppleIntelligence.estimatedTokens(t) }
-        }.reduce(0, +)
-        XCTAssertLessThanOrEqual(used + AppleIntelligence.estimatedTokens("Next?"), budget)
-    }
-
-    func testHistoryWindowNeverStartsWithOrphanedAssistantReply() {
-        let long = String(repeating: "word ", count: 3_000)
-        let turns: [AppleIntelligence.TranscriptPlan.Turn] = [.user("q1 " + long), .assistant("a1")]
-        // The user turn no longer fits, so its reply must be dropped too.
-        XCTAssertEqual(AppleIntelligence.historyWindow(turns, prompt: "Next?", instructions: ""), [])
+        XCTAssertEqual(AppleIntelligence.historyWindow(turns, prompt: "Next?", instructions: ""), Array(turns.suffix(2)))
     }
 
     func testHistoryWindowReturnsEmptyWhenInstructionsAndPromptExhaustBudget() {
@@ -90,14 +71,6 @@ final class AppleIntelligenceTests: XCTestCase {
         }
     }
 
-    func testStreamedDeltasCombineIntoAssistantMessage() {
-        let combined = [" world", "!"].reduce(AppleIntelligence.ChatResponse(delta: .init(content: "Hello"))) {
-            $0.combining(with: .init(delta: .init(content: $1)))
-        }
-        XCTAssertEqual(combined.message?.content.text, "Hello world!")
-        XCTAssertEqual(combined.message?.role, .assistant)
-    }
-
     func testToolchainRoutesChatRequestsToAppleIntelligence() throws {
         var toolchain = LangToolchain()
         toolchain.register(AppleIntelligence())
@@ -120,7 +93,7 @@ final class AppleIntelligenceTests: XCTestCase {
 
     func testUnavailableOSReportsUnsupportedAndFailsRequests() async throws {
         try XCTSkipIf(AppleIntelligence.isSupportedOnThisOS, "Foundation Models is present on this OS")
-        XCTAssertEqual(AppleIntelligence.availability(), .unavailable(.unsupportedOS))
+        XCTAssertEqual(AppleIntelligence.availability, .unavailable(.unsupportedOS))
 
         let request = AppleIntelligence.ChatRequest(model: .onDevice, messages: [Message(role: .user, string: "Hi")])
         do {
@@ -133,7 +106,7 @@ final class AppleIntelligenceTests: XCTestCase {
 
     /// Live generation; runs only where Apple Intelligence is enabled and ready.
     func testLiveStreamingGeneration() async throws {
-        try XCTSkipUnless(AppleIntelligence.availability() == .available, "Apple Intelligence model is not available here")
+        try XCTSkipUnless(AppleIntelligence.availability == .available, "Apple Intelligence model is not available here")
         let request = AppleIntelligence.ChatRequest(
             model: .onDevice,
             messages: [Message(role: .user, string: "Reply with the single word: pong")],

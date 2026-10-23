@@ -14,7 +14,6 @@ public final class ProviderAccessManager: ObservableObject {
     private let keychainService: KeychainService
     private let sessionStore: AuthSessionStore
     private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
-    private let appleModels: () -> [Model]
     private let compatibleCatalog: CompatibleModelCatalog
     private let stateLock = NSLock()
     private var refreshGeneration: UInt64 = 0
@@ -23,13 +22,11 @@ public final class ProviderAccessManager: ObservableObject {
         keychainService: KeychainService = .shared,
         sessionStore: AuthSessionStore = .shared,
         ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared,
-        appleModels: @escaping () -> [Model] = { Model.appleModels },
         compatibleCatalog: CompatibleModelCatalog = .shared
     ) {
         self.keychainService = keychainService
         self.sessionStore = sessionStore
         self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
-        self.appleModels = appleModels
         self.compatibleCatalog = compatibleCatalog
         refresh()
     }
@@ -227,7 +224,7 @@ public final class ProviderAccessManager: ObservableObject {
             return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
         }
         if service == .apple {
-            return appleModels()
+            return Model.appleModels
         }
 
         let hasAPIKey = apiKey?.isEmpty == false
@@ -276,7 +273,7 @@ public final class ProviderAccessManager: ObservableObject {
             case .ollama:
                 return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
             case .apple:
-                return appleModels()
+                return Model.appleModels
             case .serper:
                 return []
             }

@@ -12,15 +12,8 @@ import LangTools
 
 @available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
 enum FoundationModelsEngine {
-    static func systemModel(for model: AppleIntelligenceModel) -> SystemLanguageModel {
-        switch model {
-        case .onDevice: return .default
-        case .contentTagging: return SystemLanguageModel(useCase: .contentTagging)
-        }
-    }
-
-    static func availability(for model: AppleIntelligenceModel) -> AppleIntelligence.Availability {
-        switch systemModel(for: model).availability {
+    static var availability: AppleIntelligence.Availability {
+        switch SystemLanguageModel.default.availability {
         case .available: return .available
         case .unavailable(.deviceNotEligible): return .unavailable(.deviceNotEligible)
         case .unavailable(.appleIntelligenceNotEnabled): return .unavailable(.appleIntelligenceNotEnabled)
@@ -65,13 +58,9 @@ enum FoundationModelsEngine {
     }
 
     static func makeSession(for request: AppleIntelligence.ChatRequest) throws -> (LanguageModelSession, String) {
-        let availability = availability(for: request.model)
-        guard availability == .available else {
-            if case .unavailable(let reason) = availability { throw AppleIntelligenceError.unavailable(reason) }
-            throw AppleIntelligenceError.unavailable(.unknown)
-        }
+        if case .unavailable(let reason) = availability { throw AppleIntelligenceError.unavailable(reason) }
         let plan = try AppleIntelligence.transcriptPlan(for: request.messages)
-        let session = LanguageModelSession(model: systemModel(for: request.model), transcript: transcript(for: plan))
+        let session = LanguageModelSession(model: .default, transcript: transcript(for: plan))
         return (session, plan.prompt)
     }
 
@@ -93,7 +82,6 @@ enum FoundationModelsEngine {
 
     static func options(for request: AppleIntelligence.ChatRequest) -> GenerationOptions {
         let sampling: GenerationOptions.SamplingMode? = switch request.sampling {
-        case .greedy: .greedy
         case .topK(let k, let seed): .random(top: k, seed: seed)
         case .topP(let p, let seed): .random(probabilityThreshold: p, seed: seed)
         case nil: nil

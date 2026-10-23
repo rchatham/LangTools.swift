@@ -440,10 +440,11 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             // not sent; the on-device model answers from the conversation alone.
             // GenerationOptions takes a single sampling mode, so top-k wins when
             // both top-k and top-p are set (ranges are validated by the settings).
+            let appleSeed = seed.map(UInt64.init(truncatingIfNeeded:))
             let sampling: AppleIntelligence.Sampling? = if let topK {
-                .topK(topK, seed: seed.map { UInt64(truncatingIfNeeded: $0) })
+                .topK(topK, seed: appleSeed)
             } else if let topP {
-                .topP(topP, seed: seed.map { UInt64(truncatingIfNeeded: $0) })
+                .topP(topP, seed: appleSeed)
             } else {
                 nil
             }
@@ -452,7 +453,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                 messages: replayMessages.toAppleIntelligenceMessages(),
                 stream: stream,
                 temperature: temperature,
-                maximumResponseTokens: capabilities.maximumOutputField == .appleMaximumResponseTokens ? maximumOutputTokens : nil,
+                maximumResponseTokens: maximumOutputTokens,
                 sampling: sampling
             )
         }
@@ -612,7 +613,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .ollama:
             return
         case .apple:
-            if case .unavailable(let reason) = AppleIntelligence.availability(for: model.appleModel ?? .onDevice) {
+            if case .unavailable(let reason) = AppleIntelligence.availability {
                 throw AppleIntelligenceError.unavailable(reason)
             }
             return

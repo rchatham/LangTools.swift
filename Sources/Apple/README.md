@@ -111,20 +111,11 @@ AppleSpeech processes all audio on-device. No data is sent to external servers. 
 
 # AppleIntelligence
 
-On-device text generation using Apple's Foundation Models framework, exposed through the same `LangTools` interface as the network providers.
+On-device text generation with Apple's Foundation Models framework, behind the same `LangTools` interface as the network providers.
 
-## Requirements
-
-- iOS 26 / macOS 26 / visionOS 26 on Apple Intelligence–capable hardware, with Apple Intelligence enabled.
-- The iOS Simulator uses the host Mac's model, so the host must itself run macOS 26 with Apple Intelligence enabled.
-- The type is available on every supported OS; check `AppleIntelligence.availability()` at runtime.
-
-## Usage
+Generation requires iOS 26, macOS 26, or visionOS 26 with Apple Intelligence enabled (the iOS Simulator uses the host Mac's model). The type compiles everywhere; check `AppleIntelligence.availability` at runtime.
 
 ```swift
-import AppleLangTools
-import LangTools
-
 var toolchain = LangToolchain()
 toolchain.register(AppleIntelligence())
 
@@ -134,19 +125,11 @@ let request = AppleIntelligence.ChatRequest(
         AppleIntelligence.Message(role: .system, string: "Be concise."),
         AppleIntelligence.Message(role: .user, string: "Name three moons of Jupiter."),
     ],
-    stream: true,
-    temperature: 0.4,
-    maximumResponseTokens: 200
+    stream: true
 )
-
 for try await chunk in toolchain.stream(request: request) {
     print(chunk.delta?.content ?? "", terminator: "")
 }
 ```
 
-Each request rebuilds a `LanguageModelSession` from the message history: system messages become instructions, earlier turns are replayed as transcript entries, and the final user message is the prompt.
-
-## Limitations
-
-- Tool calling and structured output are not bridged yet (`chatRequest` throws for either).
-- The context window (~4K tokens) is shared by instructions, history, and the response. Older turns are dropped (newest first kept, ~1K tokens reserved for the reply) so long chats keep working; instructions and the current prompt are never trimmed.
+Each request rebuilds a session from the message history. The ~4K-token context window is shared by instructions, history, and the reply, so the oldest turns are dropped when a conversation outgrows it. Tool calling and structured output are not supported yet.
