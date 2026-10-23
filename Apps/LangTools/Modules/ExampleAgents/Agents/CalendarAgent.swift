@@ -26,6 +26,14 @@ public struct CalendarAgentResponse: Codable {
         self.events = events
         self.message = message
     }
+
+    private enum CodingKeys: String, CodingKey { case events, message }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(events, forKey: .events)
+        try container.encode(message, forKey: .message) // Required nullable key.
+    }
 }
 
 extension CalendarAgentResponse: StructuredOutput {
@@ -86,6 +94,22 @@ public struct CalendarEventData: Codable, Equatable {
         self.isAllDay = isAllDay
         self.calendarName = calendarName
         self.eventIdentifier = eventIdentifier
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case title, startDate, endDate, location, notes, isAllDay, calendarName, eventIdentifier
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(title, forKey: .title)
+        try container.encode(startDate, forKey: .startDate)
+        try container.encode(endDate, forKey: .endDate)
+        try container.encode(location, forKey: .location)
+        try container.encode(notes, forKey: .notes)
+        try container.encode(isAllDay, forKey: .isAllDay)
+        try container.encode(calendarName, forKey: .calendarName)
+        try container.encode(eventIdentifier, forKey: .eventIdentifier)
     }
 }
 
@@ -174,7 +198,9 @@ struct CalendarPermissionAgent: Agent {
 }
 // MARK: - Calendar Read Agent
 struct CalendarReadAgent: Agent {
-    init() {}
+    init(queries: CalendarEventQueries = .live) {
+        tools = Self.makeTools(queries: queries)
+    }
 
     let name = "calendarReadAgent"
     let description = "Agent responsible for reading calendar events"
@@ -186,8 +212,9 @@ struct CalendarReadAgent: Agent {
         """
 
     var delegateAgents: [any Agent] = []
+    var tools: [any LangToolsTool]?
 
-    var tools: [any LangToolsTool]? = [
+    private static func makeTools(queries: CalendarEventQueries) -> [any LangToolsTool] { [
         Tool(
             name: "get_events",
             description: "Get calendar events for a specific time range",
@@ -212,8 +239,8 @@ struct CalendarReadAgent: Agent {
                 }
 
                 do {
-                    let events = try await CalendarService().fetchEvents(from: startDate, to: endDate)
-                    return events.isEmpty ? "No events returned from calendar." : events.map { $0.formattedDetails }.joined(separator: "\n\n")
+                    let events = try await queries.fetch(startDate, endDate)
+                    return try CalendarToolResult(events: events).encoded()
                 } catch {
                     throw AgentError("Failed to fetch events: \(error.localizedDescription)")
                 }
@@ -235,8 +262,8 @@ struct CalendarReadAgent: Agent {
                 let limit = (args["limit"]?.intValue) ?? 10
 
                 do {
-                    let events = try await CalendarService().upcomingEvents(limit: limit)
-                    return events.isEmpty ? "No events returned from calendar." : events.map { $0.formattedDetails }.joined(separator: "\n\n")
+                    let events = try await queries.upcoming(limit)
+                    return try CalendarToolResult(events: events).encoded()
                 } catch {
                     throw AgentError("Failed to fetch upcoming events: \(error.localizedDescription)")
                 }
@@ -260,14 +287,14 @@ struct CalendarReadAgent: Agent {
                 }
                 // TODO: - This does not work, this function needs to return a more structured search instead of natural language query.
                 do {
-                    let events = try await CalendarService().searchEvents(matching: query)
-                    return events.isEmpty ? "No events returned from calendar." : events.map { $0.formattedDetails }.joined(separator: "\n\n")
+                    let events = try await queries.search(query)
+                    return try CalendarToolResult(events: events).encoded()
                 } catch {
                     throw AgentError("Failed to search events: \(error.localizedDescription)")
                 }
             }
         )
-    ]
+    ] }
 }
 
 // MARK: - Calendar Write Agent
@@ -342,7 +369,7 @@ struct CalendarWriteAgent: Agent {
                         notes: notes,
                         isAllDay: isAllDay
                     )
-                    return "Event created successfully:\n\(event.formattedDetails)"
+                    return try CalendarToolResult(events: [CalendarEventData(event: event)]).encoded()
                 } catch {
                     throw AgentError("Failed to create event: \(error.localizedDescription)")
                 }
@@ -376,8 +403,9 @@ struct CalendarWriteAgent: Agent {
                         throw AgentError("Event not found")
                     }
 
+                    let removed = CalendarEventData(event: event)
                     try await calendarStore.deleteEvent(event)
-                    return "Event deleted successfully"
+                    return try CalendarToolResult(events: [], deletedEvent: removed).encoded()
                 } catch {
                     throw AgentError("Failed to delete event: \(error.localizedDescription)")
                 }
@@ -441,6 +469,7 @@ struct CalendarWriteAgent: Agent {
                     let notes = args["notes"]?.stringValue
                     let isAllDay = args["is_all_day"]?.boolValue
 
+                    let previous = CalendarEventData(event: event)
                     let updatedEvent = try await calendarStore.updateEvent(
                         event: event,
                         title: title,
@@ -451,7 +480,9 @@ struct CalendarWriteAgent: Agent {
                         isAllDay: isAllDay
                     )
 
-                    return "Event updated successfully:\n\(updatedEvent.formattedDetails)"
+                    return try CalendarToolResult(
+                        events: [CalendarEventData(event: updatedEvent)], replacedEvent: previous
+                    ).encoded()
                 } catch {
                     throw AgentError("Failed to update event: \(error.localizedDescription)")
                 }
@@ -500,6 +531,17 @@ public struct CalendarAgent: Agent {
 
     /// Structured output schema — tells the LLM to return CalendarAgentResponse JSON.
     public var responseSchema: JSONSchema? { CalendarAgentResponse.jsonSchema }
+
+    public func execute(context: AgentContext) async throws -> String {
+        let results = CalendarExecutionResults()
+        var scopedContext = context
+        let forward = context.eventHandler
+        scopedContext.eventHandler = { event in
+            results.observe(event)
+            forward(event)
+        }
+        return try await execute(context: scopedContext, finalizingResponse: results.finalize)
+    }
 }
 
 // MARK: - Helpers
