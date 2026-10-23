@@ -108,3 +108,28 @@ do {
 ## Privacy
 
 AppleSpeech processes all audio on-device. No data is sent to external servers. Users must grant speech recognition permission in Settings > Privacy > Speech Recognition.
+
+# AppleIntelligence
+
+On-device text generation with Apple's Foundation Models framework, behind the same `LangTools` interface as the network providers.
+
+Generation requires iOS 26, macOS 26, or visionOS 26 with Apple Intelligence enabled (the iOS Simulator uses the host Mac's model). The type compiles everywhere; check `AppleIntelligence.availability` at runtime.
+
+```swift
+var toolchain = LangToolchain()
+toolchain.register(AppleIntelligence())
+
+let request = AppleIntelligence.ChatRequest(
+    model: .onDevice,
+    messages: [
+        AppleIntelligence.Message(role: .system, string: "Be concise."),
+        AppleIntelligence.Message(role: .user, string: "Name three moons of Jupiter."),
+    ],
+    stream: true
+)
+for try await chunk in toolchain.stream(request: request) {
+    print(chunk.delta?.content ?? "", terminator: "")
+}
+```
+
+Each request rebuilds a session from the message history. The ~4K-token context window is shared by instructions, history, and the reply, so the oldest turns are dropped when a conversation outgrows it. Tool calling and structured output are not supported yet.

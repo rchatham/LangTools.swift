@@ -70,6 +70,7 @@ let package = Package(
         .testTarget(name: "OpenRouterTests", dependencies: ["OpenRouter", "OpenAI", "OpenAICompatible", "Anthropic", "AnthropicCompatible", "TestUtils"]),
         .testTarget(name: "OpenAICompatibleProvidersTests", dependencies: ["VercelAIGateway", "Cohere", "Perplexity", "OpenAI", "OpenAICompatible", "Anthropic", "AnthropicCompatible", "TestUtils"]),
         .testTarget(name: "AppleSpeechTests", dependencies: ["AppleLangTools"]),
+        .testTarget(name: "AppleIntelligenceTests", dependencies: ["AppleLangTools", "LangTools"]),
         .testTarget(name: "WhisperKitLangToolsTests", dependencies: ["WhisperKitLangTools"]),
     ] + (extendedTestsEnabled ? [
         .testTarget(name: "AgentsTests", dependencies: ["Agents", "LangTools", "OpenAI", "TestUtils"]),

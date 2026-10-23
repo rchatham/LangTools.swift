@@ -9,6 +9,7 @@ import LangTools
 import OpenAI
 import Anthropic
 import Ollama
+import AppleLangTools
 import ChatUI
 
 public final class Message: Codable, Sendable, ObservableObject, Identifiable, Equatable, Hashable {
@@ -263,6 +264,16 @@ public extension Array<Message> {
             let toolCalls = calls.map { Ollama.ChatToolCall(function: .init(name: $0.name, arguments: Self.parseArguments($0.arguments))) }
             let results = calls.map { Ollama.ChatToolResult(tool_selection_id: $0.id, result: m.providerToolResults[$0.id] ?? $0.result ?? "", is_error: $0.status == .failure) }
             return [Ollama.Message(role: .assistant, content: m.providerContext ?? "", tool_calls: toolCalls)] + Ollama.Message.messages(for: results)
+        }
+    }
+
+    /// The on-device model has no tool-calling bridge yet, so retained tool
+    /// calls are dropped and only each message's text context is replayed.
+    func toAppleIntelligenceMessages() -> [AppleIntelligence.Message] {
+        compactMap { m in
+            guard m.isSystem || m.isUser || m.isAssistant,
+                  let text = m.providerContext, !text.isEmpty else { return nil }
+            return AppleIntelligence.Message(role: .init(m.role), string: text)
         }
     }
 
