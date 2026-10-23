@@ -10,6 +10,7 @@ import Foundation
 import LangTools
 import OpenAI
 import OpenAICompatible
+import OpenRouter
 import VercelAIGateway
 import Groq
 import Mistral
@@ -22,13 +23,14 @@ import Perplexity
 
 enum CompatibleProvider: String, CaseIterable, Codable {
     // Raw values double as the model prefix and the matching `APIService` case.
-    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
+    case openrouter, vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
 
     var type: any OpenAICompatibleProvider.Type { operations.type }
 
     /// The provider's generic operations, bound to its concrete type.
     private var operations: Operations {
         switch self {
+        case .openrouter: return Operations(OpenRouter.self) { OpenRouter(apiKey: $0, appTitle: "LangTools CLI") }
         case .vercel: return Operations(VercelAIGateway.self) { VercelAIGateway(apiKey: $0) }
         case .groq: return Operations(Groq.self) { Groq(apiKey: $0) }
         case .mistral: return Operations(Mistral.self) { Mistral(apiKey: $0) }

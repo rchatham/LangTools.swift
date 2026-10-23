@@ -57,7 +57,6 @@ struct LangToolsApp: App {
         // fixture mode so no real network or process interaction occurs.
         if !fixtureActive {
             initializeOllama()
-            OpenRouterModelCatalog.shared.refreshInBackground()
             CompatibleModelCatalog.shared.refreshInBackground()
         }
     }

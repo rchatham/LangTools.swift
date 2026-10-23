@@ -11,7 +11,6 @@ import Anthropic
 import XAI
 import Gemini
 import Ollama
-import OpenRouter
 
 /// Provider categories for grouping models in the UI
 enum Provider: String, CaseIterable {
@@ -20,8 +19,8 @@ enum Provider: String, CaseIterable {
     case xAI = "XAI"
     case gemini = "Gemini"
     case ollama = "Ollama"
-    case openRouter = "OpenRouter"
     // OpenAI-compatible providers; raw values match each `displayName`.
+    case openRouter = "OpenRouter"
     case vercel = "Vercel AI Gateway"
     case groq = "Groq"
     case mistral = "Mistral"
@@ -80,42 +79,22 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
     case gemini(Gemini.Model)
     /// A locally-served Ollama model (e.g. "llama3", "mistral", "phi3").
     case ollama(Ollama.Model)
-    /// An OpenRouter model slug (e.g. "anthropic/claude-sonnet-4.5"). Its raw
-    /// value carries an `openrouter/` prefix so it never falls through to the
-    /// Ollama case, which accepts any string.
-    case openRouter(OpenRouter.Model)
-    /// A model on an OpenAI-compatible provider. Its raw value is
-    /// `<provider>/<model-id>`, e.g. `groq/llama-3.3-70b-versatile`.
+    /// A model on an OpenAI-compatible provider, such as OpenRouter or Groq. Its raw value
+    /// is `<provider>/<model-id>`, e.g. `openrouter/anthropic/claude-sonnet-4.5`, so it never
+    /// falls through to the Ollama case, which accepts any string.
     case compatible(CompatibleProvider, String)
 
-    static let openRouterPrefix = "openrouter/"
-
-    /// Chat-model catalogs of the configured OpenAI-compatible providers,
-    /// populated by `NetworkClient.fetchCompatibleModels()`. Access is
-    /// serialized for the same reason as `openRouterCatalog`.
+    /// The configured providers' chat catalogs, filled by `NetworkClient.fetchCompatibleModels()`
+    /// in the background while the UI reads them, so access is serialized.
     static var compatibleCatalogs: [CompatibleProvider: [OpenAICompatibleModelInfo]] {
-        get { openRouterCatalogLock.lock(); defer { openRouterCatalogLock.unlock() }; return _compatibleCatalogs }
-        set { openRouterCatalogLock.lock(); defer { openRouterCatalogLock.unlock() }; _compatibleCatalogs = newValue }
+        get { catalogLock.lock(); defer { catalogLock.unlock() }; return _compatibleCatalogs }
+        set { catalogLock.lock(); defer { catalogLock.unlock() }; _compatibleCatalogs = newValue }
     }
+    private static let catalogLock = NSLock()
     private static var _compatibleCatalogs: [CompatibleProvider: [OpenAICompatibleModelInfo]] = [:]
 
-    /// The OpenRouter catalog, populated at runtime by
-    /// `NetworkClient.fetchOpenRouterModels()` once an API key is configured.
-    /// The fetch runs in a background task while the UI reads the catalog, so
-    /// access is serialized.
-    static var openRouterCatalog: [OpenRouter.ModelInfo] {
-        get { openRouterCatalogLock.lock(); defer { openRouterCatalogLock.unlock() }; return _openRouterCatalog }
-        set { openRouterCatalogLock.lock(); defer { openRouterCatalogLock.unlock() }; _openRouterCatalog = newValue }
-    }
-    private static let openRouterCatalogLock = NSLock()
-    private static var _openRouterCatalog: [OpenRouter.ModelInfo] = []
-
     init?(rawValue: String) {
-        if rawValue.hasPrefix(Self.openRouterPrefix) {
-            guard let model = Self.openRouterModel(fromPrefixed: rawValue) else { return nil }
-            self = .openRouter(model)
-        }
-        else if let provider = CompatibleProvider.allCases.first(where: { rawValue.hasPrefix($0.prefix) }) {
+        if let provider = CompatibleProvider.allCases.first(where: { rawValue.hasPrefix($0.prefix) }) {
             guard let id = CompatibleProvider.validModelID(String(rawValue.dropFirst(provider.prefix.count))) else { return nil }
             self = .compatible(provider, id)
         }
@@ -134,19 +113,8 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
         case .xAI(let model): return model.rawValue
         case .gemini(let model): return model.rawValue
         case .ollama(let model): return model.rawValue
-        case .openRouter(let model): return Self.openRouterPrefix + model.rawValue
         case .compatible(let provider, let id): return provider.prefix + id
         }
-    }
-
-    /// Parses `openrouter/<slug>`. OpenRouter slugs normally contain a slash
-    /// (`creator/model`); a bare remainder such as `auto` is OpenRouter's own
-    /// `openrouter/auto` router, so the full string is kept as the slug.
-    static func openRouterModel(fromPrefixed rawValue: String) -> OpenRouter.Model? {
-        let slug = String(rawValue.dropFirst(openRouterPrefix.count))
-        // Reject empty and whitespace-padded slugs, as the app does.
-        guard !slug.isEmpty, slug == slug.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
-        return OpenRouter.Model(rawValue: slug.contains("/") ? slug : rawValue)
     }
 
     var id: String { rawValue }
@@ -157,7 +125,6 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
         + Ollama.Model.allCases.map { .ollama($0) }
-        + openRouterCatalog.map { .openRouter($0.model) }
         + compatibleChatModels
     }
 
@@ -167,7 +134,6 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
         + Ollama.Model.allCases.map { .ollama($0) }
-        + openRouterCatalog.map { .openRouter($0.model) }
         + compatibleChatModels
     }
 
@@ -190,26 +156,18 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
         case .xAI: return .xAI
         case .gemini: return .gemini
         case .ollama: return .ollama
-        case .openRouter: return .openRouter
         case .compatible(let provider, _): return provider.category
         }
     }
 
     var capabilities: ModelCapabilities {
         switch self {
-        case .anthropic, .openAI, .xAI:
+        case .anthropic, .openAI, .xAI, .gemini:
             return ModelCapabilities(
                 supportsTools: true,
                 toolReliability: .recommended,
                 supportsStreaming: true,
                 supportsStructuredOutput: true
-            )
-        case .gemini:
-            return ModelCapabilities(
-                supportsTools: false,
-                toolReliability: .unavailable,
-                supportsStreaming: true,
-                supportsStructuredOutput: false
             )
         case .ollama:
             return ModelCapabilities(
@@ -218,25 +176,15 @@ enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equ
                 supportsStreaming: true,
                 supportsStructuredOutput: false
             )
-        case .openRouter(let model):
-            // Support varies by model. The catalog says which models accept
-            // tools; a model missing from it is assumed to.
-            let info = Self.openRouterCatalog.first { $0.model == model }
+        case .compatible(let provider, let id):
+            // Catalogs that report tool support decide; otherwise tools are assumed.
+            let info = Self.compatibleCatalogs[provider]?.first { $0.id == id }
             let supportsTools = info?.supportsTools ?? true
             return ModelCapabilities(
                 supportsTools: supportsTools,
                 toolReliability: supportsTools ? .recommended : .unavailable,
                 supportsStreaming: true,
-                supportsStructuredOutput: info?.supportsStructuredOutput ?? false
-            )
-        case .compatible(let provider, let id):
-            // Catalogs that report tool support decide; otherwise tools are assumed.
-            let supportsTools = Self.compatibleCatalogs[provider]?.first { $0.id == id }?.supportsTools ?? true
-            return ModelCapabilities(
-                supportsTools: supportsTools,
-                toolReliability: supportsTools ? .recommended : .unavailable,
-                supportsStreaming: true,
-                supportsStructuredOutput: false
+                supportsStructuredOutput: info?.metadata["supported_parameters"]?.arrayValue?.contains("structured_outputs") ?? false
             )
         }
     }

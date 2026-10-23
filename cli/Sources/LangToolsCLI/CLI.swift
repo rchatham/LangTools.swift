@@ -6,7 +6,6 @@ import Anthropic
 import XAI
 import Gemini
 import Ollama
-import OpenRouter
 import SwiftTUI
 #if canImport(Darwin)
 import Darwin
@@ -222,8 +221,6 @@ struct CLI {
             return Gemini.Model(rawValue: id).map { .gemini($0) }
         case "xai", "grok":
             return XAI.Model(rawValue: id).map { .xAI($0) }
-        case "openrouter":
-            return Model.openRouterModel(fromPrefixed: Model.openRouterPrefix + id).map { .openRouter($0) }
         default:
             guard let compatible = CompatibleProvider(rawValue: provider),
                   let id = CompatibleProvider.validModelID(id) else { return nil }
@@ -233,7 +230,6 @@ struct CLI {
 
     static func runTraditionalCLI(runMode: CLIRunMode) async throws {
         await networkClient.fetchOllamaModels()
-        await networkClient.fetchOpenRouterModels()
         await networkClient.fetchCompatibleModels()
         try await checkAndRequestAPIKeys(runMode: runMode)
 
@@ -348,7 +344,6 @@ struct CLI {
             .openAI: "OPENAI_API_KEY",
             .xAI: "XAI_API_KEY",
             .gemini: "GEMINI_API_KEY",
-            .openRouter: "OPENROUTER_API_KEY",
         ].merging(CompatibleProvider.allCases.map { ($0.apiService, $0.environmentVariable) }) { current, _ in current }
 
         return variableByService.reduce(into: [:]) { result, entry in
@@ -696,7 +691,6 @@ struct CLI {
         case .openAI:    defaultService = .openAI
         case .xAI:       defaultService = .xAI
         case .gemini:    defaultService = .gemini
-        case .openRouter: defaultService = .openRouter
         case .compatible(let provider, _): defaultService = provider.apiService
         case .ollama:    return // Ollama is local — no API key needed
         }
@@ -760,10 +754,6 @@ struct CLI {
             ollamaManualIndex = nil
         }
 
-        // OpenRouter's catalog is too large to number, so models are entered by slug.
-        let openRouterManualIndex = models.count
-        models.append(("OpenRouter (enter model slug)", .openRouter(.auto)))
-
         // OpenAI-compatible providers: models are entered by ID.
         var compatibleManualIndices: [Int: CompatibleProvider] = [:]
         for provider in CompatibleProvider.allCases {
@@ -795,18 +785,6 @@ struct CLI {
             } else {
                 print("Invalid model name. Keeping current model.".yellow)
                 return
-            }
-        }
-
-        if idx - 1 == openRouterManualIndex {
-            print("Enter OpenRouter model slug (e.g. anthropic/claude-sonnet-4.5, or press Enter for openrouter/auto): ", terminator: "")
-            let slug = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !slug.isEmpty {
-                guard let m = OpenRouter.Model(rawValue: slug) else {
-                    print("Invalid model slug. Keeping current model.".yellow)
-                    return
-                }
-                newModel = .openRouter(m)
             }
         }
 

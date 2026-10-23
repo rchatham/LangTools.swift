@@ -12,7 +12,6 @@ import XAI
 import Gemini
 import Cohere
 import Ollama
-import OpenRouter
 
 public typealias Role = OpenAI.Message.Role
 
@@ -70,7 +69,6 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     private let accountProxyTransport: AccountProxyTransportProtocol
     private let openAIAccountChatBridge: OpenAIAccountChatBridging
     private let generationSettingsProvider: @Sendable () -> ChatGenerationSettings
-    private let openRouterCatalog: OpenRouterModelCatalog
     private let compatibleCatalog: CompatibleModelCatalog
     public let providerAccessManager: ProviderAccessManager
     private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
@@ -93,7 +91,6 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         generationSettingsProvider: @escaping @Sendable () -> ChatGenerationSettings = {
             ChatGenerationSettingsStore().load()
         },
-        openRouterCatalog: OpenRouterModelCatalog = .shared,
         compatibleCatalog: CompatibleModelCatalog = .shared
     ) {
         self.keychainService = keychainService
@@ -104,7 +101,6 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
         self.ollamaSession = ollamaSession
         self.generationSettingsProvider = generationSettingsProvider
-        self.openRouterCatalog = openRouterCatalog
         self.compatibleCatalog = compatibleCatalog
         super.init()
         APIService.llms.forEach { llm in keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) } }
@@ -342,27 +338,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                 tool_choice: toolChoice,
                 toolEventHandler: toolEventHandler
             )
-        case .openRouter(let providerModel):
-            // Sending tools to a model without tool support fails at OpenRouter,
-            // so tools go only to models the catalog lists as supporting them.
-            let supportsTools = openRouterCatalog.entry(for: providerModel)?.supportsTools ?? true
-            return OpenAI.ChatCompletionRequest(
-                model: providerModel,
-                messages: replayMessages.toOpenAIMessages(),
-                temperature: temperature,
-                top_p: topP,
-                stream: stream,
-                stop: stop.map { .array($0) },
-                max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
-                presence_penalty: presencePenalty,
-                frequency_penalty: frequencyPenalty,
-                seed: seed,
-                tools: supportsTools ? tools?.convertTools() : nil,
-                tool_choice: supportsTools ? toolChoice : nil,
-                toolEventHandler: toolEventHandler
-            )
         case .compatible(let provider, let id):
-            // As with OpenRouter, tools go only to models the catalog does not
+            // Tools go only to models the catalog does not
             // list as lacking tool support.
             let supportsTools = compatibleCatalog.entry(for: provider, id: id)?.supportsTools ?? true
             if provider == .cohere, let model = Cohere.Model(rawValue: id) {
@@ -475,7 +452,6 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .gemini(let model): return AgentContext(langTool: try requiredLangTool(Gemini.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
         case .openAI(let model), .codex(let model): return AgentContext(langTool: try requiredLangTool(OpenAI.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
         case .xAI(let model): return AgentContext(langTool: try requiredLangTool(XAI.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
-        case .openRouter(let model): return AgentContext(langTool: try requiredLangTool(OpenRouter.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
         case .compatible(let provider, let id):
             guard let context = provider.providerContext(id: id, toolchain: toolchainSnapshot()) else {
                 throw NetworkError.langToolNotRegistered(provider.displayName)
@@ -517,9 +493,6 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         keychainService.saveApiKey(apiKey: apiKey, for: llm)
         registerLangTool(apiKey, for: llm)
         providerAccessManager.refresh()
-        if llm == .openRouter {
-            openRouterCatalog.refreshInBackground(keychainService: keychainService, accessManager: providerAccessManager)
-        }
         if let provider = CompatibleProvider(service: llm) {
             compatibleCatalog.refreshInBackground(provider, keychainService: keychainService, accessManager: providerAccessManager)
         }
@@ -600,8 +573,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .openAI: return if let baseURL { OpenAI(baseURL: baseURL, apiKey: apiKey) } else { OpenAI(apiKey: apiKey) }
         case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
-        case .openRouter: return if let baseURL { OpenRouter(baseURL: baseURL, apiKey: apiKey, appTitle: "LangTools") } else { OpenRouter(apiKey: apiKey, appTitle: "LangTools") }
-        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
+        case .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
             return CompatibleProvider(service: llm)?.makeClient(apiKey: apiKey)
         case .ollama: return nil
         default: return nil
@@ -649,13 +621,13 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
 }
 
 public enum APIService: String, CaseIterable, Codable, Identifiable {
-    case openAI, anthropic, xAI, gemini, ollama, serper, openRouter
+    case openAI, anthropic, xAI, gemini, ollama, serper
     // OpenAI-compatible providers; raw values match `CompatibleProvider`.
-    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
+    case openrouter, vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
 
     public var id: String { rawValue }
 
-    static var llms: [APIService] = [.openAI, .anthropic, .xAI, .gemini, .ollama, .openRouter] + CompatibleProvider.allCases.map(\.service)
+    static var llms: [APIService] = [.openAI, .anthropic, .xAI, .gemini, .ollama] + CompatibleProvider.allCases.map(\.service)
 }
 
 extension NetworkClient {

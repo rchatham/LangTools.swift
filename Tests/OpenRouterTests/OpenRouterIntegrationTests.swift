@@ -49,10 +49,10 @@ final class OpenRouterIntegrationTests: XCTestCase {
         let (openRouter, session) = try liveClient()
         defer { session.invalidateAndCancel() }
 
-        let models = try await openRouter.listModels(.init(supportedParameters: ["tools"]))
+        let models = try await openRouter.listModels()
 
         XCTAssertFalse(models.isEmpty)
-        XCTAssertTrue(models.allSatisfy(\.supportsTools), "the supported_parameters filter must be applied server-side")
+        XCTAssertTrue(models.contains { $0.supportsTools == true })
     }
 
     func testModelOverrideIsTrimmedAndEmptyIsRejected() {

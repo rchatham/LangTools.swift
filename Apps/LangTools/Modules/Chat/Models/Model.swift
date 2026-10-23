@@ -10,7 +10,6 @@ import Anthropic
 import XAI
 import Gemini
 import Ollama
-import OpenRouter
 
 public enum ModelRoute: String, Codable, Hashable {
     case openAI = "openai"
@@ -20,9 +19,8 @@ public enum ModelRoute: String, Codable, Hashable {
     case xAI = "xai"
     case gemini = "gemini"
     case ollama = "ollama"
-    case openRouter = "openrouter"
     // OpenAI-compatible providers; raw values match `CompatibleProvider`.
-    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
+    case openrouter, vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
 }
 
 public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equatable {
@@ -33,11 +31,8 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
     case xAI(XAI.Model)
     case gemini(Gemini.Model)
     case ollama(Ollama.Model)
-    /// An OpenRouter slug such as `anthropic/claude-sonnet-4.5`, stored as
-    /// `openrouter/anthropic/claude-sonnet-4.5`.
-    case openRouter(OpenRouter.Model)
     /// A model on an OpenAI-compatible provider, stored as `<provider>/<model-id>`
-    /// (e.g. `groq/llama-3.3-70b-versatile`).
+    /// (e.g. `openrouter/anthropic/claude-sonnet-4.5`).
     case compatible(CompatibleProvider, String)
 
     public init?(rawValue: String) {
@@ -69,10 +64,6 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             case ModelRoute.ollama.rawValue:
                 guard let model = Ollama.Model(rawValue: slug) else { return nil }
                 self = .ollama(model)
-            case ModelRoute.openRouter.rawValue:
-                guard slug == slug.trimmingCharacters(in: .whitespacesAndNewlines),
-                      let model = OpenRouter.Model(rawValue: slug) else { return nil }
-                self = .openRouter(model)
             default:
                 guard let provider = CompatibleProvider(rawValue: route),
                       let id = CompatibleProvider.validModelID(slug) else { return nil }
@@ -105,8 +96,6 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             return model.rawValue
         case .ollama(let model):
             return model.rawValue
-        case .openRouter(let model):
-            return model.rawValue
         case .compatible(_, let id):
             return id
         }
@@ -128,8 +117,6 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             return .gemini
         case .ollama:
             return .ollama
-        case .openRouter:
-            return .openRouter
         case .compatible(let provider, _):
             return provider.route
         }
@@ -144,9 +131,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         + Gemini.Model.allCases.map { .gemini($0) }
 
         let ollamaModels = OllamaEndpointConfiguration.shared.cachedModels().map { Model.ollama($0) }
-        let openRouterModels = OpenRouterModelCatalog.shared.models().map { Model.openRouter($0) }
-
-        return standardModels + ollamaModels + openRouterModels + compatibleModels(catalog: .shared)
+        return standardModels + ollamaModels + compatibleModels(catalog: .shared)
     }
 
     static func compatibleModels(catalog: CompatibleModelCatalog) -> [Model] {
@@ -161,7 +146,6 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
         + OllamaEndpointConfiguration.shared.cachedModels().map { .ollama($0) }
-        + OpenRouterModelCatalog.shared.models().map { .openRouter($0) }
         + compatibleModels(catalog: .shared)
     }
 
@@ -172,7 +156,6 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         case .xAI: return .xAI
         case .gemini: return .gemini
         case .ollama: return .ollama
-        case .openRouter: return .openRouter
         case .compatible(let provider, _): return provider.service
         }
     }
@@ -299,20 +282,6 @@ public extension Model {
                 supportsSeed: true,
                 supportsStop: true,
                 contextWindowTokens: Self.geminiContextWindows[model.rawValue]
-            )
-        case .openRouter(let model):
-            // Limits vary by model and upstream provider, so only the app guard applies.
-            return .init(
-                maximumOutputField: .openAIMaxTokens,
-                maximumOutputTokenBound: ChatGenerationSettings.tokenRange.upperBound,
-                maximumOutputWarning: "The app guard is not a model limit. OpenRouter output capacity depends on the selected model and provider.",
-                supportsTemperature: true,
-                supportsTopP: true,
-                supportsFrequencyPenalty: true,
-                supportsPresencePenalty: true,
-                supportsSeed: true,
-                supportsStop: true,
-                contextWindowTokens: OpenRouterModelCatalog.shared.entry(for: model)?.contextLength
             )
         case .compatible(let provider, let id):
             // Limits vary by model, so only the app guard applies. Parameters a

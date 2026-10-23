@@ -2,7 +2,6 @@ import Anthropic
 import Gemini
 import Ollama
 import OpenAI
-import OpenRouter
 import XAI
 import XCTest
 @testable import Chat
@@ -197,8 +196,8 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
         XCTAssertEqual(Set(Gemini.Model.allCases.map(\.rawValue)).intersection(geminiBounds.keys), Set(geminiBounds.keys))
     }
 
-    func testOpenRouterModelsUseAppCeilingWithOpenAIParameters() {
-        let capabilities = Model.openRouter("vendor/model-not-in-any-catalog").generationCapabilities
+    func testCompatibleModelsUseAppCeilingWithOpenAIParameters() {
+        let capabilities = Model.compatible(.openrouter, "vendor/model-not-in-any-catalog").generationCapabilities
         XCTAssertEqual(capabilities.maximumOutputField, .openAIMaxTokens)
         XCTAssertEqual(capabilities.maximumOutputTokenBound, ChatGenerationSettings.tokenRange.upperBound)
         XCTAssertTrue(capabilities.supportsTemperature)

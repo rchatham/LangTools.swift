@@ -67,7 +67,6 @@ let package = Package(
                 .product(name: "LangTools", package: "langtools-cli"),
                 .product(name: "OpenAI", package: "langtools-cli"),
                 .product(name: "Ollama", package: "langtools-cli"),
-                .product(name: "OpenRouter", package: "langtools-cli"),
                 .product(name: "OpenAICompatible", package: "langtools-cli"),
                 .product(name: "Gemini", package: "langtools-cli"),
                 .product(name: "Cohere", package: "langtools-cli"),

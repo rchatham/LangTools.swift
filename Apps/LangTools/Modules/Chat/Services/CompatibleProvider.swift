@@ -19,9 +19,10 @@ import TogetherAI
 import Fireworks
 import Cohere
 import Perplexity
+import OpenRouter
 
 public enum CompatibleProvider: String, CaseIterable, Codable, Identifiable, Sendable {
-    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
+    case openrouter, vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
 
     public var id: String { rawValue }
     public var displayName: String { operations.type.displayName }
@@ -65,6 +66,7 @@ public enum CompatibleProvider: String, CaseIterable, Codable, Identifiable, Sen
 
     private var operations: Operations {
         switch self {
+        case .openrouter: return Operations(OpenRouter.self) { OpenRouter(apiKey: $0, appTitle: "LangTools") }
         case .vercel: return Operations(VercelAIGateway.self) { VercelAIGateway(apiKey: $0) }
         case .groq: return Operations(Groq.self) { Groq(apiKey: $0) }
         case .mistral: return Operations(Mistral.self) { Mistral(apiKey: $0) }

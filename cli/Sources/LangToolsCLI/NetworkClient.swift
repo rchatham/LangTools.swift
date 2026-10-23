@@ -17,7 +17,6 @@ import XAI
 import Gemini
 import Cohere
 import Ollama
-import OpenRouter
 #if canImport(AVFAudio)
 import AVFAudio
 #endif
@@ -68,10 +67,6 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
             return Gemini.GenerateContentRequest(model: model, messages: messages.toOpenAIMessages().map { Gemini.Message($0) }, stream: stream, tools: tools, functionCallingMode: toolChoice.map { .init($0) }, toolEventHandler: toolEventHandler)
         } else if case .ollama(let model) = model {
             return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), stream: stream, tools: tools, toolEventHandler: toolEventHandler)
-        } else if case .openRouter(let model) = model {
-            // The OpenRouter overload tags the model so the toolchain routes it
-            // to OpenRouter rather than to OpenAI, XAI, or Gemini.
-            return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice, toolEventHandler: toolEventHandler)
         } else if case .compatible(let provider, let id) = model {
             // The tagged model routes to the provider rather than to OpenAI.
             if provider == .cohere, let model = Cohere.Model(rawValue: id) {
@@ -128,17 +123,6 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    /// Loads the OpenRouter catalog into `Model.openRouterCatalog` when an
-    /// OpenRouter key is configured. Failures leave the previous catalog intact.
-    func fetchOpenRouterModels() async {
-        guard let openRouter = langToolchain.langTool(OpenRouter.self) else { return }
-        do {
-            Model.openRouterCatalog = try await openRouter.listModels()
-        } catch {
-            // OpenRouter may be unreachable; models can still be entered by slug.
-        }
-    }
-
     /// Loads chat-model catalogs for the configured OpenAI-compatible providers
     /// into `Model.compatibleCatalogs`. A provider without a catalog endpoint,
     /// or one that cannot be reached, offers its suggested models.
@@ -164,8 +148,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
         case .ollama: return Ollama()
-        case .openRouter: return if let baseURL { OpenRouter(baseURL: baseURL, apiKey: apiKey, appTitle: "LangTools CLI") } else { OpenRouter(apiKey: apiKey, appTitle: "LangTools CLI") }
-        case .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
+        case .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
             return CompatibleProvider(apiService: llm)!.makeClient(apiKey: apiKey)
         }
     }
@@ -176,9 +159,9 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
 }
 
 enum APIService: String, CaseIterable {
-    case openAI, anthropic, xAI, gemini, ollama, openRouter
+    case openAI, anthropic, xAI, gemini, ollama
     // OpenAI-compatible providers; raw values match `CompatibleProvider`.
-    case vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
+    case openrouter, vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
 }
 
 extension NetworkClient {

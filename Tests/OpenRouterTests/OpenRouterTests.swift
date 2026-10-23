@@ -10,6 +10,7 @@ import FoundationNetworking
 import LangTools
 @testable import TestUtils
 @testable import OpenRouter
+import OpenAICompatible
 @testable import OpenAI
 import Anthropic
 
@@ -135,7 +136,7 @@ final class OpenRouterTests: XCTestCase {
     // MARK: - Models
 
     func testListModelsDecodesCatalogAndSkipsMalformedEntries() async throws {
-        MockURLProtocol.setHandler(for: OpenRouter.ListModelsRequest.endpoint) { request in
+        MockURLProtocol.setHandler(for: "models") { request in
             XCTAssertEqual(request.httpMethod, "GET")
             XCTAssertEqual(request.url?.absoluteString, "https://openrouter.ai/api/v1/models")
             return (.success(try self.getData(filename: "models_list_response-openrouter")!), 200)
@@ -145,42 +146,18 @@ final class OpenRouterTests: XCTestCase {
 
         XCTAssertEqual(models.map(\.id), ["anthropic/claude-sonnet-4.5", "meta-llama/llama-3.2-3b-instruct:free"])
         let sonnet = models[0]
-        XCTAssertEqual(sonnet.model, "anthropic/claude-sonnet-4.5")
-        XCTAssertEqual(sonnet.contextLength, 1_000_000)
-        XCTAssertEqual(sonnet.pricing?.prompt, "0.000003")
-        XCTAssertEqual(sonnet.pricing?.inputCacheRead, "0.0000003")
-        XCTAssertEqual(sonnet.architecture?.inputModalities, ["text", "image", "file"])
-        XCTAssertEqual(sonnet.topProvider?.maxCompletionTokens, 64000)
-        XCTAssertTrue(sonnet.supportsTools)
-        XCTAssertTrue(sonnet.supportsStructuredOutput)
-        let llama = models[1]
-        XCTAssertNil(llama.contextLength)
-        XCTAssertFalse(llama.supportsTools)
-        XCTAssertFalse(llama.supportsStructuredOutput)
-    }
-
-    func testListModelsFiltersBecomeQueryItems() throws {
-        let request = OpenRouter.ListModelsRequest(supportedParameters: ["tools", "structured_outputs"], outputModalities: ["text"], category: "programming")
-
-        let url = try XCTUnwrap(api.prepare(request: request).url)
-        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
-
-        XCTAssertEqual(components.path, "/api/v1/models")
-        XCTAssertEqual(components.queryItems, [
-            URLQueryItem(name: "supported_parameters", value: "tools,structured_outputs"),
-            URLQueryItem(name: "output_modalities", value: "text"),
-            URLQueryItem(name: "category", value: "programming"),
-        ])
+        XCTAssertEqual(sonnet.contextWindow, 1_000_000)
+        XCTAssertEqual(sonnet.metadata["pricing"]?["prompt"], "0.000003")
+        XCTAssertEqual(sonnet.supportsTools, true)
+        XCTAssertNil(models[1].contextWindow)
+        XCTAssertEqual(models[1].supportsTools, false)
     }
 
     // MARK: - Routing options
 
     func testProviderPreferencesAndFallbackModelsAreEncoded() throws {
-        let request = OpenAI.ChatCompletionRequest(
-            model: "meta-llama/llama-3.3-70b-instruct",
-            messages: [.init(role: .user, content: "Hi")],
-            provider: .init(order: ["groq", "together"], allowFallbacks: false, dataCollection: .deny, sort: .throughput, zeroDataRetention: true),
-            fallbackModels: ["mistralai/mistral-large"])
+        let request = OpenAI.ChatCompletionRequest(model: "meta-llama/llama-3.3-70b-instruct" as OpenRouter.Model, messages: [.init(role: .user, content: "Hi")])
+            .routing(provider: .init(order: ["groq", "together"], allowFallbacks: false, dataCollection: .deny, sort: .throughput, zeroDataRetention: true), fallbackModels: ["mistralai/mistral-large"])
 
         let body = try body(of: api.prepare(request: request))
 
@@ -227,7 +204,7 @@ final class OpenRouterTests: XCTestCase {
         XCTAssertFalse(OpenRouter.requestValidators.contains { $0(openAIRequest) })
         XCTAssertFalse(OpenAI.requestValidators.contains { $0(openRouterRequest) },
                        "an OpenRouter slug that matches an OpenAI ID must not route to OpenAI")
-        XCTAssertTrue(OpenRouter.requestValidators.contains { $0(OpenRouter.ListModelsRequest()) })
+        XCTAssertTrue(OpenRouter.requestValidators.contains { $0(OpenAICompatibleListModelsRequest<OpenRouter>()) })
     }
 
     func testToolchainRoutesTaggedRequestsToOpenRouterAndUntaggedToOpenAI() async throws {
