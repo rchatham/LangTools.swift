@@ -10,7 +10,8 @@ final class OllamaSettingsInjectionTests: XCTestCase {
         let injected: (ChatSettingsView.ViewModel, OllamaService) -> ChatSettingsView = ChatSettingsView.init(viewModel:ollamaService:)
         let legacySheet: () -> OllamaSettingsView = OllamaSettingsView.init
         let injectedSheet: (OllamaService, OllamaEndpointConfiguration?) -> OllamaSettingsView = OllamaSettingsView.init
-        _ = (legacy, injected, legacySheet, injectedSheet)
+        let ownedAccess: (ChatSettingsView.ViewModel, OllamaService, AccessPromptContext) -> ChatSettingsView = ChatSettingsView.init(viewModel:ollamaService:accessPrompts:)
+        _ = (legacy, injected, ownedAccess, legacySheet, injectedSheet)
         // Never construct ChatSettingsView or its ViewModel: other globals are outside this seam.
     }
 

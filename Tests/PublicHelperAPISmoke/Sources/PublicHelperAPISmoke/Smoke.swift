@@ -33,7 +33,12 @@ public enum PublicHelperAPISmoke {
         _ = provider
         let legacySettings: (ChatSettingsView.ViewModel) -> ChatSettingsView = ChatSettingsView.init(viewModel:)
         let injectedSettings: (ChatSettingsView.ViewModel, OllamaService) -> ChatSettingsView = ChatSettingsView.init(viewModel:ollamaService:)
-        _ = (legacySettings, injectedSettings) // References only; never construct either settings view.
+        let ownedAccessSettings: (ChatSettingsView.ViewModel, OllamaService, AccessPromptContext) -> ChatSettingsView = ChatSettingsView.init(viewModel:ollamaService:accessPrompts:)
+        let legacyPrompts = EmptyView().manageAccessPrompts(networkClient:priority:)
+        let ownedPrompts = EmptyView().manageAccessPrompts(accessPrompts:priority:)
+        let accountOperations: (ProviderAccessManager, @escaping @MainActor () -> any AccountLoginService) -> ProviderAccountAccessOperations = ProviderAccountAccessOperations.init
+        _ = (legacySettings, injectedSettings, ownedAccessSettings, legacyPrompts, ownedPrompts, accountOperations)
+        // References only; never construct settings, resolve login factories or invoke this consumer.
         let legacyCoordinator: () -> MobileHelperPairingCoordinator = MobileHelperPairingCoordinator.init
         _ = legacyCoordinator
         let coordinator = try MobileHelperPairingCoordinator(

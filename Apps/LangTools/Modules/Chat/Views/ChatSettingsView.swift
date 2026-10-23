@@ -16,6 +16,7 @@ public struct ChatSettingsView: View {
     @State private var selectedCustomTab: String? = nil
     @ObservedObject private var pairingCoordinator = CodexHelperPairingCoordinator.shared
     private let ollamaSettingsPresentation: OllamaSettingsPresentation
+    private let accessPromptPresentation: AccessPromptPresentation
 
     public enum SettingsTab: String, CaseIterable, Identifiable {
         case general = "General"
@@ -40,11 +41,19 @@ public struct ChatSettingsView: View {
     public init(viewModel: ViewModel) {
         self.viewModel = viewModel
         self.ollamaSettingsPresentation = .legacy
+        self.accessPromptPresentation = .legacy
     }
 
     public init(viewModel: ViewModel, ollamaService: OllamaService) {
         self.viewModel = viewModel
         self.ollamaSettingsPresentation = .injected(ollamaService)
+        self.accessPromptPresentation = .legacy
+    }
+
+    public init(viewModel: ViewModel, ollamaService: OllamaService, accessPrompts: AccessPromptContext) {
+        self.viewModel = viewModel
+        self.ollamaSettingsPresentation = .injected(ollamaService)
+        self.accessPromptPresentation = .injected(accessPrompts)
     }
 
     public var body: some View {
@@ -200,7 +209,7 @@ public struct ChatSettingsView: View {
             ollamaSettingsPresentation.makeView()
         }
         #endif
-        .directAccessPrompts(enabled: !viewModel.isProxyContext)
+        .directAccessPrompts(enabled: !viewModel.isProxyContext, presentation: accessPromptPresentation)
     }
 
     // iOS/iPadOS layout (unchanged)
@@ -475,7 +484,7 @@ public struct ChatSettingsView: View {
         .sheet(isPresented: $showingOllamaSettings) {
             ollamaSettingsPresentation.makeView()
         }
-        .directAccessPrompts(enabled: !viewModel.isProxyContext)
+        .directAccessPrompts(enabled: !viewModel.isProxyContext, presentation: accessPromptPresentation)
     }
 
     @ViewBuilder
@@ -1129,9 +1138,14 @@ public struct ChatSettingsView: View {
 
 private extension View {
     @ViewBuilder
-    func directAccessPrompts(enabled: Bool) -> some View {
+    func directAccessPrompts(enabled: Bool, presentation: AccessPromptPresentation) -> some View {
         if enabled && !ChatUITestEnvironment.isFixtureActive {
-            manageAccessPrompts(priority: 10)
+            switch presentation {
+            case .legacy:
+                manageAccessPrompts(priority: 10)
+            case .injected(let context):
+                manageAccessPrompts(accessPrompts: context, priority: 10)
+            }
         } else {
             self
         }

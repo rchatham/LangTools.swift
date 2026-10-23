@@ -451,59 +451,25 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         providerAccessManager.refresh()
     }
 
+    private var accountAccessOperations: ProviderAccountAccessOperations {
+        ProviderAccountAccessOperations(providerAccessManager: providerAccessManager,
+            loginServiceProvider: { self.accountLoginService })
+    }
+
     public func connectAccount(_ provider: AccountLoginProvider) async throws {
-        let session = try await accountLoginService.beginLogin(for: provider)
-        try await MainActor.run {
-            try providerAccessManager.saveAccountSession(session)
-        }
+        try await accountAccessOperations.connectAccount(provider)
     }
 
     public func connectCodexHelper() async throws {
-        let session = try await accountLoginService.beginCodexHelperLogin()
-        try await MainActor.run {
-            try providerAccessManager.saveAccountSession(session.canonicalized)
-        }
+        try await accountAccessOperations.connectCodexHelper()
     }
 
     public func disconnectAccount(_ provider: AccountLoginProvider) async throws {
-        let sessionBeingDisconnected = providerAccessManager.session(for: provider)
-        if provider == .openAI,
-           sessionBeingDisconnected?.accessToken == CodexSessionMarker.value {
-            try await disconnectCodexHelper()
-            return
-        }
-
-        do {
-            try await accountLoginService.logout(provider: provider)
-        } catch {
-            // A remote logout failure must not leave a stale local session behind.
-            NSLog("Remote %@ logout failed; clearing the local session: %@", provider.displayName, error.localizedDescription)
-        }
-        try await MainActor.run {
-            guard providerAccessManager.session(for: provider)?.id == sessionBeingDisconnected?.id else {
-                return
-            }
-            try providerAccessManager.removeAccountSession(for: provider)
-        }
+        try await accountAccessOperations.disconnectAccount(provider)
     }
 
     public func disconnectCodexHelper() async throws {
-        let sessionBeingDisconnected = providerAccessManager.session(for: .openAI)
-        do {
-            try await accountLoginService.logoutCodexHelper()
-        } catch {
-            // Keep the local marker from advertising a helper session that can no longer be used.
-            NSLog("Remote Codex helper logout failed; clearing the local session: %@", error.localizedDescription)
-        }
-        try await MainActor.run {
-            guard let sessionBeingDisconnected,
-                  sessionBeingDisconnected.accessToken == CodexSessionMarker.value,
-                  providerAccessManager.session(for: .openAI)?.id == sessionBeingDisconnected.id
-            else {
-                return
-            }
-            try providerAccessManager.removeAccountSession(for: .openAI)
-        }
+        try await accountAccessOperations.disconnectCodexHelper()
     }
 
     func registerLangTool(_ apiKey: String, for llm: APIService) {
