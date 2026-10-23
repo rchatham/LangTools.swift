@@ -57,6 +57,8 @@ public protocol LangToolsStreamableResponse: Decodable {
     /// Validate the accumulated response at EOF, before executing tools or completing
     /// the stream. Providers that require a terminal record should throw if it is absent.
     func validateStreamCompletion() throws
+    /// Validate each decoded chunk, and a complete response, for in-band provider errors.
+    func validateStreamChunk() throws
 }
 
 extension LangToolsStreamableResponse {
@@ -64,6 +66,8 @@ extension LangToolsStreamableResponse {
 
     /// By default, EOF is sufficient. Providers opt in to stricter validation.
     public func validateStreamCompletion() throws {}
+
+    public func validateStreamChunk() throws {}
 
     public var content: (any LangToolsContent)? { (self as? any LangToolsStreamableChatResponse)?.delta?.content.map { LangToolsTextContent(text: $0) }  ?? (self as? any LangToolsChatResponse)?.message?.content }
 }

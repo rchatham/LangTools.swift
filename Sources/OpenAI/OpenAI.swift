@@ -34,10 +34,11 @@ final public class OpenAI: LangTools {
         }
     }
 
+    /// OpenAI claims only untagged models; a tagged one belongs to its provider.
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
-            { ($0 as? ChatCompletionRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
-            { ($0 as? ResponsesRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
+            { ($0 as? ChatCompletionRequest).flatMap { $0.model.providerID == nil && OpenAIModel.openAIModels.contains($0.model) } ?? false },
+            { ($0 as? ResponsesRequest).flatMap { $0.model.providerID == nil && OpenAIModel.openAIModels.contains($0.model) } ?? false },
             { $0 is AudioSpeechRequest },
             { $0 is AudioTranscriptionRequest },
             { $0 is ListModelDataRequest },
@@ -80,7 +81,7 @@ final public class OpenAI: LangTools {
             urlRequest.httpBody = formData.body
         } else {
             urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolsError.invalidData }
+            do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw error as? LangToolsError ?? .invalidData }
         }
 
         return urlRequest
@@ -131,8 +132,21 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         id = customModelID
     }
 
+    /// A model routed to one OpenAI-compatible provider.
+    public init(customModelID: String, providerID: LangToolsProviderID) {
+        id = customModelID
+        self.providerID = providerID
+    }
+
     public var id: String
     public var rawValue: String { id }
+
+    /// The provider this model is routed to, for request validators; not encoded or compared.
+    public internal(set) var providerID: LangToolsProviderID? = nil
+
+    public func belongs(to provider: LangToolsProviderID) -> Bool {
+        providerID == provider
+    }
 
     public var type: OpenAIModelType {
         id.hasPrefix("text") ? .embedding :

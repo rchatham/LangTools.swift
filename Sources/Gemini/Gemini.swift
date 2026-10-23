@@ -11,36 +11,78 @@ import FoundationNetworking
 #endif
 import LangTools
 import OpenAI
+import OpenAICompatible
 
-public final class Gemini: LangTools {
+/// Serves Gemini's native `generateContent` API (`Gemini.GenerateContentRequest`) and its
+/// OpenAI-compatible API: `Gemini.Model` requests route here untagged, other IDs tagged.
+public final class Gemini: OpenAICompatibleProvider {
     public typealias Model = GeminiModel
     public typealias ErrorResponse = GeminiErrorResponse
 
+    public static let providerID = LangToolsProviderID(rawValue: "gemini"), displayName = "Gemini", apiKeyEnvironmentVariable = "GEMINI_API_KEY"
+    public static let defaultBaseURL = URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/")!
+    public static let nativeBaseURL = URL(string: "https://generativelanguage.googleapis.com/v1beta/")!
+    public static var knownModels: [OpenAICompatibleModel<Gemini>] { Model.allCases.compactMap { OpenAICompatibleModel(rawValue: $0.rawValue) } }
+
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         [
-            { ($0 as? OpenAI.ChatCompletionRequest).flatMap { OpenAIModel.geminiModels.contains($0.model) } ?? false },
-        ]
+            { ($0 as? OpenAI.ChatCompletionRequest).flatMap { $0.model.providerID == nil && OpenAIModel.geminiModels.contains($0.model) } ?? false },
+            { $0 is GenerateContentRequest },
+            { $0 is ListModelsRequest },
+        ] + compatibleRequestValidators
     }
 
-    public var session: URLSession { openAI.session }
-    public var logger: LangToolsLogger? { openAI.logger }
+    public let openAI: OpenAI
+    private let nativeBaseURL: URL
+    private let apiKey: String
 
-    let openAI: OpenAI
-
-    public init(baseURL: URL = URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil) {
+    public init(baseURL: URL = Gemini.defaultBaseURL, nativeBaseURL: URL = Gemini.nativeBaseURL, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil) {
+        self.nativeBaseURL = nativeBaseURL
+        self.apiKey = apiKey
         openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey, session: session, logger: logger))
     }
 
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
-        try openAI.prepare(request: request)
+        let headers = ["x-goog-api-key": apiKey]
+        if let request = request as? GenerateContentRequest {
+            let method = request.stream == true ? "streamGenerateContent?alt=sse" : "generateContent"
+            guard let url = URL(string: "\(request.modelPath):\(method)", relativeTo: nativeBaseURL)?.absoluteURL else { throw LangToolsError.invalidURL }
+            return try prepareNative(request: request, url: url, headers: headers)
+        }
+        guard let request = request as? ListModelsRequest else { return try prepareCompatible(request: request) }
+        var components = URLComponents(url: nativeBaseURL.appendingPathComponent("models"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "pageSize", value: "1000")] + (request.pageToken.map { [URLQueryItem(name: "pageToken", value: $0)] } ?? [])
+        guard let url = components?.url else { throw LangToolsError.invalidURL }
+        return try prepareNative(request: request, url: url, headers: headers)
     }
 
+    /// Lists models from the native catalog, across pages, with token limits.
+    public func listModels() async throws -> [OpenAICompatibleModelInfo] {
+        var models: [OpenAICompatibleModelInfo] = []
+        var request = ListModelsRequest()
+        for _ in 0..<10 {  // The cap only guards against a looping page token.
+            let page = try await perform(request: request)
+            models += (page.models ?? []).compactMap(\.info)
+            guard let next = page.nextPageToken, !next.isEmpty else { break }
+            request.pageToken = next
+        }
+        return models
+    }
+
+    /// Builds a native request for a `Gemini.Model`, or an OpenAI-format request
+    /// for an `OpenAICompatibleModel<Gemini>`.
     public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        if let model = model as? OpenAICompatibleModel<Gemini> {
+            return try compatibleChatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
+        }
         guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
-        return try OpenAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
+        var request = GenerateContentRequest(model: model, messages: messages)
+        (request.tools, request.toolEventHandler, request.responseSchema) = (tools?.map { OpenAI.Tool($0) }, toolEventHandler, responseSchema)
+        return request
     }
 }
 
+/// Errors from both APIs; a native error's `status` is read as `type` and its numeric `code` as text.
 public struct GeminiErrorResponse: Error, Codable {
     public let type: String?
     public let error: APIError
@@ -50,6 +92,47 @@ public struct GeminiErrorResponse: Error, Codable {
         public let type: String
         public let param: String?
         public let code: String?
+
+        private enum CodingKeys: String, CodingKey { case message, type, param, code }
+        private enum NativeKeys: String, CodingKey { case status }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            message = try container.decode(String.self, forKey: .message)
+            type = try container.decodeIfPresent(String.self, forKey: .type) ?? decoder.container(keyedBy: NativeKeys.self).decodeIfPresent(String.self, forKey: .status) ?? "error"
+            param = try container.decodeIfPresent(String.self, forKey: .param)
+            code = (try? container.decodeIfPresent(String.self, forKey: .code)) ?? (try? container.decodeIfPresent(Int.self, forKey: .code)).map(String.init)
+        }
+    }
+}
+
+// MARK: - Native model catalog
+
+extension Gemini {
+    /// `GET models` on the native API.
+    public struct ListModelsRequest: LangToolsRequest, Encodable {
+        public typealias Response = ListModelsResponse
+        public typealias LangTool = Gemini
+        public static var endpoint: String { "models" }
+        public static var httpMethod: HTTPMethod { .get }
+        public var pageToken: String?
+        public init(pageToken: String? = nil) { self.pageToken = pageToken }
+        public func encode(to encoder: Encoder) throws {}
+    }
+
+    public struct ListModelsResponse: Decodable {
+        public let models: [ModelEntry]?
+        public let nextPageToken: String?
+    }
+
+    public struct ModelEntry: Codable {
+        /// The resource name, such as `models/gemini-3-flash`.
+        public let name: String?, displayName: String?, inputTokenLimit: Int?, outputTokenLimit: Int?, supportedGenerationMethods: [String]?
+
+        /// The entry normalized like an OpenAI-compatible catalog entry; nil without a name.
+        public var info: OpenAICompatibleModelInfo? {
+            name.map { OpenAICompatibleModelInfo(id: $0.hasPrefix("models/") ? String($0.dropFirst(7)) : $0, name: displayName, ownedBy: "google", contextWindow: inputTokenLimit, maxOutputTokens: outputTokenLimit, isChatModel: supportedGenerationMethods?.contains("generateContent") ?? false) }
+        }
     }
 }
 
