@@ -14,17 +14,20 @@ public final class ProviderAccessManager: ObservableObject {
     private let keychainService: KeychainService
     private let sessionStore: AuthSessionStore
     private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
+    private let appleModels: () -> [Model]
     private let stateLock = NSLock()
     private var refreshGeneration: UInt64 = 0
 
     public init(
         keychainService: KeychainService = .shared,
         sessionStore: AuthSessionStore = .shared,
-        ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared
+        ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared,
+        appleModels: @escaping () -> [Model] = { Model.appleModels }
     ) {
         self.keychainService = keychainService
         self.sessionStore = sessionStore
         self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
+        self.appleModels = appleModels
         refresh()
     }
 
@@ -112,7 +115,9 @@ public final class ProviderAccessManager: ObservableObject {
         if available.contains(model) || model.apiService == .ollama {
             return model
         }
-        return available.first ?? model
+        // The on-device Apple model is listed whenever the OS supports it, so it
+        // must not silently replace a selection whose provider is unconfigured.
+        return available.first { $0.apiService != .apple } ?? model
     }
 
     public func accessibleModelIDs(for service: APIService) -> [String] {
@@ -219,7 +224,7 @@ public final class ProviderAccessManager: ObservableObject {
             return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
         }
         if service == .apple {
-            return Model.appleModels
+            return appleModels()
         }
 
         let hasAPIKey = apiKey?.isEmpty == false
@@ -265,7 +270,7 @@ public final class ProviderAccessManager: ObservableObject {
             case .ollama:
                 return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
             case .apple:
-                return Model.appleModels
+                return appleModels()
             case .serper:
                 return []
             }
