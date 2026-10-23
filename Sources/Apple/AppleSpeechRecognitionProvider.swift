@@ -1,8 +1,8 @@
-// Apple's Speech framework is unavailable on Linux; the module builds empty there.
-#if canImport(Speech)
-import AVFoundation
 import Foundation
 import LangTools
+
+#if canImport(Speech)
+import AVFoundation
 import Speech
 
 func isBenignAppleSpeechTerminalError(_ error: Error) -> Bool {

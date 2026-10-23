@@ -5,10 +5,9 @@
 //  Model definitions for AppleSpeech provider
 //
 
-// Apple's Speech framework is unavailable on Linux; the module builds empty there.
-#if canImport(Speech)
 import Foundation
 
+#if canImport(Speech)
 extension AppleSpeech {
     /// Model identifier for Apple Speech framework
     ///

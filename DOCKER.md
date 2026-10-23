@@ -113,18 +113,14 @@ Optimizes Docker builds by excluding:
 
 ## Linux Compatibility
 
-The library includes compatibility shims for Linux, compiled only where Darwin is unavailable:
+The library includes compatibility shims for Linux in `Sources/LangTools/URL+Compatibility.swift`:
 
-1. **URLSession.data(for:)** and **URLSession.bytes(for:)** (`Sources/LangTools/URLSession+AsyncBytes.swift`): stream the response body through a session-level data delegate, so streamed responses arrive incrementally, cancelling the consumer cancels the request, and authentication challenges and redirects are forwarded to the caller's session delegate
-2. **URL.appending(path:)** (`Sources/LangTools/URL+Compatibility.swift`): Uses `appendingPathComponent` on Swift < 5.10
+1. **URLSession.data(for:)**: Wraps `dataTask` for async/await support
+2. **URL.appending(path:)**: Uses `appendingPathComponent` on Swift < 5.10
 3. **URL.appending(queryItems:)**: Uses `URLComponents` on Swift < 5.10
 4. **URL(filePath:)**: Uses `URL(fileURLWithPath:)` on Swift < 5.10
 
 These extensions are conditionally compiled with `#if !canImport(Darwin)` to ensure they only apply to Linux.
-
-The `AppleLangTools` module and `AppleSpeechTests` build empty on Linux because Apple's Speech framework is unavailable there.
-
-Tests run serially (`--no-parallel`) because several suites share process-global `MockURLProtocol` state. CI runs the full suite on Linux with Swift 6.0 (the `linux-tests` job); the other Swift versions here are best-effort.
 
 ## Troubleshooting
 
@@ -151,19 +147,9 @@ To speed up builds:
 
 ## CI/CD Integration
 
-Example GitHub Actions workflow:
-
-```yaml
-name: Linux Tests
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Run tests
-        run: make docker-test
-```
+The `linux-build` job in `.github/workflows/swift.yml` builds and runs the test
+suite in a `swift:6.2-noble` container on pushes and pull requests to `main`, so Linux
+regressions surface in CI rather than only in the Docker setup.
 
 ## Platform Support
 
@@ -178,3 +164,12 @@ jobs:
   - This doesn't affect functionality, only release builds
   - Tests run fine in debug mode
 - Some tests may take longer on Linux due to different Foundation implementation
+- `AppleLangTools` and `WhisperKitLangTools` (and their test targets) compile to empty
+  modules on Linux because Apple's Speech framework and WhisperKit are unavailable there
+- The Linux `URLSession.bytes(for:)` shim loads the full response before yielding lines,
+  so streamed responses arrive all at once rather than incrementally
+- Two Ollama tests that split fixtures into byte-sized `URLProtocol` chunks are skipped on
+  Linux: FoundationNetworking keeps only the last chunk for completion-handler tasks served
+  by a custom `URLProtocol` (real HTTP responses are delivered whole)
+- Swift versions before 6.1 resolve older `swift-crypto` and `swift-asn1` releases than the
+  ones pinned in `Package.resolved`, because the pinned releases require tools-version 6.1

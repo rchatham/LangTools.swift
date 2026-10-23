@@ -5,12 +5,12 @@
 //  Speech-to-text transcription request for Apple Speech framework
 //
 
-// Apple's Speech framework is unavailable on Linux; the module builds empty there.
-#if canImport(Speech)
 import Foundation
+import LangTools
+
+#if canImport(Speech)
 import Speech
 import AVFoundation
-import LangTools
 
 private final class AppleSpeechTranscriptionContinuationBox: @unchecked Sendable {
     private let lock = NSLock()
