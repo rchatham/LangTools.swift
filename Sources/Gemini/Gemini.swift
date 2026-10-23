@@ -13,30 +13,17 @@ import LangTools
 import OpenAI
 import OpenAICompatible
 
-/// Serves Gemini's OpenAI-compatible API and its native `generateContent` API
-/// (`Gemini.GenerateContentRequest`, see Gemini+GenerateContent.swift).
-///
-/// OpenAI-format requests for `Gemini.Model` cases route here untagged, as
-/// before; any other Gemini model ID can be sent as an
-/// `OpenAICompatibleModel<Gemini>`, which is tagged for Gemini.
+/// Serves Gemini's native `generateContent` API (`Gemini.GenerateContentRequest`) and its
+/// OpenAI-compatible API: `Gemini.Model` requests route here untagged, other IDs tagged.
 public final class Gemini: OpenAICompatibleProvider {
     public typealias Model = GeminiModel
     public typealias ErrorResponse = GeminiErrorResponse
 
-    public static let providerID = LangToolsProviderID(rawValue: "gemini")
-    public static let displayName = "Gemini"
+    public static let providerID = LangToolsProviderID(rawValue: "gemini"), displayName = "Gemini", apiKeyEnvironmentVariable = "GEMINI_API_KEY"
     public static let defaultBaseURL = URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/")!
-    public static let apiKeyEnvironmentVariable = "GEMINI_API_KEY"
-    /// The root of the native API (`models/{model}:generateContent`, `models`).
     public static let nativeBaseURL = URL(string: "https://generativelanguage.googleapis.com/v1beta/")!
+    public static var knownModels: [OpenAICompatibleModel<Gemini>] { Model.allCases.compactMap { OpenAICompatibleModel(rawValue: $0.rawValue) } }
 
-    /// The models of `Gemini.Model`, as tagged compatible models.
-    public static var knownModels: [OpenAICompatibleModel<Gemini>] {
-        Model.allCases.compactMap { OpenAICompatibleModel(rawValue: $0.rawValue) }
-    }
-
-    /// Claims untagged requests for `Gemini.Model` cases, as before, requests
-    /// tagged for Gemini, and native requests.
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         [
             { ($0 as? OpenAI.ChatCompletionRequest).flatMap { $0.model.providerID == nil && OpenAIModel.geminiModels.contains($0.model) } ?? false },
@@ -95,10 +82,7 @@ public final class Gemini: OpenAICompatibleProvider {
     }
 }
 
-/// Errors from both APIs: the OpenAI-compatible endpoint's
-/// `{"error": {"message", "type", ...}}` and the native API's
-/// `{"error": {"code": 400, "message", "status"}}`. For a native error, `type`
-/// is its `status` and `code` its numeric code as text.
+/// Errors from both APIs; a native error's `status` is read as `type` and its numeric `code` as text.
 public struct GeminiErrorResponse: Error, Codable {
     public let type: String?
     public let error: APIError
@@ -109,27 +93,15 @@ public struct GeminiErrorResponse: Error, Codable {
         public let param: String?
         public let code: String?
 
-        private enum CodingKeys: String, CodingKey { case message, type, param, code, status }
+        private enum CodingKeys: String, CodingKey { case message, type, param, code }
+        private enum NativeKeys: String, CodingKey { case status }
 
         public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             message = try container.decode(String.self, forKey: .message)
-            type = try container.decodeIfPresent(String.self, forKey: .type)
-                ?? container.decodeIfPresent(String.self, forKey: .status) ?? "error"
+            type = try container.decodeIfPresent(String.self, forKey: .type) ?? decoder.container(keyedBy: NativeKeys.self).decodeIfPresent(String.self, forKey: .status) ?? "error"
             param = try container.decodeIfPresent(String.self, forKey: .param)
-            if let code = try? container.decodeIfPresent(String.self, forKey: .code) {
-                self.code = code
-            } else {
-                self.code = (try? container.decodeIfPresent(Int.self, forKey: .code)).map(String.init)
-            }
-        }
-
-        public func encode(to encoder: Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(message, forKey: .message)
-            try container.encode(type, forKey: .type)
-            try container.encodeIfPresent(param, forKey: .param)
-            try container.encodeIfPresent(code, forKey: .code)
+            code = (try? container.decodeIfPresent(String.self, forKey: .code)) ?? (try? container.decodeIfPresent(Int.self, forKey: .code)).map(String.init)
         }
     }
 }

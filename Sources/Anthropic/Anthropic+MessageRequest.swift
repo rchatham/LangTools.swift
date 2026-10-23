@@ -57,19 +57,11 @@ extension Anthropic {
         @CodableIgnored
         public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
 
-        /// The provider this request is routed to, for a provider that also
-        /// serves Anthropic's Messages format; nil for Anthropic's API. Not
-        /// encoded; see `routed(to:modelID:)`.
-        @CodableIgnored
-        public internal(set) var providerID: LangToolsProviderID?
+        /// Another provider serving this format, and the model ID sent there; nil for Anthropic. Not encoded.
+        @CodableIgnored public internal(set) var providerID: LangToolsProviderID?
+        @CodableIgnored public internal(set) var providerModelID: String?
 
-        /// The model ID sent to that provider in place of `model`, such as
-        /// `"anthropic/claude-sonnet-4.5"`. Nil lets the provider choose.
-        @CodableIgnored
-        public internal(set) var providerModelID: String?
-
-        /// Returns a copy routed to another provider's Messages endpoint,
-        /// optionally with that provider's model ID.
+        /// A copy routed to another provider's Messages endpoint, optionally with its model ID.
         public func routed(to providerID: LangToolsProviderID, modelID: String? = nil) -> Self {
             var request = self
             request.providerID = providerID

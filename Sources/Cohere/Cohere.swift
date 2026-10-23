@@ -2,10 +2,8 @@
 //  Cohere.swift
 //  LangTools
 //
-//  Cohere serves two formats: its Compatibility API, which accepts OpenAI
-//  chat requests for Command models, and its native v2 Chat API
-//  (`Cohere.ChatRequest`, see Cohere+Chat.swift). Models are listed from the
-//  native catalog.
+//  Cohere's native v2 Chat API (`Cohere.ChatRequest`, see Cohere+Chat.swift)
+//  and its Compatibility API for OpenAI chat requests.
 //
 
 import Foundation
@@ -20,38 +18,17 @@ public final class Cohere: OpenAICompatibleProvider {
     public typealias Model = OpenAICompatibleModel<Cohere>
     public typealias ErrorResponse = OpenAICompatibleErrorResponse
 
-    public static let providerID = LangToolsProviderID(rawValue: "cohere")
-    public static let displayName = "Cohere"
+    public static let providerID = LangToolsProviderID(rawValue: "cohere"), displayName = "Cohere", apiKeyEnvironmentVariable = "COHERE_API_KEY"
     public static let defaultBaseURL = URL(string: "https://api.cohere.com/compatibility/v1/")!
-    public static let apiKeyEnvironmentVariable = "COHERE_API_KEY"
-    /// The root of Cohere's native API (`v2/chat`, `v1/models`).
     public static let nativeBaseURL = URL(string: "https://api.cohere.com/")!
-
-    /// Suggested models. The provider's catalog changes often.
-    public static var knownModels: [Model] {
-        [
-            "command-a-03-2025",
-            "command-a-reasoning-08-2025",
-            "command-a-vision-07-2025",
-            "command-r-plus-08-2024",
-            "command-r-08-2024",
-            "command-r7b-12-2024"
-        ]
-    }
+    public static var knownModels: [Model] { ["command-a-03-2025", "command-a-reasoning-08-2025", "command-a-vision-07-2025", "command-r-plus-08-2024", "command-r-08-2024", "command-r7b-12-2024"] }
 
     public let openAI: OpenAI
     private let nativeBaseURL: URL
     private let apiKey: String
 
-    public init(
-        baseURL: URL = Cohere.defaultBaseURL,
-        nativeBaseURL: URL = Cohere.nativeBaseURL,
-        apiKey: String,
-        session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil),
-        logger: LangToolsLogger? = nil
-    ) {
-        self.nativeBaseURL = nativeBaseURL
-        self.apiKey = apiKey
+    public init(baseURL: URL = defaultBaseURL, nativeBaseURL: URL = nativeBaseURL, apiKey: String, session: URLSession = URLSession(configuration: .default), logger: LangToolsLogger? = nil) {
+        (self.nativeBaseURL, self.apiKey) = (nativeBaseURL, apiKey)
         openAI = Self.makeClient(baseURL: baseURL, apiKey: apiKey, session: session, logger: logger)
     }
 

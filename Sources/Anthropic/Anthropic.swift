@@ -36,8 +36,7 @@ public final class Anthropic: LangTools {
 
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
-            // A request routed to another provider's Messages endpoint belongs to it.
-            { ($0 as? MessageRequest).map { $0.providerID == nil } ?? false }
+            { ($0 as? MessageRequest).map { $0.providerID == nil } ?? false }  // Routed requests belong to their provider.
         ]
     }
 

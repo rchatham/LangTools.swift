@@ -129,20 +129,11 @@ See individual module README files for detailed documentation and examples:
 - [OpenAI](Sources/OpenAI/README.md)
 - [Anthropic](Sources/Anthropic/README.md)
 - [XAI](Sources/XAI/README.md)
-- [Gemini](Sources/Gemini/README.md) - OpenAI-compatible API and native generateContent API
+- [Gemini](Sources/Gemini/README.md)
 - [Ollama](Sources/Ollama/README.md)
-- [OpenAICompatible](Sources/OpenAICompatible/README.md) - Shared support for providers serving OpenAI's Chat Completions or Responses format
-- [AnthropicCompatible](Sources/AnthropicCompatible/README.md) - Shared support for providers serving Anthropic's Messages format
-- [OpenRouter](Sources/OpenRouter/README.md)
-- [Vercel AI Gateway](Sources/VercelAIGateway/README.md)
-- [Groq](Sources/Groq/README.md)
-- [Mistral](Sources/Mistral/README.md)
-- [DeepSeek](Sources/DeepSeek/README.md)
-- [Cerebras](Sources/Cerebras/README.md)
-- [Together AI](Sources/TogetherAI/README.md)
-- [Fireworks AI](Sources/Fireworks/README.md)
-- [Cohere](Sources/Cohere/README.md) - Compatibility API and native v2 Chat API
-- [Perplexity](Sources/Perplexity/README.md) - Agent API, in OpenAI's Responses format
+- [OpenAICompatible](Sources/OpenAICompatible/README.md) - OpenAI-format providers, including Groq, Mistral, DeepSeek, Cerebras, Together AI, and Fireworks AI
+- [AnthropicCompatible](Sources/AnthropicCompatible/README.md)
+- [OpenRouter](Sources/OpenRouter/README.md), [Vercel AI Gateway](Sources/VercelAIGateway/README.md), [Cohere](Sources/Cohere/README.md), [Perplexity](Sources/Perplexity/README.md)
 - [Performance comparison snapshot](docs/performance-comparison.html)
 
 ## Contributing

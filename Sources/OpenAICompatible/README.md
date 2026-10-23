@@ -1,91 +1,46 @@
 # OpenAICompatible
 
-Shared support for providers that serve OpenAI's Chat Completions or Responses format at their own base URL. OpenRouter, Vercel AI Gateway, Groq, Mistral, DeepSeek, Cerebras, Together AI, Fireworks AI, Cohere, Perplexity, xAI, and Gemini are built on it.
+Shared support for providers that serve OpenAI's Chat Completions or Responses format at their own base URL, and the single-vendor providers built on it:
 
-The OpenAI module only supplies the hooks this layer needs: the model's provider tag, `additionalParameters`, and tolerant response decoding. Everything provider-specific lives here or in the provider's own module.
+| Provider | Base URL | Dialect handled |
+|---|---|---|
+| `Groq` | `api.groq.com/openai/v1` | Log-probability options and message `name` removed |
+| `Mistral` | `api.mistral.ai/v1` | OpenAI-only fields removed (Mistral answers 422); `seed` → `random_seed`, `max_completion_tokens` → `max_tokens` |
+| `DeepSeek` | `api.deepseek.com` | `reasoning_content` added to assistant turns (thinking mode); `json_schema` → `json_object` |
+| `Cerebras` | `api.cerebras.ai/v1` | — |
+| `TogetherAI` | `api.together.xyz/v1` | `logprobs` sent as a count |
+| `Fireworks` | `api.fireworks.ai/inference/v1` | `listModels()` reads the first catalog page |
+
+OpenRouter, Vercel AI Gateway, Cohere, Perplexity, xAI, and Gemini build on it in their own modules.
+
+```swift
+let groq = Groq(apiKey: key)
+let request = OpenAI.ChatCompletionRequest(model: "llama-3.3-70b-versatile" as Groq.Model, messages: [.init(role: .user, content: "Hi")])
+for try await chunk in groq.stream(request: request) { print(chunk.choices.first?.delta?.content ?? "", terminator: "") }
+let models = try await groq.listModels()      // GET /models, normalized; `knownModels` offers suggestions
+```
+
+`OpenAICompatibleModel<Provider>` is a validated ID whose `openAIModel` is tagged for the provider, so a `LangToolchain` routes it there even when OpenAI or a gateway serves the same ID.
 
 ## Adopting the protocol
 
-A conforming class supplies its identity and an `OpenAI` client. Routing, request preparation, extra headers, model listing, and request building come from the protocol:
-
 ```swift
-import OpenAICompatible
-
 public final class MyProvider: OpenAICompatibleProvider {
     public typealias Model = OpenAICompatibleModel<MyProvider>
     public typealias ErrorResponse = OpenAICompatibleErrorResponse
-    public static let providerID = LangToolsProviderID(rawValue: "myprovider")
-    public static let displayName = "My Provider"
+    public static let providerID = LangToolsProviderID(rawValue: "myprovider"), displayName = "My Provider", apiKeyEnvironmentVariable = "MY_PROVIDER_API_KEY"
     public static let defaultBaseURL = URL(string: "https://api.example.com/v1/")!
-    public static let apiKeyEnvironmentVariable = "MY_PROVIDER_API_KEY"
     public let openAI: OpenAI
+    public init(apiKey: String) { openAI = Self.makeClient(baseURL: Self.defaultBaseURL, apiKey: apiKey, session: .shared, logger: nil) }
 
-    public init(apiKey: String) {
-        openAI = Self.makeClient(baseURL: Self.defaultBaseURL, apiKey: apiKey, session: .shared, logger: nil)
-    }
-
-    // Optional: headers sent on every request, validated before sending.
-    public var additionalHeaders: [String: String] { ["X-Title": "My App"] }
-
-    // Optional: drop or rename fields the provider rejects.
-    public static func adaptChatBody(_ body: inout [String: JSON]) {
-        OpenAICompatibleBody.remove(["stream_options"], from: &body)
-    }
-}
-
-let request = OpenAI.ChatCompletionRequest(model: "some-model" as MyProvider.Model, messages: messages)
-let models = try await MyProvider(apiKey: key).listModels()   // GET /models, normalized
-```
-
-`OpenAICompatibleModel<MyProvider>` is a validated model ID whose `openAIModel` is tagged for the provider, so a `LangToolchain` that also holds OpenAI or another gateway routes the request to `MyProvider` even when they serve the same ID.
-
-A provider with an established model enum or error type keeps it: declare your own `Model` and `ErrorResponse`, and override `chatRequest` to build requests from your model type (xAI and Gemini do this, and still accept `OpenAICompatibleModel<Self>` for IDs outside their enums).
-
-## Responses format
-
-A provider that serves OpenAI's Responses API declares it, and tagged `OpenAI.ResponsesRequest`s route to it. `chatRequest` builds Responses requests when the provider does not serve Chat Completions:
-
-```swift
-public static var compatibleFormats: OpenAICompatibleFormats { .responses }   // or [.chatCompletions, .responses]
-
-// Optional: rewrite the encoded body for the provider's dialect.
-public static func adaptResponsesBody(_ body: inout [String: JSON]) { ... }
-```
-
-Perplexity's Agent API is built this way: it sends presets as `preset`, moves structured output to `response_format`, and overrides `prepare` to post to `/v1/agent`.
-
-## Serving more than one format
-
-A provider that also has request types of its own, or serves Anthropic's Messages format through `AnthropicCompatibleProvider`, handles them in the same class. Combine the building blocks each protocol exposes:
-
-```swift
-public final class MyGateway: OpenAICompatibleProvider, AnthropicCompatibleProvider {
-    // ...identity, `openAI`, and `anthropic` clients...
-
-    public var session: URLSession { openAI.session }
-    public var logger: LangToolsLogger? { openAI.logger }
-
-    public static var requestValidators: [(any LangToolsRequest) -> Bool] {
-        compatibleRequestValidators + anthropicRequestValidators + [{ $0 is MyCatalogRequest }]
-    }
-
-    public func prepare(request: some LangToolsRequest) throws -> URLRequest {
-        if request is Anthropic.MessageRequest { return try prepareAnthropicCompatible(request: request) }
-        return try prepareCompatible(request: request)
-    }
-
-    public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
-        if let model = model as? Anthropic.Model {
-            return try anthropicChatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
-        }
-        guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
-        return try compatibleChatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
-    }
+    // Optional hooks
+    public var additionalHeaders: [String: String] { ["X-Title": "My App"] }      // validated before sending
+    public static func adaptChatBody(_ body: inout [String: JSON]) { OpenAICompatibleBody.remove(["stream_options"], from: &body) }
 }
 ```
 
-OpenRouter and Vercel AI Gateway are built this way. The class's `ErrorResponse` must decode every format's error body; `OpenAICompatibleErrorResponse` decodes OpenAI-style, Anthropic-style, top-level `{"message": ...}`, and `{"detail": ...}` bodies.
-
-## Model catalogs
-
-`listModels()` is a protocol requirement whose default reads `GET /models` as `{"data": [...]}` or a bare array and normalizes each entry into `OpenAICompatibleModelInfo`: `contextWindow`, `maxOutputTokens`, `supportsTools` (nil when the catalog does not say), and `isChatModel`. Entries that fail to decode are skipped. A provider with its own catalog API implements `listModels()` (Cohere does), and generic callers reach it. A provider without a catalog sets `supportsModelListing` to `false` and lists `knownModels`.
+- **Responses format:** `compatibleFormats` (`.responses`, or both) routes tagged `OpenAI.ResponsesRequest`s to the provider, with `adaptResponsesBody` for its dialect. Perplexity serves only this format.
+- **More formats in one class:** a provider with request types of its own, or Anthropic's Messages format (`AnthropicCompatibleProvider`), combines `compatibleRequestValidators`, `prepareCompatible(request:)` (or `prepareNative` for its own API), and `compatibleChatRequest` with them, as OpenRouter, Vercel AI Gateway, Cohere, and Gemini do.
+- **Own model enum:** xAI and Gemini keep theirs and override `chatRequest`, still accepting `OpenAICompatibleModel<Self>` for other IDs.
+- **Catalogs:** `listModels()` reads `{"data": [...]}` or a bare array into `OpenAICompatibleModelInfo` (`contextWindow`, `maxOutputTokens`, `supportsTools`, `isChatModel`, raw `metadata`), skipping malformed entries. A provider with its own catalog API overrides it; one without sets `supportsModelListing` to `false`.
+- **Errors:** `OpenAICompatibleErrorResponse` decodes OpenAI-style, top-level `{"message"}`, and `{"detail"}` bodies.

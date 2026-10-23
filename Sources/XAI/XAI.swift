@@ -13,25 +13,15 @@ import LangTools
 import OpenAI
 import OpenAICompatible
 
-/// Serves xAI's OpenAI-compatible API. Requests for `XAI.Model` cases
-/// route here untagged, as before; any other xAI model ID can be sent as an
-/// `OpenAICompatibleModel<XAI>`, which is tagged for XAI.
+/// `XAI.Model` requests route here untagged; other IDs go as a tagged `OpenAICompatibleModel<XAI>`.
 public final class XAI: OpenAICompatibleProvider {
     public typealias Model = XAIModel
     public typealias ErrorResponse = XAIErrorResponse
 
-    public static let providerID = LangToolsProviderID(rawValue: "xai")
-    public static let displayName = "xAI"
+    public static let providerID = LangToolsProviderID(rawValue: "xai"), displayName = "xAI", apiKeyEnvironmentVariable = "XAI_API_KEY"
     public static let defaultBaseURL = URL(string: "https://api.x.ai/v1/")!
-    public static let apiKeyEnvironmentVariable = "XAI_API_KEY"
+    public static var knownModels: [OpenAICompatibleModel<XAI>] { Model.allCases.compactMap { OpenAICompatibleModel(rawValue: $0.rawValue) } }
 
-    /// The models of `XAI.Model`, as tagged compatible models.
-    public static var knownModels: [OpenAICompatibleModel<XAI>] {
-        Model.allCases.compactMap { OpenAICompatibleModel(rawValue: $0.rawValue) }
-    }
-
-    /// Claims untagged requests for `XAI.Model` cases, as before, and
-    /// requests tagged for XAI.
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         [
             { ($0 as? OpenAI.ChatCompletionRequest).flatMap { $0.model.providerID == nil && OpenAIModel.xAIModels.contains($0.model) } ?? false },

@@ -14,7 +14,7 @@ import AnthropicCompatible
 /// A minimal provider serving Anthropic's Messages format.
 private final class MessagesProvider: AnthropicCompatibleProvider {
     typealias Model = Anthropic.Model
-    typealias ErrorResponse = AnthropicCompatibleErrorResponse
+    typealias ErrorResponse = AnthropicErrorResponse
     static let providerID = LangToolsProviderID(rawValue: "test.messages")
 
     let anthropic: Anthropic
@@ -29,7 +29,7 @@ private final class MessagesProvider: AnthropicCompatibleProvider {
 /// A provider that maps models to its own IDs.
 private final class RenamingProvider: AnthropicCompatibleProvider {
     typealias Model = Anthropic.Model
-    typealias ErrorResponse = AnthropicCompatibleErrorResponse
+    typealias ErrorResponse = AnthropicErrorResponse
     static let providerID = LangToolsProviderID(rawValue: "test.renaming")
     static func anthropicModelID(for model: Anthropic.Model) -> String { "renamed-\(model.rawValue)" }
 
@@ -102,14 +102,6 @@ final class AnthropicCompatibleTests: XCTestCase {
 
         XCTAssertEqual((chat as? Anthropic.MessageRequest)?.providerID, MessagesProvider.providerID)
         XCTAssertThrowsError(try MessagesProvider.chatRequest(model: OpenAIModelStandIn.gpt, messages: [], tools: nil, responseSchema: nil, toolEventHandler: { _ in }))
-    }
-
-    func testErrorDecodesAnthropicAndOpenAIShapes() throws {
-        let anthropicShape = try JSONDecoder().decode(AnthropicCompatibleErrorResponse.self, from: Data(#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#.utf8))
-        XCTAssertEqual(anthropicShape, .init(message: "Overloaded", type: "overloaded_error"))
-        let openAIShape = try JSONDecoder().decode(AnthropicCompatibleErrorResponse.self, from: Data(#"{"error":{"message":"Insufficient credits","code":402}}"#.utf8))
-        XCTAssertEqual(openAIShape, .init(message: "Insufficient credits"))
-        XCTAssertEqual(try JSONDecoder().decode(AnthropicCompatibleErrorResponse.self, from: Data(#"{"message":"Unauthorized"}"#.utf8)).message, "Unauthorized")
     }
 }
 
