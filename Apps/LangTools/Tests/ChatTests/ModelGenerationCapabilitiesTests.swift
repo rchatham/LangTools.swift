@@ -190,7 +190,7 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
             XCTAssertTrue(capabilities.supportsTopP, providerModel.rawValue)
             XCTAssertTrue(capabilities.supportsFrequencyPenalty, providerModel.rawValue)
             XCTAssertTrue(capabilities.supportsPresencePenalty, providerModel.rawValue)
-            XCTAssertFalse(capabilities.supportsTopK, providerModel.rawValue)
+            XCTAssertTrue(capabilities.supportsTopK, providerModel.rawValue)  // native topK
             XCTAssertTrue(capabilities.supportsSeed, providerModel.rawValue)
             XCTAssertTrue(capabilities.supportsStop, providerModel.rawValue)
         }

@@ -204,6 +204,8 @@ public extension OpenAI {
                 case refusal(RefusalContent)
                 case toolResult(ToolResultContent)
 
+                public var toolResultContentType: LangToolsToolResultContentType? { if case .toolResult(let result) = self { return result }; return nil }
+
                 public init(_ contentType: any LangToolsContentType) throws {
                     if let text = contentType.textContentType {
                         self = .text(try .init(text))

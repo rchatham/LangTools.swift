@@ -10,6 +10,7 @@ import OpenAI
 import Anthropic
 import XAI
 import Gemini
+import Cohere
 import Ollama
 import OpenRouter
 
@@ -364,6 +365,20 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             // As with OpenRouter, tools go only to models the catalog does not
             // list as lacking tool support.
             let supportsTools = compatibleCatalog.entry(for: provider, id: id)?.supportsTools ?? true
+            if provider == .cohere, let model = Cohere.Model(rawValue: id) {
+                return Cohere.ChatRequest(
+                    model: model,
+                    messages: replayMessages.toOpenAIMessages().map { Cohere.Message($0) },
+                    stream: stream,
+                    tools: supportsTools ? tools?.convertTools() : nil,
+                    tool_choice: supportsTools ? toolChoice.flatMap { .init($0) } : nil,
+                    temperature: temperature,
+                    max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                    p: topP, k: topK, seed: seed, stop_sequences: stop,
+                    frequency_penalty: frequencyPenalty, presence_penalty: presencePenalty,
+                    toolEventHandler: toolEventHandler
+                )
+            }
             guard provider.servesChatCompletions else {
                 return OpenAI.ResponsesRequest(
                     model: provider.openAIModel(id: id),
@@ -408,19 +423,13 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                 toolEventHandler: toolEventHandler
             )
         case .gemini(let providerModel):
-            return OpenAI.ChatCompletionRequest(
+            return Gemini.GenerateContentRequest(
                 model: providerModel,
-                messages: replayMessages.toOpenAIMessages(),
-                temperature: temperature,
-                top_p: topP,
+                messages: replayMessages.toOpenAIMessages().map { Gemini.Message($0) },
                 stream: stream,
-                stop: stop.map { .array($0) },
-                max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
-                presence_penalty: presencePenalty,
-                frequency_penalty: frequencyPenalty,
-                seed: seed,
                 tools: tools?.convertTools(),
-                tool_choice: toolChoice,
+                functionCallingMode: toolChoice.map { .init($0) },
+                generationConfig: .init(temperature: temperature, topP: topP, topK: topK, maxOutputTokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil, stopSequences: stop, seed: seed, presencePenalty: presencePenalty, frequencyPenalty: frequencyPenalty),
                 toolEventHandler: toolEventHandler
             )
         case .ollama(let providerModel):

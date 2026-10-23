@@ -60,27 +60,22 @@ public final class Cohere: OpenAICompatibleProvider {
     }
 
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
-        guard request is ChatRequest || request is ListModelsRequest else { return try prepareCompatible(request: request) }
-        var url = nativeBaseURL.appendingPathComponent(request.endpoint)
-        if let list = request as? ListModelsRequest, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
-            components.queryItems = list.queryItems
-            url = components.url ?? url
-        }
-        var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = type(of: request).httpMethod.rawValue
-        urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
-        try OpenAICompatibleHeaders.apply(additionalHeaders, to: &urlRequest)
-        guard type(of: request).httpMethod != .get else { return urlRequest }
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        do { urlRequest.httpBody = try JSONEncoder().encode(request) }
-        catch { throw LangToolsError.invalidArgument("Failed to encode request: \(error)") }
-        return urlRequest
+        let path = request is ChatRequest ? "v2/chat" : request is ListModelsRequest ? "v1/models?endpoint=chat&page_size=1000" : nil
+        guard let path, let url = URL(string: path, relativeTo: nativeBaseURL)?.absoluteURL else { return try prepareCompatible(request: request) }
+        return try prepareNative(request: request, url: url, headers: ["Authorization": "Bearer \(apiKey)"])
     }
 
     /// Lists chat models from Cohere's native catalog, without deprecated ones.
     public func listModels() async throws -> [OpenAICompatibleModelInfo] {
-        try await perform(request: ListModelsRequest()).models.filter { !($0.is_deprecated ?? false) }.map(\.info)
+        try await perform(request: ListModelsRequest()).models.filter { $0.is_deprecated != true }.compactMap(\.info)
+    }
+
+    /// Builds a native v2 request; build an `OpenAI.ChatCompletionRequest` for the Compatibility API.
+    public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
+        var request = ChatRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { OpenAI.Tool($0) }, toolEventHandler: toolEventHandler)
+        request.responseSchema = responseSchema
+        return request
     }
 
     /// Cohere rejects OpenAI options it does not implement, and takes the
@@ -97,67 +92,27 @@ public final class Cohere: OpenAICompatibleProvider {
 // MARK: - Model catalog
 
 extension Cohere {
-    /// `GET v1/models` on the native API.
+    /// `GET v1/models?endpoint=chat` on the native API.
     public struct ListModelsRequest: LangToolsRequest, Encodable {
         public typealias Response = ListModelsResponse
         public typealias LangTool = Cohere
         public static var endpoint: String { "v1/models" }
         public static var httpMethod: HTTPMethod { .get }
-
-        /// Only models served on this endpoint, such as `"chat"` or `"embed"`.
-        public var endpointFilter: String?
-        public var pageSize: Int
-
-        public init(endpoint: String? = "chat", pageSize: Int = 1000) {
-            endpointFilter = endpoint
-            self.pageSize = pageSize
-        }
-
-        /// GET requests carry no body.
+        public init() {}
         public func encode(to encoder: Encoder) throws {}
-
-        var queryItems: [URLQueryItem] {
-            var items = [URLQueryItem(name: "page_size", value: String(pageSize))]
-            if let endpointFilter { items.append(URLQueryItem(name: "endpoint", value: endpointFilter)) }
-            return items
-        }
     }
 
     public struct ListModelsResponse: Decodable {
         public let models: [ModelEntry]
-        public let next_page_token: String?
-
-        private enum CodingKeys: String, CodingKey { case models, next_page_token }
-        private struct Lossy: Decodable {
-            let entry: ModelEntry?
-            init(from decoder: Decoder) throws { entry = try? ModelEntry(from: decoder) }
-        }
-
-        public init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            // Entries that fail to decode are skipped.
-            models = try container.decode([Lossy].self, forKey: .models).compactMap(\.entry)
-            next_page_token = try container.decodeIfPresent(String.self, forKey: .next_page_token)
-        }
     }
 
     public struct ModelEntry: Codable {
-        public let name: String
-        public let endpoints: [String]?
-        /// Capabilities such as `"tools"`, `"json_schema"`, or `"vision"`.
-        public let features: [String]?
-        public let context_length: Double?
-        public let is_deprecated: Bool?
+        /// `features` lists capabilities such as `"tools"` or `"json_schema"`.
+        public let name: String?, endpoints: [String]?, features: [String]?, context_length: Double?, is_deprecated: Bool?
 
-        /// The entry normalized like an OpenAI-compatible catalog entry.
-        public var info: OpenAICompatibleModelInfo {
-            OpenAICompatibleModelInfo(
-                id: name,
-                ownedBy: "cohere",
-                contextWindow: context_length.map { Int($0) },
-                supportsTools: features.map { $0.contains("tools") || $0.contains("strict_tools") },
-                isChatModel: endpoints?.contains("chat") ?? true
-            )
+        /// The entry normalized like an OpenAI-compatible catalog entry; nil without a name.
+        public var info: OpenAICompatibleModelInfo? {
+            name.map { OpenAICompatibleModelInfo(id: $0, ownedBy: "cohere", contextWindow: context_length.map { Int($0) }, supportsTools: features.map { $0.contains("tools") || $0.contains("strict_tools") }, isChatModel: endpoints?.contains("chat") ?? true) }
         }
     }
 }

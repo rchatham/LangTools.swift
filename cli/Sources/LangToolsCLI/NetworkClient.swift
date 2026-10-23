@@ -15,6 +15,7 @@ import OpenAICompatible
 import Anthropic
 import XAI
 import Gemini
+import Cohere
 import Ollama
 import OpenRouter
 #if canImport(AVFAudio)
@@ -64,7 +65,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
         } else if case .xAI(let model) = model {
             return OpenAI.ChatCompletionRequest(model: OpenAI.Model(customModelID: model.rawValue), messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice, toolEventHandler: toolEventHandler)
         } else if case .gemini(let model) = model {
-            return OpenAI.ChatCompletionRequest(model: OpenAI.Model(customModelID: model.rawValue), messages: messages.toOpenAIMessages(), stream: stream, toolEventHandler: toolEventHandler)
+            return Gemini.GenerateContentRequest(model: model, messages: messages.toOpenAIMessages().map { Gemini.Message($0) }, stream: stream, tools: tools, functionCallingMode: toolChoice.map { .init($0) }, toolEventHandler: toolEventHandler)
         } else if case .ollama(let model) = model {
             return Ollama.ChatRequest(model: model, messages: messages.toOllamaMessages(), stream: stream, tools: tools, toolEventHandler: toolEventHandler)
         } else if case .openRouter(let model) = model {
@@ -73,6 +74,9 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
             return OpenAI.ChatCompletionRequest(model: model, messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice, toolEventHandler: toolEventHandler)
         } else if case .compatible(let provider, let id) = model {
             // The tagged model routes to the provider rather than to OpenAI.
+            if provider == .cohere, let model = Cohere.Model(rawValue: id) {
+                return Cohere.ChatRequest(model: model, messages: messages.toOpenAIMessages().map { Cohere.Message($0) }, stream: stream, tools: tools, tool_choice: toolChoice.flatMap { .init($0) }, toolEventHandler: toolEventHandler)
+            }
             if !provider.servesChatCompletions {
                 return OpenAI.ResponsesRequest(model: provider.openAIModel(id: id), messages: messages.toOpenAIMessages(), stream: stream, tools: tools, toolEventHandler: toolEventHandler)
             }

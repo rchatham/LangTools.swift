@@ -52,7 +52,7 @@ final class CohereNativeChatTests: XCTestCase {
             documents: [.string("Paris is in France."), .object(["id": .string("doc-1"), "data": .object(["title": .string("T")])])],
             p: 0.9,
             k: 40,
-            thinking: .enabled(tokenBudget: 1024)
+            thinking: ["type": .string("enabled"), "token_budget": .number(1024)]
         )
         request.responseSchema = .object(properties: ["answer": .string()])
 
@@ -96,13 +96,26 @@ final class CohereNativeChatTests: XCTestCase {
         var toolchain = LangToolchain()
         toolchain.register(OpenAI(apiKey: "openai"))
         toolchain.register(Cohere(apiKey: "cohere"))
-        let native = Cohere.nativeChatRequest(model: "command-a-03-2025", messages: [Cohere.Message(role: .user, content: "Hi")])
+        let native = try XCTUnwrap(Cohere.chatRequest(model: "command-a-03-2025" as Cohere.Model, messages: [OpenAI.Message(role: .user, content: "Hi")], tools: nil, responseSchema: nil, toolEventHandler: { _ in }) as? Cohere.ChatRequest)
         let compatible = OpenAI.ChatCompletionRequest(model: "command-a-03-2025" as Cohere.Model, messages: [.init(role: .user, content: "Hi")])
 
         XCTAssertTrue(Cohere(apiKey: "key").canHandleRequest(native))
         XCTAssertTrue(Cohere(apiKey: "key").canHandleRequest(compatible))
         XCTAssertFalse(OpenAI(apiKey: "key").canHandleRequest(compatible))
         XCTAssertEqual(try Cohere(apiKey: "key").prepare(request: compatible).url?.absoluteString, "https://api.cohere.com/compatibility/v1/chat/completions")
+    }
+
+    func testOpenAIHistoryConvertsWithToolCallsAndResults() throws {
+        let call = OpenAI.Message.ToolCall(index: 0, id: "call_1", type: .function, function: .init(name: "get_weather", arguments: #"{"city":"Paris"}"#))
+        let history = [OpenAI.Message(role: .user, content: "Weather?"), OpenAI.Message(tool_selection: [call]), OpenAI.Message(tool_selection_id: "call_1", result: "Sunny")]
+
+        let messages = history.map { Cohere.Message($0) }
+
+        XCTAssertEqual(messages.map(\.role), [.user, .assistant, .tool])
+        XCTAssertEqual(messages[1].tool_calls?.first?.id, "call_1")
+        XCTAssertEqual(messages[1].tool_calls?.first?.arguments, #"{"city":"Paris"}"#)
+        XCTAssertEqual(messages[2].tool_call_id, "call_1")
+        XCTAssertEqual(messages[2].content.text, "Sunny")
     }
 
     // MARK: - Responses
@@ -117,7 +130,7 @@ final class CohereNativeChatTests: XCTestCase {
 
         XCTAssertEqual(result.message?.content.text, "Paris is in France.")
         XCTAssertEqual(result.message?.citations?.first?.text, "Paris")
-        XCTAssertEqual(result.usage?.billed_units?.output_tokens, 5)
+        XCTAssertEqual(result.usage?["billed_units"]?["output_tokens"]?.intValue, 5)
         XCTAssertEqual(result.finish_reason, "COMPLETE")
     }
 

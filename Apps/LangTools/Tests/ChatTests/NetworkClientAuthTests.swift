@@ -1,4 +1,5 @@
 import Anthropic
+import Cohere
 import Foundation
 import Gemini
 import KeychainAccess
@@ -143,6 +144,8 @@ final class NetworkClientAuthTests: XCTestCase {
                 request.toolEventHandler?(event)
             case let request as Ollama.ChatRequest:
                 request.toolEventHandler?(event)
+            case let request as Gemini.GenerateContentRequest:
+                request.toolEventHandler?(event)
             default:
                 XCTFail("Unexpected request type for \(model)")
             }
@@ -260,14 +263,14 @@ final class NetworkClientAuthTests: XCTestCase {
             tools: [tool],
             toolChoice: .required,
             toolEventHandler: { _ in receivedEventCount += 1 }
-        ) as? OpenAI.ChatCompletionRequest)
+        ) as? Gemini.GenerateContentRequest)
         let encoded = try JSONEncoder().encode(request)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         let encodedTools = try XCTUnwrap(object["tools"] as? [[String: Any]])
-        let encodedFunction = try XCTUnwrap(encodedTools.first?["function"] as? [String: Any])
+        let encodedFunction = try XCTUnwrap((encodedTools.first?["functionDeclarations"] as? [[String: Any]])?.first)
 
         XCTAssertEqual(encodedFunction["name"] as? String, "lookup_weather")
-        XCTAssertEqual(object["tool_choice"] as? String, "required")
+        XCTAssertEqual(((object["toolConfig"] as? [String: Any])?["functionCallingConfig"] as? [String: Any])?["mode"] as? String, "ANY")
         request.toolEventHandler?(event)
         XCTAssertEqual(receivedEventCount, 1)
     }
@@ -1121,6 +1124,14 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
         }
     }
 
+    func testCohereUsesItsNativeChatAPIWithTopK() throws {
+        let settings = try ChatGenerationSettings(temperature: 0.3, topK: 40)
+        let request = try XCTUnwrap(makeClient().request(messages: testMessages, model: .compatible(.cohere, "command-a-03-2025"), generationSettings: settings) as? Cohere.ChatRequest)
+
+        XCTAssertEqual(request.temperature, 0.3)
+        XCTAssertEqual(request.k, 40)
+    }
+
     func testXAIAndGeminiTranslationAndUnsupportedXAIFields() throws {
         let xAIModel = try XCTUnwrap(XAI.Model(rawValue: "grok-3"))
         let unsupportedXAIModel = try XCTUnwrap(XAI.Model(rawValue: "grok-imagine-video"))
@@ -1128,16 +1139,13 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
         let client = makeClient()
         let settings = try ChatGenerationSettings(maxOutputTokens: 1_024, temperature: 0.5)
 
-        for model in [Model.xAI(xAIModel), .gemini(geminiModel)] {
-            let object = try encodedRequest(client.request(
-                messages: testMessages,
-                model: model,
-                generationSettings: settings
-            ))
-            XCTAssertEqual(object["max_tokens"] as? Int, 1_024)
-            XCTAssertEqual(object["temperature"] as? Double, 0.5)
-            XCTAssertNil(object["max_completion_tokens"])
-        }
+        let object = try encodedRequest(client.request(messages: testMessages, model: .xAI(xAIModel), generationSettings: settings))
+        XCTAssertEqual(object["max_tokens"] as? Int, 1_024)
+        XCTAssertEqual(object["temperature"] as? Double, 0.5)
+        XCTAssertNil(object["max_completion_tokens"])
+        let gemini = try geminiConfig(client.request(messages: testMessages, model: .gemini(geminiModel), generationSettings: settings))
+        XCTAssertEqual(gemini["maxOutputTokens"] as? Int, 1_024)
+        XCTAssertEqual(gemini["temperature"] as? Double, 0.5)
 
         let unsupported = try encodedRequest(client.request(
             messages: testMessages,
@@ -1163,13 +1171,13 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
         XCTAssertEqual(xAI["temperature"] as? Double, 0.55)
 
         for (tokens, expected) in [(65_536, 65_536), (65_537, nil)] as [(Int, Int?)] {
-            let object = try encodedRequest(client.request(
+            let config = try geminiConfig(client.request(
                 messages: testMessages,
                 model: .gemini(geminiModel),
                 generationSettings: try ChatGenerationSettings(maxOutputTokens: tokens, temperature: 0.55)
             ))
-            XCTAssertEqual(object["max_tokens"] as? Int, expected)
-            XCTAssertEqual(object["temperature"] as? Double, 0.55)
+            XCTAssertEqual(config["maxOutputTokens"] as? Int, expected)
+            XCTAssertEqual(config["temperature"] as? Double, 0.55)
         }
     }
 
@@ -1187,13 +1195,8 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
         XCTAssertEqual(xAI["max_tokens"] as? Int, 8_192)
         XCTAssertEqual(xAI["temperature"] as? Double, 0.55)
 
-        let gemini = try encodedRequest(client.request(
-            messages: testMessages,
-            model: .gemini(geminiModel),
-            generationSettings: settings
-        ))
-        XCTAssertNil(gemini["max_tokens"])
-        XCTAssertNil(gemini["max_completion_tokens"])
+        let gemini = try geminiConfig(client.request(messages: testMessages, model: .gemini(geminiModel), generationSettings: settings))
+        XCTAssertNil(gemini["maxOutputTokens"])
         XCTAssertEqual(gemini["temperature"] as? Double, 0.55)
     }
 
@@ -1348,6 +1351,11 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
     ) throws -> [String: Any] {
         let data = try JSONEncoder().encode(request)
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    /// The `generationConfig` of a native Gemini request.
+    private func geminiConfig(_ request: any LangToolsChatRequest & LangToolsStreamableRequest) throws -> [String: Any] {
+        try XCTUnwrap(encodedRequest(request)["generationConfig"] as? [String: Any])
     }
 }
 

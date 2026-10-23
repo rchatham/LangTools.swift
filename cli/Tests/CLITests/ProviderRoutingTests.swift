@@ -8,6 +8,8 @@
 
 import XCTest
 import Ollama
+import Gemini
+import Cohere
 import OpenAI
 import OpenAICompatible
 import OpenRouter
@@ -150,6 +152,14 @@ final class ProviderRoutingTests: XCTestCase {
         XCTAssertFalse(OpenAI.requestValidators.contains { $0(responsesRequest) })
         XCTAssertFalse(CompatibleProvider.perplexity.servesChatCompletions)
         XCTAssertTrue(CompatibleProvider.cohere.servesChatCompletions)
+    }
+
+    func testGeminiAndCohereUseTheirNativeAPIs() {
+        let gemini = NetworkClient.shared.request(messages: [Message(text: "hi", role: .user)], model: .gemini(.gemini3Flash), stream: true, tools: nil, toolChoice: nil)
+        let cohere = NetworkClient.shared.request(messages: [Message(text: "hi", role: .user)], model: .compatible(.cohere, "command-a-03-2025"), stream: true, tools: nil, toolChoice: .required)
+
+        XCTAssertTrue(gemini is Gemini.GenerateContentRequest)
+        XCTAssertEqual((cohere as? Cohere.ChatRequest)?.tool_choice, .required)
     }
 
     // MARK: - Keys

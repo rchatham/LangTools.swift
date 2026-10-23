@@ -17,10 +17,12 @@ final class GeminiCompatibleProviderTests: XCTestCase {
         var toolchain = LangToolchain()
         toolchain.register(OpenAI(apiKey: "openai"))
         toolchain.register(Gemini(apiKey: "key"))
-        let typed = try XCTUnwrap(Gemini.chatRequest(model: Gemini.Model.gemini25Flash, messages: [], tools: nil, responseSchema: nil, toolEventHandler: { _ in }) as? OpenAI.ChatCompletionRequest)
+        let typed = OpenAI.ChatCompletionRequest(model: Gemini.Model.gemini3Flash, messages: [.init(role: .user, content: "Hi")])
+        let native = try XCTUnwrap(Gemini.chatRequest(model: Gemini.Model.gemini3Flash, messages: [], tools: nil, responseSchema: nil, toolEventHandler: { _ in }) as? Gemini.GenerateContentRequest)
 
         XCTAssertNil(typed.model.providerID)
-        XCTAssertEqual(try toolchain.prepare(request: typed).url?.host, "generativelanguage.googleapis.com")
+        XCTAssertEqual(try toolchain.prepare(request: typed).url?.path, "/v1beta/openai/chat/completions")
+        XCTAssertEqual(try toolchain.prepare(request: native).url?.path, "/v1beta/models/gemini-3-flash:generateContent")
     }
 
     func testOtherModelIDsRouteAsTaggedCompatibleModels() throws {

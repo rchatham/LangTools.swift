@@ -53,7 +53,7 @@ final class GeminiNativeTests: XCTestCase {
             tools: [weatherTool],
             googleSearch: true,
             functionCallingMode: .auto,
-            generationConfig: .init(temperature: 0.2, topK: 40, thinkingConfig: .init(thinkingLevel: "low")),
+            generationConfig: .init(temperature: 0.2, topK: 40, thinkingConfig: ["thinkingLevel": .string("low")]),
             safetySettings: [.init(category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH")]
         )
         request.responseSchema = .object(properties: ["answer": .string()])
@@ -127,12 +127,30 @@ final class GeminiNativeTests: XCTestCase {
         var toolchain = LangToolchain()
         toolchain.register(OpenAI(apiKey: "openai"))
         toolchain.register(Gemini(apiKey: "gemini"))
-        let native = Gemini.generateContentRequest(modelID: "gemini-3-flash", messages: [Gemini.Message(role: .user, content: "Hi")])
+        let native = try XCTUnwrap(Gemini.chatRequest(model: Gemini.Model.gemini3Flash, messages: [OpenAI.Message(role: .user, content: "Hi")], tools: nil, responseSchema: nil, toolEventHandler: { _ in }) as? Gemini.GenerateContentRequest)
 
         XCTAssertTrue(Gemini(apiKey: "key").canHandleRequest(native))
         XCTAssertFalse(OpenAI(apiKey: "key").canHandleRequest(native))
         XCTAssertEqual(native.model, .gemini3Flash)
         XCTAssertEqual(try Gemini(apiKey: "key").prepare(request: OpenAI.ChatCompletionRequest(model: Gemini.Model.gemini3Flash, messages: [.init(role: .user, content: "Hi")])).url?.absoluteString, "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
+    }
+
+    func testOpenAIHistoryConvertsAndParallelResponsesShareATurn() throws {
+        let calls = ["Paris", "Rome"].enumerated().map { OpenAI.Message.ToolCall(index: $0, id: "call_\($0)", type: .function, function: .init(name: "get_weather", arguments: #"{"city":"\#($1)"}"#)) }
+        let history = [OpenAI.Message(role: .system, content: "Be brief."), OpenAI.Message(role: .user, content: "Weather?"), OpenAI.Message(tool_selection: calls)]
+            + calls.map { OpenAI.Message(tool_selection_id: $0.id!, result: "Sunny") }
+        let request = Gemini.GenerateContentRequest(model: .gemini3Flash, messages: history.map { Gemini.Message($0) })
+
+        let body = try body(of: Gemini(apiKey: "key").prepare(request: request))
+        let contents = try XCTUnwrap(body["contents"] as? [[String: Any]])
+
+        XCTAssertNotNil(body["systemInstruction"])
+        XCTAssertEqual(contents.map { $0["role"] as? String }, ["user", "model", "user"])
+        let callParts = try XCTUnwrap(contents[1]["parts"] as? [[String: Any]])
+        XCTAssertEqual((callParts[1]["functionCall"] as? [String: Any])?["args"] as? [String: String], ["city": "Rome"])
+        let responses = try XCTUnwrap(contents[2]["parts"] as? [[String: Any]]).compactMap { $0["functionResponse"] as? [String: Any] }
+        XCTAssertEqual(responses.map { $0["id"] as? String }, ["call_0", "call_1"])
+        XCTAssertEqual(responses.map { $0["name"] as? String }, ["get_weather", "get_weather"])
     }
 
     // MARK: - Responses
@@ -147,7 +165,7 @@ final class GeminiNativeTests: XCTestCase {
 
         XCTAssertEqual(result.message?.content.text, "Paris is in France.")
         XCTAssertEqual(result.usageMetadata?.thoughtsTokenCount, 3)
-        XCTAssertEqual(result.candidates.first?.groundingMetadata?["webSearchQueries"]?.arrayValue?.first?.stringValue, "where is paris")
+        XCTAssertEqual(result.candidates?.first?.groundingMetadata?["webSearchQueries"]?.arrayValue?.first?.stringValue, "where is paris")
         XCTAssertEqual(result.responseId, "r1")
     }
 

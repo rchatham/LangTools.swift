@@ -138,6 +138,19 @@ extension OpenAICompatibleProvider {
         try prepareCompatible(request: request)
     }
 
+    /// Prepares a request for the provider's own API: `headers` (its credentials),
+    /// `additionalHeaders`, and a JSON body unless it is a GET.
+    public func prepareNative(request: some LangToolsRequest, url: URL, headers: [String: String]) throws -> URLRequest {
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = type(of: request).httpMethod.rawValue
+        headers.forEach { urlRequest.setValue($1, forHTTPHeaderField: $0) }
+        try OpenAICompatibleHeaders.apply(additionalHeaders, to: &urlRequest)
+        guard type(of: request).httpMethod != .get else { return urlRequest }
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = try JSONEncoder().encode(request)
+        return urlRequest
+    }
+
     /// A chat completion request for one of this provider's models, tagged so
     /// the toolchain routes it here.
     public static func compatibleChatRequest(model: OpenAICompatibleModel<Self>, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> OpenAI.ChatCompletionRequest {

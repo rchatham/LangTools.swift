@@ -295,6 +295,7 @@ public extension Model {
                 supportsTopP: true,
                 supportsFrequencyPenalty: true,
                 supportsPresencePenalty: true,
+                supportsTopK: true,
                 supportsSeed: true,
                 supportsStop: true,
                 contextWindowTokens: Self.geminiContextWindows[model.rawValue]
@@ -325,6 +326,7 @@ public extension Model {
                 // The Responses format has no penalties, seed, or stop sequences.
                 supportsFrequencyPenalty: provider != .groq && provider.servesChatCompletions,
                 supportsPresencePenalty: provider != .groq && provider.servesChatCompletions,
+                supportsTopK: provider == .cohere,
                 supportsSeed: provider != .deepseek && provider.servesChatCompletions,
                 supportsStop: provider.servesChatCompletions,
                 contextWindowTokens: CompatibleModelCatalog.shared.entry(for: provider, id: id)?.contextLength
