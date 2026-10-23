@@ -42,8 +42,8 @@ enum CompatibleProvider: String, CaseIterable, Codable {
     var environmentVariable: String { type.apiKeyEnvironmentVariable }
     var providerID: LangToolsProviderID { type.providerID }
     var supportsModelListing: Bool { type.supportsModelListing }
-    /// False for a provider that serves only OpenAI's Responses format (Perplexity).
-    var servesChatCompletions: Bool { type.compatibleFormats.contains(.chatCompletions) }
+    /// True for a provider that serves only OpenAI's Responses format (Perplexity).
+    var usesResponses: Bool { type.compatibleFormats == .responses }
     var knownModelIDs: [String] { operations.knownModelIDs }
     var apiService: APIService { APIService(rawValue: rawValue)! }
 

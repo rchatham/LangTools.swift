@@ -115,7 +115,7 @@ extension OpenAICompatibleProvider {
     /// A chat completion request, or a Responses request for a Responses-only provider.
     public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
         guard let model = model as? OpenAICompatibleModel<Self> else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
-        if !compatibleFormats.contains(.chatCompletions) {
+        if compatibleFormats == .responses {
             return try OpenAI.responsesRequest(model: model.openAIModel, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
         }
         return try compatibleChatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)

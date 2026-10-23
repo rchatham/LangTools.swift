@@ -22,8 +22,8 @@ public enum CompatibleProvider: String, CaseIterable, Codable, Identifiable, Sen
     public var displayName: String { operations.type.displayName }
     public var providerID: LangToolsProviderID { operations.type.providerID }
     public var supportsModelListing: Bool { operations.type.supportsModelListing }
-    /// False for a provider that serves only OpenAI's Responses format (Perplexity).
-    public var servesChatCompletions: Bool { operations.type.compatibleFormats.contains(.chatCompletions) }
+    /// True for a provider that serves only OpenAI's Responses format (Perplexity).
+    public var usesResponses: Bool { operations.type.compatibleFormats == .responses }
     /// Suggested models, offered before (or instead of) a catalog fetch.
     public var knownModelIDs: [String] { operations.knownModelIDs }
 

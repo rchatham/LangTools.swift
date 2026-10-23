@@ -72,7 +72,7 @@ class NetworkClient: NSObject, URLSessionWebSocketDelegate {
             if provider == .cohere, let model = Cohere.Model(rawValue: id) {
                 return Cohere.ChatRequest(model: model, messages: messages.toOpenAIMessages().map { Cohere.Message($0) }, stream: stream, tools: tools, tool_choice: toolChoice.flatMap { .init($0) }, toolEventHandler: toolEventHandler)
             }
-            if !provider.servesChatCompletions {
+            if provider.usesResponses {
                 return OpenAI.ResponsesRequest(model: provider.openAIModel(id: id), messages: messages.toOpenAIMessages(), stream: stream, tools: tools, toolEventHandler: toolEventHandler)
             }
             return OpenAI.ChatCompletionRequest(model: provider.openAIModel(id: id), messages: messages.toOpenAIMessages(), stream: stream, tools: tools, tool_choice: toolChoice, toolEventHandler: toolEventHandler)

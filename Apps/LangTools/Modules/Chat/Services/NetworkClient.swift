@@ -356,7 +356,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                     toolEventHandler: toolEventHandler
                 )
             }
-            guard provider.servesChatCompletions else {
+            if provider.usesResponses {
                 return OpenAI.ResponsesRequest(
                     model: provider.openAIModel(id: id),
                     messages: replayMessages.toOpenAIMessages(),

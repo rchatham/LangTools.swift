@@ -91,8 +91,8 @@ final class ProviderRoutingTests: XCTestCase {
         XCTAssertEqual(responsesRequest.model.id, "medium")
         XCTAssertTrue(responsesRequest.model.belongs(to: CompatibleProvider.perplexity.providerID))
         XCTAssertFalse(OpenAI.requestValidators.contains { $0(responsesRequest) })
-        XCTAssertFalse(CompatibleProvider.perplexity.servesChatCompletions)
-        XCTAssertTrue(CompatibleProvider.cohere.servesChatCompletions)
+        XCTAssertTrue(CompatibleProvider.perplexity.usesResponses)
+        XCTAssertFalse(CompatibleProvider.cohere.usesResponses)
     }
 
     func testGeminiAndCohereUseTheirNativeAPIs() {

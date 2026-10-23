@@ -293,11 +293,11 @@ public extension Model {
                 supportsTemperature: true,
                 supportsTopP: true,
                 // The Responses format has no penalties, seed, or stop sequences.
-                supportsFrequencyPenalty: provider != .groq && provider.servesChatCompletions,
-                supportsPresencePenalty: provider != .groq && provider.servesChatCompletions,
+                supportsFrequencyPenalty: provider != .groq && !provider.usesResponses,
+                supportsPresencePenalty: provider != .groq && !provider.usesResponses,
                 supportsTopK: provider == .cohere,
-                supportsSeed: provider != .deepseek && provider.servesChatCompletions,
-                supportsStop: provider.servesChatCompletions,
+                supportsSeed: provider != .deepseek && !provider.usesResponses,
+                supportsStop: !provider.usesResponses,
                 contextWindowTokens: CompatibleModelCatalog.shared.entry(for: provider, id: id)?.contextLength
             )
         case .xAI(let model):
