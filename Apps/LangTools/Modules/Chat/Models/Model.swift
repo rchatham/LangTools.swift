@@ -10,6 +10,7 @@ import Anthropic
 import XAI
 import Gemini
 import Ollama
+import AppleLangTools
 
 public enum ModelRoute: String, Codable, Hashable {
     case openAI = "openai"
@@ -19,6 +20,7 @@ public enum ModelRoute: String, Codable, Hashable {
     case xAI = "xai"
     case gemini = "gemini"
     case ollama = "ollama"
+    case apple = "apple"
 }
 
 public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equatable {
@@ -29,6 +31,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
     case xAI(XAI.Model)
     case gemini(Gemini.Model)
     case ollama(Ollama.Model)
+    case apple(AppleIntelligence.Model)
 
     public init?(rawValue: String) {
         let components = rawValue.split(separator: "/", maxSplits: 1).map(String.init)
@@ -58,6 +61,9 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             case ModelRoute.ollama.rawValue:
                 guard let model = Ollama.Model(rawValue: slug) else { return nil }
                 self = .ollama(model)
+            case ModelRoute.apple.rawValue:
+                guard let model = AppleIntelligence.Model(rawValue: slug) else { return nil }
+                self = .apple(model)
             default:
                 return nil
             }
@@ -88,6 +94,8 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             return model.rawValue
         case .ollama(let model):
             return model.rawValue
+        case .apple(let model):
+            return model.rawValue
         }
     }
 
@@ -107,10 +115,17 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             return .gemini
         case .ollama:
             return .ollama
+        case .apple:
+            return .apple
         }
     }
 
     public var id: String { rawValue }
+
+    var appleModel: AppleIntelligence.Model? {
+        if case .apple(let model) = self { return model }
+        return nil
+    }
 
     public static var allCases: [Model] {
         let standardModels: [Model] = OpenAI.Model.allCases.map { .openAI($0) }
@@ -120,7 +135,14 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
 
         let ollamaModels = OllamaEndpointConfiguration.shared.cachedModels().map { Model.ollama($0) }
 
-        return standardModels + ollamaModels
+        return standardModels + ollamaModels + appleModels
+    }
+
+    /// On-device Apple Intelligence models, listed whenever the OS ships
+    /// Foundation Models. Runtime readiness (Apple Intelligence enabled, model
+    /// downloaded) is reported when a request is made.
+    public static var appleModels: [Model] {
+        AppleIntelligence.isSupportedOnThisOS ? [.apple(.onDevice)] : []
     }
 
     public static var chatModels: [Model] {
@@ -129,6 +151,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
         + OllamaEndpointConfiguration.shared.cachedModels().map { .ollama($0) }
+        + appleModels
     }
 
     public var apiService: APIService {
@@ -138,6 +161,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         case .xAI: return .xAI
         case .gemini: return .gemini
         case .ollama: return .ollama
+        case .apple: return .apple
         }
     }
 
@@ -156,6 +180,7 @@ public struct ChatGenerationCapabilities: Equatable, Sendable {
         case openAIMaxCompletionTokens
         case anthropicMaxTokens
         case ollamaNumPredict
+        case appleMaximumResponseTokens
     }
 
     public let maximumOutputField: MaximumOutputField?
@@ -242,6 +267,19 @@ public extension Model {
                 supportsSeed: true,
                 supportsStop: true,
                 contextWindowTokens: nil
+            )
+        case .apple:
+            // GenerationOptions supports temperature, a response-token cap, and
+            // top-k / top-p sampling with an optional seed.
+            return .init(
+                maximumOutputField: .appleMaximumResponseTokens,
+                maximumOutputTokenBound: AppleIntelligence.Model.contextWindowTokens,
+                maximumOutputWarning: "The on-device context window is shared by instructions, history, and the response.",
+                supportsTemperature: true,
+                supportsTopP: true,
+                supportsTopK: true,
+                supportsSeed: true,
+                contextWindowTokens: AppleIntelligence.Model.contextWindowTokens
             )
         case .gemini(let model):
             guard let bound = Self.geminiGenerationModelBounds[model.rawValue] else {

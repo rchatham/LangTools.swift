@@ -104,6 +104,7 @@ public final class ProviderAccessManager: ObservableObject {
         statesForAccessUI()
             .flatMap(\.availableModels)
             + state(for: .ollama).availableModels
+            + state(for: .apple).availableModels
     }
 
     public func validateSelectedModel(_ model: Model) -> Model {
@@ -169,7 +170,7 @@ public final class ProviderAccessManager: ObservableObject {
     }
 
     public func unavailableReason(for state: ProviderAccessState) -> String? {
-        guard state.service != .ollama, state.service != .serper else { return nil }
+        guard state.service != .ollama, state.service != .apple, state.service != .serper else { return nil }
         if state.authStatus == .notConfigured {
             switch state.accessDestination {
             case .openAI:
@@ -217,6 +218,9 @@ public final class ProviderAccessManager: ObservableObject {
         if service == .ollama {
             return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
         }
+        if service == .apple {
+            return Model.appleModels
+        }
 
         let hasAPIKey = apiKey?.isEmpty == false
         let hasSession = session != nil
@@ -241,7 +245,7 @@ public final class ProviderAccessManager: ObservableObject {
                     guard let model = Anthropic.Model(rawValue: slug) else { return nil }
                     return .claudeCode(model)
                 }
-            case .xAI, .gemini, .ollama, .serper:
+            case .xAI, .gemini, .ollama, .apple, .serper:
                 parsed = session.accessibleModelIDs.compactMap(Model.init(rawValue:))
             }
             return parsed
@@ -260,6 +264,8 @@ public final class ProviderAccessManager: ObservableObject {
                 return Gemini.Model.allCases.map { .gemini($0) }
             case .ollama:
                 return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
+            case .apple:
+                return Model.appleModels
             case .serper:
                 return []
             }

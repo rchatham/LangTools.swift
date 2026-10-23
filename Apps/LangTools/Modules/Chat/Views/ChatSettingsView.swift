@@ -1114,6 +1114,8 @@ public struct ChatSettingsView: View {
             return "Gemini is Google's multimodal AI model with strong reasoning and multimodal capabilities."
         case .ollama:
             return "This is a locally-hosted model running through Ollama. Performance and capabilities depend on the model and your local hardware."
+        case .apple:
+            return "Apple's on-device foundation model. It runs privately without a network connection, but has a small context window and does not use tools yet."
         default:
             return "Selected model"
         }
@@ -1361,7 +1363,7 @@ extension ChatSettingsView {
         }
 
         var canManageAccess: Bool {
-            !isProxyContext && model.apiService != .ollama
+            !isProxyContext && model.apiService != .ollama && model.apiService != .apple
         }
 
         var providerAccessStates: [ProviderAccessState] {

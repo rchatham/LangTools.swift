@@ -42,6 +42,7 @@ extension View {
             case .xAI: return .xAI
             case .gemini: return .gemini
             case .ollama: return .ollama
+            case .apple: return .apple
             }
         }()
         return enterAPIKeyAlert(isPresented: isPresented, apiKey: apiKey, service: service)
@@ -62,6 +63,7 @@ extension APIService {
         case .xAI: return "xAI"
         case .gemini: return "Gemini"
         case .ollama: return "Ollama"
+        case .apple: return "Apple Intelligence"
         case .serper: return "Serper"
         }
     }

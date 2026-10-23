@@ -342,6 +342,11 @@ extension MessageService: @retroactive ChatMessageService {
             return handleCLIAccountError(error)
 
         default:
+            // On-device generation errors (availability, guardrails, context
+            // window) carry their own localized descriptions.
+            if UserDefaults.model.apiService == .apple {
+                return ChatAlertInfo(title: "Apple Intelligence", message: error.localizedDescription)
+            }
             return nil
         }
     }

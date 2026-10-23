@@ -11,6 +11,7 @@ import Anthropic
 import XAI
 import Gemini
 import Ollama
+import AppleLangTools
 
 public typealias Role = OpenAI.Message.Role
 
@@ -391,6 +392,24 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                 tools: tools?.convertTools(),
                 toolEventHandler: toolEventHandler
             )
+        case .apple(let providerModel):
+            // Tool calling is not bridged to Foundation Models yet, so tools are
+            // not sent; the on-device model answers from the conversation alone.
+            let sampling: AppleIntelligence.Sampling? = if let topK {
+                .topK(topK, seed: seed.map { UInt64(truncatingIfNeeded: $0) })
+            } else if let topP {
+                .topP(topP, seed: seed.map { UInt64(truncatingIfNeeded: $0) })
+            } else {
+                nil
+            }
+            return AppleIntelligence.ChatRequest(
+                model: providerModel,
+                messages: replayMessages.toAppleIntelligenceMessages(),
+                stream: stream,
+                temperature: temperature,
+                maximumResponseTokens: capabilities.maximumOutputField == .appleMaximumResponseTokens ? maximumOutputTokens : nil,
+                sampling: sampling
+            )
         }
     }
 
@@ -412,6 +431,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .ollama(let model):
             let snapshot = ollamaEndpointConfiguration.snapshot()
             return AgentContext(langTool: try snapshot.provider(directSession: ollamaSession), model: model, messages: replayMessages.toOllamaMessages(), eventHandler: eventHandler)
+        case .apple:
+            throw AppleIntelligenceError.toolCallingUnsupported
         }
     }
 
@@ -429,6 +450,9 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         if model.apiService == .ollama {
             let endpoint = endpoint ?? ollamaEndpointConfiguration.snapshot()
             snapshot.register(try endpoint.provider(directSession: ollamaSession))
+        }
+        if model.apiService == .apple {
+            snapshot.register(AppleIntelligence())
         }
         return snapshot
     }
@@ -521,13 +545,18 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .openAI: return if let baseURL { OpenAI(baseURL: baseURL, apiKey: apiKey) } else { OpenAI(apiKey: apiKey) }
         case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
-        case .ollama: return nil
+        case .ollama, .apple: return nil
         default: return nil
         }
     }
     private func ensureModelAccess(for model: Model) throws {
         switch model.apiService {
         case .ollama:
+            return
+        case .apple:
+            if case .unavailable(let reason) = AppleIntelligence.availability(for: model.appleModel ?? .onDevice) {
+                throw AppleIntelligenceError.unavailable(reason)
+            }
             return
         case .serper:
             throw NetworkError.incompatibleRequest
@@ -567,7 +596,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
 }
 
 public enum APIService: String, CaseIterable, Codable, Identifiable {
-    case openAI, anthropic, xAI, gemini, ollama, serper
+    case openAI, anthropic, xAI, gemini, ollama, apple, serper
 
     public var id: String { rawValue }
 
