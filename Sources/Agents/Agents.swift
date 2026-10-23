@@ -104,6 +104,9 @@ public enum AgentEvent: Equatable {
 
 extension Agent {
     public func execute(context: AgentContext) async throws -> String {
+        #if DEBUG
+        let richResultTraceID = RichResultDiagnostics.TraceID.random()
+        #endif
         context.eventHandler(.started(agent: name, parent: context.parent?.name, task: context.messages.last?.content.text ?? "Unknown task"))
         var tools = delegateAgents.isEmpty ? tools : (tools ?? []) + [Tool(
             name: "agent_transfer",
@@ -136,7 +139,11 @@ extension Agent {
                 do { return try await agent.execute(context: context) }
                 catch {
                     #if DEBUG
-                    print("❌ Agent transfer error (\(agentName)): \(type(of: error)) — \(error)")
+                    print(RichResultDiagnostics.agentErrorLog(
+                        traceID: richResultTraceID,
+                        agent: .label(for: name),
+                        category: .transfer
+                    ))
                     #endif
                     throw AgentError("error: " + error.localizedDescription)
                 }
@@ -155,16 +162,45 @@ extension Agent {
             // Agent's own schema takes precedence; fall back to the context-level schema.
             let effectiveSchema = responseSchema ?? context.responseSchema
             let request = try context.langTool.chatRequest(model: context.model, messages: [systemMessage] + context.messages, tools: tools, responseSchema: effectiveSchema, toolEventHandler: toolEventHandler)
+            #if DEBUG
+            let schemaSource: RichResultDiagnostics.SchemaSource = responseSchema != nil ? .agent : (context.responseSchema != nil ? .context : .none)
+            let supportsStructuredOutput = request is any LangToolsStructuredOutputRequest
+            let schemaApplied = (request as? any LangToolsStructuredOutputRequest)?.responseSchema != nil
+            let agentModelSlug = (context.model.rawValue as? String) ?? ""
+            print(RichResultDiagnostics.agentRequestLog(
+                traceID: richResultTraceID,
+                agent: .label(for: name),
+                model: .label(for: agentModelSlug),
+                provider: .label(forProviderTypeName: String(describing: type(of: context.langTool))),
+                schemaSource: schemaSource,
+                schemaRequested: effectiveSchema != nil,
+                requestSupportsStructuredOutput: supportsStructuredOutput,
+                schemaApplied: schemaApplied
+            ))
+            #endif
             let response = try await context.langTool.perform(request: request) as any LangToolsChatResponse
             guard let result = response.message?.content.string, !result.isEmpty else {
                 context.eventHandler(.error(agent: name, message: "Empty result received"))
                 throw AgentError("agent: \(name) - error: Failed to return text content")
             }
+            #if DEBUG
+            print(RichResultDiagnostics.agentCompletionLog(
+                traceID: richResultTraceID,
+                agent: .label(for: name),
+                shape: .classify(result),
+                byteCount: result.utf8.count,
+                isError: false
+            ))
+            #endif
             context.eventHandler(.completed(agent: name, result: result))
             return result
         } catch {
             #if DEBUG
-            print("❌ Agent '\(name)' failed: \(type(of: error)) — \(error)")
+            print(RichResultDiagnostics.agentErrorLog(
+                traceID: richResultTraceID,
+                agent: .label(for: name),
+                category: .execution
+            ))
             #endif
             context.eventHandler(.completed(agent: name, result: error.localizedDescription, is_error: true))
             throw AgentError("agent: \(name) - error: " + error.localizedDescription)

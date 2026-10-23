@@ -210,7 +210,27 @@ public final class ContentCardRegistry: @unchecked Sendable {
     /// key or if the decode closure returns `nil`.
     public func parseResult<AgentKey: Hashable>(_ json: String, for agentKey: AgentKey) -> ContentCardsContent? {
         let entry = storage.withLock { $0.byAgentKey[AnyHashable(agentKey)] }
-        return entry?.parseResult(json)
+        guard let entry else {
+            #if DEBUG
+            print(RichResultDiagnostics.registryLog(
+                namespace: .agent,
+                agent: .label(for: String(describing: agentKey)),
+                outcome: .registryMiss
+            ))
+            #endif
+            return nil
+        }
+        let content = entry.parseResult(json)
+        #if DEBUG
+        print(RichResultDiagnostics.registryLog(
+            namespace: .agent,
+            agent: .label(for: String(describing: agentKey)),
+            outcome: Self.debugParseOutcome(for: content),
+            cardType: content.map { RichResultDiagnostics.CardTypeLabel.label(for: $0.cardType) },
+            itemCount: content.map(\.cardCount)
+        ))
+        #endif
+        return content
     }
 
     /// Ready-made closure for `MessageService.agentResultParser`.
@@ -294,8 +314,37 @@ public final class ContentCardRegistry: @unchecked Sendable {
     /// Convert a raw tool result JSON string into a `ContentCardsContent`.
     public func parseToolResult<ToolKey: Hashable>(_ json: String, for toolKey: ToolKey) -> ContentCardsContent? {
         let entry = storage.withLock { $0.byToolName[AnyHashable(toolKey)] }
-        return entry?.parseResult(json)
+        guard let entry else {
+            #if DEBUG
+            print(RichResultDiagnostics.registryLog(
+                namespace: .tool,
+                agent: nil,
+                outcome: .registryMiss
+            ))
+            #endif
+            return nil
+        }
+        let content = entry.parseResult(json)
+        #if DEBUG
+        print(RichResultDiagnostics.registryLog(
+            namespace: .tool,
+            agent: nil,
+            outcome: Self.debugParseOutcome(for: content),
+            cardType: content.map { RichResultDiagnostics.CardTypeLabel.label(for: $0.cardType) },
+            itemCount: content.map(\.cardCount)
+        ))
+        #endif
+        return content
     }
+
+    /// Maps a parsed `ContentCardsContent?` to a fixed registry outcome for diagnostics.
+    /// DEBUG-only; release builds do not reference this symbol.
+    #if DEBUG
+    private static func debugParseOutcome(for content: ContentCardsContent?) -> RichResultDiagnostics.ParseOutcome {
+        guard let content else { return .decodeNil }
+        return content.cardCount > 0 ? .parsed : .emptyItems
+    }
+    #endif
 
     /// Ready-made closure for `MessageService.resultContentParser`.
     public var resultContentParser: (String, String, ChatToolCall.Kind) -> ChatToolCall.DisplayContent? {
