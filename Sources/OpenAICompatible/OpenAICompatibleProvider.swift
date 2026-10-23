@@ -159,13 +159,13 @@ public enum OpenAICompatibleHeaders {
         }
     }
 
-    /// Sets `headers`, rejecting invalid or reserved names and values with line breaks.
+    /// Sets `headers`, rejecting invalid or reserved names and values with control characters.
     public static func apply(_ headers: [String: String], to request: inout URLRequest) throws {
         for (name, value) in headers {
             guard isToken(name) else { throw LangToolsError.invalidArgument("additionalHeaders name '\(name)' is not a valid header name") }
             guard !reservedNames.contains(name.lowercased()) else { throw LangToolsError.invalidArgument("additionalHeaders cannot set '\(name)'") }
-            // Scalars, not Characters: "\r\n" is a single Character in Swift.
-            guard !value.unicodeScalars.contains(where: { $0 == "\r" || $0 == "\n" }) else { throw LangToolsError.invalidArgument("additionalHeaders value for '\(name)' contains a line break") }
+            // Scalars, not Characters: "\r\n" is a single Character in Swift. RFC 9110 allows only HTAB among controls.
+            guard !value.unicodeScalars.contains(where: { ($0.value < 0x20 && $0 != "\t") || $0.value == 0x7F }) else { throw LangToolsError.invalidArgument("additionalHeaders value for '\(name)' contains a control character") }
             request.setValue(value, forHTTPHeaderField: name)
         }
     }

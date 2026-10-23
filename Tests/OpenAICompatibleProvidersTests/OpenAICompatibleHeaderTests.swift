@@ -58,10 +58,11 @@ final class OpenAICompatibleHeaderTests: XCTestCase {
         }
     }
 
-    func testHeaderValuesWithLineBreaksAreRejected() {
-        for value in ["LangTools\r\nX-Injected: 1", "LangTools\nX-Injected: 1"] {
-            assertInvalidArgument(try HeaderProvider(headers: ["X-Title": value]).prepare(request: request()), containing: "line break")
+    func testHeaderValuesWithControlCharactersAreRejected() throws {
+        for value in ["LangTools\r\nX-Injected: 1", "LangTools\nX-Injected: 1", "Lang\u{0}Tools", "Lang\u{7F}Tools"] {
+            assertInvalidArgument(try HeaderProvider(headers: ["X-Title": value]).prepare(request: request()), containing: "control character")
         }
+        XCTAssertEqual(try HeaderProvider(headers: ["X-Title": "Lang\tTools"]).prepare(request: request()).value(forHTTPHeaderField: "X-Title"), "Lang\tTools")
     }
 
     func testHeaderNamesMustBeTokens() {
