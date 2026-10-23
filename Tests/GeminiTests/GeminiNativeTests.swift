@@ -119,7 +119,7 @@ final class GeminiNativeTests: MockSessionTestCase {
         let calls = ["Paris", "Rome"].enumerated().map { OpenAI.Message.ToolCall(index: $0, id: "call_\($0)", type: .function, function: .init(name: "get_weather", arguments: #"{"city":"\#($1)"}"#)) }
         let history = [OpenAI.Message(role: .system, content: "Be brief."), OpenAI.Message(role: .user, content: "Weather?"), OpenAI.Message(tool_selection: calls)]
             + calls.map { OpenAI.Message(tool_selection_id: $0.id!, result: "Sunny") }
-        let request = Gemini.GenerateContentRequest(model: .gemini3Flash, messages: history.map { Gemini.Message($0) })
+        let request = Gemini.GenerateContentRequest(model: .gemini3Flash, messages: history)
 
         let body = try body(of: Gemini(apiKey: "key").prepare(request: request))
         let contents = try XCTUnwrap(body["contents"] as? [[String: Any]])
