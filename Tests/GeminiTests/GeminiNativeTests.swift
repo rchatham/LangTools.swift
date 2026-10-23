@@ -96,6 +96,10 @@ final class GeminiNativeTests: MockSessionTestCase {
 
         XCTAssertEqual(try callPart(.init(model: .gemini3Pro, messages: [.init(tool_selection: [signed])]))["thoughtSignature"] as? String, "sig-abc")
         XCTAssertNil(try callPart(.init(modelID: "gemini-2.5-flash", messages: [.init(tool_selection: [unsigned])]))["thoughtSignature"])
+        // A signature on a text part does not cover the call that follows it.
+        let mixed = Gemini.Message(role: .model, parts: [.init(text: "Checking", thoughtSignature: "sig-text"), .init(functionCall: .init(id: "call_3", name: "get_weather", args: nil))])
+        let mixedContents = try XCTUnwrap(body(of: Gemini(apiKey: "key").prepare(request: Gemini.GenerateContentRequest(model: .gemini3Pro, messages: [mixed], stream: nil)))["contents"] as? [[String: Any]])
+        XCTAssertEqual((mixedContents.last?["parts"] as? [[String: Any]])?.last?["thoughtSignature"] as? String, Gemini.Part.skipThoughtSignatureValidator)
     }
 
     func testNativeAndCompatibleRequestsBothRouteToGeminiEndpoints() throws {

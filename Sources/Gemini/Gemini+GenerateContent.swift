@@ -133,7 +133,7 @@ extension Gemini {
                     if part.functionResponse?.name == nil { part.functionResponse?.name = names[id] }
                     return part
                 }
-                if modelID.hasPrefix("gemini-3"), message.role == .model, !parts.contains(where: { $0.thoughtSignature != nil }),
+                if modelID.hasPrefix("gemini-3"), message.role == .model, !parts.contains(where: { $0.functionCall != nil && $0.thoughtSignature != nil }),
                    let first = parts.firstIndex(where: { $0.functionCall != nil }) {
                     parts[first].thoughtSignature = Part.skipThoughtSignatureValidator
                 }
