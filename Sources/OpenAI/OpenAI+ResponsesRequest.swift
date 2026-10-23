@@ -353,6 +353,8 @@ extension OpenAI {
         public var model: String?
         public var output: [OutputItem]
         public var usage: Usage?
+        /// From a failed response, a `response.failed` event, or an `error` event.
+        public var error: ChatCompletionResponse.ResponseError?
 
         private var streamType: String?
         private var outputIndex: Int?
@@ -365,7 +367,9 @@ extension OpenAI {
         private var refusalDelta: String?
         private var argumentsDelta: String?
 
+        /// Nil for a single streamed event, whose text arrives through `delta`.
         public var message: OpenAI.Message? {
+            guard streamType == nil else { return nil }
             let text = output.compactMap { $0.messageText }.joined()
             let refusal = output.compactMap { $0.messageRefusal }.joined()
             let toolCalls = output.enumerated().compactMap { index, item -> OpenAI.Message.ToolCall? in
@@ -430,7 +434,7 @@ extension OpenAI {
             ResponsesResponse(id: nil, object: nil, created_at: nil, status: nil, model: nil, output: [], usage: nil)
         }
 
-        public init(id: String?, object: String?, created_at: Int?, status: String?, model: String?, output: [OutputItem], usage: Usage?) {
+        public init(id: String?, object: String?, created_at: Int?, status: String?, model: String?, output: [OutputItem], usage: Usage?, error: ChatCompletionResponse.ResponseError? = nil) {
             self.id = id
             self.object = object
             self.created_at = created_at
@@ -438,6 +442,7 @@ extension OpenAI {
             self.model = model
             self.output = output
             self.usage = usage
+            self.error = error
             self.streamType = nil
             self.outputIndex = nil
             self.contentIndex = nil
@@ -455,6 +460,7 @@ extension OpenAI {
             self.model = response?.model
             self.output = response?.output ?? []
             self.usage = response?.usage
+            self.error = response?.error
             self.streamType = streamType
             self.outputIndex = outputIndex
             self.contentIndex = contentIndex
@@ -494,7 +500,7 @@ extension OpenAI {
                 )
                 return
             }
-            if type == "response.output_item.added" {
+            if type?.hasPrefix("response.output_item.") == true {
                 self.init(
                     streamType: type ?? "",
                     outputIndex: try container.decodeIfPresent(Int.self, forKey: .output_index),
@@ -505,6 +511,11 @@ extension OpenAI {
                     argumentsDelta: nil,
                     response: nil
                 )
+                return
+            }
+            if type == "error" {  // The error's fields are at the top level.
+                self.init(id: nil, object: nil, created_at: nil, status: nil, model: nil, output: [], usage: nil, error: try? ChatCompletionResponse.ResponseError(from: decoder))
+                streamType = type
                 return
             }
             if type == "response.completed" {
@@ -531,6 +542,7 @@ extension OpenAI {
                     argumentsDelta: nil,
                     response: nestedResponse
                 )
+                error = error ?? (try? container.decode(ChatCompletionResponse.ResponseError.self, forKey: .error))  // `response.failed`
                 return
             }
 
@@ -541,7 +553,8 @@ extension OpenAI {
                 status: try container.decodeIfPresent(String.self, forKey: .status),
                 model: try container.decodeIfPresent(String.self, forKey: .model),
                 output: try container.decodeIfPresent([OutputItem].self, forKey: .output) ?? [],
-                usage: try container.decodeIfPresent(Usage.self, forKey: .usage)
+                usage: try container.decodeIfPresent(Usage.self, forKey: .usage),
+                error: try? container.decode(ChatCompletionResponse.ResponseError.self, forKey: .error)
             )
             streamType = type
             outputIndex = try container.decodeIfPresent(Int.self, forKey: .output_index)
@@ -550,6 +563,10 @@ extension OpenAI {
             textDelta = nil
             refusalDelta = nil
             argumentsDelta = nil
+        }
+
+        public func validateStreamChunk() throws {
+            if let error = error ?? (status == "failed" ? ChatCompletionResponse.ResponseError(message: "The response failed", code: status) : nil) { throw LangToolsError.apiError(error) }
         }
 
         public func updating(with accumulated: ResponsesResponse) -> ResponsesResponse {
@@ -565,7 +582,7 @@ extension OpenAI {
 
         public func combining(with next: ResponsesResponse) -> ResponsesResponse {
             if output.isEmpty, id == nil, next.streamType == nil { return next }
-            if next.streamType == "response.completed", next.hasCompletedResponsePayload { return next }
+            if next.hasCompletedResponsePayload { var completed = next; completed.streamType = nil; return completed }
 
             var combined = ResponsesResponse(
                 id: next.id ?? id,
@@ -577,7 +594,7 @@ extension OpenAI {
                 usage: next.usage ?? usage
             )
 
-            if next.streamType == "response.output_item.added", let item = next.item {
+            if next.streamType?.hasPrefix("response.output_item.") == true, let item = next.item {
                 let index = next.outputIndex ?? combined.output.count
                 combined.setOutputItem(item, at: index)
             } else if let delta = next.textDelta {
@@ -706,12 +723,13 @@ extension OpenAI {
             }
         }
 
+        /// A terminal event carrying the full response, which replaces the accumulated one.
         private var hasCompletedResponsePayload: Bool {
-            streamType == "response.completed" && (id != nil || object != nil || created_at != nil || status != nil || model != nil || !output.isEmpty || usage != nil)
+            ["response.completed", "response.incomplete"].contains(streamType) && (id != nil || object != nil || created_at != nil || status != nil || model != nil || !output.isEmpty || usage != nil)
         }
 
         enum CodingKeys: String, CodingKey {
-            case id, object, created_at, status, model, output, usage, type
+            case id, object, created_at, status, model, output, usage, type, error
             case output_index, content_index, item, delta, response
         }
     }

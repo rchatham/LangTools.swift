@@ -36,7 +36,7 @@ public final class Anthropic: LangTools {
 
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
-            { $0 is MessageRequest }
+            { ($0 as? MessageRequest).map { $0.providerID == nil } ?? false }  // Routed requests belong to their provider.
         ]
     }
 

@@ -13,6 +13,11 @@ final class AppleIntelligenceRouteTests: XCTestCase {
         XCTAssertNil(AccessDestination.destination(for: model))
     }
 
+    func testAppleModelGetsItsOwnPickerGroup() {
+        XCTAssertEqual(Model.apple(.onDevice).providerDisplayName, "Apple Intelligence")
+        XCTAssertEqual(Model.pickerGroups([.apple(.onDevice)]).map(\.title), ["Apple Intelligence"])
+    }
+
     func testAppleModelsAreListedOnlyWhereFoundationModelsShips() {
         XCTAssertEqual(Model.appleModels.isEmpty, !AppleIntelligence.isSupportedOnThisOS)
         XCTAssertEqual(Model.chatModels.contains(.apple(.onDevice)), AppleIntelligence.isSupportedOnThisOS)
