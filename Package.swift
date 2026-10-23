@@ -55,6 +55,7 @@ let package = Package(
         .testTarget(name: "GeminiTests", dependencies: ["Gemini", "OpenAI", "TestUtils"]),
         .testTarget(name: "OllamaTests", dependencies: ["Ollama", "OpenAI", "TestUtils"]),
         .testTarget(name: "AppleSpeechTests", dependencies: ["AppleLangTools"]),
+        .testTarget(name: "AppleIntelligenceTests", dependencies: ["AppleLangTools", "LangTools"]),
         .testTarget(name: "WhisperKitLangToolsTests", dependencies: ["WhisperKitLangTools"]),
     ] + (extendedTestsEnabled ? [
         .testTarget(name: "AgentsTests", dependencies: ["Agents", "LangTools", "OpenAI", "TestUtils"]),
