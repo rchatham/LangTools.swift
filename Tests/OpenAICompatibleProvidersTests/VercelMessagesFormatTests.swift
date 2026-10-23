@@ -15,8 +15,6 @@ import VercelAIGateway
 import OpenAICompatible
 
 final class VercelMessagesFormatTests: MockSessionTestCase {
-
-
     private func request() -> Anthropic.MessageRequest {
         Anthropic.MessageRequest(model: .claude46Sonnet, messages: [.init(role: .user, content: "Hi")])
             .routed(to: VercelAIGateway.providerID)

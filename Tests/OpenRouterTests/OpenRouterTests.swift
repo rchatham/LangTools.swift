@@ -14,39 +14,21 @@ import OpenAICompatible
 @testable import OpenAI
 import Anthropic
 
-final class OpenRouterTests: XCTestCase {
-
-    var api: OpenRouter!
-    var mockConfiguration: URLSessionConfiguration!
-
-    override func setUp() {
-        super.setUp()
-        URLProtocol.registerClass(MockURLProtocol.self)
-        mockConfiguration = URLSessionConfiguration.ephemeral
-        mockConfiguration.protocolClasses = [MockURLProtocol.self]
-        api = OpenRouter(apiKey: "or-key").configure(testURLSessionConfiguration: mockConfiguration)
-    }
-
-    override func tearDown() {
-        MockURLProtocol.resetHandlers()
-        URLProtocol.unregisterClass(MockURLProtocol.self)
-        super.tearDown()
-    }
+final class OpenRouterTests: MockSessionTestCase {
+    private var api: OpenRouter { OpenRouter(apiKey: "or-key", session: session) }
 
     private func chatRequest(_ model: OpenRouter.Model = "anthropic/claude-sonnet-4.5", stream: Bool? = nil) -> OpenAI.ChatCompletionRequest {
         OpenAI.ChatCompletionRequest(model: model, messages: [.init(role: .user, content: "Hi")], stream: stream)
     }
 
-    private func body(of urlRequest: URLRequest) throws -> [String: Any] {
-        try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(urlRequest.httpBody)) as? [String: Any])
+    private func messagesRequest() -> Anthropic.MessageRequest {
+        Anthropic.MessageRequest(model: .claude45Sonnet_20250929, messages: [.init(role: .user, content: "Hi")]).routed(to: OpenRouter.providerID)
     }
 
     // MARK: - Request preparation
 
-    func testPrepareTargetsOpenRouterWithAttributionHeaders() throws {
-        let openRouter = OpenRouter(apiKey: "or-key", appURL: URL(string: "https://example.com"), appTitle: "LangTools")
-
-        let urlRequest = try openRouter.prepare(request: chatRequest())
+    func testPrepareTargetsOpenRouterWithOptionalAttributionHeaders() throws {
+        let urlRequest = try OpenRouter(apiKey: "or-key", appURL: URL(string: "https://example.com"), appTitle: "LangTools").prepare(request: chatRequest())
 
         XCTAssertEqual(urlRequest.url?.absoluteString, "https://openrouter.ai/api/v1/chat/completions")
         XCTAssertEqual(urlRequest.httpMethod, "POST")
@@ -54,51 +36,49 @@ final class OpenRouterTests: XCTestCase {
         XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "HTTP-Referer"), "https://example.com")
         XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "X-OpenRouter-Title"), "LangTools")
         XCTAssertEqual(try body(of: urlRequest)["model"] as? String, "anthropic/claude-sonnet-4.5")
+
+        let plain = try OpenRouter(apiKey: "or-key", appTitle: "").prepare(request: chatRequest())
+        XCTAssertNil(plain.value(forHTTPHeaderField: "HTTP-Referer"))
+        XCTAssertNil(plain.value(forHTTPHeaderField: "X-OpenRouter-Title"))
     }
 
-    func testAttributionHeadersAreOmittedWhenNotConfigured() throws {
-        let urlRequest = try OpenRouter(apiKey: "or-key", appTitle: "").prepare(request: chatRequest())
+    func testMessagesRequestsTargetTheMessagesEndpointWithBearerAuth() throws {
+        let urlRequest = try OpenRouter(apiKey: "or-key", appTitle: "LangTools").prepare(request: messagesRequest())
 
-        XCTAssertNil(urlRequest.value(forHTTPHeaderField: "HTTP-Referer"))
-        XCTAssertNil(urlRequest.value(forHTTPHeaderField: "X-OpenRouter-Title"))
+        XCTAssertEqual(urlRequest.url?.absoluteString, "https://openrouter.ai/api/v1/messages")
+        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "Authorization"), "Bearer or-key")
+        XCTAssertNil(urlRequest.value(forHTTPHeaderField: "x-api-key"))
+        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "anthropic-version"), "2023-06-01")
+        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "X-OpenRouter-Title"), "LangTools", "attribution applies to every format")
+        XCTAssertEqual(try body(of: urlRequest)["model"] as? String, "anthropic/claude-sonnet-4.5")
     }
 
     // MARK: - Chat
 
-    func testChatCompletionDecodesGatewayResponse() async throws {
+    func testPerformAndStreamDecodeGatewayResponses() async throws {
         MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             XCTAssertEqual(request.url?.host, "openrouter.ai")
             return (.success(try self.getData(filename: "chat_completion_response-openrouter")!), 200)
         }
-
         let response = try await api.perform(request: chatRequest())
-
         XCTAssertEqual(response.choices.first?.message?.content.string, "Hello from a gateway.")
         XCTAssertEqual(response.usage?.completion_tokens_details?.reasoning_tokens, 12)
-    }
 
-    func testStreamingDeliversContentAndUsage() async throws {
-        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
-            (.success(try self.getData(filename: "chat_completion_stream-openrouter", fileExtension: "txt")!), 200)
-        }
-
-        var content = ""
-        var finalUsage: OpenAI.ChatCompletionResponse.Usage?
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in (.success(try self.getData(filename: "chat_completion_stream-openrouter", fileExtension: "txt")!), 200) }
+        var content = "", usage: OpenAI.ChatCompletionResponse.Usage?
         for try await chunk in api.stream(request: chatRequest(stream: true)) {
             content += chunk.choices.first?.delta?.content ?? ""
-            finalUsage = chunk.usage ?? finalUsage
+            usage = chunk.usage ?? usage
         }
-
         XCTAssertEqual(content, "Hello, world")
-        XCTAssertEqual(finalUsage?.completion_tokens_details?.reasoning_tokens, 24)
+        XCTAssertEqual(usage?.completion_tokens_details?.reasoning_tokens, 24)
     }
 
     func testStreamingErrorWithIntegerCodeEndsTheStream() async throws {
-        // OpenRouter's current API reports integer codes on mid-stream error chunks.
         let stream = """
-        data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"openai/gpt-5","choices":[{"index":0,"delta":{"role":"assistant","content":"Partial"},"finish_reason":null}]}
+        data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"choices":[{"index":0,"delta":{"role":"assistant","content":"Partial"},"finish_reason":null}]}
 
-        data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"openai/gpt-5","error":{"code":502,"message":"Upstream provider error","metadata":{"provider_name":"OpenAI"}},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}
+        data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"error":{"code":502,"message":"Upstream provider error","metadata":{"provider_name":"OpenAI"}},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}
 
         data: [DONE]
         """
@@ -106,9 +86,7 @@ final class OpenRouterTests: XCTestCase {
 
         var received: [String] = []
         do {
-            for try await chunk in api.stream(request: chatRequest(stream: true)) {
-                received.append(chunk.choices.first?.delta?.content ?? "")
-            }
+            for try await chunk in api.stream(request: chatRequest(stream: true)) { received.append(chunk.choices.first?.delta?.content ?? "") }
             XCTFail("Expected the error chunk to end the stream")
         } catch LangToolsError.apiError(let error as OpenAI.ChatCompletionResponse.ResponseError) {
             XCTAssertEqual(error.code, "502")
@@ -117,20 +95,20 @@ final class OpenRouterTests: XCTestCase {
         XCTAssertEqual(received, ["Partial"])
     }
 
-    func testHTTPErrorDecodesOpenRouterErrorResponse() async throws {
-        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
-            (.success(Data(#"{"error":{"code":402,"message":"Insufficient credits"},"user_id":"user_1"}"#.utf8)), 402)
-        }
+    func testErrorBodiesDecodeAsOpenRouterErrorResponse() async throws {
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in (.success(Data(#"{"error":{"code":402,"message":"Insufficient credits"},"user_id":"user_1"}"#.utf8)), 402) }
 
         do {
             _ = try await api.perform(request: chatRequest())
             XCTFail("Expected a 402 error")
         } catch LangToolsError.responseUnsuccessful(let status, let error as OpenRouterErrorResponse) {
             XCTAssertEqual(status, 402)
-            XCTAssertEqual(error.error.message, "Insufficient credits")
             XCTAssertEqual(error.error.code, "402")
             XCTAssertEqual(error.localizedDescription, "Insufficient credits (402)")
         }
+        let messagesError = try JSONDecoder().decode(OpenRouterErrorResponse.self, from: Data(#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#.utf8))
+        XCTAssertEqual(messagesError.error.message, "Overloaded")
+        XCTAssertEqual(messagesError.error.type, "overloaded_error")
     }
 
     // MARK: - Models
@@ -145,18 +123,24 @@ final class OpenRouterTests: XCTestCase {
         let models = try await api.listModels()
 
         XCTAssertEqual(models.map(\.id), ["anthropic/claude-sonnet-4.5", "meta-llama/llama-3.2-3b-instruct:free"])
-        let sonnet = models[0]
-        XCTAssertEqual(sonnet.contextWindow, 1_000_000)
-        XCTAssertEqual(sonnet.metadata["pricing"]?["prompt"], "0.000003")
-        XCTAssertEqual(sonnet.supportsTools, true)
+        XCTAssertEqual(models[0].contextWindow, 1_000_000)
+        XCTAssertEqual(models[0].metadata["pricing"]?["prompt"], "0.000003")
+        XCTAssertEqual(models[0].supportsTools, true)
         XCTAssertNil(models[1].contextWindow)
         XCTAssertEqual(models[1].supportsTools, false)
+    }
+
+    func testModelSlugValidationAndCoding() throws {
+        for invalid in ["", "  ", " anthropic/claude-sonnet-4.5 "] { XCTAssertNil(OpenRouter.Model(rawValue: invalid), "empty and padded slugs are rejected") }
+        XCTAssertEqual(OpenRouter.Model(rawValue: "openai/gpt-5:free")?.rawValue, "openai/gpt-5:free")
+        XCTAssertEqual(try JSONDecoder().decode(OpenRouter.Model.self, from: JSONEncoder().encode(OpenRouter.Model.auto)), .auto)
+        XCTAssertThrowsError(try JSONDecoder().decode(OpenRouter.Model.self, from: Data(#""""#.utf8)))
     }
 
     // MARK: - Routing options
 
     func testProviderPreferencesAndFallbackModelsAreEncoded() throws {
-        let request = OpenAI.ChatCompletionRequest(model: "meta-llama/llama-3.3-70b-instruct" as OpenRouter.Model, messages: [.init(role: .user, content: "Hi")])
+        let request = chatRequest("meta-llama/llama-3.3-70b-instruct")
             .routing(provider: .init(order: ["groq", "together"], allowFallbacks: false, dataCollection: .deny, sort: .throughput, zeroDataRetention: true), fallbackModels: ["mistralai/mistral-large"])
 
         let body = try body(of: api.prepare(request: request))
@@ -170,138 +154,60 @@ final class OpenRouterTests: XCTestCase {
         XCTAssertEqual(provider["sort"] as? String, "throughput")
         XCTAssertEqual(provider["zdr"] as? Bool, true)
         XCTAssertEqual(Set(provider.keys), ["order", "allow_fallbacks", "data_collection", "sort", "zdr"], "unset fields are omitted")
+
+        let preferences = OpenRouter.ProviderPreferences(order: ["a"], requireParameters: true, ignore: ["b"], quantizations: ["fp8"])
+        XCTAssertEqual(try JSONDecoder().decode(JSON.self, from: JSONEncoder().encode(preferences)), preferences.json)
+        XCTAssertEqual(try JSONDecoder().decode(OpenRouter.ProviderPreferences.self, from: JSONEncoder().encode(preferences)), preferences)
     }
 
     func testRoutingPreservesExistingParametersAndIgnoresNilArguments() {
         var request = chatRequest()
         request.additionalParameters = ["transforms": ["middle-out"]]
 
-        let unchanged = request.routing()
-        XCTAssertEqual(unchanged.additionalParameters, ["transforms": ["middle-out"]])
-
+        XCTAssertEqual(request.routing().additionalParameters, ["transforms": ["middle-out"]])
         let routed = request.routing(provider: .init(only: ["anthropic"]))
         XCTAssertEqual(routed.additionalParameters?["transforms"], ["middle-out"])
         XCTAssertEqual(routed.additionalParameters?["provider"], ["only": ["anthropic"]])
         XCTAssertNil(routed.additionalParameters?["models"])
-
         XCTAssertNil(chatRequest().routing().additionalParameters, "no options means no additional parameters")
-    }
-
-    func testProviderPreferencesCodableMatchesWireJSON() throws {
-        let preferences = OpenRouter.ProviderPreferences(order: ["a"], requireParameters: true, ignore: ["b"], quantizations: ["fp8"])
-        let decoded = try JSONDecoder().decode(JSON.self, from: JSONEncoder().encode(preferences))
-        XCTAssertEqual(decoded, preferences.json)
-        XCTAssertEqual(try JSONDecoder().decode(OpenRouter.ProviderPreferences.self, from: JSONEncoder().encode(preferences)), preferences)
     }
 
     // MARK: - Validation and toolchain routing
 
-    func testValidatorsClaimOnlyOpenRouterTaggedModels() {
-        let openRouterRequest = chatRequest("gpt-4o")
+    func testValidatorsClaimOnlyOpenRouterTaggedRequests() {
         let openAIRequest = OpenAI.ChatCompletionRequest(model: .gpt4o, messages: [.init(role: .user, content: "Hi")])
 
-        XCTAssertTrue(OpenRouter.requestValidators.contains { $0(openRouterRequest) })
+        XCTAssertTrue(OpenRouter.requestValidators.contains { $0(self.chatRequest("gpt-4o")) })
         XCTAssertFalse(OpenRouter.requestValidators.contains { $0(openAIRequest) })
-        XCTAssertFalse(OpenAI.requestValidators.contains { $0(openRouterRequest) },
-                       "an OpenRouter slug that matches an OpenAI ID must not route to OpenAI")
+        XCTAssertFalse(OpenAI.requestValidators.contains { $0(self.chatRequest("gpt-4o")) }, "an OpenRouter slug that matches an OpenAI ID must not route to OpenAI")
         XCTAssertTrue(OpenRouter.requestValidators.contains { $0(OpenAICompatibleListModelsRequest<OpenRouter>()) })
-    }
-
-    func testToolchainRoutesTaggedRequestsToOpenRouterAndUntaggedToOpenAI() async throws {
-        var toolchain = LangToolchain()
-        toolchain.register(OpenAI(apiKey: "openai-key").configure(testURLSessionConfiguration: mockConfiguration))
-        toolchain.register(api!)
-        let responseData = try XCTUnwrap(getData(filename: "chat_completion_response-openrouter"))
-
-        var hosts: [String?] = []
-        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
-            hosts.append(request.url?.host)
-            return (.success(responseData), 200)
-        }
-        _ = try await toolchain.perform(request: chatRequest("gpt-4o"))
-
-        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
-            hosts.append(request.url?.host)
-            return (.success(responseData), 200)
-        }
-        _ = try await toolchain.perform(request: OpenAI.ChatCompletionRequest(model: .gpt4o, messages: [.init(role: .user, content: "Hi")]))
-
-        XCTAssertEqual(hosts, ["openrouter.ai", "api.openai.com"])
-    }
-
-    func testChatRequestFactoryProducesTaggedRequest() throws {
-        let request = try OpenRouter.chatRequest(model: OpenRouter.Model.auto, messages: [OpenAI.Message(role: .user, content: "Hi")], tools: nil, responseSchema: nil, toolEventHandler: { _ in })
-
-        let chat = try XCTUnwrap(request as? OpenAI.ChatCompletionRequest)
-        XCTAssertEqual(chat.model.id, "openrouter/auto")
-        XCTAssertTrue(chat.model.belongs(to: OpenRouter.providerID))
-        XCTAssertThrowsError(try OpenRouter.chatRequest(model: OpenAI.Model.gpt4o, messages: [], tools: nil, responseSchema: nil, toolEventHandler: { _ in }))
-    }
-
-    // MARK: - Model type
-
-    func testModelSlugValidationAndCoding() throws {
-        XCTAssertNil(OpenRouter.Model(rawValue: ""))
-        XCTAssertNil(OpenRouter.Model(rawValue: "  "))
-        XCTAssertNil(OpenRouter.Model(rawValue: " anthropic/claude-sonnet-4.5 "), "padded slugs are rejected")
-        XCTAssertEqual(OpenRouter.Model(rawValue: "openai/gpt-5:free")?.rawValue, "openai/gpt-5:free")
-
-        let encoded = try JSONEncoder().encode(OpenRouter.Model.auto)
-        XCTAssertEqual(try JSONDecoder().decode(OpenRouter.Model.self, from: encoded), .auto)
-        XCTAssertThrowsError(try JSONDecoder().decode(OpenRouter.Model.self, from: Data(#""""#.utf8)))
-    }
-}
-
-extension OpenRouter {
-    internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
-        _ = openAI.configure(testURLSessionConfiguration: testURLSessionConfiguration)
-        return self
-    }
-}
-
-final class OpenRouterMessagesFormatTests: XCTestCase {
-    private func messagesRequest() -> Anthropic.MessageRequest {
-        Anthropic.MessageRequest(model: .claude45Sonnet_20250929, messages: [.init(role: .user, content: "Hi")])
-            .routed(to: OpenRouter.providerID)
-    }
-
-    func testMessagesRequestsTargetTheMessagesEndpointWithBearerAuth() throws {
-        let urlRequest = try OpenRouter(apiKey: "or-key", appTitle: "LangTools").prepare(request: messagesRequest())
-        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(urlRequest.httpBody)) as? [String: Any])
-
-        XCTAssertEqual(urlRequest.url?.absoluteString, "https://openrouter.ai/api/v1/messages")
-        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "Authorization"), "Bearer or-key")
-        XCTAssertNil(urlRequest.value(forHTTPHeaderField: "x-api-key"))
-        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "anthropic-version"), "2023-06-01")
-        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "X-OpenRouter-Title"), "LangTools", "attribution applies to every format")
-        XCTAssertEqual(body["model"] as? String, "anthropic/claude-sonnet-4.5")
-    }
-
-    func testOneClassServesBothFormatsInAToolchain() throws {
-        var toolchain = LangToolchain()
-        toolchain.register(Anthropic(apiKey: "anthropic"))
-        toolchain.register(OpenAI(apiKey: "openai"))
-        toolchain.register(OpenRouter(apiKey: "or-key"))
-        let direct = Anthropic.MessageRequest(model: .claude45Sonnet_20250929, messages: [.init(role: .user, content: "Hi")])
-        let chat = OpenAI.ChatCompletionRequest(model: "openai/gpt-4o" as OpenRouter.Model, messages: [.init(role: .user, content: "Hi")])
-
-        XCTAssertEqual(try toolchain.prepare(request: direct).url?.host, "api.anthropic.com")
-        XCTAssertEqual(try toolchain.prepare(request: messagesRequest()).url?.absoluteString, "https://openrouter.ai/api/v1/messages")
-        XCTAssertEqual(try toolchain.prepare(request: chat).url?.absoluteString, "https://openrouter.ai/api/v1/chat/completions")
         XCTAssertFalse(Anthropic(apiKey: "key").canHandleRequest(messagesRequest()))
     }
 
-    func testChatRequestBuildsTheFormatOfTheModelType() throws {
-        let messages = try OpenRouter.chatRequest(model: Anthropic.Model.claude46Sonnet, messages: [], tools: nil, responseSchema: nil, toolEventHandler: { _ in })
-        let chat = try OpenRouter.chatRequest(model: OpenRouter.Model.auto, messages: [], tools: nil, responseSchema: nil, toolEventHandler: { _ in })
+    func testToolchainRoutesEachFormatToItsProvider() async throws {
+        var toolchain = LangToolchain()
+        toolchain.register(Anthropic(apiKey: "anthropic"))
+        toolchain.register(OpenAI(apiKey: "openai-key", session: session))
+        toolchain.register(api)
+        let responseData = try XCTUnwrap(getData(filename: "chat_completion_response-openrouter"))
+        var hosts: [String?] = []
+        for request in [chatRequest("gpt-4o"), OpenAI.ChatCompletionRequest(model: .gpt4o, messages: [.init(role: .user, content: "Hi")])] {
+            MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { hosts.append($0.url?.host); return (.success(responseData), 200) }
+            _ = try await toolchain.perform(request: request)
+        }
 
-        XCTAssertEqual((messages as? Anthropic.MessageRequest)?.providerID, OpenRouter.providerID)
-        XCTAssertTrue((chat as? OpenAI.ChatCompletionRequest)?.model.belongs(to: OpenRouter.providerID) ?? false)
+        XCTAssertEqual(hosts, ["openrouter.ai", "api.openai.com"])
+        XCTAssertEqual(try toolchain.prepare(request: Anthropic.MessageRequest(model: .claude45Sonnet_20250929, messages: [.init(role: .user, content: "Hi")])).url?.host, "api.anthropic.com")
+        XCTAssertEqual(try toolchain.prepare(request: messagesRequest()).url?.absoluteString, "https://openrouter.ai/api/v1/messages")
     }
 
-    func testMessagesErrorBodyDecodes() throws {
-        let error = try JSONDecoder().decode(OpenRouterErrorResponse.self, from: Data(#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#.utf8))
-        XCTAssertEqual(error.error.message, "Overloaded")
-        XCTAssertEqual(error.error.type, "overloaded_error")
+    func testChatRequestBuildsTheFormatOfTheModelType() throws {
+        let chat = try XCTUnwrap(OpenRouter.chatRequest(model: OpenRouter.Model.auto, messages: [OpenAI.Message(role: .user, content: "Hi")], tools: nil, responseSchema: nil, toolEventHandler: { _ in }) as? OpenAI.ChatCompletionRequest)
+        let messages = try OpenRouter.chatRequest(model: Anthropic.Model.claude46Sonnet, messages: [], tools: nil, responseSchema: nil, toolEventHandler: { _ in })
+
+        XCTAssertEqual(chat.model.id, "openrouter/auto")
+        XCTAssertTrue(chat.model.belongs(to: OpenRouter.providerID))
+        XCTAssertEqual((messages as? Anthropic.MessageRequest)?.providerID, OpenRouter.providerID)
+        XCTAssertThrowsError(try OpenRouter.chatRequest(model: OpenAI.Model.gpt4o, messages: [], tools: nil, responseSchema: nil, toolEventHandler: { _ in }))
     }
 }

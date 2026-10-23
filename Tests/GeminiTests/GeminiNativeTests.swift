@@ -14,9 +14,6 @@ import OpenAI
 import OpenAICompatible
 
 final class GeminiNativeTests: MockSessionTestCase {
-
-
-
     private var gemini: Gemini { Gemini(apiKey: "key", session: session) }
 
     private let weatherTool = OpenAI.Tool(
@@ -25,6 +22,10 @@ final class GeminiNativeTests: MockSessionTestCase {
         tool_schema: .init(properties: ["city": .init(type: "string")], required: ["city"]),
         callback: { _, args in "Sunny in \(args["city"]?.stringValue ?? "?")" }
     )
+
+    private func decode(_ json: String) throws -> Gemini.GenerateContentResponse {
+        try JSONDecoder().decode(Gemini.GenerateContentResponse.self, from: Data(json.utf8))
+    }
 
     // MARK: - Requests
 
@@ -65,14 +66,6 @@ final class GeminiNativeTests: MockSessionTestCase {
         XCTAssertEqual((body["safetySettings"] as? [[String: Any]])?.first?["threshold"] as? String, "BLOCK_ONLY_HIGH")
     }
 
-    func testStreamingAndModelIDsOutsideTheEnum() throws {
-        let streaming = Gemini.GenerateContentRequest(modelID: "gemini-3.5-flash-preview", messages: [.init(role: .user, content: "Hi")], stream: true)
-        let tuned = Gemini.GenerateContentRequest(modelID: "tunedModels/my-model", messages: [.init(role: .user, content: "Hi")])
-
-        XCTAssertEqual(try Gemini(apiKey: "key").prepare(request: streaming).url?.absoluteString, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-preview:streamGenerateContent?alt=sse")
-        XCTAssertEqual(try Gemini(apiKey: "key").prepare(request: tuned).url?.absoluteString, "https://generativelanguage.googleapis.com/v1beta/tunedModels/my-model:generateContent")
-    }
-
     func testFunctionResponsesCarryTheCallNameAndReplayedCallsGetASignature() throws {
         // A call replayed from another provider's history has no signature.
         let call = Gemini.ToolCall(id: "call_1", name: "get_weather", args: .object(["city": .string("Paris")]))
@@ -105,7 +98,7 @@ final class GeminiNativeTests: MockSessionTestCase {
         XCTAssertNil(try callPart(.init(modelID: "gemini-2.5-flash", messages: [.init(tool_selection: [unsigned])]))["thoughtSignature"])
     }
 
-    func testNativeAndCompatibleRequestsBothRouteToGemini() throws {
+    func testNativeAndCompatibleRequestsBothRouteToGeminiEndpoints() throws {
         var toolchain = LangToolchain()
         toolchain.register(OpenAI(apiKey: "openai"))
         toolchain.register(Gemini(apiKey: "gemini"))
@@ -115,6 +108,11 @@ final class GeminiNativeTests: MockSessionTestCase {
         XCTAssertFalse(OpenAI(apiKey: "key").canHandleRequest(native))
         XCTAssertEqual(native.model, .gemini3Flash)
         XCTAssertEqual(try Gemini(apiKey: "key").prepare(request: OpenAI.ChatCompletionRequest(model: Gemini.Model.gemini3Flash, messages: [.init(role: .user, content: "Hi")])).url?.absoluteString, "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
+        // Streaming, and model IDs outside the enum.
+        let streaming = Gemini.GenerateContentRequest(modelID: "gemini-3.5-flash-preview", messages: [.init(role: .user, content: "Hi")], stream: true)
+        XCTAssertEqual(try Gemini(apiKey: "key").prepare(request: streaming).url?.absoluteString, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-preview:streamGenerateContent?alt=sse")
+        let tuned = Gemini.GenerateContentRequest(modelID: "tunedModels/my-model", messages: [.init(role: .user, content: "Hi")])
+        XCTAssertEqual(try Gemini(apiKey: "key").prepare(request: tuned).url?.absoluteString, "https://generativelanguage.googleapis.com/v1beta/tunedModels/my-model:generateContent")
     }
 
     func testOpenAIHistoryConvertsAndParallelResponsesShareATurn() throws {
@@ -190,8 +188,8 @@ final class GeminiNativeTests: MockSessionTestCase {
     }
 
     func testStreamCombinesTextAcrossChunks() throws {
-        let first = try JSONDecoder().decode(Gemini.GenerateContentResponse.self, from: Data(#"{"candidates":[{"content":{"role":"model","parts":[{"text":"Hel"}]}}]}"#.utf8))
-        let second = try JSONDecoder().decode(Gemini.GenerateContentResponse.self, from: Data(#"{"candidates":[{"content":{"role":"model","parts":[{"text":"lo","thoughtSignature":"sig"}]},"finishReason":"STOP"}]}"#.utf8))
+        let first = try decode(#"{"candidates":[{"content":{"role":"model","parts":[{"text":"Hel"}]}}]}"#)
+        let second = try decode(#"{"candidates":[{"content":{"role":"model","parts":[{"text":"lo","thoughtSignature":"sig"}]},"finishReason":"STOP"}]}"#)
 
         let combined = Gemini.GenerateContentResponse.empty.combining(with: first).combining(with: second)
 
@@ -203,12 +201,12 @@ final class GeminiNativeTests: MockSessionTestCase {
         XCTAssertThrowsError(try Gemini.GenerateContentResponse.empty.combining(with: first).validateStreamCompletion())
     }
 
-    func testSafetyStopsAndBlockedPromptsThrow() async throws {
-        let blocked = try JSONDecoder().decode(Gemini.GenerateContentResponse.self, from: Data(#"{"promptFeedback":{"blockReason":"SAFETY"}}"#.utf8))
+    func testSafetyStopsBlockedPromptsAndErrorsThrow() async throws {
+        let blocked = try decode(#"{"promptFeedback":{"blockReason":"SAFETY"}}"#)
         XCTAssertThrowsError(try blocked.validateStreamChunk())
-        let stopped = try JSONDecoder().decode(Gemini.GenerateContentResponse.self, from: Data(#"{"candidates":[{"content":{},"finishReason":"SAFETY"}]}"#.utf8))
+        let stopped = try decode(#"{"candidates":[{"content":{},"finishReason":"SAFETY"}]}"#)
         XCTAssertThrowsError(try stopped.validateStreamChunk())
-        let maxTokens = try JSONDecoder().decode(Gemini.GenerateContentResponse.self, from: Data(#"{"candidates":[{"content":{"role":"model","parts":[{"text":"Partial"}]},"finishReason":"MAX_TOKENS"}]}"#.utf8))
+        let maxTokens = try decode(#"{"candidates":[{"content":{"role":"model","parts":[{"text":"Partial"}]},"finishReason":"MAX_TOKENS"}]}"#)
         XCTAssertNoThrow(try maxTokens.validateStreamChunk())
 
         let stream = """
@@ -225,13 +223,8 @@ final class GeminiNativeTests: MockSessionTestCase {
             XCTAssertEqual(error.status, "UNAVAILABLE")
             XCTAssertEqual(error.code, 503)
         }
-    }
 
-    func testHTTPErrorDecodesTheNativeShape() async throws {
-        MockURLProtocol.setHandler(for: ":generateContent") { _ in
-            (.success(Data(#"{"error":{"code":400,"message":"API key not valid.","status":"INVALID_ARGUMENT"}}"#.utf8)), 400)
-        }
-
+        MockURLProtocol.setHandler(for: ":generateContent") { _ in (.success(Data(#"{"error":{"code":400,"message":"API key not valid.","status":"INVALID_ARGUMENT"}}"#.utf8)), 400) }
         do {
             _ = try await gemini.perform(request: Gemini.GenerateContentRequest(model: .gemini3Flash, messages: [.init(role: .user, content: "Hi")]))
             XCTFail("Expected a 400")

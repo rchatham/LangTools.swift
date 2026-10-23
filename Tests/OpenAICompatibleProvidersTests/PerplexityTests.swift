@@ -14,9 +14,6 @@ import OpenAICompatible
 import Perplexity
 
 final class PerplexityTests: MockSessionTestCase {
-
-
-
     private func request(_ model: Perplexity.Model, stream: Bool? = nil) -> OpenAI.ResponsesRequest {
         OpenAI.ResponsesRequest(model: model, messages: [.init(role: .user, content: "Hi")], stream: stream)
     }

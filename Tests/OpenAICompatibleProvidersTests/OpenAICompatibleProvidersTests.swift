@@ -15,8 +15,10 @@ import VercelAIGateway
 import Cohere
 
 final class OpenAICompatibleProvidersTests: MockSessionTestCase {
-
-
+    private func listModels<P: OpenAICompatibleProvider>(_ provider: P, _ catalog: String) async throws -> [OpenAICompatibleModelInfo] {
+        MockURLProtocol.setHandler(for: "models") { _ in (.success(Data(catalog.utf8)), 200) }
+        return try await provider.listModels()
+    }
 
     private func messages(of urlRequest: URLRequest) throws -> [[String: Any]] {
         try XCTUnwrap(body(of: urlRequest)["messages"] as? [[String: Any]])
@@ -68,19 +70,14 @@ final class OpenAICompatibleProvidersTests: MockSessionTestCase {
         XCTAssertThrowsError(try Mistral.chatRequest(model: "llama" as Groq.Model, messages: [], tools: nil, responseSchema: nil, toolEventHandler: { _ in }))
     }
 
-    func testModelIDsRejectEmptyAndPaddedValues() {
+    func testModelIDsRejectEmptyAndPaddedValuesAndKnownModelsAreValid() {
         XCTAssertNil(Groq.Model(rawValue: ""))
         XCTAssertNil(Groq.Model(rawValue: " llama"))
         XCTAssertEqual(Groq.Model(rawValue: "llama")?.rawValue, "llama")
         XCTAssertThrowsError(try JSONDecoder().decode(Groq.Model.self, from: Data(#""""#.utf8)))
-    }
-
-    func testKnownModelsAreValidIDs() {
         let all: [[String]] = [
-            VercelAIGateway.knownModels.map(\.rawValue), Groq.knownModels.map(\.rawValue),
-            Mistral.knownModels.map(\.rawValue), DeepSeek.knownModels.map(\.rawValue),
-            Cerebras.knownModels.map(\.rawValue), TogetherAI.knownModels.map(\.rawValue),
-            Fireworks.knownModels.map(\.rawValue), Cohere.knownModels.map(\.rawValue),
+            VercelAIGateway.knownModels.map(\.rawValue), Groq.knownModels.map(\.rawValue), Mistral.knownModels.map(\.rawValue), DeepSeek.knownModels.map(\.rawValue),
+            Cerebras.knownModels.map(\.rawValue), TogetherAI.knownModels.map(\.rawValue), Fireworks.knownModels.map(\.rawValue), Cohere.knownModels.map(\.rawValue),
         ]
         for ids in all {
             XCTAssertFalse(ids.isEmpty)
@@ -151,13 +148,14 @@ final class OpenAICompatibleProvidersTests: MockSessionTestCase {
         XCTAssertEqual(body["response_format"] as? [String: String], ["type": "json_object"])
     }
 
-    func testTogetherSendsLogprobsAsACount() throws {
-        let request = OpenAI.ChatCompletionRequest(model: "deepseek-ai/DeepSeek-V3" as TogetherAI.Model, messages: [.init(role: .user, content: "Hi")], logprobs: true, top_logprobs: 3)
+    func testTogetherSendsLogprobsAsACountAndVercelSendsMaxTokens() throws {
+        let together = try body(of: TogetherAI(apiKey: "key").prepare(request: OpenAI.ChatCompletionRequest(model: "deepseek-ai/DeepSeek-V3" as TogetherAI.Model, messages: [.init(role: .user, content: "Hi")], logprobs: true, top_logprobs: 3)))
+        XCTAssertEqual(together["logprobs"] as? Int, 3)
+        XCTAssertNil(together["top_logprobs"])
 
-        let body = try body(of: TogetherAI(apiKey: "key").prepare(request: request))
-
-        XCTAssertEqual(body["logprobs"] as? Int, 3)
-        XCTAssertNil(body["top_logprobs"])
+        let vercel = try body(of: VercelAIGateway(apiKey: "key").prepare(request: OpenAI.ChatCompletionRequest(model: "openai/gpt-5" as VercelAIGateway.Model, messages: [.init(role: .user, content: "Hi")], max_completion_tokens: 50)))
+        XCTAssertEqual(vercel["max_tokens"] as? Int, 50)
+        XCTAssertNil(vercel["max_completion_tokens"])
     }
 
     func testCohereRemovesUnsupportedOptionsAndUnwrapsTheSchema() throws {
@@ -178,18 +176,9 @@ final class OpenAICompatibleProvidersTests: MockSessionTestCase {
         XCTAssertNil(schema["strict"])
     }
 
-    func testVercelSendsMaxCompletionTokensAsMaxTokens() throws {
-        let request = OpenAI.ChatCompletionRequest(model: "openai/gpt-5" as VercelAIGateway.Model, messages: [.init(role: .user, content: "Hi")], max_completion_tokens: 50)
-
-        let body = try body(of: VercelAIGateway(apiKey: "key").prepare(request: request))
-
-        XCTAssertEqual(body["max_tokens"] as? Int, 50)
-        XCTAssertNil(body["max_completion_tokens"])
-    }
-
     // MARK: - Responses
 
-    func testStreamingConcatenatesTextPartsOfArrayContent() async throws {
+    func testMistralContentPartsStreamAsTextAndSkipUnknownParts() async throws {
         // Mistral reasoning models stream content as typed parts.
         let stream = """
         data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"magistral-medium-latest","choices":[{"index":0,"delta":{"role":"assistant","content":[{"type":"thinking","thinking":[{"type":"text","text":"hmm"}]}]},"finish_reason":null}]}
@@ -205,23 +194,15 @@ final class OpenAICompatibleProvidersTests: MockSessionTestCase {
             return (.success(Data(stream.utf8)), 200)
         }
         let mistral = Mistral(apiKey: "key", session: session)
-        let request = OpenAI.ChatCompletionRequest(model: "magistral-medium-latest" as Mistral.Model, messages: [.init(role: .user, content: "Hi")], stream: true)
+        let request = OpenAI.ChatCompletionRequest(model: "magistral-medium-latest" as Mistral.Model, messages: [.init(role: .user, content: "Hi")])
 
         var content = ""
-        for try await chunk in mistral.stream(request: request) {
-            content += chunk.choices.first?.delta?.content ?? ""
-        }
-
+        for try await chunk in mistral.stream(request: request) { content += chunk.choices.first?.delta?.content ?? "" }
         XCTAssertEqual(content, "Hello, world")
-    }
 
-    func testCompletionSkipsUnknownContentParts() async throws {
-        let response = """
-        {"id":"1","object":"chat.completion","created":1,"model":"magistral-medium-latest","choices":[{"index":0,"message":{"role":"assistant","content":[{"type":"thinking","thinking":[{"type":"text","text":"hmm"}]},{"type":"text","text":"Answer"}]},"finish_reason":"stop"}]}
-        """
+        let response = #"{"id":"1","object":"chat.completion","created":1,"choices":[{"index":0,"message":{"role":"assistant","content":[{"type":"thinking","thinking":[{"type":"text","text":"hmm"}]},{"type":"text","text":"Answer"}]},"finish_reason":"stop"}]}"#
         MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in (.success(Data(response.utf8)), 200) }
-
-        let result = try await Mistral(apiKey: "key", session: session).perform(request: OpenAI.ChatCompletionRequest(model: "magistral-medium-latest" as Mistral.Model, messages: [.init(role: .user, content: "Hi")]))
+        let result = try await mistral.perform(request: request)
 
         let parts = try XCTUnwrap(result.choices.first?.message?.content.array)
         XCTAssertEqual(parts.count, 1)
@@ -247,12 +228,8 @@ final class OpenAICompatibleProvidersTests: MockSessionTestCase {
         XCTAssertEqual(try decode(#"{"detail":[{"msg":"field required"},{"msg":"bad value"}]}"#).message, "field required; bad value")
         XCTAssertEqual(try decode(#"{"detail":"Not Found"}"#).message, "Not Found")
         XCTAssertThrowsError(try decode(#"{"choices":[]}"#))
-    }
-
-    func testErrorResponseRoundTripsInTheOpenAIShape() throws {
         let error = OpenAICompatibleErrorResponse(message: "Nope", type: "auth", code: "401")
-        let data = try JSONEncoder().encode(error)
-        XCTAssertEqual(try JSONDecoder().decode(OpenAICompatibleErrorResponse.self, from: data), error)
+        XCTAssertEqual(try decode(String(decoding: JSONEncoder().encode(error), as: UTF8.self)), error, "round-trips in the OpenAI shape")
         XCTAssertEqual(error.localizedDescription, "Nope")
     }
 
@@ -298,70 +275,48 @@ final class OpenAICompatibleProvidersTests: MockSessionTestCase {
         XCTAssertEqual(models.map(\.isChatModel), [true, false, true])
     }
 
-    func testListModelsReadsTogethersBareArray() async throws {
-        let catalog = """
+    func testListModelsReadsEachProvidersCatalogShape() async throws {
+        let together = try await listModels(TogetherAI(apiKey: "key", session: session), """
         [{"id":"meta-llama/Llama-3.3-70B-Instruct-Turbo","object":"model","type":"chat","display_name":"Llama 3.3 70B","organization":"Meta","context_length":131072},
          {"id":"BAAI/bge-large-en-v1.5","object":"model","type":"embedding","context_length":512}]
-        """
-        MockURLProtocol.setHandler(for: "models") { _ in (.success(Data(catalog.utf8)), 200) }
+        """)
+        XCTAssertEqual(together.map(\.id), ["meta-llama/Llama-3.3-70B-Instruct-Turbo", "BAAI/bge-large-en-v1.5"], "a bare array")
+        XCTAssertEqual(together[0].name, "Llama 3.3 70B")
+        XCTAssertEqual(together[0].ownedBy, "Meta")
+        XCTAssertEqual(together[0].contextWindow, 131_072)
+        XCTAssertNil(together[0].supportsTools)
+        XCTAssertEqual(together.map(\.isChatModel), [true, false])
 
-        let models = try await TogetherAI(apiKey: "key", session: session).listModels()
-
-        XCTAssertEqual(models.map(\.id), ["meta-llama/Llama-3.3-70B-Instruct-Turbo", "BAAI/bge-large-en-v1.5"])
-        XCTAssertEqual(models[0].name, "Llama 3.3 70B")
-        XCTAssertEqual(models[0].ownedBy, "Meta")
-        XCTAssertEqual(models[0].contextWindow, 131_072)
-        XCTAssertNil(models[0].supportsTools)
-        XCTAssertEqual(models.map(\.isChatModel), [true, false])
-    }
-
-    func testListModelsReadsMistralCapabilities() async throws {
-        let catalog = """
+        let mistral = try await listModels(Mistral(apiKey: "key", session: session), """
         {"object":"list","data":[
           {"id":"mistral-large-latest","object":"model","owned_by":"mistralai","type":"base","max_context_length":131072,"capabilities":{"completion_chat":true,"function_calling":true}},
           {"id":"mistral-embed","object":"model","owned_by":"mistralai","type":"base","capabilities":{"completion_chat":false,"function_calling":false}}
         ]}
-        """
-        MockURLProtocol.setHandler(for: "models") { _ in (.success(Data(catalog.utf8)), 200) }
+        """)
+        XCTAssertEqual(mistral.map(\.isChatModel), [true, false])
+        XCTAssertEqual(mistral.map(\.supportsTools), [true, false])
+        XCTAssertEqual(mistral[0].contextWindow, 131_072)
 
-        let models = try await Mistral(apiKey: "key", session: session).listModels()
-
-        XCTAssertEqual(models.map(\.isChatModel), [true, false])
-        XCTAssertEqual(models.map(\.supportsTools), [true, false])
-        XCTAssertEqual(models[0].contextWindow, 131_072)
-    }
-
-    func testListModelsFiltersGroqByActivityAndID() async throws {
-        let catalog = """
+        let groq = try await listModels(Groq(apiKey: "key", session: session), """
         {"object":"list","data":[
           {"id":"llama-3.3-70b-versatile","object":"model","owned_by":"Meta","active":true,"context_window":131072,"max_completion_tokens":32768},
           {"id":"whisper-large-v3","object":"model","owned_by":"OpenAI","active":true,"context_window":448},
           {"id":"llama3-8b-8192","object":"model","owned_by":"Meta","active":false,"context_window":8192}
         ]}
-        """
-        MockURLProtocol.setHandler(for: "models") { _ in (.success(Data(catalog.utf8)), 200) }
+        """)
+        XCTAssertEqual(groq.map(\.isChatModel), [true, false, false], "filtered by activity and ID")
+        XCTAssertEqual(groq[0].maxOutputTokens, 32_768)
+        XCTAssertNil(groq[0].supportsTools)
 
-        let models = try await Groq(apiKey: "key", session: session).listModels()
-
-        XCTAssertEqual(models.map(\.isChatModel), [true, false, false])
-        XCTAssertEqual(models[0].maxOutputTokens, 32_768)
-        XCTAssertNil(models[0].supportsTools)
-    }
-
-    func testListModelsReadsFireworksFlagsAndExcludesEmbeddings() async throws {
-        let catalog = """
+        let fireworks = try await listModels(Fireworks(apiKey: "key", session: session), """
         {"object":"list","data":[
           {"id":"accounts/fireworks/models/deepseek-v3","object":"model","owned_by":"fireworks","kind":"HF_BASE_MODEL","supports_chat":true,"supports_tools":true,"context_length":163840},
           {"id":"accounts/fireworks/models/qwen3-embedding-8b","object":"model","kind":"EMBEDDING_MODEL","supports_chat":true,"supports_tools":false}
         ]}
-        """
-        MockURLProtocol.setHandler(for: "models") { _ in (.success(Data(catalog.utf8)), 200) }
-
-        let models = try await Fireworks(apiKey: "key", session: session).listModels()
-
-        XCTAssertEqual(models.map(\.isChatModel), [true, false])
-        XCTAssertEqual(models.map(\.supportsTools), [true, false])
-        XCTAssertEqual(models[0].contextWindow, 163_840)
+        """)
+        XCTAssertEqual(fireworks.map(\.isChatModel), [true, false], "embeddings are excluded")
+        XCTAssertEqual(fireworks.map(\.supportsTools), [true, false])
+        XCTAssertEqual(fireworks[0].contextWindow, 163_840)
     }
 
     func testCohereListsModelsFromItsNativeCatalog() async throws {

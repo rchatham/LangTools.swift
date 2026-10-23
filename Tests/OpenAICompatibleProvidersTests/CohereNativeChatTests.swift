@@ -14,9 +14,6 @@ import OpenAICompatible
 import Cohere
 
 final class CohereNativeChatTests: MockSessionTestCase {
-
-
-
     private let weatherTool = OpenAI.Tool(
         name: "get_weather",
         description: "Current weather",
