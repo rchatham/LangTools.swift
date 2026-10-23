@@ -26,7 +26,7 @@ Codex Mac-account authentication failures use a sanitized **503** response with 
 
 See [helper README](../cli/README.md#optional-account-capabilities) for routes and [Ollama verification history](helper-ollama-verification.md) for prior acceptance evidence.
 
-## Current verification (2026-10-09–20)
+## Current verification (2026-10-09–23)
 
 All results below are local runs, not a claim about remote CI or live subscriptions. Root/app/build/UI results are from October 9; the helper filter was rerun on October 13 after the test/fixture-only cold-start observation adjustment. The October 19–20 observer work and narrowed client-test verification are recorded separately below and did not change production or UI code.
 
@@ -71,9 +71,13 @@ Cause: `stdoutClosed` classified EOF solely through `process.isRunning`. When th
 
 The fix waits a **bounded grace** after EOF before classifying it: an absolute 250 ms `ContinuousClock` deadline, sleeping at most 10 ms at a time, then attributing `.exited(status:stderr:)` through the existing termination path. A child that closes stdout and keeps running still fails closed once the grace expires. The grace task is generation-scoped, detached from caller cancellation, and joined by `invalidateProcessAndWait` so teardown cannot race it. Production timers, ownership and buffering are unchanged.
 
-`testStdoutCloseBeforeProcessReapingAttributesExitStatus` covers it with a fixture that flushes and closes OS descriptor 1 while still alive, waits 150 ms, then exits 7. Against the unfixed runtime that test fails **3/3** with the exact CI error; with the fix it passes, and post-correction verification was **63/63** green (20/20 new test, 20/20 restart, 20/20 oversized-unterminated, the separate-timeout case, and two full client suites including one without `PR77_TEST_EVIDENCE`). Independent code and security review both returned PASS. Fresh remote checks for this change are tracked on the PR, not assumed here.
+`testStdoutCloseBeforeProcessReapingAttributesExitStatus` covers it with a fixture that flushes and closes OS descriptor 1 while still alive, waits 150 ms, then exits 7. Against the unfixed runtime that test fails **3/3** with the exact CI error; with the fix it passes, and post-correction verification was **63/63** green (20/20 new test, 20/20 restart, 20/20 oversized-unterminated, the separate-timeout case, and two full client suites including one without `PR77_TEST_EVIDENCE`). Independent code and security review both returned PASS.
 
-The fix does not explain the separate oversized request-timeout reds, and a bounded grace is not a strict wall-clock guarantee under actor scheduling contention.
+Fresh remote CI at `10e12adf` then passed **eight checks with two intentional cloud skips and no failures**, including `helper-mobile-tests` — the job that failed 2/2 at `00ab9133` — plus `app-helper-tests`, `extended-tests`, `performance-tests`, `linux-build` and the review job.
+
+The fix does not explain the separate oversized request-timeout reds or the historical `0af9ab68` cold-start failure, and a bounded grace is not a strict wall-clock guarantee under actor scheduling contention.
+
+Main advanced sixteen commits while the fix was in progress; they were merged as `10e12adf` with conflicts resolved in `ProviderAccessManager` and `ChatSettingsView`. The merged tree builds, the local app CI filter passes **195/195**, and the client suite passes **26/26**.
 
 Reproduce the focused checks:
 
