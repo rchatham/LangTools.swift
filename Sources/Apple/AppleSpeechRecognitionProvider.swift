@@ -1,6 +1,8 @@
-import AVFoundation
 import Foundation
 import LangTools
+
+#if canImport(Speech)
+import AVFoundation
 import Speech
 
 func isBenignAppleSpeechTerminalError(_ error: Error) -> Bool {
@@ -466,3 +468,4 @@ enum AppleLangToolsAudioConverter {
         return try Data(contentsOf: tempWAV)
     }
 }
+#endif

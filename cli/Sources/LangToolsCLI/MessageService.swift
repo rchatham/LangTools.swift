@@ -12,6 +12,8 @@ import FoundationNetworking
 import Gemini
 import LangTools
 import OpenAI
+import OpenAICompatible
+import OpenRouter
 import XAI
 import Combine
 
@@ -230,6 +232,10 @@ class MessageService: ObservableObject {
         case .gemini:
             envVar = "GEMINI_API_KEY"
             serviceName = "Gemini"
+        case .openRouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
+            let compatible = CompatibleProvider(category: provider)!
+            envVar = compatible.environmentVariable
+            serviceName = compatible.displayName
         case .ollama:
             return ["The current Ollama model could not be reached. Check that Ollama is running and the model is available."]
         }
@@ -249,6 +255,10 @@ class MessageService: ObservableObject {
             print("XAI API error: \(error.error)")
         case let error as GeminiErrorResponse:
             print("Gemini API error: \(error.error)")
+        case let error as OpenRouterErrorResponse:
+            print("OpenRouter API error: \(error.error.errorDescription ?? error.error.message)")
+        case let error as OpenAICompatibleErrorResponse:
+            print("API error: \(error.message)")
         case let error as AnthropicErrorResponse:
             print("Anthropic API error: \(error.error)")
         default:

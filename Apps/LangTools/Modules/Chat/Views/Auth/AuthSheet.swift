@@ -198,7 +198,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
             return "OpenAI Platform status: \(status). Add an API key for direct API requests. Account credentials are selected separately for the Codex model route."
         case .anthropic:
             return "Models are shown when their provider is configured. Anthropic status: \(status). Add an Anthropic API key or sign in with Claude Code for account-based access."
-        case .xAI, .gemini:
+        case .xAI, .gemini, .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
             return "\(service.displayName) status: \(status). Use an API key to enable this provider and make its models appear in the picker."
         case .ollama:
             return "Ollama models run locally and do not require API keys or account login."

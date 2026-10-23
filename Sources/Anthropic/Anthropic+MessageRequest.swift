@@ -57,6 +57,18 @@ extension Anthropic {
         @CodableIgnored
         public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
 
+        /// Another provider serving this format, and the model ID sent there; nil for Anthropic. Not encoded.
+        @CodableIgnored public internal(set) var providerID: LangToolsProviderID?
+        @CodableIgnored public internal(set) var providerModelID: String?
+
+        /// A copy routed to another provider's Messages endpoint, optionally with its model ID.
+        public func routed(to providerID: LangToolsProviderID, modelID: String? = nil) -> Self {
+            var request = self
+            request.providerID = providerID
+            request.providerModelID = modelID
+            return request
+        }
+
         // MARK: - LangToolsStructuredOutputRequest
 
         /// The response schema for structured output. Setting this automatically populates `output_config`.
