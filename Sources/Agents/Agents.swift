@@ -23,6 +23,10 @@ public protocol Agent {
     /// The caller is responsible for decoding the JSON into the appropriate type.
     /// Default is `nil` (plain-text response).
     var responseSchema: JSONSchema? { get }
+
+    /// Executes this agent. The default implementation runs the provider tool loop.
+    /// A specialized agent may finalize its response from authoritative tool data.
+    func execute(context: AgentContext) async throws -> String
 }
 
 extension Agent {
@@ -104,6 +108,15 @@ public enum AgentEvent: Equatable {
 
 extension Agent {
     public func execute(context: AgentContext) async throws -> String {
+        try await execute(context: context, finalizingResponse: { $0 })
+    }
+
+    /// Runs the normal provider/tool loop, then finalizes its response before
+    /// publishing success. Throwing never retries tools or publishes a success.
+    public func execute(
+        context: AgentContext,
+        finalizingResponse: (String) throws -> String
+    ) async throws -> String {
         #if DEBUG
         let richResultTraceID = RichResultDiagnostics.TraceID.random()
         #endif
@@ -183,6 +196,8 @@ extension Agent {
                 context.eventHandler(.error(agent: name, message: "Empty result received"))
                 throw AgentError("agent: \(name) - error: Failed to return text content")
             }
+            try Task.checkCancellation()
+            let finalized = try finalizingResponse(result)
             #if DEBUG
             print(RichResultDiagnostics.agentCompletionLog(
                 traceID: richResultTraceID,
@@ -192,8 +207,8 @@ extension Agent {
                 isError: false
             ))
             #endif
-            context.eventHandler(.completed(agent: name, result: result))
-            return result
+            context.eventHandler(.completed(agent: name, result: finalized))
+            return finalized
         } catch {
             #if DEBUG
             print(RichResultDiagnostics.agentErrorLog(
