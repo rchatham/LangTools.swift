@@ -13,27 +13,9 @@ import OpenAI
 import OpenAICompatible
 import Perplexity
 
-final class PerplexityTests: XCTestCase {
+final class PerplexityTests: MockSessionTestCase {
 
-    var session: URLSession!
 
-    override func setUp() {
-        super.setUp()
-        URLProtocol.registerClass(MockURLProtocol.self)
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [MockURLProtocol.self]
-        session = URLSession(configuration: configuration)
-    }
-
-    override func tearDown() {
-        MockURLProtocol.resetHandlers()
-        URLProtocol.unregisterClass(MockURLProtocol.self)
-        super.tearDown()
-    }
-
-    private func body(of urlRequest: URLRequest) throws -> [String: Any] {
-        try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(urlRequest.httpBody)) as? [String: Any])
-    }
 
     private func request(_ model: Perplexity.Model, stream: Bool? = nil) -> OpenAI.ResponsesRequest {
         OpenAI.ResponsesRequest(model: model, messages: [.init(role: .user, content: "Hi")], stream: stream)

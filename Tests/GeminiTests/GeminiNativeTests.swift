@@ -13,27 +13,9 @@ import LangTools
 import OpenAI
 import OpenAICompatible
 
-final class GeminiNativeTests: XCTestCase {
+final class GeminiNativeTests: MockSessionTestCase {
 
-    var session: URLSession!
 
-    override func setUp() {
-        super.setUp()
-        URLProtocol.registerClass(MockURLProtocol.self)
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [MockURLProtocol.self]
-        session = URLSession(configuration: configuration)
-    }
-
-    override func tearDown() {
-        MockURLProtocol.resetHandlers()
-        URLProtocol.unregisterClass(MockURLProtocol.self)
-        super.tearDown()
-    }
-
-    private func body(of urlRequest: URLRequest) throws -> [String: Any] {
-        try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(urlRequest.bodyData ?? urlRequest.httpBody)) as? [String: Any])
-    }
 
     private var gemini: Gemini { Gemini(apiKey: "key", session: session) }
 

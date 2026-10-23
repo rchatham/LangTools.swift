@@ -14,23 +14,8 @@ import OpenAI
 import VercelAIGateway
 import OpenAICompatible
 
-final class VercelMessagesFormatTests: XCTestCase {
+final class VercelMessagesFormatTests: MockSessionTestCase {
 
-    var session: URLSession!
-
-    override func setUp() {
-        super.setUp()
-        URLProtocol.registerClass(MockURLProtocol.self)
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [MockURLProtocol.self]
-        session = URLSession(configuration: configuration)
-    }
-
-    override func tearDown() {
-        MockURLProtocol.resetHandlers()
-        URLProtocol.unregisterClass(MockURLProtocol.self)
-        super.tearDown()
-    }
 
     private func request() -> Anthropic.MessageRequest {
         Anthropic.MessageRequest(model: .claude46Sonnet, messages: [.init(role: .user, content: "Hi")])

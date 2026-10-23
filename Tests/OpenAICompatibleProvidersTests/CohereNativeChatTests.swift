@@ -13,27 +13,9 @@ import OpenAI
 import OpenAICompatible
 import Cohere
 
-final class CohereNativeChatTests: XCTestCase {
+final class CohereNativeChatTests: MockSessionTestCase {
 
-    var session: URLSession!
 
-    override func setUp() {
-        super.setUp()
-        URLProtocol.registerClass(MockURLProtocol.self)
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [MockURLProtocol.self]
-        session = URLSession(configuration: configuration)
-    }
-
-    override func tearDown() {
-        MockURLProtocol.resetHandlers()
-        URLProtocol.unregisterClass(MockURLProtocol.self)
-        super.tearDown()
-    }
-
-    private func body(of urlRequest: URLRequest) throws -> [String: Any] {
-        try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(urlRequest.httpBody)) as? [String: Any])
-    }
 
     private let weatherTool = OpenAI.Tool(
         name: "get_weather",
