@@ -343,8 +343,9 @@ extension MessageService: @retroactive ChatMessageService {
 
         default:
             // On-device generation errors (availability, guardrails, context
-            // window) carry their own localized descriptions.
-            if UserDefaults.model.apiService == .apple {
+            // window) carry their own localized descriptions. Match on the error
+            // itself, not the saved default model, so attribution stays correct.
+            if error.isAppleIntelligenceError {
                 return ChatAlertInfo(title: "Apple Intelligence", message: error.localizedDescription)
             }
             return nil

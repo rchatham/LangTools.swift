@@ -44,9 +44,8 @@ enum FoundationModelsEngine {
                     var emitted = ""
                     for try await snapshot in session.streamResponse(to: prompt, options: options(for: request)) {
                         try Task.checkCancellation()
-                        let text = snapshot.content
-                        let delta = text.hasPrefix(emitted) ? String(text.dropFirst(emitted.count)) : text
-                        emitted = text
+                        let delta = AppleIntelligence.streamDelta(emitted: emitted, snapshot: snapshot.content)
+                        emitted = snapshot.content
                         guard !delta.isEmpty else { continue }
                         if case .terminated = continuation.yield(.init(delta: .init(content: delta))) { return }
                     }
@@ -59,6 +58,10 @@ enum FoundationModelsEngine {
             }
             continuation.onTermination = { @Sendable _ in task.cancel() }
         }
+    }
+
+    static func isFrameworkError(_ error: Error) -> Bool {
+        error is LanguageModelSession.GenerationError || error is LanguageModelSession.ToolCallError
     }
 
     static func makeSession(for request: AppleIntelligence.ChatRequest) throws -> (LanguageModelSession, String) {

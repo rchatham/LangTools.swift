@@ -271,7 +271,8 @@ public extension Array<Message> {
     /// calls are dropped and only each message's text context is replayed.
     func toAppleIntelligenceMessages() -> [AppleIntelligence.Message] {
         compactMap { m in
-            guard let text = m.providerContext, !text.isEmpty else { return nil }
+            guard m.isSystem || m.isUser || m.isAssistant,
+                  let text = m.providerContext, !text.isEmpty else { return nil }
             return AppleIntelligence.Message(role: .init(m.role), string: text)
         }
     }

@@ -69,6 +69,21 @@ final class AppleIntelligenceTests: XCTestCase {
         XCTAssertEqual(AppleIntelligence.historyWindow([.user("Hi"), .assistant("Hello")], prompt: huge, instructions: ""), [])
     }
 
+    func testStreamDeltaEmitsOnlyNewTextAndNeverResendsEmittedText() {
+        XCTAssertEqual(AppleIntelligence.streamDelta(emitted: "", snapshot: "Hel"), "Hel")
+        XCTAssertEqual(AppleIntelligence.streamDelta(emitted: "Hel", snapshot: "Hello"), "lo")
+        XCTAssertEqual(AppleIntelligence.streamDelta(emitted: "Hello", snapshot: "Hello"), "")
+        // A snapshot that rewrites earlier text only contributes its new tail.
+        XCTAssertEqual(AppleIntelligence.streamDelta(emitted: "Hello", snapshot: "Howdy there"), " there")
+        XCTAssertEqual(AppleIntelligence.streamDelta(emitted: "Hello there", snapshot: "Hi"), "")
+    }
+
+    func testProviderErrorDetectionMatchesOnlyAppleErrors() {
+        XCTAssertTrue(AppleIntelligence.isProviderError(AppleIntelligenceError.unavailable(.modelNotReady)))
+        XCTAssertFalse(AppleIntelligence.isProviderError(LangToolsError.requestFailed))
+        XCTAssertFalse(AppleIntelligence.isProviderError(URLError(.timedOut)))
+    }
+
     func testTranscriptPlanRequiresAUserMessage() {
         XCTAssertThrowsError(try AppleIntelligence.transcriptPlan(for: [Message(role: .system, string: "Only instructions")])) {
             XCTAssertEqual($0 as? AppleIntelligenceError, .missingPrompt)

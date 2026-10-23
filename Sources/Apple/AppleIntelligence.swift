@@ -34,7 +34,8 @@ import LangTools
 ///     print(chunk.delta?.content ?? "", terminator: "")
 /// }
 /// ```
-public final class AppleIntelligence: LangTools {
+/// Stateless and immutable, so a single instance can be shared across actors.
+public final class AppleIntelligence: LangTools, Sendable {
     public typealias Model = AppleIntelligenceModel
     public typealias ErrorResponse = AppleIntelligenceErrorResponse
     public typealias Message = LangToolsMessageImpl<LangToolsTextContent>
@@ -121,6 +122,28 @@ public final class AppleIntelligence: LangTools {
         guard tools?.isEmpty ?? true else { throw AppleIntelligenceError.toolCallingUnsupported }
         guard responseSchema == nil else { throw AppleIntelligenceError.structuredOutputUnsupported }
         return ChatRequest(model: model, messages: messages)
+    }
+
+    /// Whether `error` originated from Apple Intelligence generation: this
+    /// provider's own errors or Foundation Models generation/tool-call errors.
+    public static func isProviderError(_ error: Error) -> Bool {
+        if error is AppleIntelligenceError { return true }
+        #if canImport(FoundationModels) && !os(watchOS) && !os(tvOS)
+        if #available(iOS 26.0, macOS 26.0, visionOS 26.0, *) {
+            return FoundationModelsEngine.isFrameworkError(error)
+        }
+        #endif
+        return false
+    }
+
+    /// Text to emit for a streamed snapshot, given everything emitted so far.
+    ///
+    /// Foundation Models string snapshots carry the cumulative response and grow
+    /// append-only. LangTools deltas cannot retract text, so if a snapshot ever
+    /// rewrites earlier output only the part beyond what was already emitted is
+    /// sent; re-sending the whole snapshot would duplicate it once deltas combine.
+    public static func streamDelta(emitted: String, snapshot: String) -> String {
+        String(snapshot.dropFirst(emitted.count))
     }
 
     // MARK: - Engine dispatch

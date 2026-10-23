@@ -395,6 +395,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .apple(let providerModel):
             // Tool calling is not bridged to Foundation Models yet, so tools are
             // not sent; the on-device model answers from the conversation alone.
+            // GenerationOptions takes a single sampling mode, so top-k wins when
+            // both top-k and top-p are set (ranges are validated by the settings).
             let sampling: AppleIntelligence.Sampling? = if let topK {
                 .topK(topK, seed: seed.map { UInt64(truncatingIfNeeded: $0) })
             } else if let topP {
@@ -415,6 +417,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
 
     public func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
         let effectiveModel = ToolSettings.shared.agentModelOverride ?? model
+        // Agents need tool calling, which the on-device route lacks regardless of availability.
+        if effectiveModel.apiService == .apple { throw AppleIntelligenceError.toolCallingUnsupported }
         try ensureModelAccess(for: effectiveModel)
         if accountSession(for: effectiveModel) != nil {
             throw NetworkError.accountProxyTransportFailed("Account-backed agent execution is not supported. Use an API key for agent runs.")
@@ -632,4 +636,9 @@ extension NetworkClient {
             }
         }
     }
+}
+
+public extension Error {
+    /// Whether this error came from Apple Intelligence on-device generation.
+    var isAppleIntelligenceError: Bool { AppleIntelligence.isProviderError(self) }
 }
