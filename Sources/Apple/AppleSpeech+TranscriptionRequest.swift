@@ -6,9 +6,11 @@
 //
 
 import Foundation
+import LangTools
+
+#if canImport(Speech)
 import Speech
 import AVFoundation
-import LangTools
 
 private final class AppleSpeechTranscriptionContinuationBox: @unchecked Sendable {
     private let lock = NSLock()
@@ -199,3 +201,4 @@ public enum AppleSpeechError: Error, LocalizedError {
         }
     }
 }
+#endif

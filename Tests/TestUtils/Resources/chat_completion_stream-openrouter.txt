@@ -1,0 +1,11 @@
+: OPENROUTER PROCESSING
+
+data: {"id":"gen-1729000001-def456","provider":"OpenAI","model":"openai/gpt-5","object":"chat.completion.chunk","created":1729000001,"choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+: OPENROUTER PROCESSING
+
+data: {"id":"gen-1729000001-def456","provider":"OpenAI","model":"openai/gpt-5","object":"chat.completion.chunk","created":1729000001,"choices":[{"index":0,"delta":{"content":", world"},"finish_reason":"stop","native_finish_reason":"completed","logprobs":null}]}
+
+data: {"id":"gen-1729000001-def456","provider":"OpenAI","model":"openai/gpt-5","object":"chat.completion.chunk","created":1729000001,"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":30,"total_tokens":39,"cost":0.0004,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":24}}}
+
+data: [DONE]

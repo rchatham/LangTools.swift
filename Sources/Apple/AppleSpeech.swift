@@ -6,6 +6,8 @@
 //
 
 import Foundation
+
+#if canImport(Speech)
 import Speech
 
 /// Namespace for Apple Speech recognition functionality
@@ -46,3 +48,4 @@ public enum AppleSpeech {
         SFSpeechRecognizer.authorizationStatus()
     }
 }
+#endif

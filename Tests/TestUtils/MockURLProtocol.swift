@@ -55,6 +55,16 @@ class MockURLProtocol: URLProtocol {
         "api.anthropic.com",
         "api.x.ai",
         "generativelanguage.googleapis.com",
+        "openrouter.ai",
+        "ai-gateway.vercel.sh",
+        "api.groq.com",
+        "api.mistral.ai",
+        "api.deepseek.com",
+        "api.cerebras.ai",
+        "api.together.xyz",
+        "api.fireworks.ai",
+        "api.cohere.com",
+        "api.perplexity.ai",
     ]
 
     private static func hasHandler(forPath path: String) -> Bool {

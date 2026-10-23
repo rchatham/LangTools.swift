@@ -7,6 +7,7 @@
 
 import Foundation
 
+#if canImport(Speech)
 extension AppleSpeech {
     /// Model identifier for Apple Speech framework
     ///
@@ -21,3 +22,4 @@ extension AppleSpeech {
         public var displayName: String { "Apple Speech (On-Device)" }
     }
 }
+#endif

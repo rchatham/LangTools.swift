@@ -9,6 +9,7 @@ import XCTest
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+import LangTools
 @testable import TestUtils
 @testable import XAI
 @testable import OpenAI
@@ -121,6 +122,17 @@ class XAITests: XCTestCase {
 
         let isValid = XAI.requestValidators.contains { $0(validRequest) }
         XCTAssertTrue(isValid, "XAI request validator should accept XAI model requests")
+    }
+
+    func testXAIValidatorRejectsModelTaggedForAnotherProvider() {
+        let gateway = LangToolsProviderID(rawValue: "example.gateway")
+        let tagged = OpenAI.ChatCompletionRequest(
+            model: OpenAI.Model(customModelID: XAIModel.grok3.rawValue, providerID: gateway),
+            messages: [.init(role: .user, content: "test")]
+        )
+
+        XCTAssertFalse(XAI.requestValidators.contains { $0(tagged) },
+                       "a Grok ID tagged for a gateway must route to that gateway, not XAI")
     }
 
     func testGrokVisionModel() async throws {
