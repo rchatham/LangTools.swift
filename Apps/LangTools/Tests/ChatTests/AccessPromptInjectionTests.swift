@@ -9,6 +9,7 @@ final class AccessPromptInjectionTests: XCTestCase {
     func testInjectedConstructionIsInertAndRetainsTheOwnedManager() throws {
         let fixture = try AccessPromptFixture()
         let calls = AccessPromptCalls()
+        let modelReads = fixture.model.reads
         let context = fixture.context(calls: calls)
         let reads = fixture.keys.reads
         let controller = AccessPromptController(context: context)
@@ -18,6 +19,8 @@ final class AccessPromptInjectionTests: XCTestCase {
         XCTAssertTrue(controller.accessManager === fixture.manager)
         _ = EmptyView().manageAccessPrompts(accessPrompts: context, priority: 10)
         XCTAssertEqual(calls.actions, [])
+        XCTAssertEqual(fixture.model.reads, modelReads)
+        XCTAssertEqual(fixture.model.writes, 0)
         XCTAssertEqual(fixture.keys.reads, reads)
         XCTAssertEqual(fixture.secrets.values, [:])
         XCTAssertEqual(fixture.credentials.operations, 0)
@@ -78,6 +81,33 @@ final class AccessPromptInjectionTests: XCTestCase {
         XCTAssertFalse(fixture.manager.state(for: .openAI).hasAccountSession)
     }
 
+    func testInjectedResolutionIsDynamicAndLifecyclePreservesOwnerArbitration() throws {
+        let fixture = try AccessPromptFixture()
+        let modelReads = fixture.model.reads
+        let dependencies = fixture.context(calls: AccessPromptCalls()).resolvePresentationDependencies()
+        XCTAssertTrue(dependencies.presentation === fixture.presentation)
+        XCTAssertTrue(dependencies.login === fixture.login)
+        XCTAssertEqual(fixture.model.reads, modelReads)
+        XCTAssertEqual(dependencies.model.wrappedValue.apiService, .openAI)
+        fixture.model.value = try XCTUnwrap(Model(rawValue: "ollama/llama3.2"))
+        XCTAssertEqual(dependencies.model.wrappedValue.apiService, .ollama)
+        XCTAssertNil(AccessDestination.destination(for: dependencies.model.wrappedValue))
+        let root = UUID(), settings = UUID()
+        fixture.presentation.registerPresenter(root, priority: 0)
+        fixture.presentation.registerPresenter(settings, priority: 10)
+        XCTAssertEqual(fixture.presentation.presentationOwner, settings)
+        fixture.presentation.present(preferredDestination: .anthropic)
+        XCTAssertEqual(fixture.presentation.preferredDestination, .anthropic)
+        fixture.presentation.dismiss()
+        XCTAssertNil(fixture.presentation.preferredDestination)
+        XCTAssertFalse(fixture.presentation.isPresented)
+        fixture.presentation.unregisterPresenter(settings)
+        XCTAssertEqual(fixture.presentation.presentationOwner, root)
+        fixture.presentation.unregisterPresenter(root)
+        XCTAssertNil(fixture.presentation.presentationOwner)
+        XCTAssertEqual(fixture.model.writes, 0)
+    }
+
     func testLegacySelectionDoesNotResolveDependencies() {
         let presentation = AccessPromptPresentation.legacy
         guard case .legacy = presentation else { return XCTFail("Expected legacy selector") }
@@ -106,6 +136,10 @@ final class AccessPromptFixture {
     let credentials = AccessPromptCredentialStore()
     let configuration: OllamaEndpointConfiguration
     let manager: ProviderAccessManager
+    let model = AccessPromptMemoryModel()
+    let selectedModelBinding: Binding<Model>
+    let presentation = AuthPresentationCoordinator()
+    let login = AccountLoginCoordinator()
 
     init() throws {
         defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -113,6 +147,8 @@ final class AccessPromptFixture {
         configuration = OllamaEndpointConfiguration(userDefaults: defaults, credentialStore: credentials)
         manager = ProviderAccessManager(keychainService: keys, sessionStore: AuthSessionStore(secretStore: secrets),
             ollamaEndpointConfiguration: configuration)
+        // SwiftUI Binding.init samples its getter; do this BEFORE context construction.
+        selectedModelBinding = model.binding
     }
 
     deinit { defaults.removePersistentDomain(forName: suite) }
@@ -139,7 +175,17 @@ final class AccessPromptFixture {
         }, disconnectCodexHelper: { [self] in
             try calls.record("helper-disconnect")
             try AuthSessionStore(secretStore: secrets).removeSession(for: .openAI)
-        })
+        }, selectedModelBinding: selectedModelBinding, presentationCoordinator: presentation, loginCoordinator: login)
+    }
+}
+
+@MainActor
+final class AccessPromptMemoryModel {
+    var value: Model = .openAI(.gpt4o_mini)
+    private(set) var reads = 0
+    private(set) var writes = 0
+    var binding: Binding<Model> {
+        Binding(get: { self.reads += 1; return self.value }, set: { self.writes += 1; self.value = $0 })
     }
 }
 

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Operations and displayed access state for one owned settings graph.
 /// No default operation resolves a global client, manager or credential store.
@@ -11,6 +12,8 @@ public struct AccessPromptContext {
     let disconnectAccount: (AccountLoginProvider) async throws -> Void
     let connectCodexHelper: () async throws -> Void
     let disconnectCodexHelper: () async throws -> Void
+
+    private var presentationDependencies: PresentationDependencies = .legacy
 
     public init(
         accessManager: ProviderAccessManager,
@@ -28,6 +31,39 @@ public struct AccessPromptContext {
         self.disconnectAccount = disconnectAccount
         self.connectCodexHelper = connectCodexHelper
         self.disconnectCodexHelper = disconnectCodexHelper
+    }
+
+    /// Explicit presentation dependencies are retained without reading the binding.
+    public init(
+        accessManager: ProviderAccessManager,
+        saveAPIKey: @escaping (String, APIService) throws -> Void,
+        removeAPIKey: @escaping (APIService) throws -> Void,
+        connectAccount: @escaping (AccountLoginProvider) async throws -> Void,
+        disconnectAccount: @escaping (AccountLoginProvider) async throws -> Void,
+        connectCodexHelper: @escaping () async throws -> Void,
+        disconnectCodexHelper: @escaping () async throws -> Void,
+        selectedModelBinding: Binding<Model>,
+        presentationCoordinator: AuthPresentationCoordinator,
+        loginCoordinator: AccountLoginCoordinator
+    ) {
+        self.init(accessManager: accessManager, saveAPIKey: saveAPIKey, removeAPIKey: removeAPIKey,
+            connectAccount: connectAccount, disconnectAccount: disconnectAccount,
+            connectCodexHelper: connectCodexHelper, disconnectCodexHelper: disconnectCodexHelper)
+        presentationDependencies = .injected(selectedModelBinding, presentationCoordinator, loginCoordinator)
+    }
+
+    private enum PresentationDependencies {
+        case legacy
+        case injected(Binding<Model>, AuthPresentationCoordinator, AccountLoginCoordinator)
+    }
+
+    func resolvePresentationDependencies() -> (model: Binding<Model>, presentation: AuthPresentationCoordinator, login: AccountLoginCoordinator) {
+        switch presentationDependencies {
+        case .legacy:
+            return (Binding(get: { UserDefaults.model }, set: { UserDefaults.model = $0 }), .shared, .shared)
+        case let .injected(model, presentation, login):
+            return (model, presentation, login)
+        }
     }
 
     /// Only the selected legacy presentation may resolve these dependencies.

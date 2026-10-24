@@ -1,8 +1,8 @@
 import SwiftUI
 
 private struct ManageAccessPromptModifier: ViewModifier {
-    @ObservedObject private var coordinator = AuthPresentationCoordinator.shared
-    @ObservedObject private var loginCoordinator = AccountLoginCoordinator.shared
+    @ObservedObject private var coordinator: AuthPresentationCoordinator
+    @ObservedObject private var loginCoordinator: AccountLoginCoordinator
     @ObservedObject private var accessManager: ProviderAccessManager
     @State private var showAPIKeyPrompt = false
     @State private var apiKeyInput = ""
@@ -15,8 +15,13 @@ private struct ManageAccessPromptModifier: ViewModifier {
     @State private var presenterID = UUID()
     private let controller: AccessPromptController
     private let priority: Int
+    private let selectedModelBinding: Binding<Model>
 
     init(accessPrompts: AccessPromptContext, priority: Int) {
+        let dependencies = accessPrompts.resolvePresentationDependencies()
+        self._coordinator = ObservedObject(wrappedValue: dependencies.presentation)
+        self._loginCoordinator = ObservedObject(wrappedValue: dependencies.login)
+        self.selectedModelBinding = dependencies.model
         self.controller = AccessPromptController(context: accessPrompts)
         self.accessManager = accessPrompts.accessManager
         self.priority = priority
@@ -76,11 +81,11 @@ private struct ManageAccessPromptModifier: ViewModifier {
     }
 
     private var currentDestination: AccessDestination? {
-        coordinator.preferredDestination ?? AccessDestination.destination(for: UserDefaults.model)
+        coordinator.preferredDestination ?? AccessDestination.destination(for: selectedModelBinding.wrappedValue)
     }
 
     private var currentService: APIService {
-        currentDestination?.service ?? UserDefaults.model.apiService
+        currentDestination?.service ?? selectedModelBinding.wrappedValue.apiService
     }
 
     private var currentState: ProviderAccessState {

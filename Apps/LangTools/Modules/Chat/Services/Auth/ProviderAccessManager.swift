@@ -286,6 +286,8 @@ public final class AuthPresentationCoordinator: ObservableObject {
     private var presenters: [UUID: (priority: Int, order: UInt64)] = [:]
     private var registrationOrder: UInt64 = 0
 
+    public init() {}
+
     /// Settings sheets/windows own their own prompts while visible. The chat
     /// root stays registered as a fallback, not a second simultaneous presenter.
     func registerPresenter(_ id: UUID, priority: Int) {
