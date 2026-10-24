@@ -314,6 +314,9 @@ actor TaskManager {
         case .ollama(let providerModel):
             guard let provider = toolchain.langTool(Ollama.self) else { throw ProviderError.unavailable(model) }
             return ProviderContext(langTool: provider, model: providerModel)
+        case .compatible(let compatible, let id):
+            guard let context = compatible.providerContext(id: id, toolchain: toolchain) else { throw ProviderError.unavailable(model) }
+            return ProviderContext(langTool: context.langTool, model: context.model)
         }
     }
 

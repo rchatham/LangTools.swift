@@ -10,7 +10,7 @@ services:
       - .:/workspace
     environment:
       - SWIFT_VERSION=5.9
-    command: swift test --parallel
+    command: swift test --no-parallel
 
   # Swift 5.10 for forward compatibility testing
   langtools-swift-5-10:
@@ -23,7 +23,7 @@ services:
       - .:/workspace
     environment:
       - SWIFT_VERSION=5.10
-    command: swift test --parallel
+    command: swift test --no-parallel
 
   # Swift 6.0 for future compatibility testing
   langtools-swift-6-0:
@@ -36,7 +36,7 @@ services:
       - .:/workspace
     environment:
       - SWIFT_VERSION=6.0
-    command: swift test --parallel
+    command: swift test --no-parallel
 
   # Build-only service (no tests)
   langtools-build:

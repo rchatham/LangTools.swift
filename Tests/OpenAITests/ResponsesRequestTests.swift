@@ -552,6 +552,60 @@ final class ResponsesRequestTests: XCTestCase {
         XCTAssertNil(firstToolCall(in: combined))
     }
 
+    func testResponsesErrorEventsFailTheChunk() throws {
+        let errorEvent: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(#"data: {"type":"error","code":"rate_limit_exceeded","message":"Slow down","param":null}"#)
+        XCTAssertThrowsError(try XCTUnwrap(errorEvent).validateStreamChunk()) { error in
+            guard case LangToolsError.apiError(let apiError as OpenAI.ChatCompletionResponse.ResponseError) = error else { return XCTFail("Unexpected \(error)") }
+            XCTAssertEqual(apiError.message, "Slow down")
+            XCTAssertEqual(apiError.code, "rate_limit_exceeded")
+        }
+
+        let failed: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(#"data: {"type":"response.failed","response":{"id":"resp_1","status":"failed","output":[],"error":{"code":"server_error","message":"Boom"}}}"#)
+        XCTAssertThrowsError(try XCTUnwrap(failed).validateStreamChunk())
+
+        let failedWithoutDetail = OpenAI.ResponsesResponse(id: "resp_1", object: "response", created_at: 1, status: "failed", model: nil, output: [], usage: nil)
+        XCTAssertThrowsError(try failedWithoutDetail.validateStreamChunk())
+
+        let completed = try JSONDecoder().decode(OpenAI.ResponsesResponse.self, from: Data(#"{"id":"resp_1","status":"completed","output":[],"error":null}"#.utf8))
+        XCTAssertNoThrow(try completed.validateStreamChunk())
+    }
+
+    func testResponsesTerminalEventDoesNotRepeatTheStreamedText() throws {
+        let completed: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(#"data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello"}]}]}}"#)
+        let event = try XCTUnwrap(completed)
+
+        // Stream consumers read `content`; the event's text already arrived as deltas.
+        XCTAssertNil(event.message)
+        XCTAssertNil(event.content)
+        XCTAssertEqual(OpenAI.ResponsesResponse.empty.combining(with: event).message?.content.string, "Hello")
+    }
+
+    func testResponsesIncompleteStreamEventReplacesAccumulatedResponse() throws {
+        let lines = [
+            #"data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"Partial"}"#,
+            #"data: {"type":"response.incomplete","response":{"id":"resp_1","status":"incomplete","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Partial answer"}]}]}}"#
+        ]
+
+        var combined = OpenAI.ResponsesResponse.empty
+        for line in lines {
+            let response: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(line)
+            if let response { combined = combined.combining(with: response) }
+        }
+
+        XCTAssertEqual(combined.status, "incomplete")
+        XCTAssertEqual(combined.message?.content.string, "Partial answer")
+    }
+
+    func testResponsesOutputItemDoneCompletesAFunctionCallWithoutEmittingADelta() throws {
+        let done: OpenAI.ResponsesResponse? = try OpenAI.decodeStream(#"data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"}}"#)
+        let chunk = try XCTUnwrap(done)
+
+        XCTAssertNil(chunk.delta)
+        let toolCall = try XCTUnwrap(firstToolCall(in: OpenAI.ResponsesResponse.empty.combining(with: chunk)))
+        XCTAssertEqual(toolCall.id, "call_1")
+        XCTAssertEqual(toolCall.name, "lookup")
+    }
+
     private func encodedFunctionCallID(for request: OpenAI.ResponsesRequest) throws -> String {
         let data = try JSONEncoder().encode(request)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])

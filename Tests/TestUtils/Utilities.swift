@@ -6,6 +6,9 @@
 //
 
 import XCTest
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 @testable import LangTools
 
 extension LangToolsStreamableResponse where Self: Encodable {
@@ -46,5 +49,29 @@ extension Encodable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = outputFormatting
         return try encoder.encode(self)
+    }
+}
+
+/// A test case whose `session` routes through `MockURLProtocol`; handlers are reset after each test.
+open class MockSessionTestCase: XCTestCase {
+    public var session: URLSession!
+
+    open override func setUp() {
+        super.setUp()
+        URLProtocol.registerClass(MockURLProtocol.self)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        session = URLSession(configuration: configuration)
+    }
+
+    open override func tearDown() {
+        MockURLProtocol.resetHandlers()
+        URLProtocol.unregisterClass(MockURLProtocol.self)
+        super.tearDown()
+    }
+
+    /// The JSON object body of a prepared request.
+    public func body(of urlRequest: URLRequest) throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(urlRequest.bodyData ?? urlRequest.httpBody)) as? [String: Any])
     }
 }
