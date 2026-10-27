@@ -8,6 +8,7 @@ import Agents
 import ChatUI
 import Foundation
 import LangTools
+import OpenAI
 import ToolKit
 
 private enum BufferedMessageEvent {
@@ -254,13 +255,40 @@ private final class SendEventBuffer: @unchecked Sendable {
 @Observable
 public class MessageService {
     public let networkClient: NetworkClientProtocol
-    @ObservationIgnored private let toolSettings: ToolSettings
+    /// Providers preserve dynamic lookup timing without requiring shared state.
+    @MainActor
+    public struct Dependencies {
+        public let selectedModel: () -> Model
+        public let conversationSettings: () -> ChatConversationSettings
+        public let keepsToolCallsInHistory: () -> Bool
+        public let maxToolIterations: () -> Int?
+        public let enabledTools: () -> [OpenAI.Tool]?
+        public let toolConfigurations: () -> [ToolConfiguration]
+
+        public init(
+            selectedModel: @escaping () -> Model,
+            conversationSettings: @escaping () -> ChatConversationSettings,
+            keepsToolCallsInHistory: @escaping () -> Bool,
+            maxToolIterations: @escaping () -> Int?,
+            enabledTools: @escaping () -> [OpenAI.Tool]?,
+            toolConfigurations: @escaping () -> [ToolConfiguration]
+        ) {
+            self.selectedModel = selectedModel
+            self.conversationSettings = conversationSettings
+            self.keepsToolCallsInHistory = keepsToolCallsInHistory
+            self.maxToolIterations = maxToolIterations
+            self.enabledTools = enabledTools
+            self.toolConfigurations = toolConfigurations
+        }
+    }
+
+    @ObservationIgnored private let dependencies: Dependencies
     public var messages: [Message] = [] {
         didSet {
             if let last = messages.last {
                 notifyMessageUpdated(
                     last,
-                    keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory
+                    keepsToolCallsInHistory: dependencies.keepsToolCallsInHistory()
                 )
             }
         }
@@ -288,14 +316,12 @@ public class MessageService {
     /// Register this from the app target to keep `Chat` agnostic of specific agents.
     public var agentResultParser: ((_ result: String, _ agentName: String) -> Message?)?
 
-    /// Snapshot of tools filtered by the current ToolManager state.
-    /// Delegates to `ToolManager.filteredTools()` for the enabled-id set, then
-    /// intersects with `self.tools` so future changes to ToolManager filtering
-    /// logic are automatically picked up here.
-    /// Hops to the main actor because ToolManager is @MainActor-isolated.
+    /// Snapshot of tools filtered by the enabled-id set, intersected with
+    /// supplied tools and supplemented by non-agent configurations.
+    /// Legacy providers delegate dynamically to the main-actor ToolManager.
     @MainActor
     func filteredTools(for sendID: UUID) -> [Tool]? {
-        guard let enabledTools = ToolManager.shared.filteredTools() else { return nil }
+        guard let enabledTools = dependencies.enabledTools() else { return nil }
         let enabledNames = Set(enabledTools.map { $0.name })
         let agentTools = agents
             .filter { enabledNames.contains($0.name) }
@@ -306,14 +332,34 @@ public class MessageService {
             }
         var result = agentTools + (tools ?? []).filter { enabledNames.contains($0.name) }
         let suppliedToolNames = Set(result.map { $0.name })
-        for config in ToolManager.shared.allToolConfigurations() where !config.isAgent && enabledNames.contains(config.id) && !suppliedToolNames.contains(config.id) {
+        for config in dependencies.toolConfigurations() where !config.isAgent && enabledNames.contains(config.id) && !suppliedToolNames.contains(config.id) {
             result.append(Tool(config.toTool()))
         }
         return result
     }
 
     public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [any Agent]? = nil, tools: [Tool]? = nil, toolSettings: ToolSettings = .shared) {
-        self.toolSettings = toolSettings
+        self.dependencies = Dependencies(
+            selectedModel: { UserDefaults.model },
+            conversationSettings: { ChatConversationSettingsStore().load() },
+            keepsToolCallsInHistory: { toolSettings.keepsToolCallsInHistory },
+            maxToolIterations: { toolSettings.maxToolIterations },
+            enabledTools: { ToolManager.shared.filteredTools() },
+            toolConfigurations: { ToolManager.shared.allToolConfigurations() }
+        )
+        self.networkClient = networkClient
+        self.agents = agents ?? []
+        self.tools = tools
+    }
+
+    /// Fully owned inputs, with no default client, settings, or registry lookup.
+    public init(
+        networkClient: NetworkClientProtocol,
+        agents: [any Agent]?,
+        tools: [Tool]?,
+        dependencies: Dependencies
+    ) {
+        self.dependencies = dependencies
         self.networkClient = networkClient
         self.agents = agents ?? []
         self.tools = tools
@@ -350,7 +396,7 @@ public class MessageService {
     public func markResponseStopped(messageID: UUID) {
         guard let message = messages.first(where: { $0.uuid == messageID && $0.isUser }) else { return }
         message.wasResponseStopped = true
-        notifyMessageUpdated(message, keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory)
+        notifyMessageUpdated(message, keepsToolCallsInHistory: dependencies.keepsToolCallsInHistory())
     }
 
     private func makeSendOperation(
@@ -362,7 +408,7 @@ public class MessageService {
         let establishment = SendEstablishment()
         let eventNotifications = eventBuffer.register(sendID)
         let requestSnapshot = requestMessages(
-            keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory
+            keepsToolCallsInHistory: dependencies.keepsToolCallsInHistory()
         )
 
         let completion = Task { @MainActor in
@@ -418,9 +464,9 @@ public class MessageService {
         let toolCallTracker = RequestToolCallTracker()
         // Enforce the configured iteration budget before callbacks run so
         // over-limit calls fail fast instead of executing.
-        let toolBudget = ToolIterationBudget(maxIterations: toolSettings.maxToolIterations)
-        let keepsToolCallsInHistory = toolSettings.keepsToolCallsInHistory
-        let selectedModel = UserDefaults.model
+        let toolBudget = ToolIterationBudget(maxIterations: dependencies.maxToolIterations())
+        let keepsToolCallsInHistory = dependencies.keepsToolCallsInHistory()
+        let selectedModel = dependencies.selectedModel()
         let replayService = selectedModel.apiService
 
         do {
@@ -636,8 +682,7 @@ public class MessageService {
     }
 
     func systemMessage() -> String {
-        let store = ChatConversationSettingsStore()
-        let settings = store.load()
+        let settings = dependencies.conversationSettings()
         var prompt = settings.systemPrompt
 
         // Append memory fields if set
@@ -722,8 +767,8 @@ extension MessageService {
             anchorMessageID: &anchorMessageID,
             toolBreakOccurred: &toolBreakOccurred,
             generatedMessageIDs: &generatedMessageIDs,
-            keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory,
-            replayService: UserDefaults.model.apiService
+            keepsToolCallsInHistory: dependencies.keepsToolCallsInHistory(),
+            replayService: dependencies.selectedModel().apiService
         )
     }
 
@@ -901,7 +946,7 @@ extension MessageService {
         }
 
         // Apply context window truncation from conversation settings
-        let convSettings = ChatConversationSettingsStore().load()
+        let convSettings = dependencies.conversationSettings()
         if let limit = convSettings.maxContextMessages, limit > 0 {
             // Always keep the most recent user+assistant pair and system message
             let keepCount = min(limit, eligibleMessages.count)
