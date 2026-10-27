@@ -575,6 +575,10 @@ public enum RichResultDiagnostics {
         return "\(prefix)[decode] type=\(type.rawValue) category=\(category.rawValue) depth=\(path.depth) path=\(renderedPath) bytes=\(byteCount) shape=\(shape.rawValue)"
     }
 
+    public static func renderDecodeFailureLog(type: TypeLabel, cardType: CardTypeLabel) -> String {
+        "\(prefix)[render-decode] type=\(type.rawValue) cardType=\(cardType.rawValue) outcome=decodeFailed"
+    }
+
     public static func registryLog(
         namespace: Namespace,
         agent: AgentLabel?,

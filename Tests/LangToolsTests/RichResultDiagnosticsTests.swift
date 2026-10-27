@@ -50,6 +50,23 @@ final class RichResultDiagnosticsTests: XCTestCase {
         XCTAssertEqual(RichResultDiagnostics.CardTypeLabel.label(for: "custom-card-<script>"), .other)
     }
 
+    func testRenderDecodeFailureRedactsCustomRegistrationIdentifiers() {
+        struct PrivateCustomerSchema {}
+        for identifier in ["sk-fixture-secret", "customer-private-calendar", "custom\nforged-log"] {
+            let line = RichResultDiagnostics.renderDecodeFailureLog(
+                type: .label(forType: PrivateCustomerSchema.self),
+                cardType: .label(for: identifier)
+            )
+            XCTAssertEqual(line, "[RichResult][render-decode] type=other cardType=other outcome=decodeFailed")
+            XCTAssertFalse(line.contains(identifier))
+            XCTAssertFalse(line.contains("PrivateCustomerSchema"))
+        }
+        XCTAssertEqual(
+            RichResultDiagnostics.renderDecodeFailureLog(type: .weatherCardData, cardType: .weather),
+            "[RichResult][render-decode] type=weatherCardData cardType=weather outcome=decodeFailed"
+        )
+    }
+
     func testProviderRouteLabelRedactsUnknown() {
         XCTAssertEqual(RichResultDiagnostics.ProviderLabel.label(forRoute: "openai"), .openAI)
         XCTAssertEqual(RichResultDiagnostics.ProviderLabel.label(forRoute: "claude-code"), .claudeCode)
