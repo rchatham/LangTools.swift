@@ -41,7 +41,8 @@ pipelines, remote execution, or mobile-relay coding capability in this MVP.
 - [x] Create repository-local worktree and confirm helper boundary approval.
 - [x] Implement separately revocable access policy and path/credential tests.
 - [ ] Wire helper consent/roots and separately authenticated coding routes.
-- [ ] Implement tmux lifecycle and prove independent PTY attachment on a disposable socket.
+- [x] Prove independent PTY attachment on a disposable socket (synthetic agents).
+- [ ] Implement production tmux lifecycle and helper PTY service.
 - [ ] Implement bounded terminal transport; input, resize, Unicode, reconnect tests.
 - [ ] Add project persistence, sidebar/overview/launch/terminal/stop presentation.
 - [ ] Run core/app/helper suites, macOS/iOS builds, UI verification and screenshots.
@@ -58,6 +59,12 @@ pipelines, remote execution, or mobile-relay coding capability in this MVP.
   than canonical `/private/var`; corrected expectation to the approved root.
 - Ran `swift test --package-path cli --filter 'CodingWorkspaceAccessTests|LocalHelperServerTests'`
   successfully. See `/tmp/langtools-workspace-access-tests.log`.
+- `python3 Scripts/test-coding-workspace-terminal.py`: three integration tests
+  passed using tmux 3.5a, private temporary sockets and `/bin/cat`: Unicode
+  input/output, PTY resize, detach/reconnect preserves pane, two linked viewer
+  sessions leave external selection/input usable, and explicit pane stop leaves
+  an unrelated pane alive. All task-owned servers cleaned up. This is a design
+  spike, not verification of the unfinished app transport or terminal renderer.
 - No UI/runtime integration or screenshots yet. No real agents launched.
 - Delegation unavailable: provider auth/quota cooldowns; OpenRouter attempt
   returned insufficient credits. Independent review remains outstanding; first
