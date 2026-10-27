@@ -394,6 +394,52 @@ final class RichToolAgentResultsTests: XCTestCase {
         XCTAssertNil(reParsed, "Re-parsing stale/corrupt JSON returns nil gracefully")
     }
 
+    func testEveryStandaloneResultRetainsResponseOwnershipAfterReload() throws {
+        let previous = ToolSettings.shared.keepsToolCallsInHistory
+        ToolSettings.shared.keepsToolCallsInHistory = false
+        defer { ToolSettings.shared.keepsToolCallsInHistory = previous }
+
+        for route in 0..<3 { // direct tool, nested tool, agent
+            let service = MessageService(networkClient: AgentEventNetworkStub())
+            service.resultContentParser = { _, _, kind in
+                guard (route == 2 ? kind == .agent : kind == .tool) else { return nil }
+                return ChatToolCall.DisplayContent(type: "owned", json: "[]", summary: "Owned result")
+            }
+            if route == 0 {
+                service.enqueueToolEvent(.toolCalled(TestSelection(id: "owned-tool", name: "owned", arguments: "{}")))
+                service.drainToolEvents()
+            } else {
+                service.handleAgentEvent(.started(agent: "Owner", parent: nil, task: "fixture"))
+                if route == 1 {
+                    service.handleAgentEvent(.toolCalled(agent: "Owner", tool: "owned", arguments: "{}"))
+                }
+                service.drainAgentEvents()
+            }
+            let responseID = UUID()
+            let invocation = try XCTUnwrap(service.messages.first(where: \.isAssistant))
+            invocation.responseToMessageID = responseID
+            if route == 0 {
+                service.enqueueToolEvent(.toolCompleted(TestResult(tool_selection_id: "owned-tool", result: "result")))
+                service.drainToolEvents()
+            } else {
+                if route == 1 { service.handleAgentEvent(.toolCompleted(agent: "Owner", result: "result")) }
+                service.handleAgentEvent(.completed(agent: "Owner", result: "result"))
+                service.drainAgentEvents()
+            }
+            let cards = service.messages.filter {
+                if case .contentCards = $0.contentType { return true }
+                return false
+            }
+            XCTAssertEqual(cards.count, 1)
+            let card = try XCTUnwrap(cards.first)
+            XCTAssertEqual(card.responseToMessageID, responseID)
+            let reloaded = try JSONDecoder().decode(Message.self, from: JSONEncoder().encode(card))
+            XCTAssertEqual(reloaded.uuid, card.uuid)
+            XCTAssertEqual(reloaded.responseToMessageID, responseID)
+            XCTAssertEqual(reloaded.contentType, card.contentType)
+        }
+    }
+
     func testHistoryDisabledPreservesDisplayContentAsSeparateMessage() throws {
         let previousKeepsToolCallsInHistory = ToolSettings.shared.keepsToolCallsInHistory
         ToolSettings.shared.keepsToolCallsInHistory = false

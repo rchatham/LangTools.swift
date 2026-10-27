@@ -121,7 +121,20 @@ public final class ContentCardRegistry: @unchecked Sendable {
         decode: @escaping (String) -> (message: String?, items: [Item])?,
         @ViewBuilder render: @escaping @Sendable ([Item]) -> V
     ) {
-        let entry = Entry(
+        let entry = Self.makeEntry(cardType: cardType, as: type, decode: decode, render: render)
+        storage.withLock {
+            $0.byAgentKey[AnyHashable(agent)] = entry
+            $0.byCardType[cardType] = entry
+        }
+    }
+
+    private static func makeEntry<Item: StructuredOutput, V: View>(
+        cardType: String,
+        as type: Item.Type,
+        decode: @escaping (String) -> (message: String?, items: [Item])?,
+        @ViewBuilder render: @escaping @Sendable ([Item]) -> V
+    ) -> Entry {
+        Entry(
             parseResult: { json in
                 guard let (message, items) = decode(json),
                       let data = try? JSONEncoder().encode(items),
@@ -155,11 +168,6 @@ public final class ContentCardRegistry: @unchecked Sendable {
                 )
             }
         )
-
-        storage.withLock {
-            $0.byAgentKey[AnyHashable(agent)] = entry
-            $0.byCardType[cardType] = entry
-        }
     }
 
     private static func nonemptySummary(_ summary: String?) -> String? {
@@ -266,30 +274,7 @@ public final class ContentCardRegistry: @unchecked Sendable {
         decode: @escaping (String) -> (message: String?, items: [Item])?,
         @ViewBuilder render: @escaping @Sendable ([Item]) -> V
     ) {
-        let entry = Entry(
-            parseResult: { json in
-                guard let (message, items) = decode(json),
-                      let data = try? JSONEncoder().encode(items),
-                      let cardsJSON = String(data: data, encoding: .utf8)
-                else { return nil }
-                return ContentCardsContent(cardType: cardType, message: message, cardsJSON: cardsJSON, cardCount: items.count)
-            },
-            buildView: { content, showsSummary in
-                guard let items = try? content.decodeCards(as: Item.self) else {
-                    Self.logDecodeFailure(type: Item.self, cardType: cardType)
-                    return AnyView(Text("Could not display \(content.message ?? cardType + " card")").font(.subheadline).foregroundStyle(.secondary))
-                }
-                return AnyView(
-                    VStack(alignment: .leading, spacing: 12) {
-                        if showsSummary, let summary = Self.nonemptySummary(content.message) {
-                            Text(summary)
-                        }
-                        render(items)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                )
-            }
-        )
+        let entry = Self.makeEntry(cardType: cardType, as: type, decode: decode, render: render)
         storage.withLock { $0.byToolName[AnyHashable(tool)] = entry; $0.byCardType[cardType] = entry }
     }
 

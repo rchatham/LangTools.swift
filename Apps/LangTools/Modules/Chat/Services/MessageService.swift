@@ -1043,13 +1043,21 @@ extension MessageService {
             message.providerToolResults[message.toolCalls[index].id] = result
             message.providerToolResultServices[message.toolCalls[index].id] = replayService
         } else {
-            let cardMessage = Message.contentCards(ContentCardsContent(
-                cardType: displayContent.type, message: displayContent.summary,
-                cardsJSON: displayContent.json, cardCount: displayContent.itemCount))
-            cardMessage.responseToMessageID = message.responseToMessageID
-            generatedMessageIDs.insert(cardMessage.uuid)
-            messages.append(cardMessage)
+            appendStandaloneResult(displayContent, respondingTo: message, generatedMessageIDs: &generatedMessageIDs)
         }
+    }
+
+    private func appendStandaloneResult(
+        _ displayContent: ChatToolCall.DisplayContent,
+        respondingTo message: Message,
+        generatedMessageIDs: inout Set<UUID>
+    ) {
+        let cardMessage = Message.contentCards(ContentCardsContent(
+            cardType: displayContent.type, message: displayContent.summary,
+            cardsJSON: displayContent.json, cardCount: displayContent.itemCount))
+        cardMessage.responseToMessageID = message.responseToMessageID
+        generatedMessageIDs.insert(cardMessage.uuid)
+        messages.append(cardMessage)
     }
 
     /// Marks every pending tool call owned by this send as failed so cards do
@@ -1154,10 +1162,7 @@ extension MessageService {
                     _ = Self.attachDisplayContentToCompletedChild(ofAgent: agent, childID: identity.id, displayContent: displayContent, in: &calls)
                     #endif
                 } else {
-                    let cardMessage = Message.contentCards(ContentCardsContent(cardType: displayContent.type, message: displayContent.summary, cardsJSON: displayContent.json, cardCount: displayContent.itemCount))
-                    cardMessage.responseToMessageID = last.responseToMessageID
-                    generatedMessageIDs.insert(cardMessage.uuid)
-                    messages.append(cardMessage)
+                    appendStandaloneResult(displayContent, respondingTo: last, generatedMessageIDs: &generatedMessageIDs)
                     #if DEBUG
                     print(RichResultDiagnostics.presentationLog(
                         namespace: .tool, agent: nil,
@@ -1196,10 +1201,7 @@ extension MessageService {
                     }
                 } else {
                     _ = Self.setAgentStatus(agent, status: .success, result: result, in: &calls)
-                    let cardMessage = Message.contentCards(ContentCardsContent(cardType: displayContent.type, message: displayContent.summary, cardsJSON: displayContent.json, cardCount: displayContent.itemCount))
-                    cardMessage.responseToMessageID = last.responseToMessageID
-                    generatedMessageIDs.insert(cardMessage.uuid)
-                    messages.append(cardMessage)
+                    appendStandaloneResult(displayContent, respondingTo: last, generatedMessageIDs: &generatedMessageIDs)
                     #if DEBUG
                     print(RichResultDiagnostics.presentationLog(
                         namespace: .agent, agent: .label(for: agent),
