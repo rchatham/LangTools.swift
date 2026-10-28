@@ -12,6 +12,7 @@ import XAI
 import Gemini
 import Cohere
 import Ollama
+import AppleLangTools
 
 public typealias Role = OpenAI.Message.Role
 
@@ -434,11 +435,34 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                 tools: tools?.convertTools(),
                 toolEventHandler: toolEventHandler
             )
+        case .apple(let providerModel):
+            // Tool calling is not bridged to Foundation Models yet, so tools are
+            // not sent; the on-device model answers from the conversation alone.
+            // GenerationOptions takes a single sampling mode, so top-k wins when
+            // both top-k and top-p are set (ranges are validated by the settings).
+            let appleSeed = seed.map(UInt64.init(truncatingIfNeeded:))
+            let sampling: AppleIntelligence.Sampling? = if let topK {
+                .topK(topK, seed: appleSeed)
+            } else if let topP {
+                .topP(topP, seed: appleSeed)
+            } else {
+                nil
+            }
+            return AppleIntelligence.ChatRequest(
+                model: providerModel,
+                messages: replayMessages.toAppleIntelligenceMessages(),
+                stream: stream,
+                temperature: temperature,
+                maximumResponseTokens: maximumOutputTokens,
+                sampling: sampling
+            )
         }
     }
 
     public func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
         let effectiveModel = ToolSettings.shared.agentModelOverride ?? model
+        // Agents need tool calling, which the on-device route lacks regardless of availability.
+        if effectiveModel.apiService == .apple { throw AppleIntelligenceError.toolCallingUnsupported }
         try ensureModelAccess(for: effectiveModel)
         if accountSession(for: effectiveModel) != nil {
             throw NetworkError.accountProxyTransportFailed("Account-backed agent execution is not supported. Use an API key for agent runs.")
@@ -461,6 +485,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .ollama(let model):
             let snapshot = ollamaEndpointConfiguration.snapshot()
             return AgentContext(langTool: try snapshot.provider(directSession: ollamaSession), model: model, messages: replayMessages.toOllamaMessages(), eventHandler: eventHandler)
+        case .apple:
+            throw AppleIntelligenceError.toolCallingUnsupported
         }
     }
 
@@ -478,6 +504,9 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         if model.apiService == .ollama {
             let endpoint = endpoint ?? ollamaEndpointConfiguration.snapshot()
             snapshot.register(try endpoint.provider(directSession: ollamaSession))
+        }
+        if model.apiService == .apple {
+            snapshot.register(AppleIntelligence())
         }
         return snapshot
     }
@@ -575,13 +604,18 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
         case .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
             return CompatibleProvider(service: llm)?.makeClient(apiKey: apiKey)
-        case .ollama: return nil
+        case .ollama, .apple: return nil
         default: return nil
         }
     }
     private func ensureModelAccess(for model: Model) throws {
         switch model.apiService {
         case .ollama:
+            return
+        case .apple:
+            if case .unavailable(let reason) = AppleIntelligence.availability {
+                throw AppleIntelligenceError.unavailable(reason)
+            }
             return
         case .serper:
             throw NetworkError.incompatibleRequest
@@ -621,7 +655,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
 }
 
 public enum APIService: String, CaseIterable, Codable, Identifiable {
-    case openAI, anthropic, xAI, gemini, ollama, serper
+    case openAI, anthropic, xAI, gemini, ollama, apple, serper
     // OpenAI-compatible providers; raw values match `CompatibleProvider`.
     case openrouter, vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
 
@@ -659,4 +693,9 @@ extension NetworkClient {
             }
         }
     }
+}
+
+public extension Error {
+    /// Whether this error came from Apple Intelligence on-device generation.
+    var isAppleIntelligenceError: Bool { AppleIntelligence.isProviderError(self) }
 }
