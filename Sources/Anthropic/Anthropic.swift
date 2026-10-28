@@ -162,30 +162,46 @@ public extension Anthropic {
         public static let claude46Sonnet = Model(customModelID: "claude-sonnet-4-6")
         public static let claude46Sonnet_20260217 = Model(customModelID: "claude-sonnet-4-6-20260217")
 
-        // MARK: - Claude 4.5 Models - Active
+        // MARK: - Claude 4.5 Models
         public static let claude45Opus_20251101 = Model(customModelID: "claude-opus-4-5-20251101")
+        @available(*, deprecated, renamed: "claude55Sonnet", message: "Deprecated Sep 2026; retirement Nov 30, 2026. Use claude55Sonnet instead.")
         public static let claude45Sonnet_latest = Model(customModelID: "claude-sonnet-4-5-latest")
+        @available(*, deprecated, renamed: "claude55Sonnet", message: "Deprecated Sep 2026; retirement Nov 30, 2026. Use claude55Sonnet instead.")
         public static let claude45Sonnet_20250929 = Model(customModelID: "claude-sonnet-4-5-20250929")
         public static let claude45Haiku_latest = Model(customModelID: "claude-haiku-4-5-latest")
         public static let claude45Haiku_20251001 = Model(customModelID: "claude-haiku-4-5-20251001")
 
-        // MARK: - Claude 4.1 Models - Active
-        public static let claude41Opus_latest = Model(customModelID: "claude-opus-4-1-latest")
-        public static let claude41Opus_20250805 = Model(customModelID: "claude-opus-4-1-20250805")
+        // MARK: - Claude Opus 4.7 / 4.8 (2026) - Active
+        public static let claude47Opus = Model(customModelID: "claude-opus-4-7")
+        public static let claude48Opus = Model(customModelID: "claude-opus-4-8")
 
-        // MARK: - Claude 4 Models - Active
-        public static let claude4Opus_20250514 = Model(customModelID: "claude-opus-4-20250514")
-        public static let claude4Sonnet_20250514 = Model(customModelID: "claude-sonnet-4-20250514")
+        // MARK: - Claude 5 Generation (2026) - Active
+        public static let claude5Opus = Model(customModelID: "claude-opus-5")
+        public static let claude5Sonnet = Model(customModelID: "claude-sonnet-5")
+        public static let claude5Fable = Model(customModelID: "claude-fable-5")
+        public static let claude5Mythos = Model(customModelID: "claude-mythos-5")
 
-        // MARK: - Claude 3 Haiku (Deprecated - Retiring April 20, 2026)
-        // Still functional; retire warning only.
-        @available(*, deprecated, message: "Retiring April 20, 2026. Use claude45Haiku_latest instead.")
-        public static let claude3Haiku_20240307 = Model(customModelID: "claude-3-haiku-20240307")
+        // MARK: - Claude 5.1 / 5.5 Generation (2026) - Active
+        public static let claude51Fable = Model(customModelID: "claude-fable-5-1")
+        public static let claude51Mythos = Model(customModelID: "claude-mythos-5-1")
+        public static let claude55Opus = Model(customModelID: "claude-opus-5-5")
+        public static let claude55Sonnet = Model(customModelID: "claude-sonnet-5-5")
+        public static let claude55Haiku = Model(customModelID: "claude-haiku-5-5")
 
         // MARK: - Retired Models (kept for Codable round-trip compatibility only — will return API errors)
         // Note: Swift has no @available(*, retired) for members. @available(*, deprecated) is used
         // here as the strongest compile-time signal available; single-string Codable decoding is
         // unaffected by availability. Use `isRetired` for runtime checks.
+        @available(*, deprecated, renamed: "claude5Opus", message: "[RETIRED Aug 2026] Will return API errors. Use claude5Opus instead.")
+        public static let claude41Opus_latest = Model(customModelID: "claude-opus-4-1-latest")
+        @available(*, deprecated, renamed: "claude5Opus", message: "[RETIRED Aug 2026] Will return API errors. Use claude5Opus instead.")
+        public static let claude41Opus_20250805 = Model(customModelID: "claude-opus-4-1-20250805")
+        @available(*, deprecated, renamed: "claude48Opus", message: "[RETIRED Jun 2026] Will return API errors. Use claude48Opus instead.")
+        public static let claude4Opus_20250514 = Model(customModelID: "claude-opus-4-20250514")
+        @available(*, deprecated, renamed: "claude46Sonnet", message: "[RETIRED Jun 2026] Will return API errors. Use claude46Sonnet instead.")
+        public static let claude4Sonnet_20250514 = Model(customModelID: "claude-sonnet-4-20250514")
+        @available(*, deprecated, renamed: "claude45Haiku_latest", message: "[RETIRED Apr 2026] Will return API errors. Use claude45Haiku_latest instead.")
+        public static let claude3Haiku_20240307 = Model(customModelID: "claude-3-haiku-20240307")
         @available(*, deprecated, renamed: "claude46Sonnet", message: "[RETIRED Feb 2026] Will return API errors. Use claude46Sonnet instead.")
         public static let claude37Sonnet_20250219 = Model(customModelID: "claude-3-7-sonnet-20250219")
         @available(*, deprecated, renamed: "claude45Haiku_latest", message: "[RETIRED Feb 2026] Will return API errors. Use claude45Haiku_latest instead.")
@@ -220,17 +236,23 @@ extension Anthropic.Model {
             .claude46Opus, .claude46Opus_20260205,
             .claude46Sonnet, .claude46Sonnet_20260217,
             .claude45Opus_20251101,
-            .claude45Sonnet_latest, .claude45Sonnet_20250929,
             .claude45Haiku_latest, .claude45Haiku_20251001,
-            .claude41Opus_latest, .claude41Opus_20250805,
-            .claude4Opus_20250514, .claude4Sonnet_20250514,
+            .claude47Opus,
+            .claude48Opus,
+            .claude5Opus, .claude5Sonnet,
+            .claude5Fable, .claude5Mythos,
+            .claude51Fable, .claude51Mythos,
+            .claude55Opus, .claude55Sonnet, .claude55Haiku,
         ]
     }
 
     /// Models that are deprecated (still functional, but retiring soon).
     /// Built via `customModelID` to avoid re-triggering deprecation warnings at call sites.
     public static var deprecatedCases: [Anthropic.Model] {
-        ["claude-3-haiku-20240307"]
+        [
+            "claude-sonnet-4-5-latest",
+            "claude-sonnet-4-5-20250929",
+        ]
             .map(Anthropic.Model.init(customModelID:))
     }
 
@@ -239,6 +261,11 @@ extension Anthropic.Model {
     /// Built via `customModelID` to avoid triggering deprecation warnings at call sites.
     public static var retiredCases: [Anthropic.Model] {
         [
+            "claude-opus-4-1-latest",
+            "claude-opus-4-1-20250805",
+            "claude-opus-4-20250514",
+            "claude-sonnet-4-20250514",
+            "claude-3-haiku-20240307",
             "claude-3-7-sonnet-20250219",
             "claude-3-5-haiku-20241022",
             "claude-3-5-sonnet-latest",
@@ -268,10 +295,13 @@ extension Anthropic.Model {
             .claude46Opus, .claude46Opus_20260205,
             .claude46Sonnet, .claude46Sonnet_20260217,
             .claude45Opus_20251101,
-            .claude45Sonnet_latest, .claude45Sonnet_20250929,
             .claude45Haiku_latest, .claude45Haiku_20251001,
-            .claude41Opus_latest, .claude41Opus_20250805,
-            .claude4Opus_20250514, .claude4Sonnet_20250514,
+            .claude47Opus,
+            .claude48Opus,
+            .claude5Opus, .claude5Sonnet,
+            .claude5Fable, .claude5Mythos,
+            .claude51Fable, .claude51Mythos,
+            .claude55Opus, .claude55Sonnet, .claude55Haiku,
         ]
     }
 
