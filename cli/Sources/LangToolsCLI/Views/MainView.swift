@@ -454,6 +454,10 @@ struct MainView: @preconcurrency View {
             showStatus()
             return true
 
+        case "voice":
+            messages.append(ChatMessage(role: .system, content: VoiceCommand.apply(argument: argument)))
+            return true
+
         case "apikey":
             // Open API keys submenu directly
             settingsMode = .apiKeys

@@ -151,6 +151,13 @@ class MessageService: ObservableObject {
         if !silent, didRenderAssistantPrefix {
             print("")
         }
+
+        if UserDefaults.voiceEnabled {
+            // In silent (TUI) mode printing would corrupt the screen, so errors are dropped.
+            SpeechService.shared.speakInBackground(finalContent, onError: silent ? nil : { error in
+                print("Voice output failed: \(error.localizedDescription)".red)
+            })
+        }
     }
 
     func streamChatCompletionRequest(
