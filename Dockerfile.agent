@@ -1,0 +1,40 @@
+# Runtime image for langtools-agent, which runs AgentRuntime specs.
+#
+#   docker build -f Dockerfile.agent -t langtools-agent .
+#   docker run --rm -e ANTHROPIC_API_KEY -v "$PWD/spec.json:/work/spec.json:ro" langtools-agent run spec.json
+#
+# See Sources/AgentRuntime/README.md for the spec format and webhook delivery.
+
+ARG SWIFT_VERSION=6.1
+
+FROM swift:${SWIFT_VERSION}-noble AS build
+WORKDIR /build
+
+# Resolve dependencies in their own layer so source edits don't refetch them.
+COPY Package.swift Package.resolved ./
+RUN swift package resolve
+
+# Tests are copied because the manifest declares test targets SwiftPM checks for.
+COPY Sources ./Sources
+COPY Tests ./Tests
+RUN swift build -c release --product langtools-agent --static-swift-stdlib \
+    && mkdir -p /staging \
+    && cp .build/release/langtools-agent /staging/ \
+    && cp -R .build/release/*.resources /staging/
+
+FROM ubuntu:noble
+
+# The Swift runtime is linked in statically; Foundation's networking still loads libcurl.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libcurl4t64 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Resource bundles must sit next to the binary.
+COPY --from=build /staging/ /opt/langtools-agent/
+RUN ln -s /opt/langtools-agent/langtools-agent /usr/local/bin/langtools-agent \
+    && useradd --system --uid 10001 --create-home agent
+
+USER agent
+WORKDIR /work
+ENTRYPOINT ["langtools-agent"]
+CMD ["help"]

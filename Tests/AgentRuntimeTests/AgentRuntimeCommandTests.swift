@@ -132,4 +132,70 @@ final class AgentRuntimeCommandTests: XCTestCase {
         _ = await command().run(["tools"])
         XCTAssertEqual(output.map { $0.components(separatedBy: "\t")[0] }, ["current_time"])
     }
+
+    // MARK: - Webhook
+
+    private func webhookCommand(_ environment: [String: String]) -> AgentRuntimeCommand {
+        var command = command(environment: environment)
+        command.makeWebhookDelivery = { WebhookDelivery(configuration: $0, session: $1, sleep: { _ in }, now: Date.init) }
+        return command
+    }
+
+    func testRunDeliversSignedResultToWebhook() async throws {
+        mockAnswer("Pong")
+        let log = RequestLog()
+        MockURLProtocol.setHandler(for: "/hooks/agent") { request in log.append(request); return (.success(Data()), 200) }
+
+        let status = await webhookCommand(["OPENAI_API_KEY": "sk-test", "LANGTOOLS_WEBHOOK_SECRET": "whsec"])
+            .run(["run", "spec.json", "--webhook", "https://example.com/hooks/agent", "--run-id", "job-7", "--quiet"])
+
+        XCTAssertEqual(status, 0, errors.joined(separator: "\n"))
+        let request = try XCTUnwrap(log.requests.first)
+        let body = try XCTUnwrap(request.bodyData ?? request.httpBody)
+        let delivered = try AgentRunResult.decode(from: body)
+        XCTAssertEqual(delivered.runID, "job-7")
+        XCTAssertEqual(delivered.output, "Pong")
+        XCTAssertTrue(WebhookSignature.verify(body: body, header: try XCTUnwrap(request.value(forHTTPHeaderField: WebhookSignature.header)), secret: "whsec"))
+        XCTAssertEqual(try AgentRunResult.decode(from: Data(output.joined().utf8)).runID, "job-7", "stdout result carries the same run ID")
+    }
+
+    func testWebhookURLAndRunIDFromEnvironmentAndUnsignedWarning() async throws {
+        mockAnswer("Pong")
+        let log = RequestLog()
+        MockURLProtocol.setHandler(for: "/hooks/env") { request in log.append(request); return (.success(Data()), 202) }
+
+        let status = await webhookCommand(["OPENAI_API_KEY": "sk-test", "LANGTOOLS_WEBHOOK_URL": "https://example.com/hooks/env", "LANGTOOLS_RUN_ID": "env-run"])
+            .run(["run", "spec.json"])
+
+        XCTAssertEqual(status, 0)
+        XCTAssertEqual(log.requests.first?.value(forHTTPHeaderField: WebhookDelivery.runIDHeader), "env-run")
+        XCTAssertNil(log.requests.first?.value(forHTTPHeaderField: WebhookSignature.header))
+        XCTAssertTrue(errors.contains { $0.contains("LANGTOOLS_WEBHOOK_SECRET is not set") }, "\(errors)")
+    }
+
+    func testRunGetsGeneratedRunIDWithoutWebhook() async throws {
+        mockAnswer("Pong")
+        _ = await command().run(["run", "spec.json", "--quiet"])
+        XCTAssertNotNil(try AgentRunResult.decode(from: Data(output.joined().utf8)).runID)
+    }
+
+    func testFailedDeliveryExitsThree() async {
+        mockAnswer("Pong")
+        MockURLProtocol.setHandler(for: "/hooks/agent") { _ in (.success(Data()), 404) }
+        let status = await webhookCommand(["OPENAI_API_KEY": "sk-test", "LANGTOOLS_WEBHOOK_SECRET": "s"])
+            .run(["run", "spec.json", "--webhook", "https://example.com/hooks/agent", "--quiet"])
+        XCTAssertEqual(status, 3)
+        XCTAssertTrue(errors.contains { $0.contains("HTTP 404") }, "\(errors)")
+        XCTAssertFalse(output.isEmpty, "The result is still printed")
+    }
+
+    func testInsecureWebhookFailsBeforeCallingProvider() async {
+        var providerCalled = false
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in providerCalled = true; return (.success(Data()), 500) }
+        let status = await command().run(["run", "spec.json", "--webhook", "http://example.com/hook"])
+        XCTAssertEqual(status, 2)
+        XCTAssertFalse(providerCalled)
+        let validate = await command().run(["validate", "spec.json", "--webhook", "http://example.com/hook"])
+        XCTAssertEqual(validate, 2)
+    }
 }

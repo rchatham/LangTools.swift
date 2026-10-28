@@ -18,6 +18,8 @@ public struct AgentRunResult: Codable, Equatable, Sendable {
         case invalid
     }
 
+    /// Set by whoever started the run, so a webhook receiver can match the result to its request.
+    public var runID: String?
     public var agent: String
     public var provider: String
     public var model: String
@@ -30,7 +32,8 @@ public struct AgentRunResult: Codable, Equatable, Sendable {
 
     public var duration: TimeInterval { finishedAt.timeIntervalSince(startedAt) }
 
-    public init(agent: String, provider: String, model: String, status: Status, output: String? = nil, error: String? = nil, events: [Event] = [], startedAt: Date, finishedAt: Date) {
+    public init(runID: String? = nil, agent: String, provider: String, model: String, status: Status, output: String? = nil, error: String? = nil, events: [Event] = [], startedAt: Date, finishedAt: Date) {
+        self.runID = runID
         self.agent = agent
         self.provider = provider
         self.model = model

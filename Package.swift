@@ -37,6 +37,8 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/rchatham/JSON.swift.git", from: "1.0.4"),
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.18.0"),
+        // HMAC for signing webhook deliveries; re-exports CryptoKit on Apple platforms.
+        .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
         // Benchmark comparison deps — only used by BenchmarkTests, not linked into any library product.
         // To run competitor benchmarks: uncomment these and the BenchmarkTests product deps below.
         // .package(url: "https://github.com/jamesrochabrun/SwiftOpenAI.git", from: "4.4.0"),
@@ -61,7 +63,7 @@ let package = Package(
         .target(name: "Cohere", dependencies: [.target(name: "LangTools"), .target(name: "OpenAI"), .target(name: "OpenAICompatible")], resources: [.process("README.md")]),
         .target(name: "AppleLangTools", dependencies: [.target(name: "LangTools")], path: "Sources/Apple", resources: [.process("README.md")]),
         .target(name: "WhisperKitLangTools", dependencies: [.target(name: "LangTools"), .product(name: "WhisperKit", package: "WhisperKit", condition: .when(platforms: [.macOS, .iOS]))], path: "Sources/WhisperKit"),
-        .target(name: "AgentRuntime", dependencies: [.target(name: "LangTools"), .target(name: "Agents")], resources: [.process("README.md")]),
+        .target(name: "AgentRuntime", dependencies: [.target(name: "LangTools"), .target(name: "Agents"), .product(name: "Crypto", package: "swift-crypto")], resources: [.process("README.md")]),
         .target(name: "AgentRuntimeProviders", dependencies: ["AgentRuntime", "LangTools", "OpenAI", "Anthropic", "OpenAICompatible", "Gemini", "XAI", "Ollama", "OpenRouter", "VercelAIGateway", "Perplexity", "Cohere"]),
         .executableTarget(name: "langtools-agent", dependencies: ["AgentRuntime", "AgentRuntimeProviders"]),
         .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], path: "Tests/TestUtils", resources: [.process("Resources/")]),

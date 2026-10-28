@@ -154,6 +154,7 @@ public enum AgentRuntimeError: Error, LocalizedError, Equatable {
     case missingCredential(provider: String, environmentVariable: String?)
     case unknownTools([String], available: [String])
     case timedOut(seconds: Double)
+    case invalidWebhook(String)
 
     public var errorDescription: String? {
         switch self {
@@ -170,6 +171,8 @@ public enum AgentRuntimeError: Error, LocalizedError, Equatable {
             return "Unknown tool(s): \(names.joined(separator: ", ")). Available: \(list)."
         case .timedOut(let seconds):
             return "Run exceeded its \(seconds)s timeout."
+        case .invalidWebhook(let message):
+            return message
         }
     }
 }
