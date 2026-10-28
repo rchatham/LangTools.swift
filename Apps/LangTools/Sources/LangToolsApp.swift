@@ -318,7 +318,7 @@ extension MessageService: @retroactive ChatMessageService {
             case .missingRequiredFunctionArguments:
                 return ChatAlertInfo(title: "Missing Arguments", message: "Required function arguments are missing.")
             case .toolIterationLimitReached:
-                return ChatAlertInfo(title: "Tool Iteration Limit Reached", message: "Maximum tool retry limit reached.")
+                return ChatAlertInfo(title: "Tool Limit Reached", message: error.localizedDescription)
             }
 
         case is LangToolchainError:
@@ -352,6 +352,12 @@ extension MessageService: @retroactive ChatMessageService {
             return handleCLIAccountError(error)
 
         default:
+            // On-device generation errors (availability, guardrails, context
+            // window) carry their own localized descriptions. Match on the error
+            // itself, not the saved default model, so attribution stays correct.
+            if error.isAppleIntelligenceError {
+                return ChatAlertInfo(title: "Apple Intelligence", message: error.localizedDescription)
+            }
             return nil
         }
     }

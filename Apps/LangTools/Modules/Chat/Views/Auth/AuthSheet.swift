@@ -103,7 +103,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
         let state = currentState
 
         switch service {
-        case .ollama:
+        case .ollama, .apple:
             Button("OK", role: .cancel) {
                 coordinator.dismiss()
             }
@@ -185,6 +185,8 @@ private struct ManageAccessPromptModifier: ViewModifier {
             return "\(service.displayName) status: \(status). Use an API key to enable this provider and make its models appear in the picker."
         case .ollama:
             return "Ollama models run locally and do not require API keys or account login."
+        case .apple:
+            return "Apple Intelligence runs on-device and does not require API keys or account login."
         case .serper:
             return "Use your Serper API key for web search capabilities."
         }
