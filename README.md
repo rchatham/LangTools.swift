@@ -126,6 +126,7 @@ See individual module README files for detailed documentation and examples:
 
 - [LangTools](Sources/LangTools/README.md) - Core protocols and LangToolchain for unified multi-provider management
 - [Agents](Sources/Agents/README.md)
+- [AgentRuntime](Sources/AgentRuntime/README.md) - Run agents from JSON specs with the `langtools-agent` CLI
 - [OpenAI](Sources/OpenAI/README.md)
 - [Anthropic](Sources/Anthropic/README.md)
 - [XAI](Sources/XAI/README.md)
