@@ -23,7 +23,24 @@ final class MockWebSocketTask: LangToolsWebSocketTask, @unchecked Sendable {
     private var pending: [URLSessionWebSocketTask.Message] = []
     private var waiters: [CheckedContinuation<URLSessionWebSocketTask.Message, Error>] = []
     private var closed = false
+    private var inFlightSends = 0
+    private var _maxConcurrentSends = 0
     private(set) var resumeCallCount = 0
+
+    /// How long each send stays in flight, to widen the window for overlap.
+    var sendDelayNanoseconds: UInt64 = 0
+    /// When true, every send throws.
+    var failSends = false
+
+    var maxConcurrentSends: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _maxConcurrentSends
+    }
+
+    var isClosed: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return closed
+    }
 
     var sentMessages: [String] {
         lock.lock(); defer { lock.unlock() }
@@ -46,9 +63,25 @@ final class MockWebSocketTask: LangToolsWebSocketTask, @unchecked Sendable {
     }
 
     func send(_ message: URLSessionWebSocketTask.Message) async throws {
+        let delay = try beginSend()
+        if delay > 0 { try? await Task.sleep(nanoseconds: delay) }
+        endSend(message)
+    }
+
+    private func beginSend() throws -> UInt64 {
         lock.lock()
         defer { lock.unlock() }
         if closed { throw URLError(.cancelled) }
+        if failSends { throw URLError(.networkConnectionLost) }
+        inFlightSends += 1
+        _maxConcurrentSends = max(_maxConcurrentSends, inFlightSends)
+        return sendDelayNanoseconds
+    }
+
+    private func endSend(_ message: URLSessionWebSocketTask.Message) {
+        lock.lock()
+        defer { lock.unlock() }
+        inFlightSends -= 1
         if case .string(let text) = message {
             _sentMessages.append(text)
         }
@@ -210,6 +243,41 @@ final class OpenAIRealtimeSessionTests: XCTestCase {
         await session.disconnect()
     }
 
+    /// Regression test: concurrent callers (e.g. a mic loop appending audio)
+    /// must not have two sends in flight on the socket at once.
+    func testConcurrentSendsNeverOverlapOnTheSocket() async throws {
+        let (session, mock) = try await makeConnectedSession()
+        mock.sendDelayNanoseconds = 20_000_000
+
+        await withTaskGroup(of: Void.self) { group in
+            for i in 0..<8 {
+                group.addTask { try? await session.append(audio: Data([UInt8(i)])) }
+            }
+        }
+
+        XCTAssertEqual(mock.sentMessages.count, 8)
+        XCTAssertEqual(mock.maxConcurrentSends, 1, "Sends overlapped on the socket")
+        await session.disconnect()
+    }
+
+    func testModelIsPercentEncodedInConnectURL() async throws {
+        let mock = MockWebSocketTask()
+        let session = OpenAIRealtimeSession(apiKey: "test-key", model: "custom model&x=1")
+        var requestedURL: URL?
+        session.webSocketTaskFactory = { request in
+            requestedURL = request.url
+            return mock
+        }
+        try await session.connect()
+
+        let url = try XCTUnwrap(requestedURL)
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertEqual(items?.count, 1, "A raw '&' in the model would add a stray query item")
+        XCTAssertEqual(items?.first?.name, "model")
+        XCTAssertEqual(items?.first?.value, "custom model&x=1")
+        await session.disconnect()
+    }
+
     func testSendWhileDisconnectedThrows() async throws {
         let session = OpenAIRealtimeSession(apiKey: "test-key")
         do {
@@ -249,22 +317,22 @@ final class OpenAIRealtimeSessionTests: XCTestCase {
 
 final class RealtimePipelineModeTests: XCTestCase {
 
-    /// TTS stub that records synthesized text and emits one audio chunk per call
+    /// TTS stub that records synthesized text and returns a one-chunk stream
+    /// per call, whose single byte is the call's 1-based index.
     private final class StubTTS: RealtimeTools.TTSProvider, @unchecked Sendable {
         private let lock = NSLock()
         private(set) var synthesized: [String] = []
-        let audioStream: AsyncThrowingStream<Data, Error>
-        private let continuation: AsyncThrowingStream<Data, Error>.Continuation
         var isSynthesizing: Bool = false
 
-        init() {
-            (audioStream, continuation) = AsyncThrowingStream.makeStream(of: Data.self)
-        }
-
-        func synthesize(text: String) async throws {
-            lock.lock(); synthesized.append(text); lock.unlock()
-            continuation.yield(Data([0x01]))
+        func synthesize(text: String) async throws -> AsyncThrowingStream<Data, Error> {
+            lock.lock()
+            synthesized.append(text)
+            let index = UInt8(synthesized.count)
+            lock.unlock()
+            let (stream, continuation) = AsyncThrowingStream.makeStream(of: Data.self)
+            continuation.yield(Data([index]))
             continuation.finish()
+            return stream
         }
 
         func cancel() async throws {}
@@ -299,6 +367,35 @@ final class RealtimePipelineModeTests: XCTestCase {
         try await pipeline.sendText("hello")
 
         XCTAssertEqual(tts.synthesized, ["LLM(hello)"])
+    }
+
+    /// Regression test: TTSProvider used to expose one shared audioStream,
+    /// which the first turn finished, so every later turn produced no audio.
+    func testConsecutiveTurnsEachDeliverTheirOwnAudio() async throws {
+        let tts = StubTTS()
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.modular)
+            .build()
+        pipeline.setProviders(tts: tts)
+        pipeline.textProcessor = { text in "LLM(\(text))" }
+
+        let lock = NSLock()
+        var audio: [Data] = []
+        let handler = RealtimeEventHandler()
+        handler.onAudioReceived = { data in
+            lock.lock(); audio.append(data); lock.unlock()
+        }
+        pipeline.eventHandler = handler
+        try await pipeline.start()
+
+        try await pipeline.sendText("first")
+        try await pipeline.sendText("second")
+
+        XCTAssertEqual(tts.synthesized, ["LLM(first)", "LLM(second)"])
+        lock.lock()
+        let received = audio
+        lock.unlock()
+        XCTAssertEqual(received, [Data([1]), Data([2])], "Each turn should deliver its own audio")
     }
 
     func testSpeechToSpeechModeThrowsNotImplemented() async throws {

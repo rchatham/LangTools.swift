@@ -327,6 +327,37 @@ public protocol LangToolsWebSocketTask: AnyObject {
 
 extension URLSessionWebSocketTask: LangToolsWebSocketTask {}
 
+/// Runs WebSocket sends one at a time, in the order they were submitted.
+///
+/// `URLSessionWebSocketTask.send` isn't documented as safe to call while a
+/// previous send is still in flight, and the realtime sessions release their
+/// state lock before awaiting the socket, so overlapping callers (a mic loop
+/// appending audio while another task commits or cancels) could otherwise
+/// interleave frames. Each `run` waits for the previously submitted operation
+/// to finish before starting its own.
+package final class SerialSendQueue: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tail: Task<Void, Never>?
+
+    package init() {}
+
+    package func run(_ operation: @escaping () async throws -> Void) async throws {
+        try await enqueue(operation).value
+    }
+
+    private func enqueue(_ operation: @escaping () async throws -> Void) -> Task<Void, Error> {
+        lock.lock()
+        defer { lock.unlock() }
+        let previous = tail
+        let task = Task {
+            await previous?.value
+            try await operation()
+        }
+        tail = Task { _ = try? await task.value }
+        return task
+    }
+}
+
 // MARK: - Realtime Event Handler
 
 /// Handler for realtime events with type-erased callbacks

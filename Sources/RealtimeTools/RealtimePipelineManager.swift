@@ -308,9 +308,7 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
 
         eventHandler?.onResponseStarted?()
 
-        try await tts.synthesize(text: text)
-
-        for try await audioData in tts.audioStream {
+        for try await audioData in try await tts.synthesize(text: text) {
             eventHandler?.onAudioReceived?(audioData)
         }
 

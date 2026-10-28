@@ -142,11 +142,11 @@ public struct TranscriptionResult: Sendable {
 
 /// Protocol for TTS providers
 public protocol TTSProvider: AnyObject, Sendable {
-    /// Synthesize text to speech
-    func synthesize(text: String) async throws
-
-    /// Stream of audio data
-    var audioStream: AsyncThrowingStream<Data, Error> { get }
+    /// Synthesize `text`, returning that utterance's audio as a stream that
+    /// finishes when the utterance is complete. Each call gets its own
+    /// stream, so consecutive turns never share (or consume) one another's
+    /// audio.
+    func synthesize(text: String) async throws -> AsyncThrowingStream<Data, Error>
 
     /// Cancel current synthesis
     func cancel() async throws

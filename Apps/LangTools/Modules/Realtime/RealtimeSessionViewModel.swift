@@ -59,7 +59,6 @@ public final class RealtimeSessionViewModel: ObservableObject {
 
     /// Tracks the current assistant audio item for truncation on barge-in
     private var currentAssistantItemId: String?
-    private var assistantAudioMs: Int = 0
 
     public init(apiKeyProvider: @escaping () -> String?) {
         self.apiKeyProvider = apiKeyProvider
@@ -180,16 +179,25 @@ public final class RealtimeSessionViewModel: ObservableObject {
     /// interrupts automatically on speech).
     public func interrupt() async {
         guard let session else { return }
-        player.flush()
-        isModelSpeaking = false
+        let truncation = stopPlayback()
         do {
             try await session.cancelResponse()
-            if let itemId = currentAssistantItemId {
-                try await session.truncateItem(itemId: itemId, contentIndex: 0, audioEndMs: assistantAudioMs)
-            }
         } catch {
             // Cancelling with no active response is fine — ignore
         }
+        if let truncation {
+            try? await session.truncateItem(itemId: truncation.itemId, contentIndex: 0, audioEndMs: truncation.audioEndMs)
+        }
+    }
+
+    /// Stops local playback and returns where to truncate the assistant
+    /// item: the audio the user actually heard, not everything received.
+    /// Reads the position before flushing, since flush() resets it.
+    private func stopPlayback() -> (itemId: String, audioEndMs: Int)? {
+        let playedMs = player.playedMilliseconds
+        player.flush()
+        isModelSpeaking = false
+        return currentAssistantItemId.map { ($0, playedMs) }
     }
 
     // MARK: - Event Handling
@@ -216,10 +224,14 @@ public final class RealtimeSessionViewModel: ObservableObject {
         case .inputAudioBufferSpeechStarted:
             isUserSpeaking = true
             // Barge-in: the server detected user speech — stop local playback
-            // immediately so the user isn't talking over stale audio.
-            if isModelSpeaking {
-                player.flush()
-                isModelSpeaking = false
+            // immediately so the user isn't talking over stale audio. The
+            // server cancels the response itself (interrupt_response), but
+            // only the client knows how much was played, so truncate the
+            // item there to keep the conversation in line with what was heard.
+            if isModelSpeaking, let truncation = stopPlayback(), let session {
+                Task {
+                    try? await session.truncateItem(itemId: truncation.itemId, contentIndex: 0, audioEndMs: truncation.audioEndMs)
+                }
             }
 
         case .inputAudioBufferSpeechStopped:
@@ -230,7 +242,7 @@ public final class RealtimeSessionViewModel: ObservableObject {
 
         case .responseOutputItemAdded(let e):
             currentAssistantItemId = e.item.id
-            assistantAudioMs = 0
+            player.resetPlaybackPosition()
 
         case .responseAudioTranscriptDelta(let e):
             appendDelta(id: e.itemId, role: .assistant, delta: e.delta)
@@ -247,8 +259,6 @@ public final class RealtimeSessionViewModel: ObservableObject {
         case .responseAudioDelta(let e):
             if let audio = e.audioData {
                 isModelSpeaking = true
-                // PCM16 mono at 24kHz: 48 bytes per millisecond
-                assistantAudioMs += audio.count / 48
                 player.enqueue(pcm16: audio)
             }
 

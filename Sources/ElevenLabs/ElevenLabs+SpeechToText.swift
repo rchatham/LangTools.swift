@@ -62,6 +62,7 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
 
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private let sendQueue = SerialSendQueue()
 
     // MARK: - Transcription Stream
 
@@ -137,7 +138,14 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
             enablePartials: enablePartials,
             language: language
         )
-        try await sendMessage(config)
+        do {
+            try await sendMessage(config)
+        } catch {
+            // Don't leave a resumed socket behind: a later connect() would
+            // pass the !_isConnected guard and overwrite (leak) it.
+            tearDownSocket()
+            throw error
+        }
 
         lock.lock()
         _isConnected = true
@@ -147,6 +155,13 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
 
     /// Disconnect from the WebSocket
     public func disconnect() {
+        tearDownSocket()
+        transcriptionContinuation.finish()
+    }
+
+    /// Cancels the receive loop and socket and invalidates the URLSession,
+    /// leaving the output stream open.
+    private func tearDownSocket() {
         lock.lock()
         _isConnected = false
         let task = receiveTask
@@ -160,7 +175,6 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
         task?.cancel()
         socket?.cancel(with: .normalClosure, reason: nil)
         session?.invalidateAndCancel()
-        transcriptionContinuation.finish()
     }
 
     // MARK: - Sending Audio
@@ -197,7 +211,8 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
             throw ElevenLabsSTTError.encodingError
         }
 
-        try await socket?.send(.string(jsonString))
+        guard let socket else { return }
+        try await sendQueue.run { try await socket.send(.string(jsonString)) }
     }
 
     private func startReceiving() {

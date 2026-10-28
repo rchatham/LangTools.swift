@@ -77,6 +77,7 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
 
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private let sendQueue = SerialSendQueue()
 
     public var sessionId: String {
         lock.lock(); defer { lock.unlock() }
@@ -127,8 +128,9 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
         let factory = webSocketTaskFactory
         lock.unlock()
 
-        let urlString = "wss://api.openai.com/v1/realtime?model=\(model)"
-        guard let url = URL(string: urlString) else {
+        var components = URLComponents(string: "wss://api.openai.com/v1/realtime")
+        components?.queryItems = [URLQueryItem(name: "model", value: model)]
+        guard let url = components?.url else {
             setState(.error)
             throw OpenAIRealtimeError.invalidURL
         }
@@ -191,7 +193,7 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
             throw OpenAIRealtimeError.encodingError
         }
 
-        try await socket.send(.string(jsonString))
+        try await sendQueue.run { try await socket.send(.string(jsonString)) }
     }
 
     // MARK: - Session Update
@@ -321,8 +323,6 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
             lock.lock()
             _isGenerating = false
             lock.unlock()
-        case .error(let errorEvent):
-            print("OpenAI Realtime Error: \(errorEvent.error.message)")
         default:
             break
         }

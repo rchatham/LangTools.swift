@@ -132,8 +132,24 @@ public final class RealtimePCMPlayer: ObservableObject {
     private var playerNode: AVAudioPlayerNode?
     private var format: AVAudioFormat?
     private var pendingBuffers = 0
+    private var playedFrames = 0
+    /// Bumped by flush()/stop() so completion callbacks for buffers that were
+    /// dropped (AVAudioPlayerNode still calls them on stop) are ignored.
+    private var generation = 0
 
     public static let sampleRate: Double = 24000
+
+    /// Milliseconds of audio actually played since the last
+    /// `resetPlaybackPosition()` or `flush()`. Use this, not the amount
+    /// received, as the truncation point on barge-in.
+    public var playedMilliseconds: Int {
+        playedFrames * 1000 / Int(Self.sampleRate)
+    }
+
+    /// Start counting played audio from zero, e.g. when a new response item begins.
+    public func resetPlaybackPosition() {
+        playedFrames = 0
+    }
 
     public init() {}
 
@@ -161,12 +177,14 @@ public final class RealtimePCMPlayer: ObservableObject {
     }
 
     public func stop() {
+        generation += 1
         playerNode?.stop()
         engine?.stop()
         playerNode = nil
         engine = nil
         format = nil
         pendingBuffers = 0
+        playedFrames = 0
         isPlaying = false
     }
 
@@ -184,15 +202,18 @@ public final class RealtimePCMPlayer: ObservableObject {
             let samples = rawBuffer.bindMemory(to: Int16.self)
             guard let channel = buffer.floatChannelData?[0] else { return }
             for i in 0..<frameCount {
-                channel[i] = Float(samples[i]) / Float(Int16.max)
+                // Divide by 32768 so -32768 maps to exactly -1.0.
+                channel[i] = Float(samples[i]) / 32768
             }
         }
 
         pendingBuffers += 1
         isPlaying = true
-        playerNode.scheduleBuffer(buffer) { [weak self] in
+        let bufferGeneration = generation
+        playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, bufferGeneration == self.generation else { return }
+                self.playedFrames += frameCount
                 self.pendingBuffers = max(0, self.pendingBuffers - 1)
                 if self.pendingBuffers == 0 { self.isPlaying = false }
             }
@@ -201,8 +222,10 @@ public final class RealtimePCMPlayer: ObservableObject {
 
     /// Immediately drop all queued audio (barge-in interruption).
     public func flush() {
+        generation += 1
         playerNode?.stop()
         pendingBuffers = 0
+        playedFrames = 0
         isPlaying = false
         playerNode?.play()
     }

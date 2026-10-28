@@ -56,6 +56,47 @@ final class ElevenLabsWebSocketSessionTests: XCTestCase {
         await fulfillment(of: [expectation], timeout: 5)
         session.disconnect()
     }
+
+    func testConcurrentSendsNeverOverlapOnTheSocket() async throws {
+        let (session, mock) = try await makeConnectedSession()
+        mock.sendDelayNanoseconds = 20_000_000
+
+        await withTaskGroup(of: Void.self) { group in
+            for i in 0..<6 {
+                group.addTask { try? await session.send(text: "chunk \(i) ") }
+            }
+            group.addTask { try? await session.flush() }
+        }
+
+        // 1 initial message from connect() + 6 text chunks + 1 flush
+        XCTAssertEqual(mock.sentMessages.count, 8)
+        XCTAssertEqual(mock.maxConcurrentSends, 1, "Sends overlapped on the socket")
+        session.disconnect()
+    }
+
+    /// Regression test: a failed initial send used to leave the resumed
+    /// socket attached, so the next connect() overwrote (leaked) it.
+    func testFailedConnectTearsDownSocketAndAllowsRetry() async throws {
+        let failing = MockWebSocketTask()
+        failing.failSends = true
+        let working = MockWebSocketTask()
+        var sockets = [failing, working]
+
+        let session = ElevenLabsWebSocketSession(apiKey: "test-key", voiceId: "voice-123")
+        session.webSocketTaskFactory = { _ in sockets.removeFirst() }
+
+        do {
+            try await session.connect()
+            XCTFail("Expected connect() to throw")
+        } catch {}
+        XCTAssertFalse(session.isConnected)
+        XCTAssertTrue(failing.isClosed, "The failed socket should be cancelled, not leaked")
+
+        try await session.connect()
+        XCTAssertTrue(session.isConnected)
+        XCTAssertFalse(working.isClosed)
+        session.disconnect()
+    }
 }
 
 // MARK: - ElevenLabsSTTSession Decode Resilience
@@ -97,6 +138,27 @@ final class ElevenLabsSTTSessionTests: XCTestCase {
         mock.push("also not json")
 
         await fulfillment(of: [expectation], timeout: 5)
+        session.disconnect()
+    }
+
+    func testFailedConnectTearsDownSocketAndAllowsRetry() async throws {
+        let failing = MockWebSocketTask()
+        failing.failSends = true
+        let working = MockWebSocketTask()
+        var sockets = [failing, working]
+
+        let session = ElevenLabsSTTSession(apiKey: "test-key")
+        session.webSocketTaskFactory = { _ in sockets.removeFirst() }
+
+        do {
+            try await session.connect()
+            XCTFail("Expected connect() to throw")
+        } catch {}
+        XCTAssertFalse(session.isConnected)
+        XCTAssertTrue(failing.isClosed, "The failed socket should be cancelled, not leaked")
+
+        try await session.connect()
+        XCTAssertTrue(session.isConnected)
         session.disconnect()
     }
 

@@ -27,6 +27,11 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var _isRecognizing: Bool = false
+    /// Bumped on every start and stop. Recognition callbacks carry the
+    /// generation they were started under and are ignored once it's stale —
+    /// cancelling a task in stopTranscription() makes the Speech framework
+    /// deliver a final cancellation error, which must not end `transcriptions`.
+    private var generation = 0
 
     public var isRecognizing: Bool {
         lock.lock(); defer { lock.unlock() }
@@ -138,8 +143,13 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
         }
 
         // Start recognition task
+        lock.lock()
+        generation += 1
+        let taskGeneration = generation
+        lock.unlock()
+
         let recognitionTask = speechRecognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            self?.handleRecognitionResult(result, error: error)
+            self?.handleRecognitionResult(result, error: error, generation: taskGeneration)
         }
 
         lock.lock()
@@ -152,6 +162,7 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
     public func stopTranscription() async throws {
         lock.lock()
         guard _isRecognizing else { lock.unlock(); return }
+        generation += 1
         let request = recognitionRequest
         let task = recognitionTask
         recognitionRequest = nil
@@ -187,7 +198,12 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
 
     // MARK: - Private Methods
 
-    private func handleRecognitionResult(_ result: SFSpeechRecognitionResult?, error: Error?) {
+    private func handleRecognitionResult(_ result: SFSpeechRecognitionResult?, error: Error?, generation taskGeneration: Int) {
+        lock.lock()
+        let isCurrent = taskGeneration == generation
+        lock.unlock()
+        guard isCurrent else { return }
+
         if let error = error {
             transcriptionContinuation.finish(throwing: AppleSpeechError.recognitionFailed(error))
             return
