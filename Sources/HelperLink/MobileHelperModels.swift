@@ -114,6 +114,7 @@ public struct MobileHelperPairingPayload: Codable, Equatable, Sendable {
     /// The scheme must start with an ASCII letter and contain only ASCII letters,
     /// digits, plus, minus, or dots.
     /// Grammar: `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`
+    /// Use an app-owned registered custom scheme; grammar validation does not establish ownership or registration.
     ///
     /// - Parameter value: The scheme string to validate.
     /// - Returns: True if the scheme is valid.
