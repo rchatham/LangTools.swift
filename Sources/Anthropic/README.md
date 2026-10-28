@@ -59,17 +59,16 @@ Swift interface for Anthropic's Claude models, part of the LangTools framework.
 
 ### Model Characteristics
 
-**Claude 4.1 Opus** (Released August 5, 2025)
-- Best for: Incremental coding improvements and long agentic tasks
-- Use when: Working on complex, multi-step development projects that require deep understanding and sustained context
+**Claude 5.5 Opus** (Released September 2026)
+- Best for: Long-running agentic coding and knowledge work
+- Use when: Working on complex, multi-step development projects that require deep reasoning and sustained context
 
-**Claude 4.5 Sonnet** (Released September 29, 2025)
-- Best for: Advanced workflows, finance, and STEM-related tasks
-- Use when: Handling sophisticated analytical work with extended context requirements
-- Features: Enhanced context size support for longer conversations and documents
+**Claude 5.5 Sonnet** (Released September 2026)
+- Best for: The best combination of speed and intelligence for most workloads
+- Use when: Handling sophisticated analytical work, finance, and STEM-related tasks
 
-**Claude 4.5 Haiku** (Released October 2025)
-- Best for: Efficiency, cost-effectiveness, and real-time processing
+**Claude 5.5 Haiku** (Released October 2026)
+- Best for: High-volume, latency-sensitive tasks such as classification, extraction, and routing
 - Use when: Building business applications, chatbots, or services requiring fast responses
 - Features: Optimized for speed and cost without sacrificing quality
 
@@ -83,10 +82,10 @@ let anthropic = Anthropic(apiKey: "your-api-key")
 
 ### Chat Completions
 
-Basic chat completion with Claude 4.5 Sonnet:
+Basic chat completion with Claude 5.5 Sonnet:
 ```swift
 let request = Anthropic.MessageRequest(
-    model: .claude45Sonnet_latest,
+    model: .claude55Sonnet,
     messages: [
         Message(role: .user, content: "Analyze the financial implications of quantum computing on the banking sector.")
     ],
@@ -97,10 +96,10 @@ let response = try await anthropic.perform(request: request)
 print(response.message?.content.text ?? "")
 ```
 
-Using Claude 4.1 Opus for complex coding tasks:
+Using Claude 5 Opus for complex coding tasks:
 ```swift
 let request = Anthropic.MessageRequest(
-    model: .claude41Opus_latest,
+    model: .claude5Opus,
     messages: [
         Message(role: .user, content: "Refactor this codebase to implement a microservices architecture with proper error handling and monitoring.")
     ],
@@ -125,10 +124,10 @@ let response = try await anthropic.perform(request: request)
 print(response.message?.content.text ?? "")
 ```
 
-Streaming chat completion with Claude 4.1 Opus:
+Streaming chat completion with Claude 5 Opus:
 ```swift
 let request = Anthropic.MessageRequest(
-    model: .claude41Opus_latest,
+    model: .claude5Opus,
     messages: [
         Message(role: .user, content: "Write a comprehensive technical specification for a distributed system.")
     ],
@@ -171,7 +170,7 @@ let searchTool = Anthropic.Tool(
 )
 
 let request = Anthropic.MessageRequest(
-    model: .claude45Sonnet_latest,
+    model: .claude55Sonnet,
     messages: [
         Message(role: .user, content: "Find papers about quantum computing.")
     ],
@@ -198,7 +197,7 @@ let message = Message(
 )
 
 let request = Anthropic.MessageRequest(
-    model: .claude45Sonnet_latest,
+    model: .claude55Sonnet,
     messages: [message]
 )
 ```
@@ -211,7 +210,7 @@ Set context and behavior with system messages:
 
 ```swift
 let request = Anthropic.MessageRequest(
-    model: .claude45Sonnet_latest,
+    model: .claude55Sonnet,
     messages: [
         Message(role: .user, content: "Explain quantum entanglement.")
     ],
@@ -229,7 +228,7 @@ Available options for message requests:
 
 ```swift
 let request = Anthropic.MessageRequest(
-    model: .claude45Sonnet_latest,
+    model: .claude55Sonnet,
     messages: messages,
     max_tokens: 1000,          // Maximum response length
     stop_sequences: ["END"],   // Custom stop sequences
@@ -268,12 +267,10 @@ do {
 ## Best Practices
 
 1. **Model Selection**: 
-   - Use Claude 4.1 Opus for complex coding projects and long-running agentic workflows
-   - Use Claude 4.5 Sonnet for advanced analytical work in finance, science, and STEM fields
-   - Use Claude 4.5 Haiku for real-time applications, chatbots, and cost-sensitive deployments
-   - Use Claude 3 Opus for complex tasks requiring deep understanding (legacy)
-   - Use Claude 3.5 Sonnet for general purpose tasks (legacy)
-   - Use Claude 3.5 Haiku for quick, simple responses (legacy)
+   - Use Claude 5.5 Opus for long-running agentic coding and knowledge work
+   - Use Claude 5.5 Sonnet for advanced analytical work in finance, science, and STEM fields
+   - Use Claude 5.5 Haiku for real-time applications, chatbots, and cost-sensitive deployments
+   - Use Claude Fable 5.1 for demanding reasoning and long-horizon agentic work
 
 2. **System Messages**:
    - Keep system messages focused and specific
