@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 import HelperLink
 @testable import Chat
 
@@ -8,9 +9,9 @@ import HelperLink
 // Minimal, Debug-only SwiftUI app used ONLY as a UI Testing Bundle host for
 // PR78's isolated iOS presentation verification. It is NOT LangToolsApp and
 // never starts any ordinary app startup path, `.shared` coordinator/settings/
-// services, or discovery. It hosts exactly one real production API: the
-// `mobileHelperPairingPresentation(coordinator:brandingTitle:)` view modifier
-// from `Chat`. `@testable import Chat` (with ENABLE_TESTABILITY, a legitimate
+// services, or discovery. It hosts the production pairing modifier and, for
+// the request-error scenario, ChatUI's actual composer through the shared inert
+// RequestErrorPresentationFixture. `@testable import Chat` (with ENABLE_TESTABILITY, a legitimate
 // Debug build setting — not a macro-trust bypass) is used only to construct
 // an inert, in-memory `MobileHelperCredentialStoring` and a deny-all-network
 // counting session factory, so the UI test can assert zero credential/network
@@ -37,6 +38,7 @@ enum FixtureScenario: String {
     case defaultTitle
     case customTitle
     case invalid
+    case toolIterationLimit
 }
 
 // MARK: - Fail-closed environment resolution
@@ -178,6 +180,7 @@ final class FixtureModel: ObservableObject {
     let coordinator: MobileHelperPairingCoordinator
     let initialHelperID: String?
     let initialRevision: UInt64
+    let requestError = RequestErrorPresentationFixture()
 
     /// Bumped only by the fixture-only "Refresh Diagnostics" control. Forces
     /// a SwiftUI body re-evaluation so the diagnostic `Text` views re-read
@@ -208,7 +211,7 @@ final class FixtureModel: ObservableObject {
             case .defaultTitle:
                 resolvedScheme = "langtools-example-auth"
                 resolvedTitle = "Connect LangToolsHelper"
-            case .customTitle, .invalid:
+            case .customTitle, .invalid, .toolIterationLimit:
                 resolvedScheme = "botsworth"
                 resolvedTitle = "Connect Botsworth Helper"
             }
@@ -281,6 +284,11 @@ final class FixtureModel: ObservableObject {
                 preconditionFailure("Invalid fixture failure-scenario URL")
             }
             coordinator.handle(url)
+        case .toolIterationLimit:
+            requestError.presentToolLimit()
+            // Keep the screenshot's background diagnostics current as well;
+            // dismissal assertions still explicitly refresh them again.
+            refreshDiagnostics()
         }
     }
 }
@@ -293,6 +301,10 @@ struct FixtureRootView: View {
             Text("Presentation Fixture Host")
                 .font(.headline)
                 .accessibilityIdentifier("fixture-root-label")
+            if model.scenario == .toolIterationLimit {
+                model.requestError.view
+                    .frame(height: 100)
+            }
             // Fixture-only control: not a replica of, and never embedded in,
             // the real production sheet/alert. Re-renders the diagnostic
             // labels below so they are read fresh at the moment the UI test
@@ -318,6 +330,12 @@ struct FixtureRootView: View {
                     .accessibilityIdentifier("diagnostic-initial-revision")
                 Text("initialHelperID:\(model.initialHelperID ?? "nil")")
                     .accessibilityIdentifier("diagnostic-initial-helper-id")
+                Text("mappingCount:\(model.requestError.mappingCount)")
+                    .accessibilityIdentifier("diagnostic-mapping-count")
+                Text("unexpectedOperations:\(model.requestError.unexpectedOperationCount)")
+                    .accessibilityIdentifier("diagnostic-unexpected-operations")
+                Text("alertPresented:\(model.requestError.isPresented)")
+                    .accessibilityIdentifier("diagnostic-request-alert-presented")
             }
             // Read (not written) so this Group is part of the dependency the
             // compiler sees on `diagnosticsRefreshTick`, guaranteeing a
@@ -326,9 +344,11 @@ struct FixtureRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground))
-        // The ONLY production API under test. Not a replica, not a fake
-        // Cancel/Confirm action — this is the real modifier from Chat.
+        // Real production pairing modifier, not a fake Cancel/Confirm action.
+        // The tool-limit scenario instead presents the actual composer above.
         .mobileHelperPairingPresentation(coordinator: model.coordinator, brandingTitle: model.title)
+        .preferredColorScheme(model.scenario == .toolIterationLimit
+            ? (UIDevice.current.userInterfaceIdiom == .pad ? .light : .dark) : nil)
         .task {
             model.triggerScenario()
         }

@@ -3,13 +3,14 @@
 Minimal, Debug-only Xcode project (App target + UI Testing Bundle) used only
 to render and inspect the real production
 `mobileHelperPairingPresentation(coordinator:brandingTitle:)` modifier from
-`Chat` on isolated iOS simulators. **Not LangToolsApp.** No ordinary app startup,
+`Chat`, plus the actual ChatUI composer for request-error alerts, on isolated
+iOS simulators. **Not LangToolsApp.** No ordinary app startup,
 no `.shared` coordinator/settings/services/Keychain/discovery.
 
 ## What this is / is not
 
-- Is: a from-scratch SwiftUI app hosting exactly one real production API, plus
-  a real XCUITest UI Testing Bundle that drives it.
+- Is: a from-scratch SwiftUI app hosting the real pairing modifier or real
+  composer/error handler, plus a real XCUITest UI Testing Bundle that drives it.
 - Is not: a replica of the production sheet/alert, a fake Cancel/Confirm
   action, or a path to any real credential/network I/O (the injected
   credential store is in-memory only; the injected session's transport is
@@ -18,6 +19,10 @@ no `.shared` coordinator/settings/services/Keychain/discovery.
 - `@testable import Chat` is used only to reach two internal dependency-
   injection initializers (`OllamaEndpointConfiguration(userDefaults:credentialStore:)`
   and `MobileHelperPairingCoordinator(configuration:scheme:client:didSelect:)`);
+  `@testable import ChatUI` in the shared test-only
+  `RequestErrorPresentationFixture.swift` reaches the real internal composer,
+  using an inert service that delegates to the same `chatAlertInfo` mapper as
+  the app. No ChatUI source change, ordinary service or voice handler is used.
   `ENABLE_TESTABILITY` is a legitimate Debug build setting, not a macro-trust
   bypass.
 
@@ -68,10 +73,16 @@ xcodebuild test \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
 ```
 
-Repeat with an iPad destination UDID for the second device class. All 3 test
+Repeat with an iPad destination UDID for the second device class. All 4 test
 cases (`testDefaultTitleConfirmationSheetAndCancel`,
 `testCustomTitleConfirmationSheetAndCancel`,
-`testInvalidLinkPresentsFailureWithoutPairing`) run per invocation.
+`testInvalidLinkPresentsFailureWithoutPairing`,
+`testToolIterationLimitAlertAndCancel`) run per invocation. The `toolIterationLimit`
+scenario uses dark appearance on iPhone and light on iPad, without changing
+simulator settings. It invokes the real composer's error handler with
+`LangToolsRequestError.toolIterationLimitReached`, verifies the production
+mapping's title/message and actual **Cancel** dismissal, then checks one mapping
+and zero unexpected service/credential/session/selection operations.
 
 If a destination simulator is in a stale `Shutdown` state and `xcodebuild`
 reports a transient `FBSOpenApplicationServiceErrorDomain ... Busy` launch
@@ -102,7 +113,8 @@ after a run; nothing here publishes them anywhere automatically.
   `FIXTURE_SCENARIO` is missing/unrecognized, if the bundle identifier
   doesn't match this fixture's own, or if not a Debug build.
 - Confirm is never tapped by any test. Only the real Cancel ("Cancel") or
-  real alert "OK" control is tapped.
+  pairing-failure alert "OK" control is tapped. The tool-limit composer alert
+  genuinely uses Cancel, not OK.
 - The fixture-only "Refresh Diagnostics" button (`fixture-refresh-diagnostics`)
   is not part of, and never embedded in, the production modal; it only forces
   a SwiftUI re-render of the diagnostic labels and is tapped after Cancel/OK,

@@ -66,6 +66,27 @@ final class MobileHelperPairingPresentationUITests: XCTestCase {
         assertZeroSideEffects(app: app)
     }
 
+    func testToolIterationLimitAlertAndCancel() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["FIXTURE_SCENARIO"] = "toolIterationLimit"
+        app.launch()
+
+        let alert = app.alerts["Tool Iteration Limit"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 15), "Production composer alert did not appear")
+        XCTAssertTrue(alert.staticTexts["Tool iteration limit reached."].exists)
+        XCTAssertFalse(alert.buttons["mobile-helper-confirm"].exists)
+        XCTAssertTrue(alert.buttons["Cancel"].exists, "Use the actual composer's dismissal control")
+        try attachScreenshot(named: "tool-iteration-limit", of: app)
+        alert.buttons["Cancel"].tap()
+        XCTAssertFalse(alert.waitForExistence(timeout: 3), "Production composer alert must dismiss")
+
+        try refreshDiagnosticsAndAssertStillDismissed(app: app, navigationBarTitle: nil)
+        assertZeroSideEffects(app: app)
+        XCTAssertEqual(app.staticTexts["diagnostic-mapping-count"].label, "mappingCount:1")
+        XCTAssertEqual(app.staticTexts["diagnostic-unexpected-operations"].label, "unexpectedOperations:0")
+        XCTAssertEqual(app.staticTexts["diagnostic-request-alert-presented"].label, "alertPresented:false")
+    }
+
     // MARK: - Shared confirmation-sheet flow
 
     private func runConfirmationScenario(scenario: String, title: String, artifact: String) throws {
@@ -126,6 +147,8 @@ final class MobileHelperPairingPresentationUITests: XCTestCase {
         }
         XCTAssertFalse(app.alerts["Helper Pairing Failed"].exists,
             "Refreshing diagnostics must not retrigger the production alert")
+        XCTAssertFalse(app.alerts["Tool Iteration Limit"].exists,
+            "Refreshing diagnostics must not retrigger the production composer alert")
     }
 
     // MARK: - Diagnostics (fixture-host-only; not production UI)

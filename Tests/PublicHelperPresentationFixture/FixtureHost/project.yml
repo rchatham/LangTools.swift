@@ -10,6 +10,8 @@ packages:
     path: ../../../Apps/LangTools
   LangTools:
     path: ../../..
+  ChatUI:
+    path: ../../../Apps/LangTools/ChatUI
 
 targets:
   PresentationFixtureHost:
@@ -17,11 +19,16 @@ targets:
     platform: iOS
     sources:
       - path: PresentationFixtureHost
+      - path: ../../../Apps/LangTools/Tests/ChatTests/Fixtures/RequestErrorPresentationFixture.swift
     dependencies:
       - package: LangToolsApp
         product: Chat
       - package: LangTools
         product: HelperLink
+      - package: LangTools
+        product: LangTools
+      - package: ChatUI
+        product: ChatUI
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reidchatham.pr78fixture.PresentationFixtureHost

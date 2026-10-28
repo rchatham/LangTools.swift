@@ -34,6 +34,86 @@ Tests press only the real production Cancel or alert OK, then explicitly refresh
 
 Independent read-only QA verified both result bundles and current source; fixture-safety review found no blocking issues. These are scoped reviews, not a security audit. The new iOS fixture is not wired into hosted CI.
 
+## Tool-iteration-limit alert — verified 2026-10-27 UTC
+
+The app now delegates only `LangToolsRequestError` presentation to the exhaustive
+`chatAlertInfo` mapping in the compiled Chat package. Two direct tests preserve
+all four existing titles/messages, including the localized tool-limit description
+and absence of executable actions or credential fields. Hosted package CI selects
+these tests explicitly; this does not replace a full executable-app build.
+
+The shared, test-only `RequestErrorPresentationFixture` hosts **the actual ChatUI
+composer/error handler** with an inert message service. It never constructs an
+ordinary app service, voice handler, conversation, credential store or provider.
+The real informational alert uses **Cancel**, not OK; no production UI behavior
+was changed to make testing easier. Both native fixtures press that real control,
+verify dismissal, one mapping and zero unexpected service operations. The iOS host
+also refreshes diagnostics before capture and after dismissal and verifies zero
+credential/session/selection effects and unchanged helper ID/revision.
+
+<table>
+<tr><th>macOS light</th><th>macOS dark</th><th>iPhone dark</th><th>iPad light</th></tr>
+<tr><td><a href="macos-light-tool-iteration-limit.png"><img src="macos-light-tool-iteration-limit.png" width="240" alt="macOS light tool-limit alert"></a></td><td><a href="macos-dark-tool-iteration-limit.png"><img src="macos-dark-tool-iteration-limit.png" width="240" alt="macOS dark tool-limit alert"></a></td><td><a href="iphone-tool-iteration-limit.png"><img src="iphone-tool-iteration-limit.png" height="240" alt="iPhone dark tool-limit alert"></a></td><td><a href="ipad-tool-iteration-limit.png"><img src="ipad-tool-iteration-limit.png" height="240" alt="iPad light tool-limit alert"></a></td></tr>
+</table>
+
+All four alert captures were inspected for readable, unclipped title, message and
+Cancel. macOS captures draw the actual attached native view hierarchy with
+`displayIgnoringOpacity`, over an appearance-resolved system background; they do
+not reconstruct text or controls. Local Vision recognition validates all three
+strings and pixel checks reject unresolved backgrounds. The original layer-only
+attempt lost native drawing and was rejected, not accepted as visual evidence.
+These content-view bitmaps do not verify window chrome, desktop blur or material
+vibrancy. iOS captures are actual fixture-application screenshots, retained also
+as `keepAlways` XCUITest attachments. No desktop/window-server capture or permission
+changes were used.
+
+Verification on macOS **27.0.1**, Xcode **26.3 (17C529)**, iOS Simulator **26.3.1**:
+
+- Safe focused Chat run: **50 tests passed**, including two mapping cases and four
+  AppKit presentation cases (the new tool-limit case covers light and dark).
+- Native iOS fixture: **four tests passed per device**, iPhone 17 and iPad (A16),
+  with no failures or skips; Debug `build-for-testing` also succeeded.
+- Ordinary macOS app: unsigned compile+link **BUILD SUCCEEDED** after the owner's
+  normal macro approval (see below); the app was not launched.
+- HelperLink: **11 passed**; ordinary public-import smoke and CLI builds passed.
+- Independent scoped correctness/security source reviews found no actionable
+  findings; these were read-only reviews, not audits or independent test reruns.
+
+Commands for macOS remain above; the iOS fixture README lists all four scenarios.
+Current logs/results are retained under `/tmp/langtools-pr78-alert-fixes/`, notably
+`app-final.log`, `iphone-final.{log,xcresult}`, `ipad-final.{log,xcresult}`,
+`helperlink.log`, `smoke.log` and `cli.log`. The two unsafe shared-settings/real-
+Keychain tests remain explicitly excluded. Focused counts overlap earlier runs;
+they are not full-suite acceptance. Older pairing evidence above remains historical.
+
+### Ordinary-app build verification
+
+A fresh unsigned macOS app build initially exited **65** at macro validation:
+`JSONMacroPlugin` from `JSON.swift` changed since its previous approval and must be
+enabled. The clean checkout matches both root and app Xcode pins: JSON.swift
+**1.0.4**, revision `498270c44bb80c5cf5b8de8727ceb030f95c0777`; SwiftSyntax is
+**510.0.3**, revision `2bc86522d115234d1f588efe2bcb4ce4be8f8b82`.
+The manifest, plugin entry point and schema-generation implementation were
+inspected; this is not an audit or permission to execute untrusted code.
+
+The owner reviewed that specific dependency and confirmed the project builds
+normally in Xcode. Retrying the same compile-only `xcodebuild` command with the
+project's normal DerivedData then produced **BUILD SUCCEEDED** for arm64/x86_64,
+with resolved versions enforced from `Package.resolved`. The earlier failure was
+specific to the throwaway `-derivedDataPath` checkout, whose macro approval state
+was separate; it was not worked around. No global trust edit, validation-skip flag,
+permission change or ordinary app launch was used.
+
+Evidence (all retained):
+
+- Failed: `/tmp/langtools-pr78-alert-fixes/mac-build.log` and
+  `mac-build-after-approval.log` (exit 65, dedicated DerivedData).
+- Succeeded: `/tmp/langtools-pr78-alert-fixes/mac-build-default-dd.log` (exit 0).
+
+This verifies the executable app compiles and links with the new exhaustive
+mapping delegate; it was not launched. The user's earlier GUI fixture error
+remains unidentified without its first diagnostic.
+
 ## Boundaries
 
 - Synthetic, non-redeemable payloads only; fresh UUID defaults suites and custom credential namespaces. An inherited selection is rejected before construction. No confirmation, Keychain I/O, network request or listener occurs.

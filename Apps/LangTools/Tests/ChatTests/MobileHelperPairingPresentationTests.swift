@@ -3,6 +3,7 @@ import AppKit
 import Chat
 import HelperLink
 import SwiftUI
+import Vision
 import XCTest
 
 /// Hosts the production modifier, not a replica or an ImageRenderer of its parent.
@@ -41,6 +42,43 @@ final class MobileHelperPairingPresentationTests: XCTestCase {
         try capture(sheet: sheet, artifact: "botsworth-invalid-link", elements: elements)
         fixture.coordinator.dismissError()
         try await waitUntil("failure alert dismissed") { fixture.window.attachedSheet == nil }
+    }
+
+    func testToolIterationLimitAlertAndCancel() async throws {
+        for (appearance, artifact) in [(NSAppearance.Name.aqua, "macos-light-tool-iteration-limit"),
+                                       (.darkAqua, "macos-dark-tool-iteration-limit")] {
+            let fixture = try Fixture(scheme: "botsworth", showsRequestError: true)
+            defer { fixture.close() }
+            fixture.window.appearance = NSAppearance(named: appearance)
+            try await waitUntil("host window visible") { fixture.window.isVisible }
+            fixture.requestError.presentToolLimit()
+            try await waitUntil("production composer alert attached") {
+                fixture.window.attachedSheet?.isVisible == true
+            }
+            let sheet = try XCTUnwrap(fixture.window.attachedSheet)
+            try await waitUntil("mapped production alert rendered") {
+                let elements = Self.elements(in: sheet)
+                return elements.contains { $0.text == "Tool Iteration Limit" }
+                    && elements.contains { $0.text == "Tool iteration limit reached." }
+            }
+            let elements = Self.elements(in: sheet)
+            try capture(sheet: sheet, artifact: artifact, elements: elements, nativeDisplay: true)
+            // The actual composer uses Cancel for informational mapped alerts.
+            let cancel = try XCTUnwrap(elements.first {
+                $0.role == NSAccessibility.Role.button.rawValue && $0.text == "Cancel"
+            }?.object)
+            let press = NSSelectorFromString("accessibilityPerformPress")
+            guard cancel.responds(to: press) else { throw PresentationError.unavailableCancelAction }
+            _ = cancel.perform(press)
+            try await waitUntil("Cancel dismisses production composer alert") {
+                !fixture.requestError.isPresented && fixture.window.attachedSheet == nil
+            }
+            XCTAssertEqual(fixture.requestError.mappingCount, 1)
+            XCTAssertEqual(fixture.requestError.unexpectedOperationCount, 0)
+            XCTAssertEqual(fixture.selections, 0)
+            XCTAssertEqual(fixture.configuration.snapshot(), fixture.initialSnapshot)
+            XCTAssertNil(fixture.defaults.string(forKey: "ollamaSelectedMobileHelperID"))
+        }
     }
 
     private func verifyConfirmation(scheme: String, title: String, artifact: String) async throws {
@@ -148,7 +186,7 @@ final class MobileHelperPairingPresentationTests: XCTestCase {
 
     /// Opt-in, in-process view bitmap capture: no screen recording API, permission
     /// changes, global screenshots, or parent-only renders masquerading as a sheet.
-    private func capture(sheet: NSWindow, artifact: String, elements: [Element]) throws {
+    private func capture(sheet: NSWindow, artifact: String, elements: [Element], nativeDisplay: Bool = false) throws {
         guard let path = ProcessInfo.processInfo.environment["MOBILE_HELPER_PRESENTATION_ARTIFACTS"],
               !path.isEmpty else { return }
         let directory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
@@ -168,24 +206,43 @@ final class MobileHelperPairingPresentationTests: XCTestCase {
         sheet.displayIfNeeded()
         displaySubtree(view)
         CATransaction.flush()
-        let layer = try XCTUnwrap(view.layer)
-        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil,
-            pixelsWide: Int(view.bounds.width * 2), pixelsHigh: Int(view.bounds.height * 2),
-            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-        let context = try XCTUnwrap(NSGraphicsContext(bitmapImageRep: bitmap)?.cgContext)
-        context.scaleBy(x: 2, y: 2)
-        sheet.effectiveAppearance.performAsCurrentDrawingAppearance {
-            // AppKit's material background is compositor-backed; use the actual
-            // window background color beneath the captured production layers.
-            context.setFillColor(sheet.backgroundColor.cgColor)
-            context.fill(view.bounds)
+        let bitmap: NSBitmapImageRep
+        if nativeDisplay {
+            bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            let graphics = try XCTUnwrap(NSGraphicsContext(bitmapImageRep: bitmap))
+            // Draw the attached native view hierarchy, including AppKit's hosted
+            // button. Layer rendering/cacheDisplay lose its label and materials.
+            // Resolve the system background in the sheet's actual appearance;
+            // no title, message, button or layout is reconstructed here.
+            sheet.effectiveAppearance.performAsCurrentDrawingAppearance {
+                NSGraphicsContext.saveGraphicsState()
+                defer { NSGraphicsContext.restoreGraphicsState() }
+                NSGraphicsContext.current = graphics
+                NSColor.windowBackgroundColor.setFill()
+                view.bounds.fill()
+                view.displayIgnoringOpacity(view.bounds, in: graphics)
+            }
+            try validateToolLimitCapture(bitmap, appearance: sheet.effectiveAppearance)
+        } else {
+            let layer = try XCTUnwrap(view.layer)
+            bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil,
+                pixelsWide: Int(view.bounds.width * 2), pixelsHigh: Int(view.bounds.height * 2),
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            let context = try XCTUnwrap(NSGraphicsContext(bitmapImageRep: bitmap)?.cgContext)
+            context.scaleBy(x: 2, y: 2)
+            sheet.effectiveAppearance.performAsCurrentDrawingAppearance {
+                // AppKit's material background is compositor-backed; use the actual
+                // window background color beneath the captured production layers.
+                context.setFillColor(sheet.backgroundColor.cgColor)
+                context.fill(view.bounds)
+            }
+            if layer.isGeometryFlipped {
+                context.translateBy(x: 0, y: view.bounds.height)
+                context.scaleBy(x: 1, y: -1)
+            }
+            layer.render(in: context)
         }
-        if layer.isGeometryFlipped {
-            context.translateBy(x: 0, y: view.bounds.height)
-            context.scaleBy(x: 1, y: -1)
-        }
-        layer.render(in: context)
         let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
         try data.write(to: directory.appendingPathComponent(artifact + ".png"), options: .atomic)
         let text = elements.map { "\($0.role ?? "-") | \($0.identifier ?? "-") | \($0.text ?? "-")" }.joined(separator: "\n")
@@ -193,11 +250,37 @@ final class MobileHelperPairingPresentationTests: XCTestCase {
         print("Production attached-sheet bitmap: \(directory.path)/\(artifact).png (\(bitmap.pixelsWide)x\(bitmap.pixelsHigh))")
     }
 
+    /// Validate the pixels, not just the independent AX tree. Recognition is local
+    /// to this in-memory bitmap; it does not capture a display or contact a service.
+    private func validateToolLimitCapture(_ bitmap: NSBitmapImageRep, appearance: NSAppearance) throws {
+        // The alert's unobstructed corner must have an opaque, resolved background
+        // appropriate to its appearance, rather than transparent/black material.
+        let corner = try XCTUnwrap(bitmap.colorAt(x: 2, y: 2)?.usingColorSpace(.deviceRGB))
+        let brightness = (corner.redComponent + corner.greenComponent + corner.blueComponent) / 3
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        guard corner.alphaComponent > 0.99,
+              isDark ? (brightness > 0.03 && brightness < 0.4) : brightness > 0.7 else {
+            throw PresentationError.invalidCapture("Unresolved alert background")
+        }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US"]
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage), options: [:]).perform([request])
+        let lines = request.results?.compactMap { $0.topCandidates(1).first?.string } ?? []
+        for expected in ["Tool Iteration Limit", "Tool iteration limit reached.", "Cancel"] {
+            guard lines.contains(expected) else {
+                throw PresentationError.invalidCapture("Missing readable native text: \(expected); recognized: \(lines)")
+            }
+        }
+    }
+
     private enum PresentationError: Error {
         case timeout(String)
         case invalidArtifactDirectory
         case unexpectedStoredSelection
         case unavailableCancelAction
+        case invalidCapture(String)
     }
 
     @MainActor
@@ -210,8 +293,9 @@ final class MobileHelperPairingPresentationTests: XCTestCase {
         let window: NSWindow
         var selections: Int { selectionCount.value }
         private let selectionCount: SelectionCount
+        let requestError = RequestErrorPresentationFixture()
 
-        init(scheme: String, title: String = "Connect Botsworth Helper") throws {
+        init(scheme: String, title: String = "Connect Botsworth Helper", showsRequestError: Bool = false) throws {
             defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
             // A fresh suite has no selected helper, so this public constructor only
             // constructs its store: it never queries, writes or deletes Keychain.
@@ -235,9 +319,19 @@ final class MobileHelperPairingPresentationTests: XCTestCase {
             if NSApplication.shared.responds(to: selector) {
                 _ = NSApplication.shared.perform(selector, with: NSNumber(value: true))
             }
-            let host = NSHostingView(rootView: Text("Pairing presentation verification")
-                .frame(width: 680, height: 520)
-                .mobileHelperPairingPresentation(coordinator: coordinator, brandingTitle: title))
+            let content: AnyView
+            if showsRequestError {
+                let composerView = requestError.view
+                content = AnyView(VStack {
+                    Text("Isolated request-error presentation verification")
+                    composerView
+                }.frame(width: 680, height: 520))
+            } else {
+                content = AnyView(Text("Pairing presentation verification")
+                    .frame(width: 680, height: 520)
+                    .mobileHelperPairingPresentation(coordinator: coordinator, brandingTitle: title))
+            }
+            let host = NSHostingView(rootView: content)
             window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 520),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false

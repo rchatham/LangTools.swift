@@ -9,7 +9,10 @@
 /* Begin PBXBuildFile section */
 		0A0099050C7F9E9A100C5205 /* Chat in Frameworks */ = {isa = PBXBuildFile; productRef = EEB865957BE086D46B3D65BB /* Chat */; };
 		172ADC342E55FE8A867A72AC /* PresentationFixtureHostApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98D5C4339A8A5036AAE3361F /* PresentationFixtureHostApp.swift */; };
+		19E6BD894CBEC67817E27AE8 /* RequestErrorPresentationFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28AC4525A7F59A0DBFF1595C /* RequestErrorPresentationFixture.swift */; };
+		42C6524CD4F0436B11BA462A /* LangTools in Frameworks */ = {isa = PBXBuildFile; productRef = E10801135F2977E43BF0D7AE /* LangTools */; };
 		BE63A34DB88B2D4013D4BBB2 /* HelperLink in Frameworks */ = {isa = PBXBuildFile; productRef = 90D14682F18E4D5796D7F63A /* HelperLink */; };
+		D73F440D0AE8D1C67BFF94A1 /* ChatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 6FE023BF219CB640C66562DD /* ChatUI */; };
 		F0F278479EDEBC59EB963B53 /* MobileHelperPairingPresentationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 821A76D7FA6E9DD3CB323881 /* MobileHelperPairingPresentationUITests.swift */; };
 /* End PBXBuildFile section */
 
@@ -24,6 +27,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		28AC4525A7F59A0DBFF1595C /* RequestErrorPresentationFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestErrorPresentationFixture.swift; sourceTree = "<group>"; };
+		3749850EEE00977625B08BD1 /* ChatUI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ChatUI; path = ../../../Apps/LangTools/ChatUI; sourceTree = SOURCE_ROOT; };
 		821A76D7FA6E9DD3CB323881 /* MobileHelperPairingPresentationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileHelperPairingPresentationUITests.swift; sourceTree = "<group>"; };
 		8FD0859A04CF7355FE84CA72 /* PresentationFixtureUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PresentationFixtureUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		98D5C4339A8A5036AAE3361F /* PresentationFixtureHostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationFixtureHostApp.swift; sourceTree = "<group>"; };
@@ -39,12 +44,30 @@
 			files = (
 				0A0099050C7F9E9A100C5205 /* Chat in Frameworks */,
 				BE63A34DB88B2D4013D4BBB2 /* HelperLink in Frameworks */,
+				42C6524CD4F0436B11BA462A /* LangTools in Frameworks */,
+				D73F440D0AE8D1C67BFF94A1 /* ChatUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		12E9D42955100556FD27A9C6 /* ChatTests */ = {
+			isa = PBXGroup;
+			children = (
+				96B4FCAA45F6E156217B2F1A /* Fixtures */,
+			);
+			path = ChatTests;
+			sourceTree = "<group>";
+		};
+		2AD39B1D84D55B99D58A4906 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				12E9D42955100556FD27A9C6 /* ChatTests */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
 		3511DCB0AC01FBB07630EC47 /* PresentationFixtureUITests */ = {
 			isa = PBXGroup;
 			children = (
@@ -56,10 +79,27 @@
 		47939FF0F5A5B8D1C7153DA2 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
+				3749850EEE00977625B08BD1 /* ChatUI */,
 				9971C06A939F5448554257B5 /* LangTools */,
 				E8EC053C921444E52B3AF2E4 /* langtools-helper-apis */,
 			);
 			name = Packages;
+			sourceTree = "<group>";
+		};
+		544925EC4FDAB9EEC7244D2A /* Apps */ = {
+			isa = PBXGroup;
+			children = (
+				71B7581C98011AF1DE88549E /* LangTools */,
+			);
+			path = Apps;
+			sourceTree = "<group>";
+		};
+		71B7581C98011AF1DE88549E /* LangTools */ = {
+			isa = PBXGroup;
+			children = (
+				2AD39B1D84D55B99D58A4906 /* Tests */,
+			);
+			path = LangTools;
 			sourceTree = "<group>";
 		};
 		7B13DCF7D966852DFC0C7A35 /* Products */ = {
@@ -71,9 +111,27 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		84DD99AC418357381F358AAD /* langtools-helper-apis */ = {
+			isa = PBXGroup;
+			children = (
+				544925EC4FDAB9EEC7244D2A /* Apps */,
+			);
+			name = "langtools-helper-apis";
+			path = ../../..;
+			sourceTree = "<group>";
+		};
+		96B4FCAA45F6E156217B2F1A /* Fixtures */ = {
+			isa = PBXGroup;
+			children = (
+				28AC4525A7F59A0DBFF1595C /* RequestErrorPresentationFixture.swift */,
+			);
+			path = Fixtures;
+			sourceTree = "<group>";
+		};
 		DA2DA5A3A20B2546E10BA704 = {
 			isa = PBXGroup;
 			children = (
+				84DD99AC418357381F358AAD /* langtools-helper-apis */,
 				47939FF0F5A5B8D1C7153DA2 /* Packages */,
 				E1BFF9517AD1A34FC6774958 /* PresentationFixtureHost */,
 				3511DCB0AC01FBB07630EC47 /* PresentationFixtureUITests */,
@@ -107,6 +165,8 @@
 			packageProductDependencies = (
 				EEB865957BE086D46B3D65BB /* Chat */,
 				90D14682F18E4D5796D7F63A /* HelperLink */,
+				E10801135F2977E43BF0D7AE /* LangTools */,
+				6FE023BF219CB640C66562DD /* ChatUI */,
 			);
 			productName = PresentationFixtureHost;
 			productReference = D4B7F14B9CA433F6D54DA492 /* PresentationFixtureHost.app */;
@@ -154,6 +214,7 @@
 			mainGroup = DA2DA5A3A20B2546E10BA704;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				F942D4AE0D63B0F325FBBEEA /* XCLocalSwiftPackageReference "../../../Apps/LangTools/ChatUI" */,
 				11074FC4948DBEDAD56CD4F8 /* XCLocalSwiftPackageReference "../../.." */,
 				4B89421749E1EEC2DC7EF116 /* XCLocalSwiftPackageReference "../../../Apps/LangTools" */,
 			);
@@ -182,6 +243,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				172ADC342E55FE8A867A72AC /* PresentationFixtureHostApp.swift in Sources */,
+				19E6BD894CBEC67817E27AE8 /* RequestErrorPresentationFixture.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -452,12 +514,24 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../../Apps/LangTools;
 		};
+		F942D4AE0D63B0F325FBBEEA /* XCLocalSwiftPackageReference "../../../Apps/LangTools/ChatUI" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../../Apps/LangTools/ChatUI;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		6FE023BF219CB640C66562DD /* ChatUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ChatUI;
+		};
 		90D14682F18E4D5796D7F63A /* HelperLink */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = HelperLink;
+		};
+		E10801135F2977E43BF0D7AE /* LangTools */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LangTools;
 		};
 		EEB865957BE086D46B3D65BB /* Chat */ = {
 			isa = XCSwiftPackageProductDependency;

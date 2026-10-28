@@ -303,16 +303,7 @@ extension MessageService: @retroactive ChatMessageService {
             }
 
         case let error as LangToolsRequestError:
-            switch error {
-            case .multipleChoiceIndexOutOfBounds:
-                return ChatAlertInfo(title: "Invalid Selection", message: "The selected choice was out of bounds.")
-            case .failedToDecodeFunctionArguments:
-                return ChatAlertInfo(title: "Decoding Error", message: "Failed to decode function arguments.")
-            case .missingRequiredFunctionArguments:
-                return ChatAlertInfo(title: "Missing Arguments", message: "Required function arguments are missing.")
-            case .toolIterationLimitReached:
-                return ChatAlertInfo(title: "Tool Iteration Limit", message: error.localizedDescription)
-            }
+            return error.chatAlertInfo
 
         case is LangToolchainError:
 
