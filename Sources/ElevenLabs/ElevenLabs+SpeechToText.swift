@@ -31,7 +31,11 @@ extension ElevenLabs {
 
 // MARK: - STT WebSocket Session
 
-/// ElevenLabs WebSocket session for real-time speech-to-text (Scribe)
+/// ElevenLabs WebSocket session for real-time speech-to-text (Scribe).
+///
+/// A session is single-use: once it's disconnected, or its connection fails,
+/// its output stream has finished and `connect()` throws `sessionClosed`.
+/// Create a new session to reconnect.
 public final class ElevenLabsSTTSession: @unchecked Sendable {
     // MARK: - Properties
 
@@ -47,6 +51,8 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
     private var urlSession: URLSession?
     private var receiveTask: Task<Void, Never>?
     private var _isConnected: Bool = false
+    /// Set by disconnect() or a failed connection; see the type's doc comment.
+    private var _closed = false
 
     /// Factory for the underlying WebSocket transport. Overridable in tests.
     internal var webSocketTaskFactory: ((URLRequest) -> any LangToolsWebSocketTask)?
@@ -94,10 +100,8 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
 
     /// Connect to the ElevenLabs STT WebSocket API
     public func connect() async throws {
-        lock.lock()
-        guard !_isConnected else { lock.unlock(); return }
-        let factory = webSocketTaskFactory
-        lock.unlock()
+        let (shouldConnect, factory) = try beginConnecting()
+        guard shouldConnect else { return }
 
         var urlComponents = URLComponents()
         urlComponents.scheme = "wss"
@@ -155,8 +159,28 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
 
     /// Disconnect from the WebSocket
     public func disconnect() {
+        lock.lock()
+        _closed = true
+        lock.unlock()
         tearDownSocket()
         transcriptionContinuation.finish()
+    }
+
+    /// Returns the transport factory to connect with, or `shouldConnect:
+    /// false` when already connected.
+    private func beginConnecting() throws -> (shouldConnect: Bool, factory: ((URLRequest) -> any LangToolsWebSocketTask)?) {
+        lock.lock()
+        defer { lock.unlock() }
+        if _closed { throw ElevenLabsSTTError.sessionClosed }
+        guard !_isConnected else { return (false, nil) }
+        return (true, webSocketTaskFactory)
+    }
+
+    private func markConnectionFailed() {
+        lock.lock()
+        _isConnected = false
+        _closed = true
+        lock.unlock()
     }
 
     /// Cancels the receive loop and socket and invalidates the URLSession,
@@ -243,6 +267,7 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
                     // A genuine transport-level error (socket closed, etc.) —
                     // this is fatal, unlike a single malformed message below.
                     if !Task.isCancelled {
+                        self.markConnectionFailed()
                         self.transcriptionContinuation.finish(throwing: error)
                     }
                     break
@@ -390,6 +415,7 @@ public enum ElevenLabsSTTError: Error, LocalizedError {
     case notConnected
     case encodingError
     case connectionFailed(Error)
+    case sessionClosed
     case serverError(String)
 
     public var errorDescription: String? {
@@ -402,6 +428,8 @@ public enum ElevenLabsSTTError: Error, LocalizedError {
             return "Failed to encode message"
         case .connectionFailed(let error):
             return "Connection failed: \(error.localizedDescription)"
+        case .sessionClosed:
+            return "This session was disconnected or its connection failed; create a new session to reconnect"
         case .serverError(let message):
             return "Server error: \(message)"
         }

@@ -79,7 +79,13 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         setState(.starting)
 
         // Initialize providers based on configuration
-        try await initializeProviders()
+        do {
+            try await initializeProviders()
+        } catch {
+            // Return to .idle so start() can be retried.
+            setState(.idle)
+            throw error
+        }
 
         setState(.running)
     }
@@ -240,24 +246,26 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
             lock.unlock()
         }
 
-        // Consume STT transcriptions: surface every result via
+        // Start an STT session and consume it: surface every result via
         // onTranscriptReceived, and in .modular mode drive the LLM/TTS steps
         // once a final transcription arrives. Stored in `processingTask` so
-        // `stop()` cancels it alongside the rest of the pipeline. Requires
-        // setProviders(stt:) to have been called before start() — an STT
-        // provider attached afterward won't be picked up until the next
-        // start() (matching the existing vadInstance/interruptionDetector
-        // setup-time-only pattern above).
+        // `stop()` cancels it alongside the rest of the pipeline; each
+        // start() gets a fresh session stream. Requires setProviders(stt:)
+        // to have been called before start() — an STT provider attached
+        // afterward won't be picked up until the next start() (matching the
+        // existing vadInstance/interruptionDetector setup-time-only pattern
+        // above).
         lock.lock()
         let stt = sttProviderInstance
         lock.unlock()
 
         if let stt {
+            let transcriptions = try await stt.startTranscription()
             let mode = configuration.mode
             let task = Task { [weak self] in
                 guard let self else { return }
                 do {
-                    for try await result in stt.transcriptions {
+                    for try await result in transcriptions {
                         guard !Task.isCancelled else { return }
                         self.eventHandler?.onTranscriptReceived?(result.text, result.isFinal)
                         if mode == .modular, result.isFinal, !result.text.isEmpty {

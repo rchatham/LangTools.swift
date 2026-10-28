@@ -88,17 +88,18 @@ public enum RealtimePipelineEvent: Sendable {
 
 /// Protocol for STT providers
 public protocol STTProvider: AnyObject, Sendable {
-    /// Start transcription
-    func startTranscription() async throws
+    /// Start a transcription session and return its results. The stream
+    /// stays open across utterances (`TranscriptionResult.isFinal` marks the
+    /// end of each), finishes when `stopTranscription()` is called, and
+    /// throws if recognition fails. Each session gets a fresh stream, so a
+    /// provider can be stopped and started again.
+    func startTranscription() async throws -> AsyncThrowingStream<TranscriptionResult, Error>
 
-    /// Stop transcription
+    /// Stop the current transcription session, finishing its stream.
     func stopTranscription() async throws
 
     /// Send audio for transcription
     func transcribe(audio: Data) async throws
-
-    /// Stream of transcription results
-    var transcriptions: AsyncThrowingStream<TranscriptionResult, Error> { get }
 }
 
 /// Result from speech-to-text transcription

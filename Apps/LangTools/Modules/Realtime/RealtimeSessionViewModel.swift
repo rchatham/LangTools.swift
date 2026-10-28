@@ -136,11 +136,12 @@ public final class RealtimeSessionViewModel: ObservableObject {
         player.stop()
         eventTask?.cancel()
         eventTask = nil
-        audioSendChain.cancel()
-        if let session {
-            await session.disconnect()
-        }
+        // Clear `session` before awaiting disconnect so audio chunks still
+        // queued in audioSendChain see it's gone and drop out instead of
+        // racing the disconnect.
+        let closingSession = session
         session = nil
+        await closingSession?.disconnect()
         isModelSpeaking = false
         isUserSpeaking = false
     }
@@ -152,8 +153,10 @@ public final class RealtimeSessionViewModel: ObservableObject {
     private func enqueueAudioSend(_ data: Data) {
         guard let session else { return }
         let previous = audioSendChain
-        audioSendChain = Task {
+        audioSendChain = Task { [weak self] in
             _ = await previous.value
+            // Skip chunks for a session that was torn down while queued.
+            guard self?.session === session else { return }
             try? await session.append(audio: data)
         }
     }

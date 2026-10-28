@@ -20,25 +20,24 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
 
     private let speechRecognizer: SFSpeechRecognizer?
 
-    // recognitionRequest/recognitionTask/isRecognizing are written from both
-    // caller-invoked methods (startTranscription/stopTranscription/transcribe)
-    // and the Speech framework's recognition callback queue — guarded by `lock`.
+    // The session state below is written from caller-invoked methods
+    // (startTranscription/stopTranscription/transcribe) and read from the
+    // Speech framework's recognition callback queue — guarded by `lock`.
     private let lock = NSLock()
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
+    /// The current session's stream. Each recognition callback captures the
+    /// continuation of the session it belongs to, so the cancellation error
+    /// a task delivers after stopTranscription() lands on that session's
+    /// already-finished stream and is dropped.
+    private var continuation: AsyncThrowingStream<TranscriptionResult, Error>.Continuation?
     private var _isRecognizing: Bool = false
-    /// Bumped on every start and stop. Recognition callbacks carry the
-    /// generation they were started under and are ignored once it's stale —
-    /// cancelling a task in stopTranscription() makes the Speech framework
-    /// deliver a final cancellation error, which must not end `transcriptions`.
-    private var generation = 0
 
     public var isRecognizing: Bool {
         lock.lock(); defer { lock.unlock() }
         return _isRecognizing
     }
 
-    private let transcriptionContinuation: AsyncThrowingStream<TranscriptionResult, Error>.Continuation
 
     private let requiresOnDevice: Bool
     private let language: Locale
@@ -76,15 +75,6 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
 
     private let config: Configuration
 
-    // MARK: - Transcription Stream
-
-    /// Stream of transcription results. Created once at init so results
-    /// emitted before the first consumer attaches are buffered, not dropped.
-    /// The stream stays open across multiple utterances — check
-    /// `TranscriptionResult.isFinal` for end-of-utterance; the stream only
-    /// finishes on error.
-    public let transcriptions: AsyncThrowingStream<TranscriptionResult, Error>
-
     // MARK: - Initialization
 
     public init(configuration: Configuration = Configuration()) {
@@ -92,7 +82,6 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
         self.language = configuration.language
         self.requiresOnDevice = configuration.requiresOnDevice
         self.speechRecognizer = SFSpeechRecognizer(locale: configuration.language)
-        (self.transcriptions, self.transcriptionContinuation) = AsyncThrowingStream.makeStream(of: TranscriptionResult.self)
     }
 
     // MARK: - Authorization
@@ -113,8 +102,10 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
 
     // MARK: - STTProvider Protocol
 
-    public func startTranscription() async throws {
-        guard !isRecognizing else { return }
+    public func startTranscription() async throws -> AsyncThrowingStream<TranscriptionResult, Error> {
+        if isRecognizing {
+            throw AppleSpeechError.alreadyRecognizing
+        }
 
         guard let speechRecognizer = speechRecognizer else {
             throw AppleSpeechError.recognizerNotAvailable
@@ -143,33 +134,34 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
         }
 
         // Start recognition task
-        lock.lock()
-        generation += 1
-        let taskGeneration = generation
-        lock.unlock()
-
+        let (stream, continuation) = AsyncThrowingStream.makeStream(of: TranscriptionResult.self)
         let recognitionTask = speechRecognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            self?.handleRecognitionResult(result, error: error, generation: taskGeneration)
+            self?.handleRecognitionResult(result, error: error, continuation: continuation)
         }
 
         lock.lock()
         self.recognitionRequest = recognitionRequest
         self.recognitionTask = recognitionTask
+        self.continuation = continuation
         _isRecognizing = true
         lock.unlock()
+
+        return stream
     }
 
     public func stopTranscription() async throws {
         lock.lock()
         guard _isRecognizing else { lock.unlock(); return }
-        generation += 1
         let request = recognitionRequest
         let task = recognitionTask
+        let continuation = self.continuation
         recognitionRequest = nil
         recognitionTask = nil
+        self.continuation = nil
         _isRecognizing = false
         lock.unlock()
 
+        continuation?.finish()
         request?.endAudio()
         task?.cancel()
     }
@@ -198,14 +190,13 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
 
     // MARK: - Private Methods
 
-    private func handleRecognitionResult(_ result: SFSpeechRecognitionResult?, error: Error?, generation taskGeneration: Int) {
-        lock.lock()
-        let isCurrent = taskGeneration == generation
-        lock.unlock()
-        guard isCurrent else { return }
-
+    private func handleRecognitionResult(
+        _ result: SFSpeechRecognitionResult?,
+        error: Error?,
+        continuation: AsyncThrowingStream<TranscriptionResult, Error>.Continuation
+    ) {
         if let error = error {
-            transcriptionContinuation.finish(throwing: AppleSpeechError.recognitionFailed(error))
+            continuation.finish(throwing: AppleSpeechError.recognitionFailed(error))
             return
         }
 
@@ -226,12 +217,12 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
             language: language.identifier
         )
 
-        transcriptionContinuation.yield(transcription)
+        continuation.yield(transcription)
 
         // Intentionally do not finish the stream on `result.isFinal` — a final
-        // result ends the current utterance, not the recognizer. The caller can
-        // start a new recognition task and keep consuming the same stream;
-        // `TranscriptionResult.isFinal` signals end-of-utterance.
+        // result ends the current utterance, not the session.
+        // `TranscriptionResult.isFinal` signals end-of-utterance; the stream
+        // finishes in stopTranscription().
     }
 
     private func createAudioBuffer(from data: Data) -> AVAudioPCMBuffer? {
@@ -257,7 +248,9 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
         data.withUnsafeBytes { rawBufferPointer in
             guard let baseAddress = rawBufferPointer.baseAddress else { return }
             if let int16ChannelData = buffer.int16ChannelData {
-                memcpy(int16ChannelData[0], baseAddress, data.count)
+                // Copy whole samples only: an odd trailing byte doesn't fit
+                // in the buffer, and copying data.count would overrun it.
+                memcpy(int16ChannelData[0], baseAddress, Int(frameCount) * MemoryLayout<Int16>.size)
             }
         }
 
@@ -311,6 +304,7 @@ public enum AppleSpeechError: Error, LocalizedError {
     case requestCreationFailed
     case requestNotInitialized
     case notRecognizing
+    case alreadyRecognizing
     case audioConversionFailed
     case recognitionFailed(Error)
 
@@ -326,6 +320,8 @@ public enum AppleSpeechError: Error, LocalizedError {
             return "Recognition request not initialized"
         case .notRecognizing:
             return "Not currently recognizing speech"
+        case .alreadyRecognizing:
+            return "A transcription session is already running"
         case .audioConversionFailed:
             return "Failed to convert audio data"
         case .recognitionFailed(let error):

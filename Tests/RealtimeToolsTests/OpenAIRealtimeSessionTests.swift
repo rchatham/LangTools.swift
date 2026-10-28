@@ -278,6 +278,44 @@ final class OpenAIRealtimeSessionTests: XCTestCase {
         await session.disconnect()
     }
 
+    func testConnectAfterDisconnectThrowsSessionClosed() async throws {
+        let (session, _) = try await makeConnectedSession()
+        await session.disconnect()
+
+        do {
+            try await session.connect()
+            XCTFail("Expected sessionClosed")
+        } catch let error as OpenAIRealtimeError {
+            guard case .sessionClosed = error else {
+                return XCTFail("Expected sessionClosed, got \(error)")
+            }
+        }
+    }
+
+    /// Regression test: state used to stay .connected after the socket
+    /// failed, so the session looked usable while `events` had ended.
+    func testSocketFailureMovesStateToErrorAndClosesSession() async throws {
+        let (session, mock) = try await makeConnectedSession()
+
+        mock.cancel(with: .goingAway, reason: nil)
+
+        var iterator = session.events.makeAsyncIterator()
+        do {
+            while try await iterator.next() != nil {}
+            XCTFail("Expected the events stream to throw")
+        } catch {}
+
+        XCTAssertEqual(session.state, .error)
+        do {
+            try await session.connect()
+            XCTFail("Expected sessionClosed")
+        } catch let error as OpenAIRealtimeError {
+            guard case .sessionClosed = error else {
+                return XCTFail("Expected sessionClosed, got \(error)")
+            }
+        }
+    }
+
     func testSendWhileDisconnectedThrows() async throws {
         let session = OpenAIRealtimeSession(apiKey: "test-key")
         do {
@@ -436,22 +474,82 @@ final class RealtimePipelineModeTests: XCTestCase {
 
     // MARK: - STT Wiring
 
-    /// STT stub whose transcription stream can be pushed to on demand
+    /// STT stub that hands out a fresh stream per session; push() yields
+    /// into the current session's stream.
     private final class StubSTT: RealtimeTools.STTProvider, @unchecked Sendable {
-        let transcriptions: AsyncThrowingStream<TranscriptionResult, Error>
-        private let continuation: AsyncThrowingStream<TranscriptionResult, Error>.Continuation
+        private let lock = NSLock()
+        private var continuation: AsyncThrowingStream<TranscriptionResult, Error>.Continuation?
+        private var _startCount = 0
 
-        init() {
-            (transcriptions, continuation) = AsyncThrowingStream.makeStream(of: TranscriptionResult.self)
+        var startCount: Int {
+            lock.lock(); defer { lock.unlock() }
+            return _startCount
         }
 
-        func startTranscription() async throws {}
-        func stopTranscription() async throws {}
+        func startTranscription() async throws -> AsyncThrowingStream<TranscriptionResult, Error> {
+            let (stream, continuation) = AsyncThrowingStream.makeStream(of: TranscriptionResult.self)
+            beginSession(continuation)
+            return stream
+        }
+
+        func stopTranscription() async throws {
+            endSession()?.finish()
+        }
+
         func transcribe(audio: Data) async throws {}
 
         func push(_ result: TranscriptionResult) {
-            continuation.yield(result)
+            lock.lock()
+            let continuation = self.continuation
+            lock.unlock()
+            continuation?.yield(result)
         }
+
+        private func beginSession(_ continuation: AsyncThrowingStream<TranscriptionResult, Error>.Continuation) {
+            lock.lock()
+            self.continuation = continuation
+            _startCount += 1
+            lock.unlock()
+        }
+
+        private func endSession() -> AsyncThrowingStream<TranscriptionResult, Error>.Continuation? {
+            lock.lock()
+            defer { continuation = nil; lock.unlock() }
+            return continuation
+        }
+    }
+
+    /// Polls `condition` until it holds or the timeout passes.
+    private func waitUntil(timeout: TimeInterval = 5, _ condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    /// Regression test: STTProvider used to expose one long-lived stream.
+    /// stop() cancelled its consumer, which terminated that stream, so a
+    /// restarted pipeline never received another transcription.
+    func testRestartedPipelineReceivesTranscriptionsAgain() async throws {
+        let stt = StubSTT()
+        let tts = StubTTS()
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.modular)
+            .build()
+        pipeline.setProviders(stt: stt, tts: tts)
+        pipeline.textProcessor = { text in "LLM(\(text))" }
+
+        try await pipeline.start()
+        stt.push(TranscriptionResult(text: "one", isFinal: true))
+        try await waitUntil { tts.synthesized.count == 1 }
+
+        await pipeline.stop()
+        try await pipeline.start()
+        stt.push(TranscriptionResult(text: "two", isFinal: true))
+        try await waitUntil { tts.synthesized.count == 2 }
+
+        XCTAssertEqual(tts.synthesized, ["LLM(one)", "LLM(two)"])
+        XCTAssertEqual(stt.startCount, 2, "Each start() should begin a new STT session")
     }
 
     func testModularModeDrivesTextProcessorFromFinalSTTTranscription() async throws {

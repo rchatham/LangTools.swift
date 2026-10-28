@@ -74,6 +74,20 @@ final class ElevenLabsWebSocketSessionTests: XCTestCase {
         session.disconnect()
     }
 
+    func testConnectAfterDisconnectThrowsSessionClosed() async throws {
+        let (session, _) = try await makeConnectedSession()
+        session.disconnect()
+
+        do {
+            try await session.connect()
+            XCTFail("Expected sessionClosed")
+        } catch let error as ElevenLabsWebSocketError {
+            guard case .sessionClosed = error else {
+                return XCTFail("Expected sessionClosed, got \(error)")
+            }
+        }
+    }
+
     /// Regression test: a failed initial send used to leave the resumed
     /// socket attached, so the next connect() overwrote (leaked) it.
     func testFailedConnectTearsDownSocketAndAllowsRetry() async throws {
@@ -160,6 +174,20 @@ final class ElevenLabsSTTSessionTests: XCTestCase {
         try await session.connect()
         XCTAssertTrue(session.isConnected)
         session.disconnect()
+    }
+
+    func testConnectAfterDisconnectThrowsSessionClosed() async throws {
+        let (session, _) = try await makeConnectedSession()
+        session.disconnect()
+
+        do {
+            try await session.connect()
+            XCTFail("Expected sessionClosed")
+        } catch let error as ElevenLabsSTTError {
+            guard case .sessionClosed = error else {
+                return XCTFail("Expected sessionClosed, got \(error)")
+            }
+        }
     }
 
     /// A server-sent "error" message is a valid decode, not a malformed one —

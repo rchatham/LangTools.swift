@@ -44,7 +44,11 @@ extension OpenAI: LangToolsRealtime {
 
 // MARK: - OpenAI Realtime Session
 
-/// OpenAI Realtime session implementation using WebSocket
+/// OpenAI Realtime session implementation using WebSocket.
+///
+/// A session is single-use: once it's disconnected, or its connection fails,
+/// `events` has finished and `connect()` throws `sessionClosed`. Create a new
+/// session to reconnect.
 public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked Sendable {
     public typealias ClientEvent = OpenAIRealtimeClientEvent
     public typealias ServerEvent = OpenAIRealtimeServerEvent
@@ -61,6 +65,8 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
     private var _sessionId: String = ""
     private var _state: RealtimeSessionState = .disconnected
     private var _isGenerating: Bool = false
+    /// Set by disconnect() or a failed connection; see the type's doc comment.
+    private var _closed = false
     private var webSocketTask: (any LangToolsWebSocketTask)?
     private var urlSession: URLSession?
     private var receiveTask: Task<Void, Never>?
@@ -122,16 +128,13 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
 
     /// Connect to the OpenAI Realtime API
     public func connect() async throws {
-        lock.lock()
-        guard _state == .disconnected else { lock.unlock(); return }
-        _state = .connecting
-        let factory = webSocketTaskFactory
-        lock.unlock()
+        let (shouldConnect, factory) = try beginConnecting()
+        guard shouldConnect else { return }
 
         var components = URLComponents(string: "wss://api.openai.com/v1/realtime")
         components?.queryItems = [URLQueryItem(name: "model", value: model)]
         guard let url = components?.url else {
-            setState(.error)
+            setState(.disconnected)
             throw OpenAIRealtimeError.invalidURL
         }
 
@@ -164,6 +167,7 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
     public func disconnect() async {
         lock.lock()
         _state = .disconnected
+        _closed = true
         let task = receiveTask
         let socket = webSocketTask
         let session = urlSession
@@ -258,6 +262,24 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
         lock.unlock()
     }
 
+    /// Moves to `.connecting` and returns the transport factory, or returns
+    /// `shouldConnect: false` when already connecting or connected.
+    private func beginConnecting() throws -> (shouldConnect: Bool, factory: ((URLRequest) -> any LangToolsWebSocketTask)?) {
+        lock.lock()
+        defer { lock.unlock() }
+        if _closed { throw OpenAIRealtimeError.sessionClosed }
+        guard _state == .disconnected else { return (false, nil) }
+        _state = .connecting
+        return (true, webSocketTaskFactory)
+    }
+
+    private func markConnectionFailed() {
+        lock.lock()
+        _state = .error
+        _closed = true
+        lock.unlock()
+    }
+
     private func startReceiving() {
         let task = Task { [weak self] in
             while !Task.isCancelled {
@@ -285,6 +307,10 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
                     }
                 } catch {
                     if !Task.isCancelled {
+                        // The socket failed (including a failed handshake —
+                        // state reads .connected until here, since sends
+                        // before the socket opens are buffered by the task).
+                        self.markConnectionFailed()
                         self.eventContinuation.finish(throwing: error)
                     }
                     break
@@ -418,6 +444,7 @@ public enum OpenAIRealtimeError: Error, LocalizedError {
     case decodingError
     case connectionFailed(Error)
     case sessionError(String)
+    case sessionClosed
 
     public var errorDescription: String? {
         switch self {
@@ -433,6 +460,8 @@ public enum OpenAIRealtimeError: Error, LocalizedError {
             return "Connection failed: \(error.localizedDescription)"
         case .sessionError(let message):
             return "Session error: \(message)"
+        case .sessionClosed:
+            return "This realtime session was disconnected or its connection failed; create a new session to reconnect"
         }
     }
 }
