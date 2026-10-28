@@ -32,7 +32,7 @@ let package = Package(
         .library(name: "WhisperKitLangTools", targets: ["WhisperKitLangTools"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/rchatham/JSON.swift.git", from: "1.0.4"),
+        .package(name: "JSON.swift", path: "external/JSON.swift"),
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.18.0"),
         // Benchmark comparison deps — only used by BenchmarkTests, not linked into any library product.
         // To run competitor benchmarks: uncomment these and the BenchmarkTests product deps below.

@@ -1,3 +1,6 @@
 [submodule "Apps/LangTools/ChatUI"]
 	path = Apps/LangTools/ChatUI
 	url = https://github.com/rchatham/ChatUI
+[submodule "external/JSON.swift"]
+	path = external/JSON.swift
+	url = https://github.com/rchatham/JSON.swift.git

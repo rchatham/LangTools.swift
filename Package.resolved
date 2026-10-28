@@ -1,15 +1,6 @@
 {
   "pins" : [
     {
-      "identity" : "json.swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/rchatham/JSON.swift.git",
-      "state" : {
-        "revision" : "498270c44bb80c5cf5b8de8727ceb030f95c0777",
-        "version" : "1.0.4"
-      }
-    },
-    {
       "identity" : "swift-argument-parser",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-argument-parser.git",
