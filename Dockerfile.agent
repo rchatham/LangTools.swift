@@ -29,10 +29,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libcurl4t64 \
     && rm -rf /var/lib/apt/lists/*
 
-# Resource bundles must sit next to the binary.
+# Resource bundles must sit next to the binary. Workers mount their queue at /spool,
+# and a new Docker volume takes that directory's owner, so it must belong to agent.
 COPY --from=build /staging/ /opt/langtools-agent/
 RUN ln -s /opt/langtools-agent/langtools-agent /usr/local/bin/langtools-agent \
-    && useradd --system --uid 10001 --create-home agent
+    && useradd --system --uid 10001 --create-home agent \
+    && install -d -o agent -g agent -m 0700 /spool
 
 USER agent
 WORKDIR /work

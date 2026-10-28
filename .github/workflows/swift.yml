@@ -92,6 +92,7 @@ jobs:
         docker run --rm -e ANTHROPIC_API_KEY=placeholder \
           -v "$PWD/Examples/AgentRuntime:/work:ro" langtools-agent:ci validate clock.json
         test "$(docker run --rm --entrypoint id langtools-agent:ci -u)" = 10001
+        test "$(docker run --rm --entrypoint stat langtools-agent:ci -c %U /spool)" = agent
 
   helper-mobile-tests:
     runs-on: macos-latest

@@ -2,42 +2,30 @@
 //  AgentDeployCommand.swift
 //  AgentDeploy
 //
-//  The `langtools-agent-deploy` command line: creates workers, uploads their keys,
-//  submits jobs and reads results.
+//  The `langtools-agent-deploy` command line, over `AgentFleet`.
 //
 
 import Foundation
 import AgentRuntime
 
 public struct AgentDeployCommand {
-    public var compute: ComputeProvider
-    public var runner: CommandRunner
+    public var fleet: AgentFleet
     public var environment: [String: String]
-    public var knownHostsFile: URL
     public var readFile: (String) throws -> Data
     public var standardInput: () -> Data
     public var standardOutput: (String) -> Void
     public var standardError: (String) -> Void
-    var sleep: (TimeInterval) async throws -> Void = { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) }
-    /// Time allowed for a new droplet to accept SSH and finish first-boot setup.
-    var bootTimeout: TimeInterval = 600
-    /// Time allowed for the service to pull the image and start.
-    var startTimeout: TimeInterval = 600
 
     public init(
-        compute: ComputeProvider,
-        runner: CommandRunner,
+        fleet: AgentFleet,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        knownHostsFile: URL? = nil,
         readFile: @escaping (String) throws -> Data = { try Data(contentsOf: URL(fileURLWithPath: $0)) },
         standardInput: @escaping () -> Data = { FileHandle.standardInput.readDataToEndOfFile() },
         standardOutput: @escaping (String) -> Void = { FileHandle.standardOutput.write(Data(($0 + "\n").utf8)) },
         standardError: @escaping (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
     ) {
-        self.compute = compute
-        self.runner = runner
+        self.fleet = fleet
         self.environment = environment
-        self.knownHostsFile = knownHostsFile ?? Self.defaultKnownHostsFile(environment: environment)
         self.readFile = readFile
         self.standardInput = standardInput
         self.standardOutput = standardOutput
@@ -47,36 +35,51 @@ public struct AgentDeployCommand {
     public static let usage = """
         Usage: langtools-agent-deploy <command> [options]
 
-        Workers run the langtools-agent image on DigitalOcean droplets, managed with doctl.
-        A shared worker takes anyone's jobs; an isolated worker (--owner) has its own
-        droplet, API keys and queue, and only takes jobs submitted with its owner.
+        A worker is a langtools-agent container on a host. A host is any machine with
+        Docker: this one ("local", always available), a server you can SSH into, or a
+        machine created with a provider such as DigitalOcean.
 
-        Commands:
-          create <name>            Create a worker and start it.
-              --image <ref>        The langtools-agent image to run (required).
-              --env-file <path>    KEY=value file with provider API keys and LANGTOOLS_WEBHOOK_SECRET (required).
-              --owner <owner>      Make the worker isolated for this owner.
-              --region <slug>      Default nyc3.
-              --size <slug>        Default s-1vcpu-1gb.
-              --ssh-key <id>       SSH key ID or fingerprint; repeat for more. Default: every key on the account.
-              --concurrency <n>    Jobs to run at once. Default 2.
-          configure <name>         Replace a worker's keys, image or concurrency, then restart it.
-              --env-file <path>  --image <ref>  --concurrency <n>
-          submit <name> <spec.json | ->
-                                   Queue a spec on a worker; prints the run ID.
-              --webhook <url>      Where the worker POSTs the result.
-              --run-id <id>        Default: a new UUID.
-              --owner <owner>      Required for an isolated worker.
-          status <name> <run-id>   Print a job's state, and its result once done.
-          logs <name>              Print the worker's recent log.
-              --lines <n>          Default 200.
-          list                     List workers.
-          destroy <name> --force   Delete the worker's droplet and everything on it.
-          user-data                Print the first-boot script a new droplet runs.
+        Workers:
+          create <worker>          Start a worker.
+              --image <ref>        The langtools-agent image (required).
+              --host <host>        Default: local.
+              --env-file <path>    KEY=value file with provider API keys and LANGTOOLS_WEBHOOK_SECRET.
+              --owner <owner>      Isolate the worker for one owner: its own container, keys and queue.
+              --concurrency <n>    Jobs at once. Default 2.
+              --network <name>     Docker network to attach to. Default: Docker's default.
+              --registry-config <path>
+                                   Docker config.json for pulling from a private registry.
+              --pull               Pull the image even if the host already has it.
+          configure <worker>       Recreate a worker, keeping its queue and results.
+              --image <ref>  --concurrency <n>  --env-file <path>  --registry-config <path>  --pull
+          submit <worker> <spec.json | ->
+                                   Queue a spec; prints the run ID.
+              --webhook <url>  --run-id <id>  --owner <owner>
+              --wait               Wait for the result and print it.
+              --timeout <s>        With --wait, give up after this many seconds.
+          status <worker> <run-id> Print a job's state, and its result once done.
+          logs <worker>            Print the worker's recent log. --lines <n>, default 200.
+          list                     List workers on every host.
+          destroy <worker> --force Remove the worker and its queue and results. --keep-results keeps them.
 
-        LANGTOOLS_WEBHOOK_SECRET in this environment, if set, signs that job's webhook
-        instead of the worker's secret. SSH host keys are pinned in
-        ~/.config/langtools-agent/known_hosts.
+        Hosts:
+          host add <host> --ssh <user@address>
+                                   Register a machine that already has Docker.
+              --port <n>  --identity <key path>
+              --owner <owner>      Dedicate the host to one owner.
+          host create <host> --provider digitalocean
+                                   Create a machine and install Docker on it.
+              --region <slug>  --size <slug>  --ssh-key <id> (repeatable)  --owner <owner>
+          host list                List hosts.
+          host check <host>        Check that Docker is reachable on the host.
+          host remove <host>       Forget a host. The machine is left as it is.
+          host destroy <host> --force
+                                   Delete a provider-created machine and everything on it.
+          host setup-script        Print the script that installs Docker on a fresh Ubuntu machine.
+
+        LANGTOOLS_WEBHOOK_SECRET in this environment, if set, signs a submitted job's
+        webhook instead of the worker's secret. The registry of hosts and workers is in
+        ~/.config/langtools-agent/fleet.json.
         """
 
     public func run(_ arguments: [String]) async -> Int32 {
@@ -89,12 +92,14 @@ public struct AgentDeployCommand {
             switch command {
             case "create": try await create(&options)
             case "configure": try await configure(&options)
-            case "submit": try await submit(&options)
+            case "submit": return try await submit(&options)
             case "status": return try await status(&options)
-            case "logs": try await logs(&options)
+            case "logs":
+                let lines = try take("--lines", from: &options).map { try positive($0, "--lines") } ?? 200
+                standardOutput(try await fleet.logs(of: try single(&options, "logs takes one worker name."), lines: lines).trimmingCharacters(in: .newlines))
             case "list": try await list(&options)
             case "destroy": return try await destroy(&options)
-            case "user-data": standardOutput(WorkerProvisioning.userDataScript)
+            case "host": return try await host(&options)
             case "help", "--help", "-h": standardOutput(Self.usage)
             default:
                 standardError("error: Unknown command '\(command)'.\n\n\(Self.usage)")
@@ -111,187 +116,162 @@ public struct AgentDeployCommand {
         }
     }
 
-    // MARK: - Commands
+    // MARK: - Workers
 
     private func create(_ options: inout [String]) async throws {
         let image = try required("--image", from: &options)
-        let envPath = try required("--env-file", from: &options)
+        let host = try take("--host", from: &options) ?? HostRecord.local.name
+        let envPath = try take("--env-file", from: &options)
         let owner = try take("--owner", from: &options)
-        let region = try take("--region", from: &options) ?? "nyc3"
-        let size = try take("--size", from: &options) ?? "s-1vcpu-1gb"
-        let concurrency = try take("--concurrency", from: &options).map(parseConcurrency) ?? 2
-        var sshKeys: [String] = []
-        while let key = try take("--ssh-key", from: &options) { sshKeys.append(key) }
+        let concurrency = try take("--concurrency", from: &options).map { try positive($0, "--concurrency") } ?? 2
+        let network = try take("--network", from: &options)
+        let registryConfig = try take("--registry-config", from: &options).map(read)
+        let pull = take(flag: "--pull", from: &options)
         let name = try single(&options, "create takes one worker name.")
 
-        // Everything that can be checked locally is checked before a droplet costs money.
-        try WorkerNames.validate(name: name)
-        if let owner { try WorkerNames.validate(owner: owner) }
-        let config = WorkerProvisioning.WorkerConfig(image: image, concurrency: concurrency)
-        try config.validate()
-        let env = try loadEnvFile(envPath)
-        if try await compute.workers().contains(where: { $0.name == name }) { throw DeployError.workerExists(name) }
-
-        standardError("Creating \(owner.map { "isolated worker for \($0)" } ?? "shared worker") '\(name)' (\(size) in \(region))...")
-        let worker = try await compute.createWorker(WorkerRequest(name: name, owner: owner, region: region, size: size, sshKeys: sshKeys, userData: WorkerProvisioning.userDataScript))
-        do {
-            let connection = try connection(to: worker)
-            await forgetHostKey(of: worker)  // A reused IP may have an old droplet's key pinned.
-            standardError("Droplet \(worker.id) is at \(connection.host); waiting for first-boot setup...")
-            try await waitForBoot(connection)
-            try await install(config: config, env: env, on: connection)
-        } catch {
-            standardError("The droplet was created but setup did not finish. Fix the problem and run `langtools-agent-deploy configure \(name) ...`, or remove it with `langtools-agent-deploy destroy \(name) --force`.")
-            throw error
-        }
-        standardOutput("\(name)\t\(worker.publicIPv4 ?? "-")\tready")
+        let configuration = WorkerContainer.Configuration(name: name, image: image, owner: owner, concurrency: concurrency, network: network)
+        try configuration.validate()
+        let env = try envPath.map(loadEnvFile) ?? {
+            standardError("warning: no --env-file; the worker has no API keys, so only providers that need none (such as a local Ollama) will work.")
+            return Data()
+        }()
+        try await fleet.createWorker(configuration, on: host, env: env, registryConfig: registryConfig, pull: pull)
+        standardOutput("\(name)\t\(host)\tready")
     }
 
     private func configure(_ options: inout [String]) async throws {
-        let envPath = try take("--env-file", from: &options)
         let image = try take("--image", from: &options)
-        let concurrency = try take("--concurrency", from: &options).map(parseConcurrency)
+        let concurrency = try take("--concurrency", from: &options).map { try positive($0, "--concurrency") }
+        let env = try take("--env-file", from: &options).map(loadEnvFile)
+        let registryConfig = try take("--registry-config", from: &options).map(read)
+        let pull = take(flag: "--pull", from: &options)
         let name = try single(&options, "configure takes one worker name.")
-        guard envPath != nil || image != nil || concurrency != nil else { throw DeployError.invalidArgument("Pass --env-file, --image or --concurrency.") }
-        let env = try envPath.map(loadEnvFile)
-
-        let connection = try connection(to: try await compute.worker(named: name))
-        let current = WorkerProvisioning.WorkerConfig.parse(try await connection.attempt("cat \(WorkerProvisioning.workerConfigFile)").stdoutString)
-        guard let resolvedImage = image ?? current.image else { throw DeployError.invalidArgument("The worker has no image configured yet; pass --image.") }
-        let config = WorkerProvisioning.WorkerConfig(image: resolvedImage, concurrency: concurrency ?? current.concurrency ?? 2)
-        try config.validate()
-        if env == nil, try await connection.attempt("test -f \(WorkerProvisioning.envFile)").status != 0 {
-            throw DeployError.invalidArgument("The worker has no keys yet; pass --env-file.")
-        }
-        try await install(config: config, env: env, on: connection)
+        if let image, !WorkerContainer.Configuration.isImageReference(image) { throw DeployError.invalidArgument("Image reference '\(image)' contains characters an image name can't have.") }
+        try await fleet.configureWorker(name, image: image, concurrency: concurrency, env: env, registryConfig: registryConfig, pull: pull)
         standardOutput("\(name)\tready")
     }
 
-    private func submit(_ options: inout [String]) async throws {
+    private func submit(_ options: inout [String]) async throws -> Int32 {
         let webhook = try take("--webhook", from: &options)
         let runID = try take("--run-id", from: &options)
         let owner = try take("--owner", from: &options)
+        let wait = take(flag: "--wait", from: &options)
+        let timeout = try take("--timeout", from: &options).map { try positive($0, "--timeout") }
         guard options.count == 2 else { throw DeployError.invalidArgument("submit takes a worker name and a spec path.") }
         let (name, specPath) = (options[0], options[1])
         if let owner { try WorkerNames.validate(owner: owner) }
 
-        let data = specPath == "-" ? standardInput() : try readFile(specPath)
+        let data = specPath == "-" ? standardInput() : try read(specPath)
         var job = AgentJob(spec: try AgentSpec.decode(from: data), webhookSecret: environment[AgentRuntimeCommand.webhookSecretVariable], owner: owner)
         if let runID { job.runID = runID }
         if let webhook {
             guard let url = URL(string: webhook), url.host != nil else { throw DeployError.invalidArgument("Invalid webhook URL: \(webhook)") }
             job.webhookURL = url
         }
-        do { try job.validate() } catch { throw DeployError.invalidArgument(error.localizedDescription) }
-
-        let worker = try await compute.worker(named: name)
-        if let workerOwner = worker.owner, workerOwner != owner {
-            throw DeployError.invalidArgument("Worker '\(name)' is isolated for owner '\(workerOwner)'; submit with --owner \(workerOwner).")
+        try await fleet.submit(job, to: name)
+        guard wait else {
+            standardOutput(Self.json(["runID": job.runID, "state": AgentSpool.State.queued.rawValue]))
+            return 0
         }
-        // The job, including any webhook secret, travels on stdin so it never appears in a process list.
-        let output = try await connection(to: worker).run(
-            "docker exec -i \(WorkerProvisioning.containerName) langtools-agent enqueue --job --spool /spool",
-            stdin: try job.encoded()
-        )
-        standardOutput(output.stdoutString.trimmingCharacters(in: .whitespacesAndNewlines))
+        let result = try await fleet.waitForResult(of: job.runID, on: name, timeout: timeout.map(TimeInterval.init))
+        standardOutput(String(decoding: try result.encoded(), as: UTF8.self))
+        return result.status == .completed ? 0 : 1
     }
 
     private func status(_ options: inout [String]) async throws -> Int32 {
         guard options.count == 2 else { throw DeployError.invalidArgument("status takes a worker name and a run ID.") }
-        guard AgentJob.isValidRunID(options[1]) else { throw DeployError.invalidArgument("Invalid run ID '\(options[1])'.") }
-        let connection = try connection(to: try await compute.worker(named: options[0]))
-        let output = try await connection.attempt("docker exec \(WorkerProvisioning.containerName) langtools-agent status --spool /spool \(shellQuote(options[1]))")
-        if !output.stdout.isEmpty { standardOutput(output.stdoutString.trimmingCharacters(in: .whitespacesAndNewlines)) }
-        if !output.stderrString.isEmpty { standardError(output.stderrString) }
-        return output.status == 0 ? 0 : 1
-    }
-
-    private func logs(_ options: inout [String]) async throws {
-        let lines = try take("--lines", from: &options).map { value -> Int in
-            guard let n = Int(value), n > 0 else { throw DeployError.invalidArgument("--lines must be a positive integer.") }
-            return n
-        } ?? 200
-        let name = try single(&options, "logs takes one worker name.")
-        let output = try await connection(to: try await compute.worker(named: name))
-            .run("journalctl -u \(WorkerProvisioning.serviceName) --no-pager -n \(lines)")
-        standardOutput(output.stdoutString.trimmingCharacters(in: .newlines))
+        let status = try await fleet.status(of: options[1], on: options[0])
+        var fields: [String: Any] = ["runID": status.runID, "state": status.state.rawValue]
+        if let result = status.result { fields["result"] = try JSONSerialization.jsonObject(with: result.encoded(prettyPrinted: false)) }
+        standardOutput(Self.json(fields))
+        return status.state == .unknown ? 1 : 0
     }
 
     private func list(_ options: inout [String]) async throws {
         guard options.isEmpty else { throw DeployError.invalidArgument("list takes no arguments.") }
-        let workers = try await compute.workers()
-        standardOutput(["NAME", "OWNER", "STATUS", "IP", "REGION", "SIZE"].joined(separator: "\t"))
-        for worker in workers {
-            standardOutput([worker.name, worker.owner ?? "(shared)", worker.status, worker.publicIPv4 ?? "-", worker.region ?? "-", worker.size ?? "-"].joined(separator: "\t"))
+        standardOutput(["NAME", "HOST", "OWNER", "STATE", "IMAGE", "CONCURRENCY"].joined(separator: "\t"))
+        for worker in try await fleet.listWorkers() {
+            standardOutput([worker.name, worker.host, worker.owner ?? "-", worker.state, worker.image ?? "-", worker.concurrency.map(String.init) ?? "-"].joined(separator: "\t"))
         }
     }
 
     private func destroy(_ options: inout [String]) async throws -> Int32 {
         let force = take(flag: "--force", from: &options)
+        let keepResults = take(flag: "--keep-results", from: &options)
         let name = try single(&options, "destroy takes one worker name.")
-        let worker = try await compute.worker(named: name)
         guard force else {
-            standardError("This deletes droplet \(worker.id) (\(worker.publicIPv4 ?? "no IP")) with its queue and results. Run again with --force to confirm.")
+            standardError("This removes worker '\(name)'\(keepResults ? "" : " with its queue and results"). Run again with --force to confirm.")
             return 2
         }
-        try await compute.deleteWorker(worker)
-        await forgetHostKey(of: worker)
+        try await fleet.destroyWorker(name, keepResults: keepResults)
         standardOutput("\(name)\tdestroyed")
         return 0
     }
 
-    // MARK: - Setup steps
+    // MARK: - Hosts
 
-    private func connection(to worker: WorkerHost) throws -> WorkerConnection {
-        guard let ip = worker.publicIPv4 else { throw DeployError.notReady("Worker '\(worker.name)' has no public IPv4 address yet.") }
-        try FileManager.default.createDirectory(at: knownHostsFile.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        return WorkerConnection(host: ip, knownHostsFile: knownHostsFile, identityFile: environment["LANGTOOLS_DEPLOY_SSH_IDENTITY"], runner: runner)
-    }
-
-    private func forgetHostKey(of worker: WorkerHost) async {
-        guard let ip = worker.publicIPv4, FileManager.default.fileExists(atPath: knownHostsFile.path) else { return }
-        _ = try? await runner.run("ssh-keygen", ["-R", ip, "-f", knownHostsFile.path], stdin: nil)
-    }
-
-    private func waitForBoot(_ connection: WorkerConnection) async throws {
-        let deadline = Date().addingTimeInterval(bootTimeout)
-        while try await connection.attempt("true").status != 0 {
-            guard Date() < deadline else { throw DeployError.notReady("The droplet did not accept SSH within \(Int(bootTimeout))s.") }
-            try await sleep(5)
-        }
-        // 0 is done, 2 is done with warnings; anything else means the setup script failed.
-        let status = try await connection.attempt("cloud-init status --wait")
-        guard status.status == 0 || status.status == 2 else {
-            throw DeployError.notReady("First-boot setup failed: \(status.stdoutString.trimmingCharacters(in: .whitespacesAndNewlines)) \(status.stderrString). See /var/log/cloud-init-output.log on the droplet.")
-        }
-    }
-
-    private func install(config: WorkerProvisioning.WorkerConfig, env: Data?, on connection: WorkerConnection) async throws {
-        standardError("Uploading configuration...")
-        if let env { try await connection.upload(env, to: WorkerProvisioning.envFile) }
-        if let credentials = try await compute.registryCredentials(for: config.image) {
-            try await connection.upload(credentials, to: "\(WorkerProvisioning.dockerConfigDirectory)/config.json")
-        }
-        try await connection.upload(Data(config.fileContents.utf8), to: WorkerProvisioning.workerConfigFile)
-        try await connection.run("systemctl restart \(WorkerProvisioning.serviceName)")
-
-        standardError("Starting \(config.image)...")
-        let deadline = Date().addingTimeInterval(startTimeout)
-        while try await connection.attempt("docker exec \(WorkerProvisioning.containerName) langtools-agent tools").status != 0 {
-            guard Date() < deadline else {
-                let log = try? await connection.attempt("journalctl -u \(WorkerProvisioning.serviceName) --no-pager -n 30").stdoutString
-                throw DeployError.notReady("The worker did not start within \(Int(startTimeout))s. Recent log:\n\(log ?? "(unavailable)")")
+    private func host(_ options: inout [String]) async throws -> Int32 {
+        guard let subcommand = options.first else { throw DeployError.invalidArgument("host needs a subcommand: add, create, list, check, remove, destroy or setup-script.") }
+        options.removeFirst()
+        switch subcommand {
+        case "add":
+            let address = try required("--ssh", from: &options)
+            let port = try take("--port", from: &options).map { try positive($0, "--port") }
+            let identity = try take("--identity", from: &options)
+            let owner = try take("--owner", from: &options)
+            let name = try single(&options, "host add takes one host name.")
+            try await fleet.addHost(HostRecord(name: name, kind: .ssh, address: address, port: port, identityFile: identity, owner: owner))
+            standardOutput("\(name)\t\(address)\tready")
+        case "create":
+            let provider = try required("--provider", from: &options)
+            let region = try take("--region", from: &options)
+            let size = try take("--size", from: &options)
+            let owner = try take("--owner", from: &options)
+            var sshKeys: [String] = []
+            while let key = try take("--ssh-key", from: &options) { sshKeys.append(key) }
+            let name = try single(&options, "host create takes one host name.")
+            let host = try await fleet.createHost(name: name, provider: provider, owner: owner, region: region, size: size, sshKeys: sshKeys)
+            standardOutput("\(name)\t\(host.address ?? "-")\tready")
+        case "list":
+            guard options.isEmpty else { throw DeployError.invalidArgument("host list takes no arguments.") }
+            standardOutput(["NAME", "KIND", "ADDRESS", "OWNER", "PROVIDER"].joined(separator: "\t"))
+            for host in try fleet.hosts() {
+                standardOutput([host.name, host.kind.rawValue, host.address.map { a in host.port.map { "\(a):\($0)" } ?? a } ?? "-", host.owner ?? "-", host.provider ?? "-"].joined(separator: "\t"))
             }
-            try await sleep(5)
+        case "check":
+            let name = try single(&options, "host check takes one host name.")
+            let version = try await fleet.checkHost(try fleet.store.load().host(named: name))
+            standardOutput("\(name)\tdocker \(version)")
+        case "remove":
+            try fleet.removeHost(try single(&options, "host remove takes one host name."))
+        case "destroy":
+            let force = take(flag: "--force", from: &options)
+            let name = try single(&options, "host destroy takes one host name.")
+            guard force else {
+                standardError("This deletes host '\(name)''s machine and every worker on it. Run again with --force to confirm.")
+                return 2
+            }
+            try await fleet.destroyHost(name)
+            standardOutput("\(name)\tdestroyed")
+        case "setup-script":
+            standardOutput(HostBootstrap.script)
+        default:
+            throw DeployError.invalidArgument("Unknown host subcommand '\(subcommand)'.")
         }
+        return 0
+    }
+
+    // MARK: - Helpers
+
+    private func read(_ path: String) throws -> Data {
+        do { return try readFile(path) } catch { throw DeployError.invalidArgument("Could not read \(path): \(error.localizedDescription)") }
     }
 
     private func loadEnvFile(_ path: String) throws -> Data {
-        let data: Data
-        do { data = try readFile(path) } catch { throw DeployError.invalidArgument("Could not read \(path): \(error.localizedDescription)") }
-        let keys = try WorkerProvisioning.validateEnvFile(String(decoding: data, as: UTF8.self))
-        guard keys.contains(where: { $0.hasSuffix("_API_KEY") }) else {
-            throw DeployError.invalidArgument("\(path) sets no *_API_KEY variable, so the worker could not call any provider.")
+        let data = try read(path)
+        let keys = try WorkerContainer.validateEnvFile(String(decoding: data, as: UTF8.self))
+        if !keys.contains(where: { $0.hasSuffix("_API_KEY") }) {
+            standardError("warning: \(path) sets no *_API_KEY variable, so only providers that need no key will work.")
         }
         if !keys.contains(AgentRuntimeCommand.webhookSecretVariable) {
             standardError("warning: \(path) has no \(AgentRuntimeCommand.webhookSecretVariable); webhook deliveries will be unsigned unless each job brings a secret.")
@@ -299,7 +279,10 @@ public struct AgentDeployCommand {
         return data
     }
 
-    // MARK: - Arguments
+    private static func json(_ object: [String: Any]) -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
 
     private func take(_ option: String, from options: inout [String]) throws -> String? {
         guard let index = options.firstIndex(of: option) else { return nil }
@@ -325,14 +308,8 @@ public struct AgentDeployCommand {
         return options[0]
     }
 
-    private func parseConcurrency(_ value: String) throws -> Int {
-        guard let n = Int(value) else { throw DeployError.invalidArgument("--concurrency must be an integer.") }
+    private func positive(_ value: String, _ option: String) throws -> Int {
+        guard let n = Int(value), n > 0 else { throw DeployError.invalidArgument("\(option) must be a positive integer.") }
         return n
-    }
-
-    static func defaultKnownHostsFile(environment: [String: String]) -> URL {
-        let config = environment["XDG_CONFIG_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).appendingPathComponent(".config", isDirectory: true)
-        return config.appendingPathComponent("langtools-agent/known_hosts")
     }
 }

@@ -2,7 +2,7 @@
 //  DigitalOceanCompute.swift
 //  AgentDeploy
 //
-//  Runs workers on DigitalOcean droplets through `doctl`, so the deploy tool uses
+//  Creates hosts as DigitalOcean droplets through `doctl`, so the deploy tool uses
 //  doctl's own authentication and never handles an API token itself.
 //
 
@@ -10,12 +10,16 @@ import Foundation
 
 public struct DigitalOceanCompute: ComputeProvider {
     public static let baseTag = "langtools-agent"
-    static let workerTagPrefix = "langtools-agent-worker:"
+    static let hostTagPrefix = "langtools-agent-host:"
     static let ownerTagPrefix = "langtools-agent-owner:"
     public static let image = "ubuntu-24-04-x64"
     static let registryHost = "registry.digitalocean.com"
 
+    public var id: String { "digitalocean" }
     public var displayName: String { "DigitalOcean" }
+    public var sshUser: String { "root" }
+    public static let defaultRegion = "nyc3"
+    public static let defaultSize = "s-1vcpu-1gb"
     public var runner: CommandRunner
     /// `doctl` executable name or path.
     public var doctl: String
@@ -30,21 +34,21 @@ public struct DigitalOceanCompute: ComputeProvider {
         self.context = context
     }
 
-    public func createWorker(_ request: WorkerRequest) async throws -> WorkerHost {
+    public func createMachine(_ request: MachineRequest) async throws -> Machine {
         try WorkerNames.validate(name: request.name)
         if let owner = request.owner { try WorkerNames.validate(owner: owner) }
         let keys = request.sshKeys.isEmpty ? try await accountSSHKeys() : request.sshKeys
         guard !keys.isEmpty else { throw DeployError.invalidArgument("No SSH keys on the DigitalOcean account. Add one with `doctl compute ssh-key import`, or pass --ssh-key.") }
 
-        var tags = [Self.baseTag, Self.workerTagPrefix + request.name]
+        var tags = [Self.baseTag, Self.hostTagPrefix + request.name]
         if let owner = request.owner { tags.append(Self.ownerTagPrefix + owner) }
 
         let userDataFile = try writeTemporaryFile(request.userData)
         defer { removeFile(userDataFile) }
         let output = try await doctl([
             "compute", "droplet", "create", Self.dropletName(for: request.name),
-            "--region", request.region,
-            "--size", request.size,
+            "--region", request.region ?? Self.defaultRegion,
+            "--size", request.size ?? Self.defaultSize,
             "--image", Self.image,
             "--ssh-keys", keys.joined(separator: ","),
             "--tag-names", tags.joined(separator: ","),
@@ -52,19 +56,19 @@ public struct DigitalOceanCompute: ComputeProvider {
             "--enable-monitoring",
             "--wait",
         ])
-        guard let worker = try Self.decodeDroplets(output.stdout).first.flatMap(Self.worker(from:)) else {
+        guard let machine = try Self.decodeDroplets(output.stdout).first.flatMap(Self.machine(from:)) else {
             throw DeployError.unexpectedOutput("doctl did not return the new droplet.")
         }
-        return worker
+        return machine
     }
 
-    public func workers() async throws -> [WorkerHost] {
+    public func machines() async throws -> [Machine] {
         let output = try await doctl(["compute", "droplet", "list", "--tag-name", Self.baseTag])
-        return try Self.decodeDroplets(output.stdout).compactMap(Self.worker(from:)).sorted { $0.name < $1.name }
+        return try Self.decodeDroplets(output.stdout).compactMap(Self.machine(from:)).sorted { $0.name < $1.name }
     }
 
-    public func deleteWorker(_ worker: WorkerHost) async throws {
-        _ = try await doctl(["compute", "droplet", "delete", worker.id, "--force"], json: false)
+    public func deleteMachine(id: String) async throws {
+        _ = try await doctl(["compute", "droplet", "delete", id, "--force"], json: false)
     }
 
     /// Read-only credentials for DigitalOcean Container Registry images; other registries need none.
@@ -73,7 +77,7 @@ public struct DigitalOceanCompute: ComputeProvider {
         return try await doctl(["registry", "docker-config"], json: false).stdout
     }
 
-    static func dropletName(for worker: String) -> String { "langtools-agent-\(worker)" }
+    static func dropletName(for host: String) -> String { "langtools-agent-\(host)" }
 
     private func accountSSHKeys() async throws -> [String] {
         let output = try await doctl(["compute", "ssh-key", "list"])
@@ -130,10 +134,10 @@ public struct DigitalOceanCompute: ComputeProvider {
         catch { throw DeployError.unexpectedOutput("Could not read doctl's droplet list: \(error)") }
     }
 
-    static func worker(from droplet: Droplet) -> WorkerHost? {
+    static func machine(from droplet: Droplet) -> Machine? {
         let tags = droplet.tags ?? []
-        guard let name = tags.first(where: { $0.hasPrefix(workerTagPrefix) })?.dropFirst(workerTagPrefix.count) else { return nil }
-        return WorkerHost(
+        guard let name = tags.first(where: { $0.hasPrefix(hostTagPrefix) })?.dropFirst(hostTagPrefix.count) else { return nil }
+        return Machine(
             id: String(droplet.id),
             name: String(name),
             owner: tags.first(where: { $0.hasPrefix(ownerTagPrefix) }).map { String($0.dropFirst(ownerTagPrefix.count)) },

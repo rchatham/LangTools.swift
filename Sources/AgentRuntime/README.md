@@ -141,7 +141,7 @@ langtools-agent status job-42        # {"runID": "job-42", "state": "queued" | "
 - SIGTERM or SIGINT stops the worker from taking new jobs and waits for running ones. A job cut off by a crash or kill is started once more on the next start, then reported as `failed`.
 - Results stay in `done/` for 7 days. Job files, which can hold a webhook secret, are readable only by their owner.
 
-To run workers on DigitalOcean, see [AgentDeploy](../AgentDeploy/README.md).
+To run workers in Docker on your machine, on servers over SSH, or on DigitalOcean, see [AgentDeploy](../AgentDeploy/README.md).
 
 ## Adding tools
 

@@ -1,110 +1,139 @@
 # AgentDeploy
 
-`langtools-agent-deploy` runs [AgentRuntime](../AgentRuntime/README.md) workers on DigitalOcean. A worker is a droplet running the `langtools-agent` image as a long-lived service that takes jobs from a queue on its disk. You submit specs to it and get results back by webhook or with `status`.
+`langtools-agent-deploy` runs [AgentRuntime](../AgentRuntime/README.md) workers wherever Docker runs. A **worker** is a `langtools-agent` container that takes jobs from a queue and delivers results by webhook or `status`. A **host** is any machine with Docker:
 
-- **Shared worker**: one droplet that takes anyone's jobs. Use it when everyone submitting is trusted to share API keys and a machine.
-- **Isolated worker** (`--owner`): a droplet for one owner, with its own API keys, queue and results. It only accepts jobs submitted with that owner, so one owner's jobs, keys and tool side effects never touch another's.
+- **`local`**: the machine you're on, such as your Mac. Always available.
+- **SSH hosts**: any server you can SSH into: a home server, a VM, a machine from any provider.
+- **Provider hosts**: machines the tool creates for you. DigitalOcean (through `doctl`) is built in; `ComputeProvider` is the seam for others.
 
-The tool drives `doctl` for DigitalOcean and `ssh` for the droplet, so it uses your existing `doctl auth` and SSH keys and never handles an API token itself. Workers open no ports except SSH.
+One host can run many workers. Docker restarts each one after a crash or reboot (`--restart unless-stopped`), so nothing else needs installing on the host.
+
+## Isolation
+
+- **Shared worker**: takes anyone's jobs. Use it for work that can share API keys and a queue.
+- **Isolated worker** (`create --owner alice`): its own container, API keys and queue; it only takes jobs submitted with `--owner alice`. Other workers on the same host can't see its files, but they share the machine and Docker daemon.
+- **Dedicated host** (`host add/create --owner alice`): a machine that only runs alice's workers. Use this when owners must not share a machine at all.
 
 ## Requirements
 
-- `doctl`, authenticated with `doctl auth init`. Set `DOCTL_CONTEXT` to use a non-default account.
-- `ssh` and `ssh-keygen`, and an SSH key on your DigitalOcean account (`doctl compute ssh-key list`). Set `LANGTOOLS_DEPLOY_SSH_IDENTITY` to use a key other than ssh's default.
-- The `langtools-agent` image in a registry the droplet can pull from.
+- Docker on every host, usable by the user you connect as (`docker version` must work without sudo).
+- `ssh` for SSH and provider hosts. Host keys are pinned in `~/.config/langtools-agent/known_hosts` on first connection.
+- `doctl`, authenticated with `doctl auth init`, to create DigitalOcean hosts. Set `DOCTL_CONTEXT` to pick an account.
 
 ```bash
 swift build -c release --product langtools-agent-deploy
 cp .build/release/langtools-agent-deploy /usr/local/bin/
 ```
 
-## 1. Publish the image
+## The image
 
-DigitalOcean Container Registry is the simplest choice, because the tool sets up pull credentials for it automatically:
+Build it once per architecture you run on. A Mac with Apple silicon runs `linux/arm64`; most servers and all DigitalOcean droplets run `linux/amd64`.
 
 ```bash
-doctl registry create my-registry        # once
-doctl registry login
-docker buildx build --platform linux/amd64 -f Dockerfile.agent \
+# Local only
+docker build -f Dockerfile.agent -t langtools-agent:dev .
+
+# For remote hosts, push to a registry they can pull from
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.agent \
   -t registry.digitalocean.com/my-registry/langtools-agent:1.0 --push .
 ```
 
-Any other registry works if the image is public. Droplets are x86-64, so build for `linux/amd64` on Apple silicon.
+A host that already has the image uses it without pulling, so a locally built `langtools-agent:dev` works for local workers with no registry. Pass `--pull` to always pull.
 
-## 2. Write the worker's env file
-
-One `KEY=value` per line, without quotes (Docker would keep them as part of the value):
+## Workers on your Mac
 
 ```bash
-# worker.env
+cat > ~/agent.env <<'EOF'
 ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
 LANGTOOLS_WEBHOOK_SECRET=whsec_...
+EOF
+
+langtools-agent-deploy create helper --image langtools-agent:dev --env-file ~/agent.env
+langtools-agent-deploy submit helper spec.json --wait          # prints the result when done
 ```
 
-Each worker gets its own copy, so an isolated worker can use the owner's own provider keys.
+The env file is `KEY=value` lines without quotes (Docker would keep them as part of the value). It's copied to `~/.config/langtools-agent/workers/<name>/env` on the host with mode 0600. Leave out `--env-file` for a worker that only uses providers with no key, such as a local Ollama. Inside the container, reach Ollama on your Mac at `http://host.docker.internal:11434` by setting the spec's `baseURL`.
 
-## 3. Create a worker
+## Workers on a server you can SSH into
 
 ```bash
-# Shared
-langtools-agent-deploy create shared \
-  --image registry.digitalocean.com/my-registry/langtools-agent:1.0 \
-  --env-file worker.env
-
-# Isolated for one owner
-langtools-agent-deploy create alice \
-  --owner alice --env-file alice.env \
-  --image registry.digitalocean.com/my-registry/langtools-agent:1.0 \
-  --region sfo3 --size s-1vcpu-2gb --concurrency 4
+langtools-agent-deploy host add homelab --ssh reid@192.168.1.20      # checks Docker is usable there
+langtools-agent-deploy create research --host homelab --image ghcr.io/me/langtools-agent:1.0 --env-file ~/agent.env
 ```
 
-`create` checks the name, image and env file before creating anything. Then it creates the droplet, waits for first-boot setup, uploads the env file over SSH, starts the service, and returns once the worker answers. This takes a few minutes, mostly installing Docker and pulling the image. Defaults are `nyc3`, `s-1vcpu-1gb` (about $6/month) and 2 concurrent jobs; agent runs mostly wait on the network, so a small droplet is enough.
+`--port` and `--identity` set the SSH port and key. To prepare a fresh Ubuntu server, run the output of `langtools-agent-deploy host setup-script` on it as root. It installs Docker and turns on the firewall with only SSH allowed.
 
-## 4. Submit work
+## Workers on DigitalOcean
+
+```bash
+langtools-agent-deploy host create do-1 --provider digitalocean --region sfo3 --size s-1vcpu-1gb
+langtools-agent-deploy create shared --host do-1 --image registry.digitalocean.com/my-registry/langtools-agent:1.0 --env-file ~/agent.env
+
+# A droplet for one owner
+langtools-agent-deploy host create alice-1 --provider digitalocean --owner alice
+langtools-agent-deploy create alice --host alice-1 --image ... --env-file ~/alice.env
+```
+
+`host create` makes the droplet (tagged `langtools-agent` and `langtools-agent-host:<name>`) with the setup script as user data, waits for it, and checks Docker. The user data holds no secrets, because it can be read from inside the droplet and DigitalOcean keeps it. Keys are copied over SSH, on stdin, so they never appear in a command line. For images in DigitalOcean Container Registry, workers on DigitalOcean hosts get read-only pull credentials automatically; elsewhere, pass `--registry-config` with a Docker `config.json`.
+
+`host destroy do-1 --force` deletes the droplet and everything on it.
+
+## Jobs
 
 ```bash
 export LANGTOOLS_WEBHOOK_SECRET=whsec_...    # optional: signs this job's webhook instead of the worker's secret
 langtools-agent-deploy submit shared spec.json --webhook https://example.com/agent-results --run-id job-42
-# {"runID": "job-42", "state": "queued"}
-
-langtools-agent-deploy submit alice spec.json --owner alice   # isolated workers need their owner
-
-langtools-agent-deploy status shared job-42     # queued, running, or done with the result; exits 1 for an unknown run
+langtools-agent-deploy submit alice spec.json --owner alice --wait --timeout 600
+langtools-agent-deploy status shared job-42  # queued, running, or done with the result; exits 1 for an unknown run
 ```
 
-The worker validates the spec against its own keys and tools when you submit, so a missing key or unknown tool fails right away rather than in the queue. The result goes to the webhook (see [webhook delivery](../AgentRuntime/README.md#delivering-results-to-a-webhook)) and stays readable with `status` for 7 days.
+The worker checks the spec against its own keys and tools at submit time, so a missing key or unknown tool fails right away instead of sitting in the queue. Results go to the webhook (see [webhook delivery](../AgentRuntime/README.md#delivering-results-to-a-webhook)) and stay readable with `status` for 7 days.
 
 ## Day-to-day
 
 ```bash
-langtools-agent-deploy list                                 # name, owner, status, IP, region, size
+langtools-agent-deploy list                          # every worker on every host, with its state
+langtools-agent-deploy host list
 langtools-agent-deploy logs shared --lines 100
-langtools-agent-deploy configure shared --env-file new.env  # rotate keys
-langtools-agent-deploy configure shared --image registry.digitalocean.com/my-registry/langtools-agent:1.1
-langtools-agent-deploy destroy alice --force                # deletes the droplet, its queue and results
-langtools-agent-deploy user-data                            # the first-boot script, to review before creating
+langtools-agent-deploy configure shared --env-file new.env      # rotate keys
+langtools-agent-deploy configure shared --image ...:1.1 --pull  # upgrade
+langtools-agent-deploy destroy shared --force        # add --keep-results to keep the queue volume
 ```
 
-`configure` restarts the service. Running jobs get five minutes to finish. A job cut off by a restart is started once more, then reported as `failed` instead of running a third time, since a tool it called may already have had side effects.
+`configure` recreates the container and keeps its queue and results. Running jobs get five minutes to finish. A job cut off by a restart is started once more, then reported as `failed` instead of running a third time, since a tool it called may already have had side effects.
 
-## What's on a worker
+The registry of hosts and workers is `~/.config/langtools-agent/fleet.json`. `list` also finds worker containers the registry doesn't know about and adds them, so if the file is lost, add the hosts again and run `list`.
 
-| Path | Contents |
-|------|----------|
-| `/etc/langtools-agent/env` | The env file: API keys and webhook secret. Mode 0600, root. |
-| `/etc/langtools-agent/worker.conf` | `IMAGE` and `CONCURRENCY`. |
-| `/etc/langtools-agent/docker/config.json` | Read-only registry credentials, for DigitalOcean Container Registry images. |
-| `/var/lib/langtools-agent/` | The queue and results, owned by the container user. |
+## What's on a host, per worker
 
-The `langtools-agent` systemd service runs the container with a read-only filesystem, all Linux capabilities dropped, `no-new-privileges`, and a process limit. The first-boot script installs Docker and the service and turns on the `ufw` firewall with only SSH allowed. It holds no secrets, because droplet user data can be read from inside the droplet and is kept by DigitalOcean. Keys are uploaded afterwards over SSH, on stdin, so they never appear in a command line. SSH host keys are trusted on first connection and pinned in `~/.config/langtools-agent/known_hosts`.
+| What | Name | Contents |
+|------|------|----------|
+| Container | `langtools-agent-<name>` | Read-only filesystem, all capabilities dropped, `no-new-privileges`, process limit, runs as uid 10001. Labelled `dev.langtools.agent.worker`, `.owner`, `.concurrency`. |
+| Volume | `langtools-agent-<name>` | The queue and results, at `/spool`. |
+| Directory | `~/.config/langtools-agent/workers/<name>/` | `env` (mode 0600) and, for private registries, `docker/config.json`. |
+
+## From Swift
+
+`AgentFleet` is the API the command is built on. Code can use it to hand work to a worker, for example to run a subagent in a container:
+
+```swift
+import AgentDeploy
+import AgentRuntime
+
+let fleet = AgentFleet(
+    store: FleetStore(file: FleetStore.defaultDirectory(environment: ProcessInfo.processInfo.environment).appendingPathComponent("fleet.json")),
+    runner: ProcessCommandRunner(),
+    providers: [DigitalOceanCompute(runner: ProcessCommandRunner())]
+)
+let runID = try await fleet.submit(AgentJob(spec: spec), to: "helper")
+let result = try await fleet.waitForResult(of: runID, on: "helper", timeout: 600)
+print(result.output ?? result.error ?? "")
+```
+
+`AgentFleet` runs `docker`, `ssh` and `doctl` as processes, so it works in macOS and Linux command-line tools and servers, not in sandboxed iOS apps.
 
 ## Limits
 
-- The registry credentials for DigitalOcean Container Registry are read-only but don't expire, and they cover every repository in the registry.
-- Anyone with root SSH access to a worker can read its keys and every job. An isolated worker is the boundary between owners; jobs on a shared worker can see each other's files.
-- Results and the queue live on the droplet's disk; `destroy` deletes them.
-
-## Other providers
-
-`ComputeProvider` is the seam for other clouds: create, list and delete machines, and supply registry credentials. `DigitalOceanCompute` is the only implementation. The worker setup itself (first-boot script, systemd unit, SSH commands) assumes a recent Ubuntu machine with root SSH, not anything DigitalOcean-specific.
+- Workers that share a host share its Docker daemon. Anyone who can run `docker` there can read every worker's keys and jobs. For owners who must not share that, give each a dedicated host.
+- DigitalOcean Container Registry credentials are read-only but don't expire, and they cover every repository in the registry.
+- Results and queues live on each host; `destroy` without `--keep-results` deletes them.
