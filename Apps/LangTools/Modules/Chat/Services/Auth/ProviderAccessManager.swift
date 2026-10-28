@@ -1,0 +1,333 @@
+import Foundation
+import Combine
+import OpenAI
+import Anthropic
+import XAI
+import Gemini
+import Ollama
+
+public final class ProviderAccessManager: ObservableObject {
+    public static let shared = ProviderAccessManager()
+
+    @Published public private(set) var states: [APIService: ProviderAccessState] = [:]
+
+    private let keychainService: KeychainService
+    private let sessionStore: AuthSessionStore
+    private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
+    private let compatibleCatalog: CompatibleModelCatalog
+    private let stateLock = NSLock()
+    private var refreshGeneration: UInt64 = 0
+
+    public init(
+        keychainService: KeychainService = .shared,
+        sessionStore: AuthSessionStore = .shared,
+        ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared,
+        compatibleCatalog: CompatibleModelCatalog = .shared
+    ) {
+        self.keychainService = keychainService
+        self.sessionStore = sessionStore
+        self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
+        self.compatibleCatalog = compatibleCatalog
+        refresh()
+    }
+
+    public func refresh() {
+        stateLock.lock()
+        refreshGeneration &+= 1
+        let generation = refreshGeneration
+        let ollamaSnapshot = ollamaEndpointConfiguration.snapshot()
+        stateLock.unlock()
+
+        var newStates: [APIService: ProviderAccessState] = [:]
+        for service in APIService.allCases {
+            let apiKey = keychainService.getApiKey(for: service)
+            let accountProvider = service.accountLoginProvider
+            let session = accountProvider.flatMap { try? sessionStore.session(for: $0) }
+            let status = authStatus(apiKey: apiKey, session: session)
+            newStates[service] = ProviderAccessState(
+                service: service,
+                authStatus: status,
+                availableModels: availableModels(for: service, apiKey: apiKey, session: session, ollamaSnapshot: ollamaSnapshot),
+                accountIdentifier: session?.accountIdentifier
+            )
+        }
+        let applyStates = {
+            self.stateLock.lock()
+            defer { self.stateLock.unlock() }
+            // Background refreshes must not restore an older catalog after a
+            // newer refresh, server switch, repair, or helper disconnect.
+            guard generation == self.refreshGeneration,
+                  self.ollamaEndpointConfiguration.isCurrent(ollamaSnapshot) else { return }
+            self.states = newStates
+        }
+        if Thread.isMainThread {
+            applyStates()
+        } else {
+            DispatchQueue.main.async(execute: applyStates)
+        }
+    }
+
+    public func saveAccountSession(_ session: AccountSession) throws {
+        try sessionStore.save(session)
+        refresh()
+    }
+
+    public func removeAccountSession(for provider: AccountLoginProvider) throws {
+        try sessionStore.removeSession(for: provider)
+        refresh()
+    }
+
+    /// Snapshot of `states` safe to read from any thread (including nonisolated
+    /// `async` call sites such as `NetworkClient.ensureModelAccess`). The
+    /// dictionary is a value type, so a copy under the lock avoids racing the
+    /// main-thread `@Published` write in `refresh()`.
+    private func snapshotStates() -> [APIService: ProviderAccessState] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return states
+    }
+
+    public func state(for service: APIService) -> ProviderAccessState {
+        snapshotStates()[service] ?? ProviderAccessState(service: service, authStatus: .notConfigured, availableModels: [])
+    }
+
+    public func hasAccountSession(for service: APIService) -> Bool {
+        state(for: service).hasAccountSession
+    }
+
+    public func hasAPIKey(for service: APIService) -> Bool {
+        state(for: service).hasAPIKey
+    }
+
+    public func session(for provider: AccountLoginProvider) -> AccountSession? {
+        try? sessionStore.session(for: provider)
+    }
+
+    public func availableChatModels() -> [Model] {
+        statesForAccessUI()
+            .flatMap(\.availableModels)
+            + state(for: .ollama).availableModels
+            + state(for: .apple).availableModels
+    }
+
+    public func validateSelectedModel(_ model: Model) -> Model {
+        let available = availableChatModels()
+        if available.contains(model) || model.apiService == .ollama {
+            return model
+        }
+        // The on-device Apple model is listed whenever the OS supports it, so it
+        // must not silently replace a selection whose provider is unconfigured.
+        return available.first { $0.apiService != .apple } ?? model
+    }
+
+    public func accessibleModelIDs(for service: APIService) -> [String] {
+        state(for: service).availableModels.map(\.rawValue)
+    }
+
+    public func statesForAccessUI() -> [ProviderAccessState] {
+        let openAIState = state(for: .openAI)
+        let anthropicState = state(for: .anthropic)
+        let codexSession = session(for: .openAI)
+        let claudeCodeSession = session(for: .claudeCode)
+
+        return [
+            ProviderAccessState(
+                service: .openAI,
+                route: .openAI,
+                accessDestination: .openAI,
+                authStatus: openAIState.hasAPIKey ? .apiKeyConfigured : .notConfigured,
+                availableModels: openAIState.availableModels.filter { $0.route == .openAI }
+            ),
+            ProviderAccessState(
+                service: .openAI,
+                route: .codex,
+                accessDestination: .codex,
+                authStatus: codexSession.map { .accountConnected($0.provider) } ?? .notConfigured,
+                availableModels: openAIState.availableModels.filter { $0.route == .codex },
+                accountIdentifier: codexSession?.accountIdentifier
+            ),
+            ProviderAccessState(
+                service: .anthropic,
+                accessDestination: .anthropic,
+                authStatus: anthropicState.hasAPIKey ? .apiKeyConfigured : .notConfigured,
+                availableModels: anthropicState.availableModels.filter { $0.route == .anthropic }
+            ),
+            ProviderAccessState(
+                service: .anthropic,
+                accessDestination: .claudeCode,
+                authStatus: claudeCodeSession.map { .accountConnected($0.provider) } ?? .notConfigured,
+                availableModels: anthropicState.availableModels.filter { $0.route == .claudeCode },
+                accountIdentifier: claudeCodeSession?.accountIdentifier
+            ),
+            accessState(for: .xAI),
+            accessState(for: .gemini),
+        ] + CompatibleProvider.allCases.map { accessState(for: $0.accessDestination) }
+    }
+
+    private func accessState(for destination: AccessDestination) -> ProviderAccessState {
+        let providerState = state(for: destination.service)
+        return ProviderAccessState(
+            service: destination.service,
+            accessDestination: destination,
+            authStatus: providerState.hasAPIKey ? .apiKeyConfigured : .notConfigured,
+            availableModels: providerState.availableModels
+        )
+    }
+
+    public func unavailableReason(for state: ProviderAccessState) -> String? {
+        guard state.service != .ollama, state.service != .apple, state.service != .serper else { return nil }
+        if state.authStatus == .notConfigured {
+            switch state.accessDestination {
+            case .openAI:
+                return "Add an OpenAI API key to show Platform API models."
+            case .codex:
+                return "Connect the Codex helper and sign in with your ChatGPT subscription to show Codex models."
+            case .anthropic:
+                return "Add an Anthropic API key to show Anthropic Platform models."
+            case .claudeCode:
+                return "Sign in with Claude Code to show account-backed models."
+            default:
+                return "Connect \(state.displayName) to show its models."
+            }
+        }
+        if state.availableModels.isEmpty {
+            return "\(state.displayName) is connected, but no chat models are currently available."
+        }
+        return nil
+    }
+
+    public func unavailableReason(for service: APIService) -> String? {
+        unavailableReason(for: state(for: service))
+    }
+
+    private func authStatus(apiKey: String?, session: AccountSession?) -> ProviderAuthStatus {
+        let hasKey = apiKey?.isEmpty == false
+        switch (hasKey, session) {
+        case (true, let session?):
+            return .apiKeyAndAccount(session.provider)
+        case (true, nil):
+            return .apiKeyConfigured
+        case (false, let session?):
+            return .accountConnected(session.provider)
+        case (false, nil):
+            return .notConfigured
+        }
+    }
+
+    private func availableModels(
+        for service: APIService,
+        apiKey: String?,
+        session: AccountSession?,
+        ollamaSnapshot: OllamaEndpointConfiguration.Snapshot
+    ) -> [Model] {
+        if service == .ollama {
+            return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
+        }
+        if service == .apple {
+            return Model.appleModels
+        }
+
+        let hasAPIKey = apiKey?.isEmpty == false
+        let hasSession = session != nil
+
+        guard hasAPIKey || hasSession else {
+            return []
+        }
+
+        let sessionModels: [Model] = {
+            guard let session else { return [] }
+            let parsed: [Model]
+            switch service {
+            case .openAI:
+                parsed = session.accessibleModelIDs.compactMap { slug in
+                    let trimmed = slug.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard trimmed.isEmpty == false else { return nil }
+                    return .codex(OpenAI.Model(rawValue: trimmed) ?? OpenAI.Model(customModelID: trimmed))
+                }
+            case .anthropic:
+                parsed = session.accessibleModelIDs.compactMap { identifier in
+                    let slug = identifier.split(separator: "/", maxSplits: 1).last.map(String.init) ?? identifier
+                    guard let model = Anthropic.Model(rawValue: slug) else { return nil }
+                    return .claudeCode(model)
+                }
+            case .xAI, .gemini, .ollama, .apple, .serper, .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
+                parsed = session.accessibleModelIDs.compactMap(Model.init(rawValue:))
+            }
+            return parsed
+        }()
+
+        let platformModels: [Model] = {
+            guard hasAPIKey else { return [] }
+            switch service {
+            case .openAI:
+                return OpenAI.Model.chatModels.map { .openAI($0) }
+            case .anthropic:
+                return Anthropic.Model.activeCases.map { .anthropic($0) }
+            case .xAI:
+                return XAI.Model.allCases.map { .xAI($0) }
+            case .gemini:
+                return Gemini.Model.allCases.map { .gemini($0) }
+            case .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
+                let provider = CompatibleProvider(service: service)!
+                return compatibleCatalog.modelIDs(for: provider).map { .compatible(provider, $0) }
+            case .ollama:
+                return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
+            case .apple:
+                return Model.appleModels
+            case .serper:
+                return []
+            }
+        }()
+
+        if hasSession, hasAPIKey == false {
+            return sessionModels
+        }
+
+        if hasSession, hasAPIKey {
+            return sessionModels + platformModels
+        }
+
+        return platformModels
+    }
+}
+
+public final class AuthPresentationCoordinator: ObservableObject {
+    public static let shared = AuthPresentationCoordinator()
+
+    @Published public var isPresented = false
+    @Published public var preferredDestination: AccessDestination?
+    @Published private(set) var presentationOwner: UUID?
+    private var presenters: [UUID: (priority: Int, order: UInt64)] = [:]
+    private var registrationOrder: UInt64 = 0
+
+    /// Settings sheets/windows own their own prompts while visible. The chat
+    /// root stays registered as a fallback, not a second simultaneous presenter.
+    func registerPresenter(_ id: UUID, priority: Int) {
+        registrationOrder &+= 1
+        presenters[id] = (priority, registrationOrder)
+        updatePresentationOwner()
+    }
+
+    func unregisterPresenter(_ id: UUID) {
+        presenters.removeValue(forKey: id)
+        updatePresentationOwner()
+    }
+
+    private func updatePresentationOwner() {
+        let owner = presenters.max {
+            if $0.value.priority == $1.value.priority { return $0.value.order < $1.value.order }
+            return $0.value.priority < $1.value.priority
+        }?.key
+        if owner != presentationOwner { presentationOwner = owner }
+    }
+
+    public func present(preferredDestination: AccessDestination? = nil) {
+        self.preferredDestination = preferredDestination
+        isPresented = true
+    }
+
+    public func dismiss() {
+        isPresented = false
+        preferredDestination = nil
+    }
+}

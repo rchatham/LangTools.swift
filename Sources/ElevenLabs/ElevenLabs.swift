@@ -56,7 +56,7 @@ public final class ElevenLabs: LangTools {
     }
 
     public func prepare<Request: LangToolsRequest>(request: Request) throws -> URLRequest {
-        var url = configuration.baseURL.appending(path: request.endpoint)
+        let url = configuration.baseURL.appending(path: request.endpoint)
 
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = Request.httpMethod.rawValue

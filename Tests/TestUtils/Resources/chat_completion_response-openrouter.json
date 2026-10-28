@@ -1,0 +1,35 @@
+{
+  "id": "gen-1729000000-abc123",
+  "provider": "Anthropic",
+  "model": "anthropic/claude-sonnet-4.5",
+  "object": "chat.completion",
+  "created": 1729000000,
+  "system_fingerprint": null,
+  "choices": [
+    {
+      "logprobs": null,
+      "finish_reason": "stop",
+      "native_finish_reason": "end_turn",
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello from a gateway.",
+        "refusal": null,
+        "reasoning": null
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 14,
+    "completion_tokens": 20,
+    "total_tokens": 34,
+    "cost": 0.000342,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 4
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 12
+    }
+  }
+}

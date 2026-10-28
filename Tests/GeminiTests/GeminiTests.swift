@@ -9,6 +9,7 @@ import XCTest
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+import LangTools
 @testable import TestUtils
 @testable import Gemini
 @testable import OpenAI
@@ -26,13 +27,13 @@ class GeminiTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
 
     func testGeminiChatCompletion() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try OpenAI.ChatCompletionResponse(
                 id: "gemini-test-id",
                 object: "chat.completion",
@@ -62,7 +63,7 @@ class GeminiTests: XCTestCase {
     }
 
     func testGeminiChatStream() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try OpenAI.ChatCompletionResponse(
                 id: "gemini-stream-id",
                 object: "chat.completion.chunk",
@@ -124,6 +125,17 @@ class GeminiTests: XCTestCase {
 
         let isValid = Gemini.requestValidators.contains { $0(validRequest) }
         XCTAssertTrue(isValid, "Gemini request validator should accept Gemini model requests")
+    }
+
+    func testGeminiValidatorRejectsModelTaggedForAnotherProvider() {
+        let gateway = LangToolsProviderID(rawValue: "example.gateway")
+        let tagged = OpenAI.ChatCompletionRequest(
+            model: OpenAI.Model(customModelID: GeminiModel.gemini3Flash.rawValue, providerID: gateway),
+            messages: [.init(role: .user, content: "test")]
+        )
+
+        XCTAssertFalse(Gemini.requestValidators.contains { $0(tagged) },
+                       "a Gemini ID tagged for a gateway must route to that gateway, not Gemini")
     }
 
     func testGeminiModelRawValues() throws {

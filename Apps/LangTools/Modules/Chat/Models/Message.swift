@@ -1,0 +1,605 @@
+//
+//  Message.swift
+//
+//  Created by Reid Chatham on 7/2/24.
+//
+
+import Foundation
+import LangTools
+import OpenAI
+import Anthropic
+import Ollama
+import AppleLangTools
+import ChatUI
+
+public final class Message: Codable, Sendable, ObservableObject, Identifiable, Equatable, Hashable {
+    public let uuid: UUID
+    public var role: Role
+    @Published public var contentType: ContentType
+    public var imageDetail: ImageDetail?
+    public let createdAt: Date
+    /// Tool invocations made while producing this message. Rendered by ChatUI
+    /// as expandable tool-call cards alongside the message bubble.
+    @Published public var toolCalls: [ChatToolCall] = []
+    /// UI-only send failure state. Intentionally excluded from Codable history.
+    @Published public var sendFailure: ChatSendFailure?
+    /// Presentation metadata; never appended to the provider-facing response text.
+    @Published public var wasResponseStopped: Bool = false
+    /// Identifies the user prompt that produced this response, including interleaved sends.
+    public var responseToMessageID: UUID?
+    /// Raw results retained for provider history replay when a rendered card
+    /// intentionally hides the corresponding `ChatToolCall.result`.
+    public var providerToolResults: [String: String] = [:]
+    /// The `APIService` each hidden raw result originated from, used to enforce
+    /// the cross-provider replay setting. Entries without a recorded service
+    /// (legacy history) are treated as same-origin during replay filtering.
+    public var providerToolResultServices: [String: APIService] = [:]
+    public var id: UUID { uuid }
+
+    public var text: String? {
+        switch contentType {
+        case .null: return nil
+        case .string(let str): return str
+        case .array(let arr): return arr.joined(separator: "\n")
+        case .agentEvent(let content): return content.formattedText
+        case .contentCards(let cards): return cards.message
+        }
+    }
+
+    /// Context sent to AI providers when this message is replayed in history.
+    ///
+    /// For content-card messages this is the card summary plus deterministic
+    /// card details and metadata (see `ContentCardsContent.providerContext`);
+    /// `text` stays the terse optional visible summary. For every other content
+    /// type this is exactly `text`, so non-card provider semantics are
+    /// unchanged.
+    public var providerContext: String? {
+        switch contentType {
+        case .contentCards(let cards): return cards.providerContext
+        default: return text
+        }
+    }
+
+    public init(uuid: UUID = UUID(), role: Role, contentType: ContentType = .null, imageDetail: ImageDetail? = nil, createdAt: Date = Date(), toolCalls: [ChatToolCall] = [], providerToolResults: [String: String] = [:], providerToolResultServices: [String: APIService] = [:], responseToMessageID: UUID? = nil) {
+        self.uuid = uuid
+        self.role = role
+        self.contentType = contentType
+        self.imageDetail = imageDetail
+        self.createdAt = createdAt
+        self.toolCalls = toolCalls
+        self.sendFailure = nil
+        self.wasResponseStopped = false
+        self.responseToMessageID = responseToMessageID
+        self.providerToolResults = providerToolResults
+        self.providerToolResultServices = providerToolResultServices
+    }
+
+    // Helper initializer for regular messages
+    public convenience init(text: String, role: Role) { self.init(role: role, contentType: .string(text)) }
+
+    // Coding keys for encoding/decoding
+    enum CodingKeys: CodingKey { case uuid, role, contentType, imageDetail, createdAt, toolCalls, providerToolResults, providerToolResultServices, wasResponseStopped, responseToMessageID }
+
+    public required init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        uuid = try container.decode(UUID.self, forKey: .uuid)
+        role = try container.decode(Role.self, forKey: .role)
+        contentType = try container.decode(ContentType.self, forKey: .contentType)
+        imageDetail = try container.decodeIfPresent(ImageDetail.self, forKey: .imageDetail)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        toolCalls = try container.decodeIfPresent([ChatToolCall].self, forKey: .toolCalls) ?? []
+        sendFailure = nil
+        wasResponseStopped = try container.decodeIfPresent(Bool.self, forKey: .wasResponseStopped) ?? false
+        responseToMessageID = try container.decodeIfPresent(UUID.self, forKey: .responseToMessageID)
+        providerToolResults = try container.decodeIfPresent([String: String].self, forKey: .providerToolResults) ?? [:]
+        providerToolResultServices = try container.decodeIfPresent([String: APIService].self, forKey: .providerToolResultServices) ?? [:]
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(uuid, forKey: .uuid)
+        try container.encode(role, forKey: .role)
+        try container.encode(contentType, forKey: .contentType)
+        try container.encodeIfPresent(imageDetail, forKey: .imageDetail)
+        try container.encode(createdAt, forKey: .createdAt)
+        if wasResponseStopped {
+            try container.encode(true, forKey: .wasResponseStopped)
+        }
+        try container.encodeIfPresent(responseToMessageID, forKey: .responseToMessageID)
+        if !toolCalls.isEmpty {
+            try container.encode(toolCalls, forKey: .toolCalls)
+        }
+        if !providerToolResults.isEmpty {
+            try container.encode(providerToolResults, forKey: .providerToolResults)
+        }
+        if !providerToolResultServices.isEmpty {
+            try container.encode(providerToolResultServices, forKey: .providerToolResultServices)
+        }
+    }
+
+    public static func == (lhs: Message, rhs: Message) -> Bool {
+        lhs.uuid == rhs.uuid &&
+        lhs.role == rhs.role &&
+        lhs.contentType == rhs.contentType &&
+        lhs.imageDetail == rhs.imageDetail &&
+        lhs.createdAt == rhs.createdAt &&
+        lhs.toolCalls == rhs.toolCalls &&
+        lhs.wasResponseStopped == rhs.wasResponseStopped &&
+        lhs.responseToMessageID == rhs.responseToMessageID &&
+        lhs.providerToolResults == rhs.providerToolResults &&
+        lhs.providerToolResultServices == rhs.providerToolResultServices
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(uuid)
+        hasher.combine(role)
+        hasher.combine(contentType)
+        hasher.combine(imageDetail)
+        hasher.combine(createdAt)
+        hasher.combine(toolCalls)
+        hasher.combine(wasResponseStopped)
+        hasher.combine(responseToMessageID)
+        hasher.combine(providerToolResults)
+        hasher.combine(providerToolResultServices)
+    }
+
+    /// Returns this message when cross-provider replay is allowed. Otherwise
+    /// returns a copy whose hidden raw results recorded from a *different*
+    /// originating service are removed, so replay falls back to the visible
+    /// `ChatToolCall.result`. Entries without a recorded origin (legacy history)
+    /// are kept and treated as same-origin.
+    public func replayFiltered(targetService: APIService, allowCrossProvider: Bool) -> Message {
+        guard !allowCrossProvider, !providerToolResultServices.isEmpty else { return self }
+        let keptResults = providerToolResults.filter { callID, _ in
+            guard let origin = providerToolResultServices[callID] else { return true }
+            return origin == targetService
+        }
+        guard keptResults.count != providerToolResults.count else { return self }
+        let keptServices = providerToolResultServices.filter { keptResults[$0.key] != nil }
+        return Message(
+            uuid: uuid,
+            role: role,
+            contentType: contentType,
+            imageDetail: imageDetail,
+            createdAt: createdAt,
+            toolCalls: toolCalls,
+            providerToolResults: keptResults,
+            providerToolResultServices: keptServices,
+            responseToMessageID: responseToMessageID
+        )
+    }
+}
+
+// Role checks
+extension Message {
+    public var isUser: Bool { role == .user }
+    public var isAssistant: Bool { role == .assistant }
+    var isSystem: Bool { role == .system }
+    var isToolCall: Bool { role == .tool }
+
+    public var isStringContent: Bool {
+        if case .string = contentType { return true }
+        return false
+    }
+
+    public var isAgentEvent: Bool {
+        if case .agentEvent = contentType { return true }
+        return false
+    }
+
+    public var parent: Message? {
+        if case .agentEvent(let content) = contentType { return content.parent }
+        return nil
+    }
+
+    public var childMessages: [Message] {
+        if case .agentEvent(let content) = contentType { return content.children }
+        return []
+    }
+}
+
+//enum Role: String, Codable {
+//    case system, assistant, user
+//}
+
+public extension Array where Element == Message {
+    /// Applies per-message cross-provider replay filtering (see
+    /// `Message.replayFiltered(targetService:allowCrossProvider:)`).
+    func replayFiltered(targetService: APIService, allowCrossProvider: Bool) -> [Message] {
+        map { $0.replayFiltered(targetService: targetService, allowCrossProvider: allowCrossProvider) }
+    }
+}
+
+public extension Array<Message> {
+    /// Retained tool calls (kept in history) are replayed to the API as proper
+    /// provider tool messages; when `keepsToolCallsInHistory` is off, `toolCalls`
+    /// is empty so only text is sent.
+    func toOpenAIMessages() -> [OpenAI.Message] {
+        flatMap { m -> [OpenAI.Message] in
+            let calls = m.toolCalls.filter { $0.status != .pending }
+            guard !calls.isEmpty else { return [OpenAI.Message(role: m.role, content: m.providerContext ?? "")] }
+            let toolCalls = calls.enumerated().map { idx, call in OpenAI.Message.ToolCall(index: idx, id: call.id, type: .function, function: .init(name: call.name, arguments: call.arguments ?? "{}")) }
+            let assistantMessage: OpenAI.Message
+            if case .contentCards = m.contentType {
+                do {
+                    // Prefer carrying the card context alongside the retained
+                    // tool calls; if the provider initializer ever rejects this
+                    // role/content/tool_calls combination, fall back to the
+                    // tool-only message instead of crashing history replay.
+                    assistantMessage = try OpenAI.Message(role: .assistant, content: .string(m.providerContext ?? ""), tool_calls: toolCalls)
+                } catch {
+                    print("⚠️ Chat.toOpenAIMessages: provider rejected assistant content+tool_calls (\(error)); replaying tool-only message (card context dropped)")
+                    assistantMessage = OpenAI.Message(tool_selection: toolCalls)
+                }
+            } else {
+                assistantMessage = OpenAI.Message(tool_selection: toolCalls)
+            }
+            return [assistantMessage] + calls.map { OpenAI.Message(tool_selection_id: $0.id, result: m.providerToolResults[$0.id] ?? $0.result ?? "") }
+        }
+    }
+
+    func toAnthropicMessages() -> [Anthropic.Message] {
+        flatMap { m -> [Anthropic.Message] in
+            guard m.role != .system else { return [] }
+            let calls = m.toolCalls.filter { $0.status != .pending }
+            guard !calls.isEmpty else { return [Anthropic.Message(role: .init(m.role), content: m.providerContext ?? "")] }
+            let use = calls.map { Anthropic.Message.Content.ContentType.toolUse(.init(id: $0.id, name: $0.name, input: $0.arguments ?? "{}")) }
+            let assistantContent: [Anthropic.Message.Content.ContentType]
+            if case .contentCards = m.contentType {
+                assistantContent = [.text(.init(text: m.providerContext ?? ""))] + use
+            } else {
+                assistantContent = use
+            }
+            let results = calls.map { Anthropic.Message.Content.ContentType.toolResult(.init(tool_selection_id: $0.id, result: m.providerToolResults[$0.id] ?? $0.result ?? "", is_error: $0.status == .failure)) }
+            return [Anthropic.Message(role: .assistant, content: .array(assistantContent)), Anthropic.Message(role: .user, content: .array(results))]
+        }
+    }
+
+    func createAnthropicSystemMessage() -> String? { filter { $0.isSystem }.reduce("") { (!$0.isEmpty ? $0 + "\n---\n" : "") + ($1.providerContext ?? "") } }
+
+    func toOllamaMessages() -> [Ollama.Message] {
+        flatMap { m -> [Ollama.Message] in
+            let calls = m.toolCalls.filter { $0.status != .pending }
+            guard !calls.isEmpty else { return [Ollama.Message(role: .init(m.role), content: m.providerContext ?? "")] }
+            let toolCalls = calls.map { Ollama.ChatToolCall(function: .init(name: $0.name, arguments: Self.parseArguments($0.arguments))) }
+            let results = calls.map { Ollama.ChatToolResult(tool_selection_id: $0.id, result: m.providerToolResults[$0.id] ?? $0.result ?? "", is_error: $0.status == .failure) }
+            return [Ollama.Message(role: .assistant, content: m.providerContext ?? "", tool_calls: toolCalls)] + Ollama.Message.messages(for: results)
+        }
+    }
+
+    /// The on-device model has no tool-calling bridge yet, so retained tool
+    /// calls are dropped and only each message's text context is replayed.
+    func toAppleIntelligenceMessages() -> [AppleIntelligence.Message] {
+        compactMap { m in
+            guard m.isSystem || m.isUser || m.isAssistant,
+                  let text = m.providerContext, !text.isEmpty else { return nil }
+            return AppleIntelligence.Message(role: .init(m.role), string: text)
+        }
+    }
+
+    private static func parseArguments(_ json: String?) -> [String: JSON] {
+        guard let json, !json.isEmpty, let dictionary = json.dictionary else { return [:] }
+        return dictionary
+    }
+}
+
+public extension Array<Tool> {
+    func convertTools<Tool: LangToolsTool>() -> [Tool] { return self.map { .init($0) } }
+}
+
+public extension OpenAI.ChatCompletionRequest.ToolChoice {
+    func toAnthropicToolChoice() -> Anthropic.MessageRequest.ToolChoice? {
+        switch self {
+        case .none: return nil
+        case .auto: return .auto
+        case .required: return .any
+        case .tool(let toolWrapper): switch toolWrapper { case .function(let name): return .tool(name) }
+        }
+    }
+}
+
+// TODO: - support more types of content. i.e. images, video, audio, pdf, etc.
+public enum ContentType: Codable, Equatable, Hashable {
+    case null
+    case string(String)
+    // TODO: - support more types of content for array
+    case array([String])
+    // TODO: - rename this as thread?
+    case agentEvent(AgentEventContent)
+    // Content cards for structured agent responses
+    case contentCards(ContentCardsContent)
+
+    // Custom coding keys for encoding/decoding
+    private enum CodingKeys: String, CodingKey { case type, content, children }
+
+    // Custom encoding
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .null: try container.encode("null", forKey: .type)
+        case .string(let str):
+            try container.encode("string", forKey: .type)
+            try container.encode(str, forKey: .content)
+        case .array(let arr):
+            try container.encode("array", forKey: .type)
+            try container.encode(arr, forKey: .content)
+        case .agentEvent(let content):
+            try container.encode("agentEvent", forKey: .type)
+            try container.encode(content, forKey: .content)
+        case .contentCards(let cards):
+            try container.encode("contentCards", forKey: .type)
+            try container.encode(cards, forKey: .content)
+        }
+    }
+
+    // Custom decoding
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try container.decode(String.self, forKey: .type)
+
+        switch type {
+        // case "null": self = .null
+        case "string":
+            let content = try container.decode(String.self, forKey: .content)
+            self = .string(content)
+        case "array":
+            let content = try container.decode([String].self, forKey: .content)
+            self = .array(content)
+        case "agentEvent":
+            let content = try container.decode(AgentEventContent.self, forKey: .content)
+            self = .agentEvent(content)
+        case "contentCards":
+            let content = try container.decode(ContentCardsContent.self, forKey: .content)
+            self = .contentCards(content)
+        default: self = .null
+        }
+    }
+
+    public static func ==(_ lhs: Self, rhs: Self) -> Bool {
+        switch (lhs, rhs) {
+        case (.null, .null): return true
+        case (.string(let lstr), .string(let rstr)): return lstr == rstr
+        case (.array(let larr), .array(let rarr)): return larr == rarr
+        case (.agentEvent(let lcontent), .agentEvent(let rcontent)): return lcontent == rcontent
+        case (.contentCards(let lcards), .contentCards(let rcards)): return lcards == rcards
+        default: return false
+        }
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        switch self {
+        case .null:
+            hasher.combine(0)
+        case .string(let str):
+            hasher.combine(1)
+            hasher.combine(str)
+        case .array(let arr):
+            hasher.combine(2)
+            hasher.combine(arr)
+        case .agentEvent(let content):
+            hasher.combine(3)
+            hasher.combine(content)
+        case .contentCards(let cards):
+            hasher.combine(4)
+            hasher.combine(cards)
+        }
+    }
+}
+
+public enum ImageDetail: String, Codable {
+    case auto, high, low
+}
+
+public struct AgentEventContent: Codable, Equatable, Hashable {
+    public let type: AgentEventType
+    public let agentName: String
+    public let details: String
+    public weak var parent: Message?
+    public var children: [Message]
+    
+    public init(type: AgentEventType, agentName: String, details: String, parent: Message? = nil, children: [Message] = []) {
+        self.type = type
+        self.agentName = agentName
+        self.details = details
+        self.parent = parent
+        self.children = children
+    }
+
+    public var formattedText: String {
+        "\(type.icon) Agent '\(agentName)' \(details)"
+    }
+
+    // TODO: - Re-evaluate the following implementation, it is very coupled with
+    // the insert function for [Message] and has implications for the way agent
+    // interactions are displayed in ChatUI.
+    var hasCompleted: Bool {
+        if [.completed, .failed].contains(type) { return true }
+        return children.contains { if case .agentEvent(let content) = $0.contentType { [.completed, .failed].contains(content.type) } else { false } }
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(type)
+        hasher.combine(agentName)
+        hasher.combine(details)
+        hasher.combine(children)
+    }
+}
+
+public enum AgentEventType: String, Codable {
+    case started
+    case delegated
+    case toolCalled
+    case toolCompleted
+    case completed
+    case failed
+    case error
+
+    public var icon: String {
+        switch self {
+        case .started: return "🤖"
+        case .delegated: return "🔄"
+        case .toolCalled: return "🛠️"
+        case .toolCompleted: return "✅"
+        case .completed: return "🏁"
+        case .failed: return "⚠️"
+        case .error: return "‼️"
+        }
+    }
+}
+
+private extension ChatToolCall {
+    mutating func failPending(reason: String) -> Bool {
+        var changed = false
+        for index in children.indices {
+            changed = children[index].failPending(reason: reason) || changed
+        }
+        if status == .pending {
+            status = .failure
+            result = reason
+            changed = true
+        }
+        return changed
+    }
+}
+
+// Factory methods for agent events
+extension Message {
+    /// Updates the tool-call lifecycle for this message from a LangTools event.
+    /// Used by `MessageService` to surface non-agent tool activity to ChatUI.
+    public func applyToolEvent(_ event: LangToolsToolEvent) {
+        switch event {
+        case .toolCalled(let selection):
+            // Always append a new pending card. Provider tool-call ids are not
+            // guaranteed to be unique (e.g. Ollama reports "ollama" for every
+            // call), so we cannot dedupe by id. Each completion is matched to
+            // the most recent pending card in `.toolCompleted` below.
+            let arguments = selection.arguments.isEmpty ? nil : selection.arguments
+            toolCalls.append(
+                ChatToolCall(
+                    id: UUID().uuidString,
+                    name: selection.name ?? "tool",
+                    kind: .tool,
+                    arguments: arguments,
+                    status: .pending,
+                    result: nil
+                )
+            )
+        case .toolCompleted(let result):
+            guard let result else { return }
+            let status: ChatToolCall.Status = result.is_error ? .failure : .success
+            // Tool events arrive as strict (.toolCalled, .toolCompleted) pairs
+            // in arrival order, so complete the most recent pending card.
+            if let index = toolCalls.lastIndex(where: { $0.kind == .tool && $0.status == .pending }) {
+                let existing = toolCalls[index]
+                toolCalls[index] = ChatToolCall(
+                    id: existing.id,
+                    name: existing.name,
+                    kind: existing.kind,
+                    arguments: existing.arguments,
+                    status: status,
+                    result: result.result,
+                    details: existing.details,
+                    children: existing.children
+                )
+            } else {
+                toolCalls.append(
+                    ChatToolCall(
+                        id: UUID().uuidString,
+                        name: "tool",
+                        arguments: nil,
+                        status: status,
+                        result: result.result
+                    )
+                )
+            }
+        }
+    }
+
+    /// Marks tool calls that never emitted a completion as failed while leaving
+    /// already completed calls untouched.
+    @discardableResult
+    public func failPendingToolCalls(reason: String) -> Bool {
+        var changed = false
+        for index in toolCalls.indices {
+            changed = toolCalls[index].failPending(reason: reason) || changed
+        }
+        return changed
+    }
+
+    public static func agentEvent(type: AgentEventType, agentName: String, details: String, children: [Message] = []) -> Message {
+        let content = AgentEventContent(type: type, agentName: agentName, details: details, children: children)
+        return Message(role: .system, contentType: .agentEvent(content))
+    }
+
+    static func createAgentStartEvent(agentName: String, task: String) -> Message {
+        .agentEvent(
+            type: .started,
+            agentName: agentName,
+            details: "started: \(task)"
+        )
+    }
+
+    static func createAgentDelegationEvent(
+        fromAgent: String,
+        toAgent: String,
+        reason: String,
+        children: [Message] = []
+    ) -> Message {
+        .agentEvent(
+            type: .delegated,
+            agentName: fromAgent,
+            details: "delegated to '\(toAgent)': \(reason)",
+            children: children
+        )
+    }
+
+    static func createAgentToolCallEvent(
+        agentName: String,
+        tool: String,
+        arguments: String
+    ) -> Message {
+        .agentEvent(
+            type: .toolCalled,
+            agentName: agentName,
+            details: "using tool: \(tool), arguments: \(arguments)"
+        )
+    }
+
+    static func createAgentToolReturnedEvent(
+        agentName: String,
+        result: String
+    ) -> Message {
+        .agentEvent(
+            type: .toolCompleted,
+            agentName: agentName,
+            details: "tool result: \(result)"
+        )
+    }
+
+    static func createAgentCompletionEvent(
+        agentName: String,
+        result: String,
+        is_error: Bool = false
+    ) -> Message {
+        .agentEvent(
+            type: is_error ? .failed : .completed,
+            agentName: agentName,
+            details: (is_error ? "failed: " : "completed: ") + result
+        )
+    }
+
+    static func createAgentErrorEvent(
+        agentName: String,
+        error: String
+    ) -> Message {
+        .agentEvent(
+            type: .error,
+            agentName: agentName,
+            details: "error: \(error)"
+        )
+    }
+
+    public static func contentCards(_ content: ContentCardsContent) -> Message {
+        Message(role: .assistant, contentType: .contentCards(content))
+    }
+}

@@ -1,0 +1,701 @@
+//
+//  NetworkClient.swift
+//
+//  Created by Reid Chatham on 1/20/23.
+//
+import Foundation
+import LangTools
+import Agents
+import OpenAI
+import Anthropic
+import XAI
+import Gemini
+import Cohere
+import Ollama
+import AppleLangTools
+
+public typealias Role = OpenAI.Message.Role
+
+public protocol NetworkClientProtocol {
+    static var shared: NetworkClientProtocol { get }
+    func performChatCompletionRequest(messages: [Message], model: Model, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) async throws -> Message
+    func streamChatCompletionRequest(messages: [Message], model: Model, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> AsyncThrowingStream<String, Error>
+    func playAudio(for text: String) async throws
+    func agentContext(messages: [Message], model: Model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext
+    func updateApiKey(_ apiKey: String, for llm: APIService) throws
+    func removeApiKey(for llm: APIService) throws
+    func connectAccount(_ provider: AccountLoginProvider) async throws
+    func connectCodexHelper() async throws
+    func disconnectAccount(_ provider: AccountLoginProvider) async throws
+    func disconnectCodexHelper() async throws
+}
+
+public protocol ConversationAwareNetworkClientProtocol: NetworkClientProtocol {
+    func performChatCompletionRequest(messages: [Message], model: Model, conversationID: UUID, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) async throws -> Message
+    func streamChatCompletionRequest(messages: [Message], model: Model, conversationID: UUID, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> AsyncThrowingStream<String, Error>
+    func endConversation(id: UUID) async
+}
+
+extension NetworkClientProtocol {
+    public func connectCodexHelper() async throws {
+        throw AccountLoginError.sessionExchangeFailed("Codex helper login is not supported by this client.")
+    }
+
+    public func disconnectCodexHelper() async throws {
+        throw AccountLoginError.sessionExchangeFailed("Codex helper logout is not supported by this client.")
+    }
+
+    public func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) async throws -> Message {
+        try await performChatCompletionRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
+    }
+
+    public func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> AsyncThrowingStream<String, Error> {
+        try streamChatCompletionRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
+    }
+
+    func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) -> any LangToolsChatRequest & LangToolsStreamableRequest where Self: NetworkClient {
+        self.directRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
+    }
+
+    func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
+        try agentContext(messages: messages, model: model, eventHandler: eventHandler)
+    }
+}
+
+public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
+    public static let shared: NetworkClientProtocol = NetworkClient()
+
+    private let keychainService: KeychainService
+    private let accountLoginService: AccountLoginService
+    private let accountProxyTransport: AccountProxyTransportProtocol
+    private let openAIAccountChatBridge: OpenAIAccountChatBridging
+    private let generationSettingsProvider: @Sendable () -> ChatGenerationSettings
+    private let compatibleCatalog: CompatibleModelCatalog
+    public let providerAccessManager: ProviderAccessManager
+    private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
+    private let ollamaSession: URLSession
+
+    private var userDefaults: UserDefaults { .standard }
+    private var langToolchain = LangToolchain()
+    private let langToolchainLock = NSLock()
+    private let conversationLock = NSLock()
+    private var codexConversationIDs = Set<UUID>()
+
+    public init(
+        keychainService: KeychainService = .shared,
+        accountLoginService: AccountLoginService = BrowserAccountLoginService.shared,
+        accountProxyTransport: AccountProxyTransportProtocol = AccountProxyTransport(),
+        openAIAccountChatBridge: OpenAIAccountChatBridging = CLIAccountSessionBridge(),
+        providerAccessManager: ProviderAccessManager = .shared,
+        ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared,
+        ollamaSession: URLSession = .shared,
+        generationSettingsProvider: @escaping @Sendable () -> ChatGenerationSettings = {
+            ChatGenerationSettingsStore().load()
+        },
+        compatibleCatalog: CompatibleModelCatalog = .shared
+    ) {
+        self.keychainService = keychainService
+        self.accountLoginService = accountLoginService
+        self.accountProxyTransport = accountProxyTransport
+        self.openAIAccountChatBridge = openAIAccountChatBridge
+        self.providerAccessManager = providerAccessManager
+        self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
+        self.ollamaSession = ollamaSession
+        self.generationSettingsProvider = generationSettingsProvider
+        self.compatibleCatalog = compatibleCatalog
+        super.init()
+        APIService.llms.forEach { llm in keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) } }
+        providerAccessManager.refresh()
+    }
+
+    public func performChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) async throws -> Message {
+        try ensureModelAccess(for: model)
+
+        if let session = accountSession(for: model) {
+            if session.provider == .openAI,
+               session.accessToken != CodexSessionMarker.value {
+                return try await openAIAccountChatBridge.performOpenAIChat(messages: messages, model: model)
+            }
+
+            return try await accountProxyTransport.performChatCompletionRequest(
+                messages: messages,
+                model: model,
+                session: session,
+                tools: tools,
+                toolChoice: toolChoice
+            )
+        }
+
+        let endpoint = model.apiService == .ollama ? ollamaEndpointConfiguration.snapshot() : nil
+        let toolchain = try toolchain(for: model, endpoint: endpoint)
+        do {
+            let response = try await toolchain.perform(request: directRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler))
+            guard let text = response.content?.text else { throw NetworkError.unexpectedResponseFormat }
+            return Message(text: text, role: .assistant)
+        } catch { throw endpoint?.actionableError(error) ?? error }
+    }
+
+    public func streamChatCompletionRequest(messages: [Message], model: Model = UserDefaults.model, stream: Bool = true, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> AsyncThrowingStream<String, Error> {
+        try ensureModelAccess(for: model)
+
+        if let session = accountSession(for: model) {
+            if session.provider == .openAI,
+               session.accessToken != CodexSessionMarker.value {
+                return AsyncThrowingStream { continuation in
+                    let task = Task {
+                        do {
+                            let message = try await openAIAccountChatBridge.performOpenAIChat(messages: messages, model: model)
+                            if let text = message.text {
+                                continuation.yield(text)
+                            }
+                            continuation.finish()
+                        } catch {
+                            continuation.finish(throwing: error)
+                        }
+                    }
+                    continuation.onTermination = { _ in task.cancel() }
+                }
+            }
+
+            return try accountProxyTransport.streamChatCompletionRequest(
+                messages: messages,
+                model: model,
+                session: session,
+                stream: stream,
+                tools: tools,
+                toolChoice: toolChoice
+            )
+        }
+
+        let endpoint = model.apiService == .ollama ? ollamaEndpointConfiguration.snapshot() : nil
+        let toolchain = try toolchain(for: model, endpoint: endpoint)
+        let responses = try toolchain.stream(request: directRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler))
+        guard let endpoint, endpoint.isHelper else {
+            return responses.compactMapAsyncThrowingStream { $0.content?.text }
+        }
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await response in responses {
+                        if let text = response.content?.text { continuation.yield(text) }
+                    }
+                    continuation.finish()
+                } catch { continuation.finish(throwing: endpoint.actionableError(error)) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    public func performChatCompletionRequest(
+        messages: [Message],
+        model: Model,
+        conversationID: UUID,
+        tools: [Tool]?,
+        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?,
+        toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }
+    ) async throws -> Message {
+        try ensureModelAccess(for: model)
+        guard case .codex = model,
+              let session = accountSession(for: model),
+              session.provider == .openAI,
+              session.accessToken == CodexSessionMarker.value,
+              let transport = accountProxyTransport as? ConversationAwareAccountProxyTransportProtocol
+        else {
+            return try await performChatCompletionRequest(messages: messages, model: model, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
+        }
+        rememberCodexConversation(conversationID)
+        return try await transport.performChatCompletionRequest(
+            messages: messages,
+            model: model,
+            session: session,
+            conversationID: conversationID,
+            tools: tools,
+            toolChoice: toolChoice
+        )
+    }
+
+    public func streamChatCompletionRequest(
+        messages: [Message],
+        model: Model,
+        conversationID: UUID,
+        stream: Bool,
+        tools: [Tool]?,
+        toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?,
+        toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }
+    ) throws -> AsyncThrowingStream<String, Error> {
+        try ensureModelAccess(for: model)
+        guard case .codex = model,
+              let session = accountSession(for: model),
+              session.provider == .openAI,
+              session.accessToken == CodexSessionMarker.value,
+              let transport = accountProxyTransport as? ConversationAwareAccountProxyTransportProtocol
+        else {
+            return try streamChatCompletionRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
+        }
+        rememberCodexConversation(conversationID)
+        return try transport.streamChatCompletionRequest(
+            messages: messages,
+            model: model,
+            session: session,
+            conversationID: conversationID,
+            stream: stream,
+            tools: tools,
+            toolChoice: toolChoice
+        )
+    }
+
+    public func endConversation(id: UUID) async {
+        guard takeCodexConversation(id),
+              let transport = accountProxyTransport as? ConversationAwareAccountProxyTransportProtocol
+        else { return }
+        await transport.endConversation(id: id)
+    }
+
+    private func rememberCodexConversation(_ id: UUID) {
+        conversationLock.lock()
+        codexConversationIDs.insert(id)
+        conversationLock.unlock()
+    }
+
+    private func takeCodexConversation(_ id: UUID) -> Bool {
+        conversationLock.lock()
+        defer { conversationLock.unlock() }
+        return codexConversationIDs.remove(id) != nil
+    }
+
+    public func playAudio(for text: String) async throws {
+        let audioReq = OpenAI.AudioSpeechRequest(model: .tts_1_hd, input: text, voice: .alloy, responseFormat: .mp3, speed: 1.2)
+        let toolchain = toolchainSnapshot()
+        let audioResponse: Data = try await toolchain.perform(request: audioReq)
+        do { try AudioPlayer.shared.play(data: audioResponse) }
+        catch { print(error.localizedDescription) }
+    }
+
+    func directRequest(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) -> any LangToolsChatRequest & LangToolsStreamableRequest {
+        let generationSettings = generationSettingsProvider()
+        return request(
+            messages: messages,
+            model: model,
+            generationSettings: generationSettings,
+            stream: stream,
+            tools: tools,
+            toolChoice: toolChoice,
+            toolEventHandler: toolEventHandler
+        )
+    }
+
+    func request(messages: [Message], model: Model, generationSettings: ChatGenerationSettings, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) -> any LangToolsChatRequest & LangToolsStreamableRequest {
+        let replayMessages = messages.replayFiltered(
+            targetService: model.apiService,
+            allowCrossProvider: ToolSettings.shared.crossProviderToolReplay
+        )
+        let capabilities = model.generationCapabilities
+        let temperature = capabilities.supportsTemperature ? generationSettings.temperature : nil
+        let maximumOutputTokens: Int? = if capabilities.maximumOutputField != nil,
+                                           let savedValue = generationSettings.maxOutputTokens,
+                                           let bound = capabilities.maximumOutputTokenBound,
+                                           savedValue <= bound {
+            savedValue
+        } else {
+            nil
+        }
+        let topP = capabilities.supportsTopP ? generationSettings.topP : nil
+        let frequencyPenalty = capabilities.supportsFrequencyPenalty ? generationSettings.frequencyPenalty : nil
+        let presencePenalty = capabilities.supportsPresencePenalty ? generationSettings.presencePenalty : nil
+        let topK = capabilities.supportsTopK ? generationSettings.topK : nil
+        let seed = capabilities.supportsSeed ? generationSettings.seed : nil
+        let stop = capabilities.supportsStop ? generationSettings.stop : nil
+
+        switch model {
+        case .anthropic(let providerModel), .claudeCode(let providerModel):
+            return Anthropic.MessageRequest(
+                model: providerModel,
+                messages: replayMessages.toAnthropicMessages(),
+                max_tokens: capabilities.maximumOutputField == .anthropicMaxTokens ? maximumOutputTokens ?? 4096 : 4096,
+                stop_sequences: stop,
+                stream: stream,
+                system: messages.createAnthropicSystemMessage(),
+                temperature: temperature,
+                tools: tools?.convertTools(),
+                tool_choice: toolChoice?.toAnthropicToolChoice(),
+                top_k: topK,
+                top_p: topP,
+                toolEventHandler: toolEventHandler
+            )
+        case .openAI(let providerModel), .codex(let providerModel):
+            return OpenAI.ChatCompletionRequest(
+                model: providerModel,
+                messages: replayMessages.toOpenAIMessages(),
+                temperature: temperature,
+                top_p: topP,
+                stream: stream,
+                stop: stop.map { .array($0) },
+                max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                max_completion_tokens: capabilities.maximumOutputField == .openAIMaxCompletionTokens ? maximumOutputTokens : nil,
+                presence_penalty: presencePenalty,
+                frequency_penalty: frequencyPenalty,
+                seed: seed,
+                tools: tools?.convertTools(),
+                tool_choice: toolChoice,
+                toolEventHandler: toolEventHandler
+            )
+        case .compatible(let provider, let id):
+            // Tools go only to models the catalog does not
+            // list as lacking tool support.
+            let supportsTools = compatibleCatalog.entry(for: provider, id: id)?.supportsTools ?? true
+            if provider == .cohere, let model = Cohere.Model(rawValue: id) {
+                return Cohere.ChatRequest(
+                    model: model,
+                    messages: replayMessages.toOpenAIMessages().map { Cohere.Message($0) },
+                    stream: stream,
+                    tools: supportsTools ? tools?.convertTools() : nil,
+                    tool_choice: supportsTools ? toolChoice.flatMap { .init($0) } : nil,
+                    temperature: temperature,
+                    max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                    p: topP, k: topK, seed: seed, stop_sequences: stop,
+                    frequency_penalty: frequencyPenalty, presence_penalty: presencePenalty,
+                    toolEventHandler: toolEventHandler
+                )
+            }
+            if provider.usesResponses {
+                return OpenAI.ResponsesRequest(
+                    model: provider.openAIModel(id: id),
+                    messages: replayMessages.toOpenAIMessages(),
+                    stream: stream,
+                    max_output_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                    temperature: temperature,
+                    top_p: topP,
+                    tools: supportsTools ? tools?.convertTools() : nil,
+                    toolEventHandler: toolEventHandler
+                )
+            }
+            return OpenAI.ChatCompletionRequest(
+                model: provider.openAIModel(id: id),
+                messages: replayMessages.toOpenAIMessages(),
+                temperature: temperature,
+                top_p: topP,
+                stream: stream,
+                stop: stop.map { .array($0) },
+                max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                presence_penalty: presencePenalty,
+                frequency_penalty: frequencyPenalty,
+                seed: seed,
+                tools: supportsTools ? tools?.convertTools() : nil,
+                tool_choice: supportsTools ? toolChoice : nil,
+                toolEventHandler: toolEventHandler
+            )
+        case .xAI(let providerModel):
+            return OpenAI.ChatCompletionRequest(
+                model: providerModel,
+                messages: replayMessages.toOpenAIMessages(),
+                temperature: temperature,
+                top_p: topP,
+                stream: stream,
+                stop: stop.map { .array($0) },
+                max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                presence_penalty: presencePenalty,
+                frequency_penalty: frequencyPenalty,
+                seed: seed,
+                tools: tools?.convertTools(),
+                tool_choice: toolChoice,
+                toolEventHandler: toolEventHandler
+            )
+        case .gemini(let providerModel):
+            return Gemini.GenerateContentRequest(
+                model: providerModel,
+                messages: replayMessages.toOpenAIMessages().map { Gemini.Message($0) },
+                stream: stream,
+                tools: tools?.convertTools(),
+                functionCallingMode: toolChoice.map { .init($0) },
+                generationConfig: .init(temperature: temperature, topP: topP, topK: topK, maxOutputTokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil, stopSequences: stop, seed: seed, presencePenalty: presencePenalty, frequencyPenalty: frequencyPenalty),
+                toolEventHandler: toolEventHandler
+            )
+        case .ollama(let providerModel):
+            let options: Ollama.GenerateOptions? = if maximumOutputTokens != nil || temperature != nil || topP != nil || topK != nil || seed != nil || frequencyPenalty != nil || presencePenalty != nil || stop != nil {
+                Ollama.GenerateOptions(
+                    seed: seed,
+                    num_predict: maximumOutputTokens,
+                    top_k: topK,
+                    top_p: topP,
+                    temperature: temperature,
+                    presence_penalty: presencePenalty,
+                    frequency_penalty: frequencyPenalty,
+                    stop: stop
+                )
+            } else {
+                nil
+            }
+            return Ollama.ChatRequest(
+                model: providerModel,
+                messages: replayMessages.toOllamaMessages(),
+                format: nil,
+                options: options,
+                stream: stream,
+                keep_alive: nil,
+                tools: tools?.convertTools(),
+                toolEventHandler: toolEventHandler
+            )
+        case .apple(let providerModel):
+            // Tool calling is not bridged to Foundation Models yet, so tools are
+            // not sent; the on-device model answers from the conversation alone.
+            // GenerationOptions takes a single sampling mode, so top-k wins when
+            // both top-k and top-p are set (ranges are validated by the settings).
+            let appleSeed = seed.map(UInt64.init(truncatingIfNeeded:))
+            let sampling: AppleIntelligence.Sampling? = if let topK {
+                .topK(topK, seed: appleSeed)
+            } else if let topP {
+                .topP(topP, seed: appleSeed)
+            } else {
+                nil
+            }
+            return AppleIntelligence.ChatRequest(
+                model: providerModel,
+                messages: replayMessages.toAppleIntelligenceMessages(),
+                stream: stream,
+                temperature: temperature,
+                maximumResponseTokens: maximumOutputTokens,
+                sampling: sampling
+            )
+        }
+    }
+
+    public func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
+        let effectiveModel = ToolSettings.shared.agentModelOverride ?? model
+        // Agents need tool calling, which the on-device route lacks regardless of availability.
+        if effectiveModel.apiService == .apple { throw AppleIntelligenceError.toolCallingUnsupported }
+        try ensureModelAccess(for: effectiveModel)
+        if accountSession(for: effectiveModel) != nil {
+            throw NetworkError.accountProxyTransportFailed("Account-backed agent execution is not supported. Use an API key for agent runs.")
+        }
+        let replayMessages = messages.replayFiltered(
+            targetService: effectiveModel.apiService,
+            allowCrossProvider: ToolSettings.shared.crossProviderToolReplay
+        )
+        switch effectiveModel {
+        case .anthropic(let model), .claudeCode(let model): return AgentContext(langTool: try requiredLangTool(Anthropic.self), model: model, messages: replayMessages.toAnthropicMessages(), eventHandler: eventHandler)
+        case .gemini(let model): return AgentContext(langTool: try requiredLangTool(Gemini.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .openAI(let model), .codex(let model): return AgentContext(langTool: try requiredLangTool(OpenAI.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .xAI(let model): return AgentContext(langTool: try requiredLangTool(XAI.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .compatible(let provider, let id):
+            guard let context = provider.providerContext(id: id, toolchain: toolchainSnapshot()) else {
+                throw NetworkError.langToolNotRegistered(provider.displayName)
+            }
+            // The existential initializer: the provider's concrete type is erased here.
+            return AgentContext(langTool: context.langTool, model: context.model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler, parent: nil, tools: nil)
+        case .ollama(let model):
+            let snapshot = ollamaEndpointConfiguration.snapshot()
+            return AgentContext(langTool: try snapshot.provider(directSession: ollamaSession), model: model, messages: replayMessages.toOllamaMessages(), eventHandler: eventHandler)
+        case .apple:
+            throw AppleIntelligenceError.toolCallingUnsupported
+        }
+    }
+
+    private func requiredLangTool<T: LangTools>(_ type: T.Type) throws -> T {
+        langToolchainLock.lock()
+        defer { langToolchainLock.unlock() }
+        guard let tool = langToolchain.langTool(type) else {
+            throw NetworkError.langToolNotRegistered(String(describing: type))
+        }
+        return tool
+    }
+
+    private func toolchain(for model: Model, endpoint: OllamaEndpointConfiguration.Snapshot? = nil) throws -> LangToolchain {
+        var snapshot = toolchainSnapshot()
+        if model.apiService == .ollama {
+            let endpoint = endpoint ?? ollamaEndpointConfiguration.snapshot()
+            snapshot.register(try endpoint.provider(directSession: ollamaSession))
+        }
+        if model.apiService == .apple {
+            snapshot.register(AppleIntelligence())
+        }
+        return snapshot
+    }
+
+    private func toolchainSnapshot() -> LangToolchain {
+        langToolchainLock.lock()
+        defer { langToolchainLock.unlock() }
+        return langToolchain
+    }
+
+    public func updateApiKey(_ apiKey: String, for llm: APIService) throws {
+        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw NetworkError.emptyApiKey }
+        keychainService.saveApiKey(apiKey: apiKey, for: llm)
+        registerLangTool(apiKey, for: llm)
+        providerAccessManager.refresh()
+        if let provider = CompatibleProvider(service: llm) {
+            compatibleCatalog.refreshInBackground(provider, keychainService: keychainService, accessManager: providerAccessManager)
+        }
+    }
+
+    public func removeApiKey(for llm: APIService) throws {
+        keychainService.deleteApiKey(for: llm)
+        providerAccessManager.refresh()
+    }
+
+    public func connectAccount(_ provider: AccountLoginProvider) async throws {
+        let session = try await accountLoginService.beginLogin(for: provider)
+        try await MainActor.run {
+            try providerAccessManager.saveAccountSession(session)
+        }
+    }
+
+    public func connectCodexHelper() async throws {
+        let session = try await accountLoginService.beginCodexHelperLogin()
+        try await MainActor.run {
+            try providerAccessManager.saveAccountSession(session.canonicalized)
+        }
+    }
+
+    public func disconnectAccount(_ provider: AccountLoginProvider) async throws {
+        let sessionBeingDisconnected = providerAccessManager.session(for: provider)
+        if provider == .openAI,
+           sessionBeingDisconnected?.accessToken == CodexSessionMarker.value {
+            try await disconnectCodexHelper()
+            return
+        }
+
+        do {
+            try await accountLoginService.logout(provider: provider)
+        } catch {
+            // A remote logout failure must not leave a stale local session behind.
+            NSLog("Remote %@ logout failed; clearing the local session: %@", provider.displayName, error.localizedDescription)
+        }
+        try await MainActor.run {
+            guard providerAccessManager.session(for: provider)?.id == sessionBeingDisconnected?.id else {
+                return
+            }
+            try providerAccessManager.removeAccountSession(for: provider)
+        }
+    }
+
+    public func disconnectCodexHelper() async throws {
+        let sessionBeingDisconnected = providerAccessManager.session(for: .openAI)
+        do {
+            try await accountLoginService.logoutCodexHelper()
+        } catch {
+            // Keep the local marker from advertising a helper session that can no longer be used.
+            NSLog("Remote Codex helper logout failed; clearing the local session: %@", error.localizedDescription)
+        }
+        try await MainActor.run {
+            guard let sessionBeingDisconnected,
+                  sessionBeingDisconnected.accessToken == CodexSessionMarker.value,
+                  providerAccessManager.session(for: .openAI)?.id == sessionBeingDisconnected.id
+            else {
+                return
+            }
+            try providerAccessManager.removeAccountSession(for: .openAI)
+        }
+    }
+
+    func registerLangTool(_ apiKey: String, for llm: APIService) {
+        if let langTool = langTool(for: llm, with: apiKey) {
+            langToolchainLock.lock()
+            langToolchain.register(langTool)
+            langToolchainLock.unlock()
+        }
+    }
+
+    func langTool(for llm: APIService, with apiKey: String) -> (any LangTools)? {
+        let baseURL: URL? = nil //URL(string: "http://localhost:8080/v1/")
+        switch llm {
+        case .anthropic: return if let baseURL { Anthropic(baseURL: baseURL, apiKey: apiKey) } else { Anthropic(apiKey: apiKey) }
+        case .openAI: return if let baseURL { OpenAI(baseURL: baseURL, apiKey: apiKey) } else { OpenAI(apiKey: apiKey) }
+        case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
+        case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
+        case .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
+            return CompatibleProvider(service: llm)?.makeClient(apiKey: apiKey)
+        case .ollama, .apple: return nil
+        default: return nil
+        }
+    }
+    private func ensureModelAccess(for model: Model) throws {
+        switch model.apiService {
+        case .ollama:
+            return
+        case .apple:
+            if case .unavailable(let reason) = AppleIntelligence.availability {
+                throw AppleIntelligenceError.unavailable(reason)
+            }
+            return
+        case .serper:
+            throw NetworkError.incompatibleRequest
+        default:
+            break
+        }
+
+        guard let destination = AccessDestination.destination(for: model),
+              let state = providerAccessManager.statesForAccessUI().first(where: { $0.accessDestination == destination })
+        else {
+            throw NetworkError.missingApiKey
+        }
+
+        if state.authStatus == .notConfigured {
+            throw NetworkError.missingApiKey
+        }
+
+        // The destination's model list is authoritative. In particular, an
+        // account session that reports no models must not become an allow-all.
+        guard state.availableModels.contains(model) else {
+            throw NetworkError.modelAccessUnavailable(model.rawValue)
+        }
+    }
+
+    private func accountSession(for model: Model) -> AccountSession? {
+        let provider: AccountLoginProvider
+        switch model.route {
+        case .codex:
+            provider = .openAI
+        case .claudeCode:
+            provider = .claudeCode
+        default:
+            return nil
+        }
+        return providerAccessManager.session(for: provider)
+    }
+}
+
+public enum APIService: String, CaseIterable, Codable, Identifiable {
+    case openAI, anthropic, xAI, gemini, ollama, apple, serper
+    // OpenAI-compatible providers; raw values match `CompatibleProvider`.
+    case openrouter, vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
+
+    public var id: String { rawValue }
+
+    static var llms: [APIService] = [.openAI, .anthropic, .xAI, .gemini, .ollama] + CompatibleProvider.allCases.map(\.service)
+}
+
+extension NetworkClient {
+    public enum NetworkError: LocalizedError, Equatable {
+        case missingApiKey
+        case emptyApiKey
+        case incompatibleRequest
+        case modelAccessUnavailable(String)
+        case accountProxyTransportFailed(String)
+        case unexpectedResponseFormat
+        case langToolNotRegistered(String)
+
+        public var errorDescription: String? {
+            switch self {
+            case .missingApiKey:
+                return "This provider is not configured. Add an API key or connect an account in Manage Access so its models appear in the picker."
+            case .emptyApiKey:
+                return "API key cannot be empty."
+            case .incompatibleRequest:
+                return "The selected request is incompatible with the current provider."
+            case .modelAccessUnavailable(let modelID):
+                return "Your current credentials do not include access to \(modelID)."
+            case .accountProxyTransportFailed(let message):
+                return message
+            case .unexpectedResponseFormat:
+                return "The API returned a response in an unexpected format."
+            case .langToolNotRegistered(let name):
+                return "\(name) is not registered. Provide an API key to enable this provider."
+            }
+        }
+    }
+}
+
+public extension Error {
+    /// Whether this error came from Apple Intelligence on-device generation.
+    var isAppleIntelligenceError: Bool { AppleIntelligence.isProviderError(self) }
+}

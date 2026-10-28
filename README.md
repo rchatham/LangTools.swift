@@ -4,11 +4,29 @@ LangTools is a Swift framework for working with Large Language Models (LLMs) and
 
 ## Features
 
-- 🤖 **Multiple LLM Support**: OpenAI, Anthropic, X.AI, Google Gemini, and Ollama
+- 🤖 **Multiple LLM Support**: OpenAI, Anthropic, X.AI, Google Gemini, Ollama, OpenRouter, Vercel AI Gateway, Groq, Mistral, DeepSeek, Cerebras, Together AI, Fireworks AI, Cohere, and Perplexity
 - 🔧 **Unified Interface**: Common protocols for working with different AI providers
 - 🤝 **Extensible Agent System**: Build specialized AI assistants with tools and delegation
 - 📝 **Streaming Support**: Handle streaming responses from AI models
 - 🛠️ **Tool Integration**: Add custom capabilities to your AI interactions
+
+## LangTools app
+
+The official **LangTools** macOS/iOS app lives in [`Apps/LangTools`](Apps/LangTools/README.md).
+It builds on the library with multi-provider chat, agents, and voice input.
+
+```bash
+git submodule update --init --recursive
+open LangTools.xcworkspace
+```
+
+Select the **LangToolsApp** scheme and a Mac or iOS destination. The app requires
+macOS 14.6+ or iOS 18+. Swift package consumers continue to use the library products
+below; they do not depend on the app or its UI dependencies.
+
+The [macOS agent workspace plan](docs/plans/macos-agent-workspace.md) describes the
+next phase: project groups, tmux navigation, and interactive agent terminals.
+These features are planned, not implemented yet.
 
 ## Installation
 
@@ -113,6 +131,10 @@ See individual module README files for detailed documentation and examples:
 - [XAI](Sources/XAI/README.md)
 - [Gemini](Sources/Gemini/README.md)
 - [Ollama](Sources/Ollama/README.md)
+- [OpenAICompatible](Sources/OpenAICompatible/README.md) - OpenAI-format providers, including Groq, Mistral, DeepSeek, Cerebras, Together AI, and Fireworks AI
+- [AnthropicCompatible](Sources/AnthropicCompatible/README.md)
+- [OpenRouter](Sources/OpenRouter/README.md), [Vercel AI Gateway](Sources/VercelAIGateway/README.md), [Cohere](Sources/Cohere/README.md), [Perplexity](Sources/Perplexity/README.md)
+- [Performance comparison snapshot](docs/performance-comparison.html)
 
 ## Contributing
 

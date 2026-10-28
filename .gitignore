@@ -1,11 +1,18 @@
 .DS_Store
 /.build
+/cli/.build/
 build/
 /Packages
 xcuserdata/
 DerivedData/
 .swiftpm/
 .netrc
+
+# Build artifacts
+*.o
+*.d
+*.swiftdeps
+*.swiftdeps~
 
 # Claude Code local settings
 .claude/

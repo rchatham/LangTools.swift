@@ -1,7 +1,14 @@
-import AVFoundation
 import Foundation
 import LangTools
+
+#if canImport(Speech)
+import AVFoundation
 import Speech
+
+func isBenignAppleSpeechTerminalError(_ error: Error) -> Bool {
+    let nsError = error as NSError
+    return nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 1110
+}
 
 private extension SFSpeechRecognizerAuthorizationStatus {
     var providerAuthorizationState: ProviderAuthorizationState {
@@ -44,8 +51,10 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionSessionID = UUID()
     private var streamingFinalizeCleanupTask: Task<Void, Never>?
+    private var blockingStreamingContinuation: CheckedContinuation<String?, Error>?
     private var onPartialResultCallback: ((String) -> Void)?
     private var onFinalResultCallback: ((String) -> Void)?
+    private var onFailureCallback: ((Error) -> Void)?
     private var languageIdentifierProvider: @MainActor () -> String?
 
     public init(
@@ -123,7 +132,17 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
 
     public func startRecognition() throws {
         updateLocaleFromSettings()
-        try startStreamingTranscription(onPartialResult: { _ in }, onFinalResult: { _ in })
+        try startStreamingTranscription(
+            onPartialResult: { [weak self] text in
+                self?.eventHandler?(.partialTranscription(text))
+            },
+            onFinalResult: { [weak self] text in
+                self?.eventHandler?(.finalTranscription(text))
+            },
+            onFailure: { [weak self] error in
+                self?.eventHandler?(.recognitionFailed(error.localizedDescription))
+            }
+        )
     }
 
     public func stopRecognition(finalizePending: Bool, clearTranscript: Bool) {
@@ -143,7 +162,8 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
 
     public func startStreamingTranscription(
         onPartialResult: @escaping (String) -> Void,
-        onFinalResult: @escaping (String) -> Void
+        onFinalResult: @escaping (String) -> Void,
+        onFailure: ((Error) -> Void)? = nil
     ) throws {
         updateLocaleFromSettings()
         guard let recognizer = speechRecognizer, recognizer.isAvailable else {
@@ -153,8 +173,10 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
             throw AppleLangToolsSpeechError.permissionDenied
         }
 
+        resetStreamingTranscriptState()
         onPartialResultCallback = onPartialResult
         onFinalResultCallback = onFinalResult
+        onFailureCallback = onFailure
 
         #if os(iOS)
         let audioSession = AVAudioSession.sharedInstance()
@@ -173,7 +195,7 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
         let inputNode = audioEngine.inputNode
         let hwFormat = inputNode.inputFormat(forBus: 0)
         guard hwFormat.sampleRate > 0 && hwFormat.channelCount > 0 else {
-            cleanupStreaming()
+            cleanupStreaming(completeBlockingContinuation: false)
             throw AppleLangToolsSpeechError.recordingFailed("No valid audio input device available")
         }
 
@@ -181,10 +203,17 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
         recognitionSessionID = sessionID
 
         recognitionTask = recognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            if error != nil {
+            if let error {
                 Task { @MainActor [weak self] in
                     guard let self, self.recognitionSessionID == sessionID else { return }
-                    self.cleanupStreaming()
+                    let transcript = result?.bestTranscription.formattedString ?? self.currentTranscript
+                    self.currentTranscript = transcript
+                    if isBenignAppleSpeechTerminalError(error) {
+                        self.onFinalResultCallback?(transcript)
+                        self.cleanupStreaming()
+                    } else {
+                        self.handleStreamingFailure(error)
+                    }
                 }
                 return
             }
@@ -195,12 +224,10 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
                 guard let self, self.recognitionSessionID == sessionID else { return }
                 if isFinal {
                     self.currentTranscript = text
-                    self.eventHandler?(.finalTranscription(text))
                     self.onFinalResultCallback?(text)
                     self.cleanupStreaming()
                 } else {
                     self.currentTranscript = text
-                    self.eventHandler?(.partialTranscription(text))
                     self.onPartialResultCallback?(text)
                 }
             }
@@ -215,7 +242,7 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
             try audioEngine.start()
             isListening = true
         } catch {
-            cleanupStreaming()
+            cleanupStreaming(completeBlockingContinuation: false)
             throw error
         }
     }
@@ -247,12 +274,45 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
             },
             onFinalResult: { text in
                 onEvent(.finalTranscription(text))
+            },
+            onFailure: { error in
+                onEvent(.recognitionFailed(error.localizedDescription))
             }
         )
     }
 
     public func stopStreamingRecognition() async -> String? {
         stopStreamingTranscription()
+    }
+
+    @discardableResult
+    public func runStreamingRecognition(onEvent: @escaping SpeechRecognitionStreamingEventHandler) async throws -> String? {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard storeBlockingStreamingContinuation(continuation) else { return }
+                do {
+                    try startStreamingTranscription(
+                        onPartialResult: { text in
+                            onEvent(.partialTranscription(text))
+                        },
+                        onFinalResult: { [weak self] text in
+                            onEvent(.finalTranscription(text))
+                            self?.completeBlockingStreaming(returning: text.isEmpty ? nil : text)
+                        },
+                        onFailure: { error in
+                            onEvent(.recognitionFailed(error.localizedDescription))
+                        }
+                    )
+                } catch {
+                    completeBlockingStreaming(throwing: error)
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.completeBlockingStreaming(throwing: CancellationError())
+                self?.cancelStreamingTranscription()
+            }
+        }
     }
 
     private func scheduleStreamingFinalizeCleanup(for sessionID: UUID) {
@@ -268,7 +328,56 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
         }
     }
 
-    private func cleanupStreaming() {
+    func setStreamingTranscriptForTesting(_ text: String) {
+        currentTranscript = text
+    }
+
+    func resetStreamingTranscriptState() {
+        currentTranscript = ""
+    }
+
+    func test_failStreamingForTesting(
+        _ error: Error,
+        onFailure: ((Error) -> Void)? = nil
+    ) async throws -> String? {
+        self.onFailureCallback = onFailure
+        return try await withCheckedThrowingContinuation { continuation in
+            guard storeBlockingStreamingContinuation(continuation) else { return }
+            handleStreamingFailure(error)
+        }
+    }
+
+    func test_runBlockedStreamingForTesting() async throws -> String? {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard storeBlockingStreamingContinuation(continuation) else { return }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.completeBlockingStreaming(throwing: CancellationError())
+            }
+        }
+    }
+
+    private func storeBlockingStreamingContinuation(_ continuation: CheckedContinuation<String?, Error>) -> Bool {
+        guard blockingStreamingContinuation == nil else {
+            continuation.resume(throwing: AppleLangToolsSpeechError.recordingFailed("Streaming recognition is already active"))
+            return false
+        }
+        blockingStreamingContinuation = continuation
+        return true
+    }
+
+    private func handleStreamingFailure(_ error: Error) {
+        onFailureCallback?(error)
+        completeBlockingStreaming(throwing: error)
+        cleanupStreaming(completeBlockingContinuation: false)
+    }
+
+    private func cleanupStreaming(completeBlockingContinuation: Bool = true) {
+        if completeBlockingContinuation {
+            completeBlockingStreaming(returning: currentTranscript.isEmpty ? nil : currentTranscript)
+        }
         streamingFinalizeCleanupTask?.cancel()
         streamingFinalizeCleanupTask = nil
         isListening = false
@@ -281,6 +390,19 @@ public final class AppleSpeechRecognitionProvider: StreamingSpeechRecognitionPro
         recognitionSessionID = UUID()
         onPartialResultCallback = nil
         onFinalResultCallback = nil
+        onFailureCallback = nil
+    }
+
+    private func completeBlockingStreaming(returning text: String?) {
+        guard let continuation = blockingStreamingContinuation else { return }
+        blockingStreamingContinuation = nil
+        continuation.resume(returning: text)
+    }
+
+    private func completeBlockingStreaming(throwing error: Error) {
+        guard let continuation = blockingStreamingContinuation else { return }
+        blockingStreamingContinuation = nil
+        continuation.resume(throwing: error)
     }
 }
 
@@ -346,3 +468,4 @@ enum AppleLangToolsAudioConverter {
         return try Data(contentsOf: tempWAV)
     }
 }
+#endif

@@ -1,0 +1,9 @@
+{
+  "comment": {"body": "@pi check the proposed fix"},
+  "issue": {
+    "number": 456,
+    "title": "Preserve the final streamed message",
+    "body": "This change flushes buffered text before closing the stream.",
+    "pull_request": {"url": "https://api.github.com/repos/example/repo/pulls/456"}
+  }
+}

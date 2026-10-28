@@ -1,0 +1,24 @@
+{
+  "model": "llama3.2:latest",
+  "created_at": "2026-04-28T13:19:39.891996Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "id": "call_6qb4kp8e",
+        "function": {
+          "index": 0,
+          "name": "ask_user_question",
+          "arguments": {
+            "question": "What is your name?",
+            "header": "",
+            "multiSelect": false,
+            "options": []
+          }
+        }
+      }
+    ]
+  },
+  "done": false
+}

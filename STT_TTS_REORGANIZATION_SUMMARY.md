@@ -348,7 +348,7 @@ Created voice input demonstration:
 - [AppleSpeech Module](Sources/AppleSpeech/README.md)
 - [OpenAI STT Documentation](Sources/OpenAI/README.md)
 - [ChatUI Audio Components](../ChatUI/Sources/ChatUI/Audio/)
-- [Voice Input Integration Guide](Examples/LangTools_Example/VOICE_INPUT_README.md)
+- [Voice Input Integration Guide](Apps/LangTools/VOICE_INPUT_README.md)
 - [LangTools STT Protocol](Sources/LangTools/LangTools+Request.swift)
 
 ---

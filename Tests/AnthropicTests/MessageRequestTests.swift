@@ -65,6 +65,39 @@ final class MessageRequestTests: XCTestCase {
         XCTAssert(data.dictionary == testData.dictionary, "failed to correctly encode the data")
     }
 
+    func testChatRequestFactoryPreservesNativeToolUseHistory() throws {
+        let messages = [
+            Anthropic.Message(
+                role: .assistant,
+                content: .array([
+                    .text(.init(text: "Let me check.")),
+                    .toolUse(.init(id: "tool-1", name: "calculate", input: #"{"expression":"1+1"}"#))
+                ])
+            ),
+            Anthropic.Message(
+                role: .user,
+                content: .array([
+                    .toolResult(.init(tool_selection_id: "tool-1", result: "2"))
+                ])
+            )
+        ]
+
+        let genericRequest = try Anthropic.chatRequest(
+            model: Anthropic.Model.claude46Sonnet,
+            messages: messages,
+            tools: nil,
+            responseSchema: nil,
+            toolEventHandler: { _ in }
+        )
+        let request = try XCTUnwrap(genericRequest as? Anthropic.MessageRequest)
+
+        XCTAssertEqual(request.messages.count, 2)
+        XCTAssertEqual(request.messages[0].content.array?.count, 2)
+        XCTAssertEqual(request.messages[0].tool_selection?.first?.id, "tool-1")
+        XCTAssertEqual(request.messages[0].tool_selection?.first?.name, "calculate")
+        XCTAssertEqual(request.messages[1].content.array?.first?.type, "tool_result")
+    }
+
     func testMessageRequestWithFunctionsEncodable() throws {
         let request = Anthropic.MessageRequest(
             model: .claude46Sonnet,

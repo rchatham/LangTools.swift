@@ -5,19 +5,51 @@ import FoundationNetworking
 
 extension URLSession {
     #if !canImport(Darwin)
-    // Provide async/await wrapper for URLSession.dataTask on Linux
+    // Provide async/await wrapper for URLSession.dataTask on Linux.
+    // Cancelling the calling task cancels the underlying data task, matching
+    // the cancellation behavior of Foundation's async APIs on Apple platforms.
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-        try await withCheckedThrowingContinuation { continuation in
-            let task = dataTask(with: request) { data, response, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else if let data = data, let response = response {
-                    continuation.resume(returning: (data, response))
-                } else {
-                    continuation.resume(throwing: URLError(.badServerResponse))
+        let cancellation = DataTaskCancellation()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let task = dataTask(with: request) { data, response, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else if let data = data, let response = response {
+                        continuation.resume(returning: (data, response))
+                    } else {
+                        continuation.resume(throwing: URLError(.badServerResponse))
+                    }
                 }
+                cancellation.start(task)
             }
+        } onCancel: {
+            cancellation.cancel()
+        }
+    }
+
+    private final class DataTaskCancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var task: URLSessionDataTask?
+        private var isCancelled = false
+
+        func start(_ task: URLSessionDataTask) {
+            lock.lock()
+            self.task = task
+            let isCancelled = isCancelled
+            lock.unlock()
             task.resume()
+            // Cancellation may arrive before the task exists; the cancelled task
+            // still calls its completion handler, which resumes the continuation.
+            if isCancelled { task.cancel() }
+        }
+
+        func cancel() {
+            lock.lock()
+            isCancelled = true
+            let task = task
+            lock.unlock()
+            task?.cancel()
         }
     }
 

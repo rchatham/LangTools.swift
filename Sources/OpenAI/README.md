@@ -287,6 +287,10 @@ let request = OpenAI.ChatCompletionRequest(
 )
 ```
 
+### OpenAI-Compatible Providers
+
+The [OpenAICompatible module](../OpenAICompatible/README.md) builds providers that serve this format on three hooks here: a model's provider tag (`OpenAI.Model(customModelID:providerID:)`, so `LangToolchain` routes it; re-tag decoded requests with `routed(to:)`), `additionalParameters` for untyped body fields, and tolerant decoding (unknown enum values read as `nil`, unknown content parts are skipped, and an in-band `error` throws `LangToolsError.apiError`).
+
 ## Error Handling
 
 OpenAI errors are typed for better handling:

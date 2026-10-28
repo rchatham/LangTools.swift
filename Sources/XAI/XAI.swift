@@ -11,30 +11,33 @@ import FoundationNetworking
 #endif
 import LangTools
 import OpenAI
+import OpenAICompatible
 
-public final class XAI: LangTools {
+/// `XAI.Model` requests route here untagged; other IDs go as a tagged `OpenAICompatibleModel<XAI>`.
+public final class XAI: OpenAICompatibleProvider {
     public typealias Model = XAIModel
     public typealias ErrorResponse = XAIErrorResponse
 
+    public static let providerID = LangToolsProviderID(rawValue: "xai"), displayName = "xAI", apiKeyEnvironmentVariable = "XAI_API_KEY"
+    public static let defaultBaseURL = URL(string: "https://api.x.ai/v1/")!
+    public static var knownModels: [OpenAICompatibleModel<XAI>] { Model.allCases.compactMap { OpenAICompatibleModel(rawValue: $0.rawValue) } }
+
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         [
-            { ($0 as? OpenAI.ChatCompletionRequest).flatMap { OpenAIModel.xAIModels.contains($0.model) } ?? false },
-        ]
+            { ($0 as? OpenAI.ChatCompletionRequest).flatMap { $0.model.providerID == nil && OpenAIModel.xAIModels.contains($0.model) } ?? false },
+        ] + compatibleRequestValidators
     }
 
-    public var session: URLSession { openAI.session }
+    public let openAI: OpenAI
 
-    let openAI: OpenAI
-
-    public init(baseURL: URL = URL(string: "https://api.x.ai/v1/")!, apiKey: String) {
-        openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey))
-    }
-
-    public func prepare(request: some LangToolsRequest) throws -> URLRequest {
-        try openAI.prepare(request: request)
+    public init(baseURL: URL = XAI.defaultBaseURL, apiKey: String, logger: LangToolsLogger? = nil) {
+        openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey, logger: logger))
     }
 
     public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        if let model = model as? OpenAICompatibleModel<XAI> {
+            return try compatibleChatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
+        }
         guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
         return try OpenAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
     }
@@ -130,7 +133,7 @@ extension OpenAIModel {
 }
 
 extension OpenAI.ChatCompletionRequest {
-    public init(model: XAI.Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, choose: @escaping ([Response.Choice]) -> Int = {_ in 0}) {
-        self.init(model: model.openAIModel, messages: messages, temperature: temperature, top_p: top_p, n: n, stream: stream, stream_options: stream_options, stop: stop, max_tokens: max_tokens, presence_penalty: presence_penalty, frequency_penalty: frequency_penalty, logit_bias: logit_bias, logprobs: logprobs, top_logprobs: top_logprobs, user: user, response_type: response_type, seed: seed, tools: tools, tool_choice: tool_choice, parallel_tool_calls: parallel_tool_calls, choose: choose)
+    public init(model: XAI.Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, choose: @escaping ([Response.Choice]) -> Int = {_ in 0}, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = {_ in}) {
+        self.init(model: model.openAIModel, messages: messages, temperature: temperature, top_p: top_p, n: n, stream: stream, stream_options: stream_options, stop: stop, max_tokens: max_tokens, presence_penalty: presence_penalty, frequency_penalty: frequency_penalty, logit_bias: logit_bias, logprobs: logprobs, top_logprobs: top_logprobs, user: user, response_type: response_type, seed: seed, tools: tools, tool_choice: tool_choice, parallel_tool_calls: parallel_tool_calls, choose: choose, toolEventHandler: toolEventHandler)
     }
 }
