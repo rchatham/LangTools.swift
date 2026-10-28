@@ -28,6 +28,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        submodules: true
     - name: Build
       run: swift build -v
     - name: Run tests
@@ -64,6 +66,7 @@ jobs:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       with:
         persist-credentials: false
+        submodules: true
     - name: Build
       run: swift build --build-tests
     - name: Run tests
@@ -81,6 +84,7 @@ jobs:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       with:
         persist-credentials: false
+        submodules: true
     - name: Run bounded helper relay and pairing lifecycle suites
       shell: bash
       run: |
@@ -188,6 +192,7 @@ jobs:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       with:
         persist-credentials: false
+        submodules: true
     - name: Run Agents extended tests
       run: Scripts/run-extended-tests.sh --filter AgentsTests -v --no-parallel
     - name: Run Integration extended tests
@@ -209,6 +214,7 @@ jobs:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       with:
         persist-credentials: false
+        submodules: true
     - name: Run performance ratio gates
       run: Scripts/run-extended-tests.sh --filter PerformanceRatioGateTests -v --no-parallel
     - name: Run performance tests
@@ -299,6 +305,7 @@ jobs:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       with:
         persist-credentials: false
+        submodules: true
     - name: Run live Ollama Cloud smoke test
       env:
         OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
