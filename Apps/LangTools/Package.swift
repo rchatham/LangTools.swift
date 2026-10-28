@@ -119,6 +119,8 @@ let package = Package(
             dependencies: [
                 "ExampleAgents",
                 .product(name: "LangTools", package: "langtools.swift"),
+                .product(name: "Agents", package: "langtools.swift"),
+                .product(name: "Anthropic", package: "langtools.swift"),
             ],
             path: "Tests/ExampleAgentsTests"),
     ]
