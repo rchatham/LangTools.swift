@@ -79,7 +79,15 @@ extension Anthropic {
             } else if let array = content.array {
                 self = .array(array.compactMap { try? ContentType($0) })
             } else {
-                fatalError("content not handled! \(content)")
+                // e.g. an OpenAI assistant turn that only carried tool calls (`.null` content).
+                self = .string("")
+            }
+        }
+
+        var isEmpty: Bool {
+            switch self {
+            case .string(let str): return str.isEmpty
+            case .array(let arr): return arr.isEmpty
             }
         }
 
@@ -120,18 +128,24 @@ extension Anthropic {
                         result: toolResult.result,
                         is_error: toolResult.is_error
                     ))
+                } else if let image = contentType.imageContentType {
+                    if let anthropicImage = image as? ImageContent {
+                        self = .image(anthropicImage)
+                    } else if let url = image.imageURL, let converted = ImageContent(imageURL: url) {
+                        self = .image(converted)
+                    } else {
+                        throw LangToolsError.invalidContentType
+                    }
                 } else {
-                    // Handle non-text content types by converting to text representation
-                    // TODO: Implement proper audio and image support
-                    let textRepresentation = String(describing: contentType)
-                    self = .text(.init(text: textRepresentation))
+                    // Anthropic has no audio input; unsupported content is dropped by callers.
+                    throw LangToolsError.invalidContentType
                 }
             }
 
             public var description: String {
                 switch self {
                 case .text(let txt): return "text: \(txt.text)"
-                case .image(let img): return "image: \(img.source.media_type)"
+                case .image(let img): return "image: \(img.source.media_type?.rawValue ?? img.source.url ?? "unknown")"
                 case .toolUse(let toolUse): return "tool use: \(toolUse.name ?? "missing name")"
                 case .toolResult(let toolResult): return "tool result: \(toolResult.content.description)"
                 }
@@ -145,6 +159,9 @@ extension Anthropic {
                 case .toolResult(let result): return result.type
                 }
             }
+
+            public var textContentType: LangToolsTextContentType? { textContent }
+            public var imageContentType: LangToolsImageContentType? { imageContent }
 
             var textContent: TextContent? { if case .text(let text) = self { return text } else { return nil }}
             var imageContent: ImageContent? { if case .image(let img) = self { return img } else { return nil }}
@@ -213,13 +230,50 @@ extension Anthropic {
                     case type, source
                 }
 
+                /// Builds an image from a remote `http(s)` URL or a base64 `data:` URL,
+                /// e.g. one taken from an OpenAI `image_url` part.
+                public init?(imageURL: String) {
+                    if imageURL.hasPrefix("data:") {
+                        // data:<media type>;base64,<payload>
+                        let body = imageURL.dropFirst("data:".count)
+                        guard let comma = body.firstIndex(of: ",") else { return nil }
+                        let header = body[..<comma].split(separator: ";").map { $0.lowercased() }
+                        guard header.count == 2, header[1] == "base64",
+                              let mediaType = ImageSource.MediaType(rawValue: header[0] == "image/jpg" ? "image/jpeg" : header[0])
+                        else { return nil }
+                        self.init(source: .init(data: String(body[body.index(after: comma)...]), media_type: mediaType))
+                    } else if imageURL.hasPrefix("https://") || imageURL.hasPrefix("http://") {
+                        self.init(source: .init(url: imageURL))
+                    } else {
+                        return nil
+                    }
+                }
+
+                public var imageURL: String? {
+                    if let url = source.url { return url }
+                    guard let data = source.data, let mediaType = source.media_type else { return nil }
+                    return "data:\(mediaType.rawValue);base64,\(data)"
+                }
+
                 public struct ImageSource: Codable {
-                    let type: String = "base64"
-                    public let media_type: MediaType
-                    public let data: String
+                    /// `"base64"` (with `media_type` and `data`) or `"url"` (with `url`).
+                    public let type: String
+                    public let media_type: MediaType?
+                    public let data: String?
+                    public let url: String?
+
                     public init(data: String, media_type: MediaType) {
+                        self.type = "base64"
                         self.media_type = media_type
                         self.data = data
+                        self.url = nil
+                    }
+
+                    public init(url: String) {
+                        self.type = "url"
+                        self.media_type = nil
+                        self.data = nil
+                        self.url = url
                     }
 
                     public enum MediaType: String, Codable {
@@ -227,7 +281,7 @@ extension Anthropic {
                     }
 
                     enum CodingKeys: String, CodingKey {
-                        case type, media_type, data
+                        case type, media_type, data, url
                     }
                 }
             }

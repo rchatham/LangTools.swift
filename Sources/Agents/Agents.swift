@@ -135,9 +135,7 @@ extension Agent {
                 context.messages.append(context.langTool.systemMessage(reason)) // TODO: - decide if this should be wrapped into the previous system message
                 do { return try await agent.execute(context: context) }
                 catch {
-                    #if DEBUG
-                    print("❌ Agent transfer error (\(agentName)): \(type(of: error)) — \(error)")
-                    #endif
+                    context.langTool.logger?.error("Agent transfer error (\(agentName)): \(type(of: error)) — \(error)")
                     throw AgentError("error: " + error.localizedDescription)
                 }
             }
@@ -163,9 +161,7 @@ extension Agent {
             context.eventHandler(.completed(agent: name, result: result))
             return result
         } catch {
-            #if DEBUG
-            print("❌ Agent '\(name)' failed: \(type(of: error)) — \(error)")
-            #endif
+            context.langTool.logger?.error("Agent '\(name)' failed: \(type(of: error)) — \(error)")
             context.eventHandler(.completed(agent: name, result: error.localizedDescription, is_error: true))
             throw AgentError("agent: \(name) - error: " + error.localizedDescription)
         }

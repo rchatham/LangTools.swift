@@ -5,12 +5,7 @@ import OpenAI
 extension Ollama {
     public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
         guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
-        // Ollama does not support structured output; responseSchema is ignored.
-        #if DEBUG
-        if responseSchema != nil {
-            print("[LangTools] ⚠️ Ollama does not support structured output. The responseSchema parameter will be ignored.")
-        }
-        #endif
+        // Ollama chat does not support structured output; responseSchema is ignored.
         let providerMessages = messages.map { ($0 as? Message) ?? Message($0) }
         return Ollama.ChatRequest(model: model, messages: providerMessages, tools: tools?.map { OpenAI.Tool($0) }, toolEventHandler: toolEventHandler)
     }

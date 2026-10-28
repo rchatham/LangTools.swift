@@ -188,10 +188,17 @@ public struct LangToolsTextContent: LangToolsTextContentType, LangToolsContent, 
     public var array: [LangToolsTextContent]? { [self] }
 }
 
-public protocol LangToolsImageContentType: LangToolsContentType {}
+public protocol LangToolsImageContentType: LangToolsContentType {
+    /// The image as a URL string, either remote (`https://…`) or a base64 `data:` URL.
+    /// Providers use it to convert images between each other's formats; `nil` means the
+    /// image cannot be expressed as a URL and won't convert.
+    var imageURL: String? { get }
+}
 
 public extension LangToolsImageContentType {
 //    var type: String { "image" } // TODO: verify this
+
+    var imageURL: String? { nil }
 
     init(_ contentType: any LangToolsContentType) throws {
         guard let image = contentType.imageContentType as? Self else {
