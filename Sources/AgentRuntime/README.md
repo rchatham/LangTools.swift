@@ -124,6 +124,25 @@ docker run --rm \
 
 Pass keys with `-e`, not in the image. A spec can also come in on standard input with `docker run -i ... run -`. To add your own tools, copy the Dockerfile and change the build target to your executable (see below).
 
+## Running as a worker
+
+`langtools-agent worker` is a long-lived process that runs jobs from a spool directory: a queue on disk that survives restarts.
+
+```bash
+export LANGTOOLS_SPOOL_DIR=/var/lib/langtools-agent ANTHROPIC_API_KEY=... LANGTOOLS_WEBHOOK_SECRET=...
+langtools-agent worker --concurrency 4 &
+
+langtools-agent enqueue spec.json --webhook https://example.com/agent-results --run-id job-42
+langtools-agent status job-42        # {"runID": "job-42", "state": "queued" | "running" | "done", "result": {...}}
+```
+
+- `enqueue` validates the spec against the worker's providers, tools and keys, so it needs the same environment as the worker. `--job` reads a whole job as JSON on standard input instead: `{"runID", "spec", "webhookURL", "webhookSecret", "owner"}`. A secret sent that way never appears in a process list.
+- Jobs run oldest first, up to `--concurrency` at a time. Jobs move between `queue/`, `running/` and `done/` by atomic rename, so several workers can share one spool.
+- SIGTERM or SIGINT stops the worker from taking new jobs and waits for running ones. A job cut off by a crash or kill is started once more on the next start, then reported as `failed`.
+- Results stay in `done/` for 7 days. Job files, which can hold a webhook secret, are readable only by their owner.
+
+To run workers on DigitalOcean, see [AgentDeploy](../AgentDeploy/README.md).
+
 ## Adding tools
 
 Tools are Swift code, so they can't travel inside a spec; a spec lists tool names and the runtime that executes it decides which names exist. To add tools, build your own executable around `AgentRuntimeCommand`:

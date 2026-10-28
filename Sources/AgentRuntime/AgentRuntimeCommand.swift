@@ -30,6 +30,7 @@ public struct AgentRuntimeCommand {
     public static let webhookURLVariable = "LANGTOOLS_WEBHOOK_URL"
     public static let webhookSecretVariable = "LANGTOOLS_WEBHOOK_SECRET"
     public static let runIDVariable = "LANGTOOLS_RUN_ID"
+    public static let spoolVariable = "LANGTOOLS_SPOOL_DIR"
 
     public var providers: AgentProviderRegistry
     public var tools: AgentToolRegistry
@@ -41,6 +42,8 @@ public struct AgentRuntimeCommand {
     public var standardOutput: (String) -> Void
     public var standardError: (String) -> Void
     var makeWebhookDelivery: (WebhookConfiguration, URLSession) -> WebhookDelivery = { WebhookDelivery(configuration: $0, session: $1) }
+    /// Calls the handler on SIGTERM or SIGINT so a worker can finish its running jobs.
+    var onStopSignal: (@escaping () -> Void) -> Void = AgentRuntimeCommand.installStopSignalHandler
 
     public init(
         providers: AgentProviderRegistry,
@@ -75,13 +78,25 @@ public struct AgentRuntimeCommand {
               --run-id <id>        Label the result for the webhook receiver (or set LANGTOOLS_RUN_ID).
           validate <spec.json | -> Check a spec, its provider, model, tools and API key without running it.
               --webhook <url>      Also check the webhook URL.
+          worker                   Run jobs from a spool directory until stopped (SIGTERM or SIGINT).
+              --spool <dir>        The spool (or set LANGTOOLS_SPOOL_DIR).
+              --concurrency <n>    Jobs to run at once (default 2).
+              --poll-interval <s>  Seconds between queue checks when idle (default 1).
+          enqueue <spec.json | ->  Validate a spec and add it to the spool; prints the run ID.
+              --spool <dir>        The spool (or set LANGTOOLS_SPOOL_DIR).
+              --webhook <url>      Where the worker should POST the result.
+              --run-id <id>        The run ID to use (default: a new UUID).
+              --owner <name>       Recorded with the job for audit.
+              --job                Read a whole job (spec, webhook, secret) as JSON instead of a spec.
+          status <run-id>          Print a job's state, and its result once done.
+              --spool <dir>        The spool (or set LANGTOOLS_SPOOL_DIR).
           providers                List registered providers and their API key variables.
           tools                    List registered tools.
 
         API keys are read from each provider's environment variable, never from the spec.
         Webhook deliveries are signed with LANGTOOLS_WEBHOOK_SECRET when it is set.
         Exit status: 0 success, 1 run failed or timed out, 2 usage or invalid spec,
-        3 the result could not be delivered to the webhook.
+        3 the result could not be delivered to the webhook. status exits 1 for an unknown run ID.
         """
 
     /// Runs the command for `arguments`, which excludes the executable name.
@@ -109,6 +124,12 @@ public struct AgentRuntimeCommand {
             catch { return usageError(error.localizedDescription) }
             guard options.count == 1 else { return usageError("validate takes one spec path.") }
             return validateSpec(at: options[0], webhookURL: webhookURL)
+        case "worker":
+            return await runWorker(&options)
+        case "enqueue":
+            return enqueue(&options)
+        case "status":
+            return status(&options)
         case "providers":
             for registration in providers.all {
                 let key = registration.apiKeyEnvironmentVariable.map { registration.requiresAPIKey ? $0 : "\($0) (optional)" } ?? "no key"
@@ -189,6 +210,114 @@ public struct AgentRuntimeCommand {
             return .usage
         }
     }
+
+    // MARK: - Worker
+
+    private func spool(_ options: inout [String]) throws -> AgentSpool {
+        guard let path = try take(option: "--spool", from: &options) ?? environment[Self.spoolVariable], !path.isEmpty else {
+            throw AgentRuntimeError.invalidSpec("Set --spool or \(Self.spoolVariable).")
+        }
+        return AgentSpool(root: URL(fileURLWithPath: path, isDirectory: true))
+    }
+
+    private func runWorker(_ options: inout [String]) async -> ExitCode {
+        let spool: AgentSpool
+        var workerOptions = AgentWorker.Options(webhookSecret: environment[Self.webhookSecretVariable])
+        do {
+            spool = try self.spool(&options)
+            if let value = try take(option: "--concurrency", from: &options) {
+                guard let n = Int(value), n > 0 else { return usageError("--concurrency must be a positive integer.") }
+                workerOptions.concurrency = n
+            }
+            if let value = try take(option: "--poll-interval", from: &options) {
+                guard let seconds = Double(value), seconds > 0 else { return usageError("--poll-interval must be a positive number.") }
+                workerOptions.pollInterval = seconds
+            }
+        } catch { return usageError(error.localizedDescription) }
+        guard options.isEmpty else { return usageError("Unexpected arguments: \(options.joined(separator: " "))") }
+        if workerOptions.webhookSecret == nil { standardError("warning: \(Self.webhookSecretVariable) is not set; jobs without their own secret get unsigned webhook deliveries.") }
+
+        let runner = AgentRunner(providers: providers, tools: tools, credentials: .environment(environment), session: session)
+        let worker = AgentWorker(spool: spool, runner: runner, options: workerOptions, session: session, log: standardError)
+        let session = self.session
+        let makeDelivery = makeWebhookDelivery
+        worker.makeWebhookDelivery = { makeDelivery($0, session) }
+        onStopSignal { worker.stop() }
+        do { try await worker.run() }
+        catch {
+            standardError("error: \(error.localizedDescription)")
+            return .runFailed
+        }
+        return .success
+    }
+
+    private func enqueue(_ options: inout [String]) -> ExitCode {
+        do {
+            let spool = try self.spool(&options)
+            let readsJob = take(flag: "--job", from: &options)
+            let webhookURL = try take(option: "--webhook", from: &options)
+            let runID = try take(option: "--run-id", from: &options)
+            let owner = try take(option: "--owner", from: &options)
+            var job: AgentJob
+            if readsJob {
+                guard options.isEmpty, webhookURL == nil, runID == nil, owner == nil else { return usageError("--job reads everything from standard input; pass no other job options.") }
+                job = try AgentJob.decode(from: standardInput())
+            } else {
+                guard options.count == 1 else { return usageError("enqueue takes one spec path.") }
+                job = AgentJob(spec: try loadSpec(at: options[0]), owner: owner)
+                if let runID { job.runID = runID }
+                if let webhookURL {
+                    guard let url = URL(string: webhookURL), url.host != nil else { throw AgentRuntimeError.invalidWebhook("Invalid webhook URL: \(webhookURL)") }
+                    job.webhookURL = url
+                }
+            }
+            job.attempts = 0
+            // The worker shares this environment, so a missing key or tool is caught now.
+            try AgentRunner(providers: providers, tools: tools, credentials: .environment(environment), session: session).validate(job.spec)
+            try spool.enqueue(job)
+            standardOutput(Self.json(["runID": job.runID, "state": AgentSpool.State.queued.rawValue]))
+            return .success
+        } catch {
+            standardError("error: \(error.localizedDescription)")
+            return .usage
+        }
+    }
+
+    private func status(_ options: inout [String]) -> ExitCode {
+        do {
+            let spool = try self.spool(&options)
+            guard options.count == 1 else { return usageError("status takes one run ID.") }
+            let runID = options[0]
+            let state = spool.state(of: runID)
+            var fields: [String: Any] = ["runID": runID, "state": state.rawValue]
+            if state == .done, let result = try spool.result(for: runID) {
+                fields["result"] = try JSONSerialization.jsonObject(with: result.encoded(prettyPrinted: false))
+            }
+            standardOutput(Self.json(fields))
+            return state == .unknown ? .runFailed : .success
+        } catch {
+            standardError("error: \(error.localizedDescription)")
+            return .usage
+        }
+    }
+
+    private static func json(_ object: [String: Any]) -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    static func installStopSignalHandler(_ handler: @escaping () -> Void) {
+        for signalNumber in [SIGTERM, SIGINT] {
+            signal(signalNumber, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .global())
+            source.setEventHandler(handler: handler)
+            source.resume()
+            stopSignalSources.append(source)
+        }
+    }
+
+    // Signal sources stop delivering once released.
+    private static var stopSignalSources: [DispatchSourceSignal] = []
 
     /// The webhook from `--webhook` or the environment, or nil when neither is set.
     private func webhookConfiguration(_ argument: String?) throws -> WebhookConfiguration? {

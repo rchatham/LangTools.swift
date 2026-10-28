@@ -198,4 +198,53 @@ final class AgentRuntimeCommandTests: XCTestCase {
         let validate = await command().run(["validate", "spec.json", "--webhook", "http://example.com/hook"])
         XCTAssertEqual(validate, 2)
     }
+
+    // MARK: - Spool commands
+
+    private func temporarySpool() -> String {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("cmd-spool-\(UUID().uuidString)").path
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: path) }
+        return path
+    }
+
+    func testEnqueueThenStatus() async throws {
+        let spoolPath = temporarySpool()
+        let env = ["OPENAI_API_KEY": "sk-test", "LANGTOOLS_SPOOL_DIR": spoolPath]
+        let queued = await command(environment: env).run(["enqueue", "spec.json", "--run-id", "cmd-1", "--webhook", "https://example.com/h", "--owner", "alice"])
+        XCTAssertEqual(queued, 0, errors.joined(separator: "\n"))
+        XCTAssertTrue(output.joined().contains("\"cmd-1\""))
+
+        output = []
+        let status = await command(environment: env).run(["status", "cmd-1"])
+        XCTAssertEqual(status, 0)
+        XCTAssertTrue(output.joined().contains("\"queued\""), output.joined())
+        let queuedJob = try XCTUnwrap(AgentSpool(root: URL(fileURLWithPath: spoolPath)).claimNext()?.job)
+        XCTAssertEqual(queuedJob.owner, "alice")
+        XCTAssertEqual(queuedJob.webhookURL?.absoluteString, "https://example.com/h")
+
+        let unknown = await command(environment: env).run(["status", "nope"])
+        XCTAssertEqual(unknown, 1)
+    }
+
+    func testEnqueueValidatesAgainstWorkerEnvironment() async {
+        let spoolPath = temporarySpool()
+        let missingKey = await command(environment: [:]).run(["enqueue", "spec.json", "--spool", spoolPath])
+        XCTAssertEqual(missingKey, 2)
+        XCTAssertTrue(errors.contains { $0.contains("OPENAI_API_KEY") }, "\(errors)")
+        let noSpool = await command().run(["enqueue", "spec.json"])
+        XCTAssertEqual(noSpool, 2)
+    }
+
+    func testEnqueueWholeJobFromStandardInput() async throws {
+        let spoolPath = temporarySpool()
+        stdin = Data(#"{"runID": "from-stdin", "webhookURL": "https://example.com/h", "webhookSecret": "s", "spec": \#(specJSON)}"#.utf8)
+        let status = await command().run(["enqueue", "--job", "--spool", spoolPath])
+        XCTAssertEqual(status, 0, errors.joined(separator: "\n"))
+        let job = try XCTUnwrap(AgentSpool(root: URL(fileURLWithPath: spoolPath)).claimNext()?.job)
+        XCTAssertEqual(job.runID, "from-stdin")
+        XCTAssertEqual(job.webhookSecret, "s")
+
+        let mixed = await command().run(["enqueue", "--job", "--spool", spoolPath, "--run-id", "x"])
+        XCTAssertEqual(mixed, 2)
+    }
 }

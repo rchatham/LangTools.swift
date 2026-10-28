@@ -33,6 +33,8 @@ let package = Package(
         .library(name: "AgentRuntime", targets: ["AgentRuntime"]),
         .library(name: "AgentRuntimeProviders", targets: ["AgentRuntimeProviders"]),
         .executable(name: "langtools-agent", targets: ["langtools-agent"]),
+        .library(name: "AgentDeploy", targets: ["AgentDeploy"]),
+        .executable(name: "langtools-agent-deploy", targets: ["langtools-agent-deploy"]),
     ],
     dependencies: [
         .package(url: "https://github.com/rchatham/JSON.swift.git", from: "1.0.4"),
@@ -66,6 +68,8 @@ let package = Package(
         .target(name: "AgentRuntime", dependencies: [.target(name: "LangTools"), .target(name: "Agents"), .product(name: "Crypto", package: "swift-crypto")], resources: [.process("README.md")]),
         .target(name: "AgentRuntimeProviders", dependencies: ["AgentRuntime", "LangTools", "OpenAI", "Anthropic", "OpenAICompatible", "Gemini", "XAI", "Ollama", "OpenRouter", "VercelAIGateway", "Perplexity", "Cohere"]),
         .executableTarget(name: "langtools-agent", dependencies: ["AgentRuntime", "AgentRuntimeProviders"]),
+        .target(name: "AgentDeploy", dependencies: ["AgentRuntime"], exclude: ["README.md"]),
+        .executableTarget(name: "langtools-agent-deploy", dependencies: ["AgentDeploy"]),
         .target(name: "TestUtils", dependencies: [.target(name: "LangTools")], path: "Tests/TestUtils", resources: [.process("Resources/")]),
 
         .testTarget(name: "LangToolsTests", dependencies: ["LangTools", "OpenAI", "Anthropic", "TestUtils"]),
@@ -80,6 +84,7 @@ let package = Package(
         .testTarget(name: "AppleSpeechTests", dependencies: ["AppleLangTools"]),
         .testTarget(name: "AppleIntelligenceTests", dependencies: ["AppleLangTools", "LangTools"]),
         .testTarget(name: "WhisperKitLangToolsTests", dependencies: ["WhisperKitLangTools"]),
+        .testTarget(name: "AgentDeployTests", dependencies: ["AgentDeploy", "AgentRuntime"]),
         .testTarget(name: "AgentRuntimeTests", dependencies: ["AgentRuntime", "AgentRuntimeProviders", "Agents", "LangTools", "OpenAI", "Anthropic", "TestUtils"]),
     ] + (extendedTestsEnabled ? [
         .testTarget(name: "AgentsTests", dependencies: ["Agents", "LangTools", "OpenAI", "TestUtils"]),
