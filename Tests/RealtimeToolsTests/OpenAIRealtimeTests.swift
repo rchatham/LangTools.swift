@@ -271,8 +271,7 @@ final class OpenAIRealtimeTests: XCTestCase {
         XCTAssertNotNil(OpenAIRealtimeError.invalidURL.errorDescription)
         XCTAssertNotNil(OpenAIRealtimeError.notConnected.errorDescription)
         XCTAssertNotNil(OpenAIRealtimeError.encodingError.errorDescription)
-        XCTAssertNotNil(OpenAIRealtimeError.decodingError.errorDescription)
-        XCTAssertNotNil(OpenAIRealtimeError.sessionError("test").errorDescription)
+        XCTAssertNotNil(OpenAIRealtimeError.sessionClosed.errorDescription)
     }
 
     // MARK: - Tool Configuration Tests

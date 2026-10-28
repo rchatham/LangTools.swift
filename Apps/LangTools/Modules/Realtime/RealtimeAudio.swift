@@ -141,7 +141,9 @@ public final class RealtimePCMPlayer: ObservableObject {
 
     /// Milliseconds of audio actually played since the last
     /// `resetPlaybackPosition()` or `flush()`. Use this, not the amount
-    /// received, as the truncation point on barge-in.
+    /// received, as the truncation point on barge-in. It counts finished
+    /// buffers only, so it can trail what was heard by up to the length of
+    /// the buffer playing at that moment (one server audio delta).
     public var playedMilliseconds: Int {
         playedFrames * 1000 / Int(Self.sampleRate)
     }

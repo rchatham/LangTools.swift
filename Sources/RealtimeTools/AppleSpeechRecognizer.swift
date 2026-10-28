@@ -226,36 +226,40 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
     }
 
     private func createAudioBuffer(from data: Data) -> AVAudioPCMBuffer? {
-        // PCM 16-bit mono at the configured sample rate (see Configuration.sampleRate)
-        let sampleRate: Double = config.sampleRate
-        let channels: AVAudioChannelCount = 1
-
-        guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: sampleRate,
-            channels: channels,
-            interleaved: true
-        ) else { return nil }
-
-        let frameCount = AVAudioFrameCount(data.count / 2) // 2 bytes per sample for Int16
-
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
-            return nil
-        }
-
-        buffer.frameLength = frameCount
-
-        data.withUnsafeBytes { rawBufferPointer in
-            guard let baseAddress = rawBufferPointer.baseAddress else { return }
-            if let int16ChannelData = buffer.int16ChannelData {
-                // Copy whole samples only: an odd trailing byte doesn't fit
-                // in the buffer, and copying data.count would overrun it.
-                memcpy(int16ChannelData[0], baseAddress, Int(frameCount) * MemoryLayout<Int16>.size)
-            }
-        }
-
-        return buffer
+        makePCM16MonoBuffer(from: data, sampleRate: config.sampleRate)
     }
+}
+
+// MARK: - PCM Conversion
+
+/// Wraps 16-bit mono PCM `data` in an `AVAudioPCMBuffer` at `sampleRate`.
+/// A trailing odd byte (half a sample) is dropped.
+func makePCM16MonoBuffer(from data: Data, sampleRate: Double) -> AVAudioPCMBuffer? {
+    guard let format = AVAudioFormat(
+        commonFormat: .pcmFormatInt16,
+        sampleRate: sampleRate,
+        channels: 1,
+        interleaved: true
+    ) else { return nil }
+
+    let frameCount = AVAudioFrameCount(data.count / MemoryLayout<Int16>.size)
+
+    guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+        return nil
+    }
+
+    buffer.frameLength = frameCount
+
+    data.withUnsafeBytes { rawBufferPointer in
+        guard let baseAddress = rawBufferPointer.baseAddress else { return }
+        if let int16ChannelData = buffer.int16ChannelData {
+            // Copy whole samples only: an odd trailing byte doesn't fit in
+            // the buffer, and copying data.count would overrun it.
+            memcpy(int16ChannelData[0], baseAddress, Int(frameCount) * MemoryLayout<Int16>.size)
+        }
+    }
+
+    return buffer
 }
 
 // MARK: - Audio Session Manager

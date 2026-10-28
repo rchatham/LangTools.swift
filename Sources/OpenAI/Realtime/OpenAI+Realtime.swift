@@ -311,7 +311,7 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
                         // state reads .connected until here, since sends
                         // before the socket opens are buffered by the task).
                         self.markConnectionFailed()
-                        self.eventContinuation.finish(throwing: error)
+                        self.eventContinuation.finish(throwing: OpenAIRealtimeError.connectionFailed(error))
                     }
                     break
                 }
@@ -441,9 +441,7 @@ public enum OpenAIRealtimeError: Error, LocalizedError {
     case invalidURL
     case notConnected
     case encodingError
-    case decodingError
     case connectionFailed(Error)
-    case sessionError(String)
     case sessionClosed
 
     public var errorDescription: String? {
@@ -454,12 +452,8 @@ public enum OpenAIRealtimeError: Error, LocalizedError {
             return "Not connected to the realtime session"
         case .encodingError:
             return "Failed to encode event"
-        case .decodingError:
-            return "Failed to decode event"
         case .connectionFailed(let error):
             return "Connection failed: \(error.localizedDescription)"
-        case .sessionError(let message):
-            return "Session error: \(message)"
         case .sessionClosed:
             return "This realtime session was disconnected or its connection failed; create a new session to reconnect"
         }

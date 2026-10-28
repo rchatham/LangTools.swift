@@ -108,7 +108,6 @@ public final class RealtimeSessionViewModel: ObservableObject {
 
             consumeEvents(from: session)
 
-            try player.start()
             mic.onAudioChunk = { [weak self] data in
                 // Fires on the audio engine's real-time thread — hop to the
                 // main actor (where audioSendChain lives) before chaining.
@@ -116,7 +115,11 @@ public final class RealtimeSessionViewModel: ObservableObject {
                     self?.enqueueAudioSend(data)
                 }
             }
+            // Start the mic first: on iOS it sets the shared audio session to
+            // .playAndRecord/.voiceChat, and changing the category under an
+            // already-running playback engine can stall or re-route it.
             try mic.start()
+            try player.start()
 
             connectionState = .connected
         } catch {

@@ -15,6 +15,12 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
     // MARK: - Properties
 
     public let configuration: RealtimePipelineConfiguration
+
+    /// Pipeline event callbacks. They run on whatever thread produced the
+    /// event — the caller of `sendAudio`/`sendText`, or the task consuming
+    /// the STT stream — not on the main thread. Hop to the main actor
+    /// yourself before touching UI. The same applies to
+    /// `onPipelineStateChanged`.
     public var eventHandler: RealtimeEventHandler?
 
     // Mutable state is written from caller methods, the interruption
@@ -118,6 +124,20 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         onPipelineStateChanged?(newState)
     }
 
+    /// Moves to `newState` only if the current state is `expected`, as one
+    /// locked step. Returns whether the transition happened.
+    private func transition(from expected: RealtimePipelineState, to newState: RealtimePipelineState) -> Bool {
+        lock.lock()
+        guard _state == expected else {
+            lock.unlock()
+            return false
+        }
+        _state = newState
+        lock.unlock()
+        onPipelineStateChanged?(newState)
+        return true
+    }
+
     // MARK: - Audio Input
 
     public func sendAudio(_ data: Data) async throws {
@@ -196,17 +216,18 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
 
     public func interrupt() async throws {
         guard interruptionConfig.enabled else { return }
-        guard state == .processing else { return }
-
-        setState(.interrupted)
+        // Check-and-set atomically: the interruption detector can move state
+        // from another thread (e.g. .speechEnded → .running) between a
+        // separate read and write.
+        guard transition(from: .processing, to: .interrupted) else { return }
         eventHandler?.onInterruption?()
 
         // Cancel TTS and mark playback stopped so the detector re-arms cleanly
         try? await ttsProviderInstance?.cancel()
         interruptionDetector?.playbackStopped()
 
-        // Reset state
-        setState(.running)
+        // Reset state, unless something else (stop(), new speech) moved it on.
+        _ = transition(from: .interrupted, to: .running)
         isProcessing = false
     }
 

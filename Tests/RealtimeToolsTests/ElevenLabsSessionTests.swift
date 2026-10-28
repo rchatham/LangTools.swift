@@ -74,6 +74,89 @@ final class ElevenLabsWebSocketSessionTests: XCTestCase {
         session.disconnect()
     }
 
+    private func audioChunk(_ text: String, isFinal: Bool = false) -> String {
+        "{\"audio\": \"\(Data(text.utf8).base64EncodedString())\", \"isFinal\": \(isFinal)}"
+    }
+
+    /// An `isFinal` before endStream() (e.g. after a flush) marks the end of
+    /// that generation but must not end the session's stream.
+    func testFinalChunkBeforeEndStreamKeepsStreamOpen() async throws {
+        let (session, mock) = try await makeConnectedSession()
+
+        mock.push(audioChunk("one"))
+        mock.push(#"{"isFinal": true}"#)
+        mock.push(audioChunk("two"))
+
+        var iterator = session.audioStream.makeAsyncIterator()
+        let first = try await iterator.next()
+        let final = try await iterator.next()
+        let afterFinal = try await iterator.next()
+
+        XCTAssertEqual(first?.audio, Data("one".utf8))
+        XCTAssertEqual(final?.isFinal, true, "The final marker should be delivered even without audio")
+        XCTAssertEqual(final?.audio, Data())
+        XCTAssertEqual(afterFinal?.audio, Data("two".utf8), "Audio after a mid-session isFinal must still arrive")
+        XCTAssertTrue(session.isConnected)
+        session.disconnect()
+    }
+
+    func testFinalChunkAfterEndStreamEndsStreamAndClosesSession() async throws {
+        let (session, mock) = try await makeConnectedSession()
+
+        try await session.endStream()
+        mock.push(audioChunk("last"))
+        mock.push(#"{"isFinal": true}"#)
+
+        var received: [AudioChunk] = []
+        for try await chunk in session.audioStream {
+            received.append(chunk)
+        }
+
+        XCTAssertEqual(received.map(\.audio), [Data("last".utf8), Data()])
+        XCTAssertFalse(session.isConnected)
+        do {
+            try await session.connect()
+            XCTFail("Expected sessionClosed")
+        } catch let error as ElevenLabsWebSocketError {
+            guard case .sessionClosed = error else {
+                return XCTFail("Expected sessionClosed, got \(error)")
+            }
+        }
+    }
+
+    /// After endStream(), the server closing the socket is the normal end of
+    /// the session: the stream finishes without throwing.
+    func testServerCloseAfterEndStreamFinishesStreamNormally() async throws {
+        let (session, mock) = try await makeConnectedSession()
+
+        try await session.endStream()
+        mock.push(audioChunk("last"))
+        mock.cancel(with: .normalClosure, reason: nil)
+
+        var received: [Data] = []
+        for try await chunk in session.audioStream {
+            received.append(chunk.audio)
+        }
+        XCTAssertEqual(received, [Data("last".utf8)])
+    }
+
+    func testSocketFailureWithoutEndStreamThrowsConnectionFailed() async throws {
+        let (session, mock) = try await makeConnectedSession()
+
+        mock.cancel(with: .goingAway, reason: nil)
+
+        var iterator = session.audioStream.makeAsyncIterator()
+        do {
+            while try await iterator.next() != nil {}
+            XCTFail("Expected the stream to throw")
+        } catch let error as ElevenLabsWebSocketError {
+            guard case .connectionFailed = error else {
+                return XCTFail("Expected connectionFailed, got \(error)")
+            }
+        }
+        XCTAssertFalse(session.isConnected)
+    }
+
     func testConnectAfterDisconnectThrowsSessionClosed() async throws {
         let (session, _) = try await makeConnectedSession()
         session.disconnect()
@@ -180,6 +263,27 @@ final class ElevenLabsSTTSessionTests: XCTestCase {
         let (session, _) = try await makeConnectedSession()
         session.disconnect()
 
+        do {
+            try await session.connect()
+            XCTFail("Expected sessionClosed")
+        } catch let error as ElevenLabsSTTError {
+            guard case .sessionClosed = error else {
+                return XCTFail("Expected sessionClosed, got \(error)")
+            }
+        }
+    }
+
+    /// Regression test: a server "done" finished the stream but left the
+    /// session marked connected, so connect() returned silently.
+    func testServerDoneClosesSession() async throws {
+        let (session, mock) = try await makeConnectedSession()
+
+        mock.push(#"{"type": "done"}"#)
+
+        var iterator = session.transcriptions.makeAsyncIterator()
+        let result = try await iterator.next()
+        XCTAssertNil(result)
+        XCTAssertFalse(session.isConnected)
         do {
             try await session.connect()
             XCTFail("Expected sessionClosed")

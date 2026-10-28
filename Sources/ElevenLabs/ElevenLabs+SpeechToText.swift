@@ -176,6 +176,13 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
         return (true, webSocketTaskFactory)
     }
 
+    private func closeSession() {
+        lock.lock()
+        _closed = true
+        lock.unlock()
+        tearDownSocket()
+    }
+
     private func markConnectionFailed() {
         lock.lock()
         _isConnected = false
@@ -268,7 +275,7 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
                     // this is fatal, unlike a single malformed message below.
                     if !Task.isCancelled {
                         self.markConnectionFailed()
-                        self.transcriptionContinuation.finish(throwing: error)
+                        self.transcriptionContinuation.finish(throwing: ElevenLabsSTTError.connectionFailed(error))
                     }
                     break
                 }
@@ -312,10 +319,14 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
 
         case "error":
             if let error = response.error {
+                // Terminal: close the session so a later connect() throws
+                // sessionClosed instead of returning as if still connected.
+                closeSession()
                 transcriptionContinuation.finish(throwing: ElevenLabsSTTError.serverError(error.message))
             }
 
         case "done":
+            closeSession()
             transcriptionContinuation.finish()
 
         default:

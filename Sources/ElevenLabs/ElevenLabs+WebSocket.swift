@@ -56,6 +56,11 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
     private var _isConnected: Bool = false
     /// Set by disconnect() or a failed connection; see the type's doc comment.
     private var _closed = false
+    /// Set by endStream(). ElevenLabs' docs don't pin down whether `isFinal`
+    /// also follows a mid-session `flush`, so `isFinal` only ends the stream
+    /// once end-of-stream was requested; otherwise it just marks the end of
+    /// that generation.
+    private var _endOfStreamRequested = false
 
     /// Factory for the underlying WebSocket transport. Overridable in tests.
     internal var webSocketTaskFactory: ((URLRequest) -> any LangToolsWebSocketTask)?
@@ -77,6 +82,9 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
 
     /// Stream of audio chunks from TTS. Created once at init so chunks
     /// received before the first consumer attaches are buffered, not dropped.
+    /// A chunk with `isFinal` set (possibly with empty `audio`) marks the end
+    /// of a generation. The stream finishes after `endStream()`, once
+    /// ElevenLabs sends its final message or closes the socket.
     public let audioStream: AsyncThrowingStream<AudioChunk, Error>
     private let audioContinuation: AsyncThrowingStream<AudioChunk, Error>.Continuation
 
@@ -230,6 +238,7 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
             throw ElevenLabsWebSocketError.notConnected
         }
 
+        markEndOfStreamRequested()
         let message = EndOfStreamMessage()
         try await sendMessage(message)
     }
@@ -275,11 +284,17 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
                         break
                     }
                 } catch {
-                    // A genuine transport-level error (socket closed, etc.) —
-                    // this is fatal, unlike a single malformed message below.
+                    // A transport-level error (socket closed, etc.) — fatal,
+                    // unlike a single malformed message below. After
+                    // endStream() the server closing the socket is the normal
+                    // end of the session, not a failure.
                     if !Task.isCancelled {
-                        self.markConnectionFailed()
-                        self.audioContinuation.finish(throwing: error)
+                        if self.endOfStreamRequested {
+                            self.finishSession()
+                        } else {
+                            self.markConnectionFailed()
+                            self.audioContinuation.finish(throwing: ElevenLabsWebSocketError.connectionFailed(error))
+                        }
                     }
                     break
                 }
@@ -301,19 +316,45 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
             return
         }
 
-        if let audio = response.audio, let audioData = Data(base64Encoded: audio) {
+        let isFinal = response.isFinal == true
+        let audioData = response.audio.flatMap { Data(base64Encoded: $0) }
+
+        // The final message usually carries no audio; still deliver it so
+        // consumers can see where a generation ended.
+        if audioData != nil || isFinal {
             let chunk = AudioChunk(
-                audio: audioData,
-                isFinal: response.isFinal ?? false,
+                audio: audioData ?? Data(),
+                isFinal: isFinal,
                 normalizedAlignment: response.normalizedAlignment,
                 alignment: response.alignment
             )
             audioContinuation.yield(chunk)
         }
 
-        if response.isFinal == true {
-            audioContinuation.finish()
+        if isFinal && endOfStreamRequested {
+            finishSession()
         }
+    }
+
+    private var endOfStreamRequested: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _endOfStreamRequested
+    }
+
+    private func markEndOfStreamRequested() {
+        lock.lock()
+        _endOfStreamRequested = true
+        lock.unlock()
+    }
+
+    /// The session ended normally: close it, release the socket, and finish
+    /// the stream.
+    private func finishSession() {
+        lock.lock()
+        _closed = true
+        lock.unlock()
+        tearDownSocket()
+        audioContinuation.finish()
     }
 }
 
