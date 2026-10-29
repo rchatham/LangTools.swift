@@ -10,22 +10,26 @@ import LangTools
 
 
 public extension OpenAI {
-    func performChatCompletionRequest(messages: [Message], model: Model = .gpt35Turbo, stream: Bool = false, completion: @escaping (Result<OpenAI.ChatCompletionResponse, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
+    func performChatCompletionRequest(messages: [Message], model: Model = .gpt4o_mini, stream: Bool = false, completion: @escaping (Result<OpenAI.ChatCompletionResponse, Error>) -> Void, didCompleteStreaming: ((Error?) -> Void)? = nil) {
         perform(request: OpenAI.ChatCompletionRequest(model: model, messages: messages, stream: stream), completion: completion, didCompleteStreaming: didCompleteStreaming)
     }
 
-    static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
-        return  ChatCompletionRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
+    static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
+        let providerMessages = messages.map { ($0 as? Message) ?? Message($0) }
+        var request = ChatCompletionRequest(model: model, messages: providerMessages, tools: tools?.map { Tool($0) }, toolEventHandler: toolEventHandler)
+        request.responseSchema = responseSchema
+        return request
     }
 }
 
 extension OpenAI {
-    public struct ChatCompletionRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest, LangToolsMultipleChoiceChatRequest {
+    public struct ChatCompletionRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest, LangToolsMultipleChoiceChatRequest, LangToolsStructuredOutputRequest {
         public typealias LangTool = OpenAI
         public typealias Response = ChatCompletionResponse
         public static var endpoint: String { "chat/completions" }
 
-        public let model: Model
+        public private(set) var model: Model
         public var messages: [Message]
         public let temperature: Double?
         public let top_p: Double?
@@ -41,7 +45,7 @@ extension OpenAI {
         public let logprobs: Bool?
         public let top_logprobs: Int?
         public let user: String?
-        public let response_format: ResponseFormat?
+        public var response_format: ResponseFormat?
         public let seed: Int?
         public let tools: [Tool]?
         public let tool_choice: ToolChoice?
@@ -54,6 +58,22 @@ extension OpenAI {
         public let reasoning_effort: ReasoningEffort?
         public let metadata: [String: String]?
 
+        /// Provider-specific body fields without a typed property, such as OpenRouter's
+        /// `provider`; encoding throws for a key in `reservedParameterKeys`. Not decoded.
+        public var additionalParameters: [String: JSON]? = nil
+
+        /// The body keys typed properties encode.
+        public static var reservedParameterKeys: Set<String> {
+            Set(CodingKeys.allCases.filter { $0 != ._choose && $0 != .toolEventHandler }.map(\.stringValue))
+        }
+
+        /// A copy whose model carries `providerID` for toolchain routing (not encoded).
+        public func routed(to providerID: LangToolsProviderID) -> Self {
+            var request = self
+            request.model.providerID = providerID
+            return request
+        }
+
         @CodableIgnored
         var _choose: (([Response.Choice]) -> Int)?
         public func choose(from choices: [Response.Choice]) -> Int { return _choose?(choices) ?? 0 }
@@ -61,13 +81,52 @@ extension OpenAI {
         @CodableIgnored
         public var toolEventHandler: ((LangToolsToolEvent) -> Void)?
 
+        // MARK: - LangToolsStructuredOutputRequest
+
+        /// The response schema for structured output. Setting this automatically updates `response_format`
+        /// to use the `json_schema` type with strict mode enabled.
+        public var responseSchema: JSONSchema? {
+            get {
+                guard case .json_schema(let format) = response_format else { return nil }
+                return format.schema
+            }
+            set {
+                if let schema = newValue {
+                    response_format = .json_schema(ResponseFormat.JSONSchemaFormat(
+                        name: schema.title ?? "structured_response",
+                        schema: schema,
+                        strict: true
+                    ))
+                } else {
+                    // Only clear if currently using json_schema; leave text/json_object untouched
+                    if case .json_schema = response_format { response_format = nil }
+                }
+            }
+        }
+
+        /// Returns `true` when the request is configured with a structured output schema.
+        public var usesStructuredOutput: Bool {
+            if case .json_schema = response_format { return true }
+            return false
+        }
+
         public init(model: OpenAIModel, messages: [any LangToolsMessage]) {
             self.init(model: model, messages: messages.map { Message($0) })
         }
 
         public init(model: Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, max_completion_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, service_tier: Response.ServiceTier? = nil, store: Bool? = nil, prediction: PredictionContent? = nil, modalities: [Modality]? = nil, audio: AudioConfig? = nil, reasoning_effort: ReasoningEffort? = nil, metadata: [String: String]? = nil, choose: @escaping ([Response.Choice]) -> Int = {_ in 0},  toolEventHandler: @escaping (LangToolsToolEvent) -> Void = {_ in}) {
             self.model = model
-            self.messages = if Model.reasoning.contains(model) { messages.map { Message(role: $0.role == .system ? .developer : $0.role, content: $0.content) } } else { messages }
+            self.messages = if Model.reasoning.contains(model) {
+                messages.map { message in
+                    // Reasoning models require the developer role instead of
+                    // system. Only the role changes; name, tool_calls, audio,
+                    // refusal, and tool-result identity are preserved. Messages
+                    // of any other role are reused verbatim so retained tool
+                    // calls survive history replay.
+                    guard message.role == .system else { return message }
+                    return Message(copying: message, role: .developer)
+                }
+            } else { messages }
             self.temperature = temperature
             self.top_p = top_p
             self.n = n
@@ -82,7 +141,12 @@ extension OpenAI {
             self.logprobs = logprobs
             self.top_logprobs = top_logprobs
             self.user = user
-            self.response_format = response_type.flatMap { ResponseFormat(type: $0) }
+            self.response_format = response_type.map { responseType in
+                switch responseType {
+                case .text: return .text
+                case .json_object: return .json_object
+                }
+            }
             self.seed = seed
             self.tools = tools
             self.tool_choice = tool_choice
@@ -98,8 +162,66 @@ extension OpenAI {
             self.toolEventHandler = toolEventHandler
         }
 
+        /// Encodes required fields and present options without dispatching absent values.
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(model, forKey: .model)
+            try container.encode(messages, forKey: .messages)
+            // Check presence before container dispatch: most request options are absent.
+            if let temperature { try container.encode(temperature, forKey: .temperature) }
+            if let top_p { try container.encode(top_p, forKey: .top_p) }
+            if let n { try container.encode(n, forKey: .n) }
+            if let stream { try container.encode(stream, forKey: .stream) }
+            if let stream_options { try container.encode(stream_options, forKey: .stream_options) }
+            if let stop { try container.encode(stop, forKey: .stop) }
+            if let max_tokens { try container.encode(max_tokens, forKey: .max_tokens) }
+            if let max_completion_tokens { try container.encode(max_completion_tokens, forKey: .max_completion_tokens) }
+            if let presence_penalty { try container.encode(presence_penalty, forKey: .presence_penalty) }
+            if let frequency_penalty { try container.encode(frequency_penalty, forKey: .frequency_penalty) }
+            if let logit_bias { try container.encode(logit_bias, forKey: .logit_bias) }
+            if let logprobs { try container.encode(logprobs, forKey: .logprobs) }
+            if let top_logprobs { try container.encode(top_logprobs, forKey: .top_logprobs) }
+            if let user { try container.encode(user, forKey: .user) }
+            if let response_format { try container.encode(response_format, forKey: .response_format) }
+            if let seed { try container.encode(seed, forKey: .seed) }
+            if let tools { try container.encode(tools, forKey: .tools) }
+            if let tool_choice { try container.encode(tool_choice, forKey: .tool_choice) }
+            if let parallel_tool_calls { try container.encode(parallel_tool_calls, forKey: .parallel_tool_calls) }
+            if let service_tier { try container.encode(service_tier, forKey: .service_tier) }
+            if let store { try container.encode(store, forKey: .store) }
+            if let prediction { try container.encode(prediction, forKey: .prediction) }
+            if let modalities { try container.encode(modalities, forKey: .modalities) }
+            if let audio { try container.encode(audio, forKey: .audio) }
+            if let reasoning_effort { try container.encode(reasoning_effort, forKey: .reasoning_effort) }
+            if let metadata { try container.encode(metadata, forKey: .metadata) }
+            guard let additionalParameters else { return }
+            if let conflict = additionalParameters.keys.sorted().first(where: Self.reservedParameterKeys.contains) {
+                throw LangToolsError.invalidArgument("additionalParameters cannot set '\(conflict)'; use the typed property instead")
+            }
+            var extra = encoder.container(keyedBy: AdditionalParameterKey.self)
+            for (key, value) in additionalParameters { try extra.encode(value, forKey: AdditionalParameterKey(stringValue: key)) }
+        }
+
+        private struct AdditionalParameterKey: CodingKey {
+            let stringValue: String, intValue: Int? = nil
+            init(stringValue: String) { self.stringValue = stringValue }
+            init?(intValue: Int) { nil }
+        }
+
+        private enum CodingKeys: String, CodingKey, CaseIterable {
+            case model, messages, temperature, top_p, n, stream, stream_options, stop
+            case max_tokens, max_completion_tokens, presence_penalty, frequency_penalty
+            case logit_bias, logprobs, top_logprobs, user, response_format, seed, tools
+            case tool_choice, parallel_tool_calls, service_tier, store, prediction
+            case modalities, audio, reasoning_effort, metadata
+            // Preserve synthesized decoding of the ignored wrappers. Neither is encoded.
+            case _choose, toolEventHandler
+        }
+
         public struct StreamOptions: Codable {
             let include_usage: Bool
+
+            public init(include_usage: Bool) { self.include_usage = include_usage }
         }
 
         public enum ReasoningEffort: String, Codable {
@@ -251,21 +373,99 @@ extension OpenAI {
             }
         }
 
-        public struct ResponseFormat: Codable {
-            let type: ResponseType
-            public init(type: ResponseType) {
-                self.type = type
+        /// Encapsulates the `response_format` field sent to the OpenAI API.
+        public enum ResponseFormat: Codable {
+            case text
+            case json_object
+            case json_schema(JSONSchemaFormat)
+
+            /// Metadata struct for the `json_schema` response format.
+            public struct JSONSchemaFormat: Codable {
+                /// Sanitised name label sent to the OpenAI API.
+                /// The API requires the pattern `^[a-zA-Z0-9_-]{1,64}$`.
+                public let name: String
+                /// The JSON Schema that the model must conform to.
+                public let schema: JSONSchema
+                /// When `true` the model will strictly follow the schema.
+                public let strict: Bool
+
+                /// - Parameter name: Raw name string. Any characters outside `[a-zA-Z0-9_-]`
+                ///   are replaced with `_`, the result is truncated to 64 characters, and an
+                ///   empty string falls back to `"structured_response"`.
+                public init(name: String, schema: JSONSchema, strict: Bool = true) {
+                    self.name = JSONSchemaFormat.sanitize(name: name)
+                    self.schema = schema
+                    self.strict = strict
+                }
+
+                /// Sanitises a candidate `name` to match OpenAI's `^[a-zA-Z0-9_-]{1,64}$`.
+                public static func sanitize(name: String) -> String {
+                    let cleaned = name
+                        .unicodeScalars
+                        .map { CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-")).contains($0) ? Character($0) : "_" }
+                        .map(String.init)
+                        .joined()
+                    let truncated = String(cleaned.prefix(64))
+                    return truncated.isEmpty ? "structured_response" : truncated
+                }
+            }
+
+            // MARK: Codable
+
+            private enum CodingKeys: String, CodingKey {
+                case type
+                case json_schema
+            }
+
+            public init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                let type = try container.decode(String.self, forKey: .type)
+                switch type {
+                case "text":        self = .text
+                case "json_object": self = .json_object
+                case "json_schema":
+                    let format = try container.decode(JSONSchemaFormat.self, forKey: .json_schema)
+                    self = .json_schema(format)
+                default:
+                    throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "Unknown response_format type: \(type)")
+                }
+            }
+
+            public func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                switch self {
+                case .text:
+                    try container.encode("text", forKey: .type)
+                case .json_object:
+                    try container.encode("json_object", forKey: .type)
+                case .json_schema(let format):
+                    try container.encode("json_schema", forKey: .type)
+                    try container.encode(format, forKey: .json_schema)
+                }
+            }
+
+            // MARK: Legacy support
+
+            /// Creates a `ResponseFormat` from the legacy `ResponseType` enum.
+            /// - Note: Prefer constructing `.text` or `.json_object` directly.
+            @available(*, deprecated, message: "Construct .text or .json_object directly instead of using ResponseType")
+            public init?(type: ResponseType) {
+                switch type {
+                case .text:        self = .text
+                case .json_object: self = .json_object
+                }
             }
         }
 
+        /// Legacy response type enumeration — use `ResponseFormat.text` or
+        /// `ResponseFormat.json_object` directly for new code.
         public enum ResponseType: String, Codable {
             case text, json_object
-            // TODO: - add json_schema
         }
     }
 
     // TODO: - Add service_tier, update usage
-    public struct ChatCompletionResponse: Codable, LangToolsStreamableChatResponse, LangToolsToolCallingResponse, LangToolsMultipleChoiceChatResponse {
+    public struct ChatCompletionResponse: Codable, LangToolsStreamableChatResponse, LangToolsToolCallingResponse, LangToolsMultipleChoiceChatResponse, LangToolsStructuredOutputResponse {
         public typealias Delta = OpenAI.Message.Delta
         public typealias Message = OpenAI.Message
         public typealias ToolSelection = Message.ToolCall
@@ -278,11 +478,19 @@ extension OpenAI {
         public var choices: [Choice]
         public let usage: Usage?
         public let service_tier: ServiceTier?
+        /// An error inside a 200 response or stream chunk, as gateways such as OpenRouter send.
+        public let error: ResponseError?
 
         @CodableIgnored
         public var choose: (([Choice]) -> Int)?
 
-        public init(id: String?, object: String, created: Int, model: String?, system_fingerprint: String?, choices: [Choice], usage: Usage?, service_tier: ServiceTier?, choose: (([Choice]) -> Int)?) {
+        /// The raw JSON string from the selected choice message content, used by `structuredOutput(as:)`.
+        public var jsonContent: String? {
+            let index = choose?(choices) ?? 0
+            return choices.indices.contains(index) ? choices[index].message?.content.string : nil
+        }
+
+        public init(id: String?, object: String, created: Int, model: String?, system_fingerprint: String?, choices: [Choice], usage: Usage?, service_tier: ServiceTier?, error: ResponseError? = nil, choose: (([Choice]) -> Int)?) {
             self.id = id
             self.object = object
             self.created = created
@@ -291,7 +499,47 @@ extension OpenAI {
             self.choices = choices
             self.usage = usage
             self.service_tier = service_tier
+            self.error = error
             self.choose = choose
+        }
+
+        private enum CodingKeys: String, CodingKey { case id, object, created, model, system_fingerprint, choices, usage, service_tier, error }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decodeIfPresent(String.self, forKey: .id)
+            object = try container.decode(String.self, forKey: .object)
+            created = try container.decode(Int.self, forKey: .created)
+            model = try container.decodeIfPresent(String.self, forKey: .model)
+            system_fingerprint = try container.decodeIfPresent(String.self, forKey: .system_fingerprint)
+            choices = try container.decodeIfPresent([Choice].self, forKey: .choices) ?? []  // Absent from error chunks.
+            usage = try container.decodeIfPresent(Usage.self, forKey: .usage)
+            service_tier = try? container.decodeIfPresent(ServiceTier.self, forKey: .service_tier)  // Unknown tiers read as nil.
+            error = try container.decodeIfPresent(ResponseError.self, forKey: .error)
+            choose = nil
+        }
+
+        public func validateStreamChunk() throws {
+            if let error { throw LangToolsError.apiError(error) }
+        }
+
+        /// An in-band error. `code` is a string such as `"server_error"`, or an integer
+        /// status (OpenRouter) as text; `metadata` carries provider detail.
+        public struct ResponseError: Error, Codable, LocalizedError {
+            public let message: String, code: String?, type: String?, param: String?, metadata: JSON?
+            public var errorDescription: String? { code.map { "\(message) (\($0))" } ?? message }
+
+            public init(message: String, code: String? = nil, type: String? = nil, param: String? = nil, metadata: JSON? = nil) {
+                (self.message, self.code, self.type, self.param, self.metadata) = (message, code, type, param, metadata)
+            }
+
+            private enum CodingKeys: String, CodingKey { case message, code, type, param, metadata }
+
+            public init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                let code = (try? container.decodeIfPresent(String.self, forKey: .code)) ?? (try? container.decodeIfPresent(Int.self, forKey: .code)).map(String.init)
+                self.init(message: try container.decode(String.self, forKey: .message), code: code, type: try container.decodeIfPresent(String.self, forKey: .type), param: try container.decodeIfPresent(String.self, forKey: .param), metadata: try container.decodeIfPresent(JSON.self, forKey: .metadata))
+            }
         }
 
         public struct Choice: Codable, LangToolsMultipleChoiceChoice {
@@ -309,9 +557,21 @@ extension OpenAI {
                 self.logprobs = logprobs
             }
 
+            private enum CodingKeys: String, CodingKey { case index, message, finish_reason, delta, logprobs }
+
+            public init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                index = try container.decode(Int.self, forKey: .index)
+                message = try container.decodeIfPresent(Message.self, forKey: .message)
+                finish_reason = try? container.decodeIfPresent(FinishReason.self, forKey: .finish_reason)  // Providers add their own.
+                delta = try container.decodeIfPresent(Message.Delta.self, forKey: .delta)
+                logprobs = try container.decodeIfPresent(LogProbs.self, forKey: .logprobs)
+            }
+
             public enum FinishReason: String, Codable {//, LangToolsFinishReason {
                 case stop, length, content_filter, tool_calls
                 case function_call // Deprecated
+                case error // A gateway's in-stream failure; the chunk also carries `error`.
             }
 
             public struct LogProbs: Codable {
@@ -343,17 +603,25 @@ extension OpenAI {
 
             func combining(_ message: Message?, with delta: Message.Delta?) -> Message? {
                 guard let delta = delta else { return message }
-                return try! Message(role: message?.role ?? delta.role ?? .assistant, content: .string(message?.content.string ?? "" + (delta.content ?? "")), name: message?.name, tool_calls: combining(message?.tool_calls, with: delta.tool_calls))
+                return try! Message(role: message?.role ?? delta.role ?? .assistant, content: .string((message?.content.string ?? "") + (delta.content ?? "")), name: message?.name, tool_calls: combining(message?.tool_calls, with: delta.tool_calls))
             }
 
             func combining(_ delta: Message.Delta?, with next: Message.Delta?) -> Message.Delta? {
                 guard let delta = delta, let next = next else { return delta ?? next }
-                return Message.Delta(role: delta.role ?? next.role, content: delta.content ?? "" + (next.content ?? ""), tool_calls: combining(delta.tool_calls, with: next.tool_calls),/**/ audio: delta.audio ?? next.audio, /**/ refusal: next.refusal)
+                return Message.Delta(role: delta.role ?? next.role, content: (delta.content ?? "") + (next.content ?? ""), tool_calls: combining(delta.tool_calls, with: next.tool_calls),/**/ audio: delta.audio ?? next.audio, /**/ refusal: next.refusal)
             }
 
             func combining(_ toolCalls: [Message.ToolCall]?, with next: [Message.ToolCall]?) -> [Message.ToolCall]? {
-                guard let toolCalls = toolCalls, let next = next else { return toolCalls ?? next }
-                return next.sorted().reduce(into: toolCalls.sorted()) { partialResult, next in
+                guard let toolCalls = toolCalls, let next = next else {
+                    // A nil side is the common case (deltas after the tool-call chunks carry no
+                    // tool_calls, decoded as nil rather than []), so the surviving array must
+                    // still self-heal here like the merge below — otherwise an out-of-order
+                    // accumulator ships unsorted through the terminal delta.
+                    guard let survivor = toolCalls ?? next else { return nil }
+                    return survivor.isSortedByIndex ? survivor : survivor.sorted()
+                }
+                let orderedNext = next.isSortedByIndex ? next : next.sorted()
+                return orderedNext.reduce(into: toolCalls.isSortedByIndex ? toolCalls : toolCalls.sorted()) { partialResult, next in
                     if let index = partialResult.firstIndex(where: { $0.index == next.index })  {
                         partialResult[index] = combining(partialResult[index], with: next)
                     } else {
@@ -398,6 +666,17 @@ extension OpenAI {
                     self.rejected_prediction_tokens = rejected_prediction_tokens
                     self.audio_tokens = audio_tokens
                 }
+
+                private enum CodingKeys: String, CodingKey { case reasoning_tokens, accepted_prediction_tokens, rejected_prediction_tokens, audio_tokens }
+
+                /// Compatible providers omit counts their upstream lacks; absent counts read as zero.
+                public init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    reasoning_tokens = try container.decodeIfPresent(Int.self, forKey: .reasoning_tokens) ?? 0
+                    accepted_prediction_tokens = try container.decodeIfPresent(Int.self, forKey: .accepted_prediction_tokens) ?? 0
+                    rejected_prediction_tokens = try container.decodeIfPresent(Int.self, forKey: .rejected_prediction_tokens) ?? 0
+                    audio_tokens = try container.decodeIfPresent(Int.self, forKey: .audio_tokens)
+                }
             }
 
             public struct PromptTokensDetails: Codable {
@@ -408,6 +687,14 @@ extension OpenAI {
                     self.audio_tokens = audio_tokens
                     self.cached_tokens = cached_tokens
                 }
+
+                private enum CodingKeys: String, CodingKey { case audio_tokens, cached_tokens }
+
+                public init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    audio_tokens = try container.decodeIfPresent(Int.self, forKey: .audio_tokens) ?? 0
+                    cached_tokens = try container.decodeIfPresent(Int.self, forKey: .cached_tokens) ?? 0
+                }
             }
         }
 
@@ -416,12 +703,18 @@ extension OpenAI {
         }
 
         public func combining(with next: ChatCompletionResponse) -> ChatCompletionResponse {
-            return ChatCompletionResponse(id: next.id, object: next.object, created: next.created, model: next.model, system_fingerprint: next.system_fingerprint, choices: combining(choices, with: next.choices), usage: next.usage, service_tier: next.service_tier, choose: choose ?? next.choose)
+            return ChatCompletionResponse(id: next.id, object: next.object, created: next.created, model: next.model, system_fingerprint: next.system_fingerprint, choices: combining(choices, with: next.choices), usage: next.usage, service_tier: next.service_tier, error: next.error ?? error, choose: choose ?? next.choose)
         }
 
         func combining(_ choices: [Choice], with next: [Choice]) -> [Choice] {
-            if choices.isEmpty { return next }
-            return next.sorted().reduce(into: choices.sorted()) { partialResult, next in
+            // The first chunk must establish the sorted-accumulator invariant too — if it carries
+            // multiple out-of-order choices and is also the last combine, nothing downstream heals it.
+            if choices.isEmpty { return next.isSortedByIndex ? next : next.sorted() }
+            let orderedNext = next.isSortedByIndex ? next : next.sorted()
+            // An empty `next` (the terminal usage-only chunk of a real stream) falls through to
+            // the reduce as a no-op over the self-healed initial value — no early return needed,
+            // and the accumulator still comes back sorted.
+            return orderedNext.reduce(into: choices.isSortedByIndex ? choices : choices.sorted()) { partialResult, next in
                 if let index = partialResult.firstIndex(where: { $0.index == next.index }) {
                     partialResult[index] = partialResult[index].combining(with: next)
                 } else {
@@ -443,12 +736,32 @@ extension Array where Element == OpenAI.ChatCompletionResponse.Choice {
     func sorted() -> [Element] {
         return self.sorted(by: { $0.index < $1.index })
     }
+
+    /// True when elements are already in non-decreasing `index` order. Providers stream choices
+    /// in index order and the accumulator is kept ordered, so this lets the hot combining path
+    /// skip the allocating `sorted()` call (O(n) check vs O(n log n) + a fresh array per merge).
+    var isSortedByIndex: Bool {
+        guard count > 1 else { return true }
+        for i in 1..<count where self[i].index < self[i - 1].index { return false }
+        return true
+    }
 }
 
 extension Array where Element == OpenAI.Message.ToolCall {
     func sorted() -> [Element] {
         guard first?.index != nil else { return self }
         return self.sorted(by: { $0.index! < $1.index! }) // assume that if an index exists it exists for all tool calls
+    }
+
+    /// True when `sorted()` would be a no-op (already index-ordered, or indices absent). Mirrors
+    /// the "if an index exists it exists for all" assumption of `sorted()`; falls back to sorting
+    /// on any nil/out-of-order case so semantics are unchanged.
+    var isSortedByIndex: Bool {
+        guard count > 1, first?.index != nil else { return true }
+        for i in 1..<count {
+            guard let a = self[i - 1].index, let b = self[i].index, a <= b else { return false }
+        }
+        return true
     }
 }
 

@@ -6,8 +6,10 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import LangTools
-
 
 final public class OpenAI: LangTools {
     public typealias Model = OpenAIModel
@@ -16,22 +18,27 @@ final public class OpenAI: LangTools {
     var configuration: OpenAIConfiguration
     fileprivate var apiKey: String { configuration.apiKey }
     public var session: URLSession { configuration.session }
+    public var logger: LangToolsLogger? { configuration.logger }
 
     public struct OpenAIConfiguration {
         public var baseURL: URL
         public let apiKey: String
         public var session: URLSession
+        public var logger: LangToolsLogger?
 
-        public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
+        public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil) {
             self.baseURL = baseURL
             self.apiKey = apiKey
             self.session = session
+            self.logger = logger
         }
     }
 
+    /// OpenAI claims only untagged models; a tagged one belongs to its provider.
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         return [
-            { ($0 as? ChatCompletionRequest).flatMap { OpenAIModel.openAIModels.contains($0.model) } ?? false },
+            { ($0 as? ChatCompletionRequest).flatMap { $0.model.providerID == nil && OpenAIModel.openAIModels.contains($0.model) } ?? false },
+            { ($0 as? ResponsesRequest).flatMap { $0.model.providerID == nil && OpenAIModel.openAIModels.contains($0.model) } ?? false },
             { $0 is AudioSpeechRequest },
             { $0 is AudioTranscriptionRequest },
             { $0 is ListModelDataRequest },
@@ -42,8 +49,8 @@ final public class OpenAI: LangTools {
         ]
     }
 
-    public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
-        configuration = OpenAIConfiguration(baseURL: baseURL, apiKey: apiKey)
+    public init(baseURL: URL = URL(string: "https://api.openai.com/v1/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil) {
+        configuration = OpenAIConfiguration(baseURL: baseURL, apiKey: apiKey, session: session, logger: logger)
     }
 
     public init(configuration: OpenAIConfiguration) {
@@ -58,7 +65,7 @@ final public class OpenAI: LangTools {
             }
             let queryItems = Mirror(reflecting: request).children
                 .filter { $0.label != nil && $0.label != "id" }
-                .map { URLQueryItem(name: $0.label!, value: String(describing: $0.value))}
+                .map { URLQueryItem(name: $0.label!, value: String(describing: $0.value)) }
             if !queryItems.isEmpty {
                 url = url.appending(queryItems: queryItems)
             }
@@ -70,12 +77,13 @@ final public class OpenAI: LangTools {
 
         if Request.httpMethod == .get { return urlRequest }
 
-        if let request = (request as? MultipartFormDataEncodableRequest) {
-            urlRequest.addValue("multipart/form-data", forHTTPHeaderField: "Content-Type")
-            urlRequest.httpBody = request.httpBody
+        if let multipartRequest = (request as? MultipartFormDataEncodableRequest) {
+            let formData = multipartRequest.multipartFormData()
+            urlRequest.addValue(formData.contentType, forHTTPHeaderField: "Content-Type")
+            urlRequest.httpBody = formData.body
         } else {
             urlRequest.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw LangToolError.invalidData }
+            do { urlRequest.httpBody = try JSONEncoder().encode(request) } catch { throw error as? LangToolsError ?? .invalidData }
         }
 
         return urlRequest
@@ -94,18 +102,27 @@ public struct OpenAIErrorResponse: Error, Codable {
 }
 
 public enum OpenAIModelType {
-    case chat, tts, stt, embedding
+    case chat, tts, stt, embedding, image, realtime, audio
 }
 
 public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRepresentable {
     public static var allCases: [OpenAIModel] = openAIModels
     public static var chatModels: [OpenAIModel] { allCases.filter({ $0.type == .chat }) }
-    public static var reasoning: [OpenAIModel] { [.o1, .o1_mini, .o1_preview, .o3_mini] }
+    public static var reasoning: [OpenAIModel] { [.o1, .o1_mini, .o3, .o3_pro, .o3_mini, .o4_mini] }
+    public static var codex: [OpenAIModel] { [.gpt5_5, .gpt5_4, .gpt5_4_mini, .gpt53_codex_spark] }
+    public static var searchPreview: [OpenAIModel] { [.gpt4o_searchPreview, .gpt4o_mini_searchPreview] }
     static let openAIModels: [OpenAIModel] = ModelID.allCases.map { OpenAIModel(modelID: $0) }
 
     public init?(rawValue: String) {
-        if ModelID(rawValue: rawValue) != nil {
-            id = rawValue
+        let normalizedRawValue = switch rawValue {
+        case "gpt-5.1-codex", "gpt-5.3-codex":
+            "gpt-5.3-codex-spark"
+        default:
+            rawValue
+        }
+
+        if ModelID(rawValue: normalizedRawValue) != nil {
+            id = normalizedRawValue
         } else { return nil }
     }
 
@@ -117,40 +134,116 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         id = customModelID
     }
 
+    /// A model routed to one OpenAI-compatible provider.
+    public init(customModelID: String, providerID: LangToolsProviderID) {
+        id = customModelID
+        self.providerID = providerID
+    }
+
     public var id: String
     public var rawValue: String { id }
 
-    public var type: OpenAIModelType {
-        id.hasPrefix("text") ? .embedding :
-        id.hasPrefix("tts") ? .tts :
-        id.hasPrefix("whisper") ? .stt : .chat
+    /// The provider this model is routed to, for request validators; not encoded or compared.
+    public internal(set) var providerID: LangToolsProviderID? = nil
+
+    public func belongs(to provider: LangToolsProviderID) -> Bool {
+        providerID == provider
     }
 
+    public var type: OpenAIModelType {
+        id.hasPrefix("text") ? .embedding :
+        id.hasPrefix("tts") || id.hasSuffix("-tts") ? .tts :
+        id.contains("whisper") || id.contains("transcribe") ? .stt :
+        id.hasPrefix("gpt-image") || id.hasPrefix("dall-e") ? .image :
+        id.contains("realtime") ? .realtime :
+        id.contains("audio") ? .audio : .chat
+    }
+
+    @available(*, deprecated, message: "GPT-3.5 models are deprecated. Use gpt4o_mini or newer models.")
     public static let gpt35Turbo = OpenAIModel(modelID: .gpt35Turbo)
+    @available(*, deprecated, message: "GPT-3.5 models are deprecated. Use gpt4o_mini or newer models.")
     public static let gpt35Turbo_0301 = OpenAIModel(modelID: .gpt35Turbo_0301)
+    @available(*, deprecated, message: "GPT-3.5 models are deprecated. Use gpt4o_mini or newer models.")
     public static let gpt35Turbo_1106 = OpenAIModel(modelID: .gpt35Turbo_1106)
+    @available(*, deprecated, message: "GPT-3.5 models are deprecated. Use gpt4o_mini or newer models.")
     public static let gpt35Turbo_16k = OpenAIModel(modelID: .gpt35Turbo_16k)
+    @available(*, deprecated, message: "GPT-3.5 models are deprecated. Use gpt4o_mini or newer models.")
     public static let gpt35TurboInstruct = OpenAIModel(modelID: .gpt35Turbo_Instruct)
+
     public static let gpt4 = OpenAIModel(modelID: .gpt4)
     public static let gpt4Turbo = OpenAIModel(modelID: .gpt4Turbo)
     public static let gpt4_0613 = OpenAIModel(modelID: .gpt4_0613)
+    @available(*, deprecated, message: "Preview model deprecated. Use gpt4Turbo or gpt4o instead.")
     public static let gpt4Turbo_1106Preview = OpenAIModel(modelID: .gpt4Turbo_1106Preview)
+    @available(*, deprecated, message: "Preview model deprecated. Use gpt4o with vision capabilities instead.")
     public static let gpt4VisionPreview = OpenAIModel(modelID: .gpt4_VisionPreview)
     public static let gpt4_32k_0613 = OpenAIModel(modelID: .gpt4_32k_0613)
     public static let gpt4o = OpenAIModel(modelID: .gpt4o)
     public static let gpt4o_mini = OpenAIModel(modelID: .gpt4o_mini)
     public static let gpt4o_2024_05_13 = OpenAIModel(modelID: .gpt4o_2024_05_13)
+    public static let gpt4o_2024_08_06 = OpenAIModel(modelID: .gpt4o_2024_08_06)
+    public static let gpt4o_2024_11_20 = OpenAIModel(modelID: .gpt4o_2024_11_20)
+    public static let gpt4o_mini_2024_07_18 = OpenAIModel(modelID: .gpt4o_mini_2024_07_18)
     public static let gpt4o_realtimePreview = OpenAIModel(modelID: .gpt4o_realtimePreview)
     public static let gpt4o_miniRealtimePreview = OpenAIModel(modelID: .gpt4o_miniRealtimePreview)
     public static let gpt4o_audioPreview = OpenAIModel(modelID: .gpt4o_audioPreview)
+    public static let gpt4o_audioPreview_2024_10_01 = OpenAIModel(modelID: .gpt4o_audioPreview_2024_10_01)
+    @available(*, deprecated, message: "Removed from API February 17, 2026. Use gpt5_2 instead.")
     public static let chatGPT4o_latest = OpenAIModel(modelID: .chatGPT4o_latest)
     public static let o1 = OpenAIModel(modelID: .o1)
     public static let o1_mini = OpenAIModel(modelID: .o1_mini)
+    public static let o3 = OpenAIModel(modelID: .o3)
+    public static let o3_pro = OpenAIModel(modelID: .o3_pro)
     public static let o3_mini = OpenAIModel(modelID: .o3_mini)
+    public static let o4_mini = OpenAIModel(modelID: .o4_mini)
+    @available(*, deprecated, message: "Preview model deprecated. Use o1 instead.")
     public static let o1_preview = OpenAIModel(modelID: .o1_preview)
+
+    public static let gpt4o_searchPreview = OpenAIModel(modelID: .gpt4o_searchPreview)
+    public static let gpt4o_mini_searchPreview = OpenAIModel(modelID: .gpt4o_mini_searchPreview)
+
+    public static let gpt41 = OpenAIModel(modelID: .gpt41)
+    public static let gpt41_mini = OpenAIModel(modelID: .gpt41_mini)
+    public static let gpt41_nano = OpenAIModel(modelID: .gpt41_nano)
+
+    public static let gpt5 = OpenAIModel(modelID: .gpt5)
+    public static let gpt5_mini = OpenAIModel(modelID: .gpt5_mini)
+    public static let gpt5_nano = OpenAIModel(modelID: .gpt5_nano)
+    public static let gpt5_pro = OpenAIModel(modelID: .gpt5_pro)
+    public static let gpt5_1 = OpenAIModel(modelID: .gpt5_1)
+    public static let gpt5_2 = OpenAIModel(modelID: .gpt5_2)
+    public static let gpt5_2_pro = OpenAIModel(modelID: .gpt5_2_pro)
+    @available(*, deprecated, message: "Not listed in OpenAI's current public model catalog. Use gpt5_4 or gpt5_5 instead.")
+    public static let gpt5_3 = OpenAIModel(modelID: .gpt5_3)
+    public static let gpt5_4 = OpenAIModel(modelID: .gpt5_4)
+    public static let gpt5_4_pro = OpenAIModel(modelID: .gpt5_4_pro)
+    public static let gpt5_4_mini = OpenAIModel(modelID: .gpt5_4_mini)
+    public static let gpt5_4_nano = OpenAIModel(modelID: .gpt5_4_nano)
+    public static let gpt5_5 = OpenAIModel(modelID: .gpt5_5)
+    public static let gpt5_5_pro = OpenAIModel(modelID: .gpt5_5_pro)
+
+    public static let gpt53_codex_spark = OpenAIModel(modelID: .gpt53_codex_spark)
+
+    public static let gptRealtime2 = OpenAIModel(modelID: .gptRealtime2)
+    public static let gptRealtime15 = OpenAIModel(modelID: .gptRealtime15)
+    public static let gptRealtime = OpenAIModel(modelID: .gptRealtime)
+    public static let gptRealtimeMini = OpenAIModel(modelID: .gptRealtimeMini)
+    public static let gptAudio15 = OpenAIModel(modelID: .gptAudio15)
+    public static let gptAudio = OpenAIModel(modelID: .gptAudio)
+
     public static let tts_1 = OpenAIModel(modelID: .tts_1)
     public static let tts_1_hd = OpenAIModel(modelID: .tts_1_hd)
+    public static let gpt4o_mini_tts = OpenAIModel(modelID: .gpt4o_mini_tts)
     public static let whisper = OpenAIModel(modelID: .whisper)
+    public static let gpt4o_transcribe = OpenAIModel(modelID: .gpt4o_transcribe)
+    public static let gpt4o_mini_transcribe = OpenAIModel(modelID: .gpt4o_mini_transcribe)
+    public static let gpt4o_transcribe_diarize = OpenAIModel(modelID: .gpt4o_transcribe_diarize)
+    public static let gptRealtimeWhisper = OpenAIModel(modelID: .gptRealtimeWhisper)
+
+    public static let gptImage2 = OpenAIModel(modelID: .gptImage2)
+    public static let gptImage15 = OpenAIModel(modelID: .gptImage15)
+    public static let gptImage1 = OpenAIModel(modelID: .gptImage1)
+    @available(*, deprecated, message: "Use textEmbedding3Small or textEmbedding3Large instead.")
     public static let textEmbeddingAda002 = OpenAIModel(modelID: .textEmbeddingAda002)
     public static let textEmbedding3Large = OpenAIModel(modelID: .textEmbedding3Large)
     public static let textEmbedding3Small = OpenAIModel(modelID: .textEmbedding3Small)
@@ -161,26 +254,79 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         case gpt35Turbo_1106 = "gpt-3.5-turbo-1106"
         case gpt35Turbo_16k = "gpt-3.5-turbo-16k"
         case gpt35Turbo_Instruct = "gpt-3.5-turbo-instruct"
+
         case gpt4 = "gpt-4"
         case gpt4Turbo = "gpt-4-turbo"
         case gpt4_0613 = "gpt-4-0613"
         case gpt4Turbo_1106Preview = "gpt-4-1106-preview"
         case gpt4_VisionPreview = "gpt-4-vision-preview"
         case gpt4_32k_0613 = "gpt-4-32k-0613"
+
         case gpt4o = "gpt-4o"
         case gpt4o_mini = "gpt-4o-mini"
         case gpt4o_2024_05_13 = "gpt-4o-2024-05-13"
+        case gpt4o_2024_08_06 = "gpt-4o-2024-08-06"
+        case gpt4o_2024_11_20 = "gpt-4o-2024-11-20"
+        case gpt4o_mini_2024_07_18 = "gpt-4o-mini-2024-07-18"
         case gpt4o_realtimePreview = "gpt-4o-realtime-preview"
         case gpt4o_miniRealtimePreview = "gpt-4o-mini-realtime-preview"
         case gpt4o_audioPreview = "gpt-4o-audio-preview"
+        case gpt4o_audioPreview_2024_10_01 = "gpt-4o-audio-preview-2024-10-01"
         case chatGPT4o_latest = "chatgpt-4o-latest"
+
+        case gpt4o_searchPreview = "gpt-4o-search-preview"
+        case gpt4o_mini_searchPreview = "gpt-4o-mini-search-preview"
+
+        case gpt41 = "gpt-4.1"
+        case gpt41_mini = "gpt-4.1-mini"
+        case gpt41_nano = "gpt-4.1-nano"
+
+        case gpt5 = "gpt-5"
+        case gpt5_mini = "gpt-5-mini"
+        case gpt5_nano = "gpt-5-nano"
+        case gpt5_pro = "gpt-5-pro"
+        case gpt5_1 = "gpt-5.1"
+        case gpt5_2 = "gpt-5.2"
+        case gpt5_2_pro = "gpt-5.2-pro"
+        case gpt5_3 = "gpt-5.3"
+        case gpt5_4 = "gpt-5.4"
+        case gpt5_4_pro = "gpt-5.4-pro"
+        case gpt5_4_mini = "gpt-5.4-mini"
+        case gpt5_4_nano = "gpt-5.4-nano"
+        case gpt5_5 = "gpt-5.5"
+        case gpt5_5_pro = "gpt-5.5-pro"
+
+        case gpt53_codex_spark = "gpt-5.3-codex-spark"
+
         case o1 = "o1"
         case o1_mini = "o1-mini"
-        case o3_mini = "o3-mini"
         case o1_preview = "o1-preview"
+        case o3 = "o3"
+        case o3_pro = "o3-pro"
+        case o3_mini = "o3-mini"
+        case o4_mini = "o4-mini"
+
+        case gptRealtime2 = "gpt-realtime-2"
+        case gptRealtime15 = "gpt-realtime-1.5"
+        case gptRealtime = "gpt-realtime"
+        case gptRealtimeMini = "gpt-realtime-mini"
+        case gptAudio15 = "gpt-audio-1.5"
+        case gptAudio = "gpt-audio"
+
         case tts_1 = "tts-1"
         case tts_1_hd = "tts-1-hd"
+        case gpt4o_mini_tts = "gpt-4o-mini-tts"
+
         case whisper = "whisper-1"
+        case gpt4o_transcribe = "gpt-4o-transcribe"
+        case gpt4o_mini_transcribe = "gpt-4o-mini-transcribe"
+        case gpt4o_transcribe_diarize = "gpt-4o-transcribe-diarize"
+        case gptRealtimeWhisper = "gpt-realtime-whisper"
+
+        case gptImage2 = "gpt-image-2"
+        case gptImage15 = "gpt-image-1.5"
+        case gptImage1 = "gpt-image-1"
+
         case textEmbeddingAda002 = "text-embedding-ada-002"
         case textEmbedding3Large = "text-embedding-3-large"
         case textEmbedding3Small = "text-embedding-3-small"
@@ -199,11 +345,10 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     }
 
     public static func ==(_ lhs: OpenAIModel, _ rhs: OpenAIModel) -> Bool {
-        return lhs.id == rhs.id
+        lhs.id == rhs.id
     }
 }
 
-// MARK: - Testing
 extension OpenAI {
     internal func configure(testURLSessionConfiguration: URLSessionConfiguration) -> Self {
         configuration.session = URLSession(configuration: testURLSessionConfiguration, delegate: session.delegate, delegateQueue: session.delegateQueue)

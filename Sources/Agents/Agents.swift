@@ -14,30 +14,68 @@ public protocol Agent {
     var description: String { get }
     var instructions: String { get }
 
-    associatedtype LangTool: LangTools
-    var langTool: LangTool { get }
-    var model: LangTool.Model { get }
     var tools: [any LangToolsTool]? { get }
     var delegateAgents: [any Agent] { get }
 
-    func execute(context: AgentContext) async throws -> String
+    /// Optional JSON Schema that constrains the LLM's final response to structured output.
+    /// When non-nil, `execute(context:)` will apply this schema to the underlying request
+    /// (if the provider supports it) and return the raw JSON string.
+    /// The caller is responsible for decoding the JSON into the appropriate type.
+    /// Default is `nil` (plain-text response).
+    var responseSchema: JSONSchema? { get }
+}
+
+extension Agent {
+    /// Default: no structured output.
+    public var responseSchema: JSONSchema? { nil }
 }
 
 public struct AgentContext {
+    public var langTool: any LangTools
+    public var model: any RawRepresentable
+
     public var messages: [any LangToolsMessage]
     public var eventHandler: (AgentEvent) -> Void
     public var parent: (any Agent)?
+    public var tools: [any LangToolsTool]?
 
-    public init(messages: [any LangToolsMessage], eventHandler: @escaping (AgentEvent) -> Void = {_ in}, parent: (any Agent)? = nil) {
+    /// Optional JSON Schema for structured output. When set, the agent will request that the
+    /// LLM return a response conforming to this schema. Only takes effect when the underlying
+    /// provider request conforms to `LangToolsStructuredOutputRequest`.
+    public var responseSchema: JSONSchema?
+
+    public init<LangTool: LangTools>(
+        langTool: LangTool, model: LangTool.Model,
+        messages: [any LangToolsMessage],
+        eventHandler: @escaping (AgentEvent) -> Void, parent: (any Agent)? = nil,
+        tools: [any LangToolsTool]? = nil,
+        responseSchema: JSONSchema? = nil
+    ) {
+        self.init(langTool: langTool, model: model, messages: messages, eventHandler: eventHandler, parent: parent, tools: tools, responseSchema: responseSchema)
+    }
+
+    public init(
+        langTool: any LangTools,
+        model: any RawRepresentable,
+        messages: [any LangToolsMessage],
+        eventHandler: @escaping (AgentEvent) -> Void, parent: Agent?,
+        tools: [any LangToolsTool]?,
+        responseSchema: JSONSchema? = nil
+    ) {
+        self.langTool = langTool
+        self.model = model
         self.messages = messages
         self.eventHandler = eventHandler
         self.parent = parent
+        self.tools = tools
+        self.responseSchema = responseSchema
     }
 }
 
 public enum AgentEvent: Equatable {
     case started(agent: String, parent: String?, task: String)
     case agentTransfer(from: String, to: String, reason: String)
+    case agentHandoff(from: String, to: String, reason: String)
     case toolCalled(agent: String, tool: String, arguments: String)
     case toolCompleted(agent: String, result: String?)
     case completed(agent: String, result: String, is_error: Bool = false)
@@ -50,10 +88,12 @@ public enum AgentEvent: Equatable {
             return "🤖 Agent '\(agent):\(parentString)' started: \(task)"
         case .agentTransfer(let from, let to, let reason):
             return "🔄 Agent '\(from)' delegated to '\(to)': \(reason)"
+        case .agentHandoff(let from, let to, let reason):
+            return "🤝 Agent '\(from)' handed off to '\(to)': \(reason)"
         case .toolCalled(let agent, let tool, let args):
             return "🛠️ Agent '\(agent)' using tool: \(tool), arguments: \(args)"
         case .toolCompleted(let agent, let tool):
-            return "✅ Agent '\(agent)' completed tool: \(tool)"
+            return "✅ Agent '\(agent)' completed tool: \(tool ?? "unknown")"
         case .completed(let agent, let result, let is_error):
             return "\(is_error ? "⚠️" :"🏁") Agent '\(agent)' \(is_error ? "encountered an error" :"completed with result"): \(result)"
         case .error(let agent, let message):
@@ -65,7 +105,7 @@ public enum AgentEvent: Equatable {
 extension Agent {
     public func execute(context: AgentContext) async throws -> String {
         context.eventHandler(.started(agent: name, parent: context.parent?.name, task: context.messages.last?.content.text ?? "Unknown task"))
-        let tools = delegateAgents.isEmpty ? tools : (tools ?? []) + [Tool(
+        var tools = delegateAgents.isEmpty ? tools : (tools ?? []) + [Tool(
             name: "agent_transfer",
             description: "Transfer the task to another agent. Be specific and explicit in your directions, direct them only to do what you need them to do.",
             tool_schema: .init(
@@ -84,49 +124,50 @@ extension Agent {
             ),
             callback: { args in
                 guard let agentName = args["agent_name"]?.stringValue,
-                      let reason = args["reason"]?.stringValue,
-                      let agent = self.delegateAgents.first(where: { $0.name == agentName })
+                    let reason = args["reason"]?.stringValue,
+                    let agent = self.delegateAgents.first(where: { $0.name == agentName })
                 else { throw AgentError("Failed to retrieve agent.") }
                 context.eventHandler(.agentTransfer(from: name, to: agentName, reason: reason))
                 var context = context
                 context.parent = self
-                context.messages.append(langTool.systemMessage("You are a delegate agent of \(name), given the following reason provided from \(name), perform your function and respond back with your answer. Assume that if you do no have a tool to complete a task that it is \(name)'s responsibility to handle it further."))
+                context.messages.append(context.langTool.systemMessage("You are a delegate agent of \(name), given the following reason provided from \(name), perform your function and respond back with your answer. Assume that if you do no have a tool to complete a task that it is \(name)'s responsibility to handle it further."))
                 // This next messages must be a user message for use with Anthropic, an assistant message will constrain the result to be a completion of the current message and may provide unexpected results. https://docs.anthropic.com/en/api/messages#:~:text=If%20the%20final%20message%20uses%20the%20assistant%20role%2C%20the%20response%20content%20will%20continue%20immediately%20from%20the%20content%20in%20that%20message.%20This%20can%20be%20used%20to%20constrain%20part%20of%20the%20model's%20response.
-                context.messages.append(langTool.userMessage(reason))
-                do {
-                    return try await agent.execute(context: context)
-                } catch {
+                context.messages.append(context.langTool.systemMessage(reason)) // TODO: - decide if this should be wrapped into the previous system message
+                do { return try await agent.execute(context: context) }
+                catch {
+                    #if DEBUG
+                    print("❌ Agent transfer error (\(agentName)): \(type(of: error)) — \(error)")
+                    #endif
                     throw AgentError("error: " + error.localizedDescription)
                 }
             }
         )]
-        let systemMessage = langTool.systemMessage(createSystemPrompt())
-        let toolEventHandler: (LangToolsToolEvent) -> Void = { [name] event in
-            switch event {
-            case .toolCalled(let toolCall):
-                context.eventHandler(.toolCalled(agent: name, tool: toolCall.name ?? "no_tool_name", arguments: toolCall.arguments))
-
-            case .toolCompleted(let toolResult):
-                if toolResult?.is_error ?? false {
-                    context.eventHandler(.error(agent: name, message: toolResult?.result ?? "No tool result returned."))
-                } else {
-                    context.eventHandler(.toolCompleted(agent: name, result: toolResult?.result))
-                }
-            }
+        if let extraTools = context.tools, !extraTools.isEmpty {
+            tools = (tools ?? []) + extraTools
+        }
+        let toolEventForwarder = AgentToolEventForwarder(agentName: name, eventHandler: context.eventHandler)
+        let toolEventHandler: (LangToolsToolEvent) -> Void = { event in
+            toolEventForwarder.handle(event)
         }
         do {
-            let request = try LangTool.chatRequest(model: model, messages: [systemMessage] + context.messages, tools: tools, toolEventHandler: toolEventHandler)
-            let response = try await langTool.perform(request: request) as any LangToolsChatResponse
-            let result = response.message?.content.text ?? ""
-            if result.isEmpty {
+//            print("AGENT \(name) SENDING: \([systemMessage] + context.messages)")
+            let systemMessage = context.langTool.systemMessage(createSystemPrompt())
+            // Agent's own schema takes precedence; fall back to the context-level schema.
+            let effectiveSchema = responseSchema ?? context.responseSchema
+            let request = try context.langTool.chatRequest(model: context.model, messages: [systemMessage] + context.messages, tools: tools, responseSchema: effectiveSchema, toolEventHandler: toolEventHandler)
+            let response = try await context.langTool.perform(request: request) as any LangToolsChatResponse
+            guard let result = response.message?.content.string, !result.isEmpty else {
                 context.eventHandler(.error(agent: name, message: "Empty result received"))
-                throw AgentError("Failed to return text content")
+                throw AgentError("agent: \(name) - error: Failed to return text content")
             }
             context.eventHandler(.completed(agent: name, result: result))
             return result
         } catch {
+            #if DEBUG
+            print("❌ Agent '\(name)' failed: \(type(of: error)) — \(error)")
+            #endif
             context.eventHandler(.completed(agent: name, result: error.localizedDescription, is_error: true))
-            throw AgentError("error: " + error.localizedDescription)
+            throw AgentError("agent: \(name) - error: " + error.localizedDescription)
         }
     }
 
@@ -135,23 +176,70 @@ extension Agent {
         var prompt = "You are an AI assistant named \(name)."
         prompt += "\nRole: \(description)"
         prompt += "\n\nInstructions:\n\(instructions)"
+        prompt += "\n\nAlways return a reponse no matter what."
 
         if let tools, !tools.isEmpty {
             prompt += "\n\nAvailable Tools:"
-            for tool in tools {
-                prompt += "\n- \(tool.name): \(tool.description ?? "")"
-            }
+            for tool in tools { prompt += "\n- \(tool.name): \(tool.description ?? "")" }
         }
 
         if !delegateAgents.isEmpty {
             prompt += "\n\nYou can transfer to these agents:"
-            for agent in delegateAgents {
-                prompt += "\n- \(agent.name): \(agent.description)"
-            }
-            prompt += "\n\nAlways return a reponse no matter what. You should relay all the critical details from your delegate agents, the user will not have access to the agent's response. Your answer should be specific and comprehensive, but provide only the relevant information to the user or parent agent."
+            for agent in delegateAgents { prompt += "\n- \(agent.name): \(agent.description)" }
         }
+
+        if !(tools?.isEmpty ?? true) || !delegateAgents.isEmpty {
+            prompt += """
+                \n\nYou should relay all the critical details from your tools and delegate agents,
+                the user will not have access to the tool or delegate agent's response. Your answer should
+                be specific and comprehensive, but provide only the relevant information
+                to the user or parent agent.
+                """
+        }
+
         prompt += "\n\nCurrent time: \(Date().description(with: .current))"
         return prompt
+    }
+}
+
+final class AgentToolEventForwarder {
+    private let agentName: String
+    private let eventHandler: (AgentEvent) -> Void
+    private let lock = NSLock()
+    private var pendingTransferSelectionIDs: [String?] = []
+
+    init(agentName: String, eventHandler: @escaping (AgentEvent) -> Void) {
+        self.agentName = agentName
+        self.eventHandler = eventHandler
+    }
+
+    func handle(_ event: LangToolsToolEvent) {
+        switch event {
+        case .toolCalled(let toolCall):
+            guard toolCall.name != "agent_transfer" else {
+                lock.lock()
+                pendingTransferSelectionIDs.append(toolCall.id)
+                lock.unlock()
+                return
+            }
+            eventHandler(.toolCalled(agent: agentName, tool: toolCall.name ?? "no_tool_name", arguments: toolCall.arguments))
+
+        case .toolCompleted(let toolResult):
+            let selectionID = toolResult?.tool_selection_id
+            lock.lock()
+            let transferIndex = pendingTransferSelectionIDs.firstIndex { $0 == selectionID }
+            if let transferIndex {
+                pendingTransferSelectionIDs.remove(at: transferIndex)
+            }
+            lock.unlock()
+            guard transferIndex == nil else { return }
+
+            if toolResult?.is_error ?? false {
+                eventHandler(.error(agent: agentName, message: toolResult?.result ?? "No tool result returned."))
+            } else {
+                eventHandler(.toolCompleted(agent: agentName, result: toolResult?.result))
+            }
+        }
     }
 }
 
@@ -160,5 +248,30 @@ public struct AgentError: Error, LocalizedError {
     public var errorDescription: String? { message }
     public init(_ message: String) {
         self.message = message
+    }
+}
+
+extension Agent {
+    func convertToLangToolsTool<Tool: LangToolsTool>(parent: Agent? = nil, eventHandler: @escaping (AgentEvent) -> Void = {_ in}) -> Tool {
+        Tool(agent: self, parent: parent, eventHandler: eventHandler)
+    }
+}
+
+extension LangToolsTool {
+    public init(agent: Agent, parent: Agent? = nil, eventHandler: @escaping (AgentEvent) -> Void) {
+        self.init(name: agent.name, description: agent.description, parent: parent, eventHandler: eventHandler, callback: { _ in agent })
+    }
+
+    public init(name: String, description: String?, parent: Agent? = nil, eventHandler: @escaping (AgentEvent) -> Void, callback: @escaping ([String: JSON]) async throws -> Agent) {
+        self.init(name: name, description: description, tool_schema: ToolSchema(
+            type: "object",
+            properties: [
+                "reason": .init(type: "string", enumValues: nil, description: "The reason for delegating to the agent. This should provide any neccsary information for the agent to be able to perform it's task.")
+            ],
+            required: ["reason"])) { info, args in
+            guard let request = args["reason"]?.stringValue else { return "Invalid research request" }
+            let context = AgentContext(langTool: info.langTool, model: info.model, messages: info.messages + [info.langTool.userMessage(request)], eventHandler: eventHandler, parent: parent, tools: nil)
+            return try await callback(args).execute(context: context)
+        }
     }
 }

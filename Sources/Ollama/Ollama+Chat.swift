@@ -3,8 +3,16 @@ import LangTools
 import OpenAI
 
 extension Ollama {
-    public static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
-        return Ollama.ChatRequest(model: model, messages: messages.map { Message($0) }, tools: tools?.map { OpenAI.Tool($0) }, toolEventHandler: toolEventHandler)
+    public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
+        // Ollama does not support structured output; responseSchema is ignored.
+        #if DEBUG
+        if responseSchema != nil {
+            print("[LangTools] ⚠️ Ollama does not support structured output. The responseSchema parameter will be ignored.")
+        }
+        #endif
+        let providerMessages = messages.map { ($0 as? Message) ?? Message($0) }
+        return Ollama.ChatRequest(model: model, messages: providerMessages, tools: tools?.map { OpenAI.Tool($0) }, toolEventHandler: toolEventHandler)
     }
 
     public struct ChatRequest: Codable, LangToolsChatRequest, LangToolsStreamableRequest, LangToolsToolCallingRequest {
@@ -76,6 +84,11 @@ extension Ollama {
         public let eval_duration: Int64?
 
         public var delta: ChatDelta? { nil }
+
+        /// Ollama chat streams must end with a decoded `done: true` response.
+        public func validateStreamCompletion() throws {
+            guard done else { throw LangToolsError.incompleteStream }
+        }
 
         public static var empty: ChatResponse {
             return ChatResponse(
@@ -179,13 +192,38 @@ extension Ollama {
     public struct ChatToolCall: Codable, LangToolsToolSelection {
         public let id: String? = "ollama"
         public var name: String? { function.name }
-        public var arguments: String { function.arguments.string ?? "" }
+        public var arguments: String {
+            JSON.object(function.arguments).jsonString(formatting: []) ?? "{}"
+        }
 
         public let function: Function
 
+        public init(function: Function) { self.function = function }
+
+        enum CodingKeys: String, CodingKey {
+            case id, function
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            _ = try container.decodeIfPresent(String.self, forKey: .id)
+            function = try container.decode(Function.self, forKey: .function)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(id, forKey: .id)
+            try container.encode(function, forKey: .function)
+        }
+
         public struct Function: Codable {
             public let name: String
-            public let arguments: [String:String]
+            public let arguments: [String: JSON]
+
+            public init(name: String, arguments: [String: JSON]) {
+                self.name = name
+                self.arguments = arguments
+            }
         }
     }
 

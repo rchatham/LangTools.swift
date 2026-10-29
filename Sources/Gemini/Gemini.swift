@@ -6,36 +6,83 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import LangTools
 import OpenAI
+import OpenAICompatible
 
-public final class Gemini: LangTools {
+/// Serves Gemini's native `generateContent` API (`Gemini.GenerateContentRequest`) and its
+/// OpenAI-compatible API: `Gemini.Model` requests route here untagged, other IDs tagged.
+public final class Gemini: OpenAICompatibleProvider {
     public typealias Model = GeminiModel
     public typealias ErrorResponse = GeminiErrorResponse
 
+    public static let providerID = LangToolsProviderID(rawValue: "gemini"), displayName = "Gemini", apiKeyEnvironmentVariable = "GEMINI_API_KEY"
+    public static let defaultBaseURL = URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/")!
+    public static let nativeBaseURL = URL(string: "https://generativelanguage.googleapis.com/v1beta/")!
+    public static var knownModels: [OpenAICompatibleModel<Gemini>] { Model.allCases.compactMap { OpenAICompatibleModel(rawValue: $0.rawValue) } }
+
     public static var requestValidators: [(any LangToolsRequest) -> Bool] {
         [
-            { ($0 as? OpenAI.ChatCompletionRequest).flatMap { OpenAIModel.geminiModels.contains($0.model) } ?? false },
-        ]
+            { ($0 as? OpenAI.ChatCompletionRequest).flatMap { $0.model.providerID == nil && OpenAIModel.geminiModels.contains($0.model) } ?? false },
+            { $0 is GenerateContentRequest },
+            { $0 is ListModelsRequest },
+        ] + compatibleRequestValidators
     }
 
-    public var session: URLSession { openAI.session }
+    public let openAI: OpenAI
+    private let nativeBaseURL: URL
+    private let apiKey: String
 
-    let openAI: OpenAI
-
-    public init(baseURL: URL = URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/")!, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil)) {
-        openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey, session: session))
+    public init(baseURL: URL = Gemini.defaultBaseURL, nativeBaseURL: URL = Gemini.nativeBaseURL, apiKey: String, session: URLSession = URLSession(configuration: .default, delegate: nil, delegateQueue: nil), logger: LangToolsLogger? = nil) {
+        self.nativeBaseURL = nativeBaseURL
+        self.apiKey = apiKey
+        openAI = OpenAI(configuration: .init(baseURL: baseURL, apiKey: apiKey, session: session, logger: logger))
     }
 
     public func prepare(request: some LangToolsRequest) throws -> URLRequest {
-        try openAI.prepare(request: request)
+        let headers = ["x-goog-api-key": apiKey]
+        if let request = request as? GenerateContentRequest {
+            let method = request.stream == true ? "streamGenerateContent?alt=sse" : "generateContent"
+            guard let url = URL(string: "\(request.modelPath):\(method)", relativeTo: nativeBaseURL)?.absoluteURL else { throw LangToolsError.invalidURL }
+            return try prepareNative(request: request, url: url, headers: headers)
+        }
+        guard let request = request as? ListModelsRequest else { return try prepareCompatible(request: request) }
+        var components = URLComponents(url: nativeBaseURL.appendingPathComponent("models"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "pageSize", value: "1000")] + (request.pageToken.map { [URLQueryItem(name: "pageToken", value: $0)] } ?? [])
+        guard let url = components?.url else { throw LangToolsError.invalidURL }
+        return try prepareNative(request: request, url: url, headers: headers)
     }
 
-    public static func chatRequest(model: Model, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
-        try OpenAI.chatRequest(model: model.openAIModel, messages: messages, tools: tools, toolEventHandler: toolEventHandler)
+    /// Lists models from the native catalog, across pages, with token limits.
+    public func listModels() async throws -> [OpenAICompatibleModelInfo] {
+        var models: [OpenAICompatibleModelInfo] = []
+        var request = ListModelsRequest()
+        for _ in 0..<10 {  // The cap only guards against a looping page token.
+            let page = try await perform(request: request)
+            models += (page.models ?? []).compactMap(\.info)
+            guard let next = page.nextPageToken, !next.isEmpty else { break }
+            request.pageToken = next
+        }
+        return models
+    }
+
+    /// Builds a native request for a `Gemini.Model`, or an OpenAI-format request
+    /// for an `OpenAICompatibleModel<Gemini>`.
+    public static func chatRequest(model: any RawRepresentable, messages: [any LangToolsMessage], tools: [any LangToolsTool]?, responseSchema: JSONSchema?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> any LangToolsChatRequest {
+        if let model = model as? OpenAICompatibleModel<Gemini> {
+            return try compatibleChatRequest(model: model, messages: messages, tools: tools, responseSchema: responseSchema, toolEventHandler: toolEventHandler)
+        }
+        guard let model = model as? Model else { throw LangToolsError.invalidArgument("Unsupported model \(model)") }
+        var request = GenerateContentRequest(model: model, messages: messages)
+        (request.tools, request.toolEventHandler, request.responseSchema) = (tools?.map { OpenAI.Tool($0) }, toolEventHandler, responseSchema)
+        return request
     }
 }
 
+/// Errors from both APIs; a native error's `status` is read as `type` and its numeric `code` as text.
 public struct GeminiErrorResponse: Error, Codable {
     public let type: String?
     public let error: APIError
@@ -45,28 +92,132 @@ public struct GeminiErrorResponse: Error, Codable {
         public let type: String
         public let param: String?
         public let code: String?
+
+        private enum CodingKeys: String, CodingKey { case message, type, param, code }
+        private enum NativeKeys: String, CodingKey { case status }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            message = try container.decode(String.self, forKey: .message)
+            type = try container.decodeIfPresent(String.self, forKey: .type) ?? decoder.container(keyedBy: NativeKeys.self).decodeIfPresent(String.self, forKey: .status) ?? "error"
+            param = try container.decodeIfPresent(String.self, forKey: .param)
+            code = (try? container.decodeIfPresent(String.self, forKey: .code)) ?? (try? container.decodeIfPresent(Int.self, forKey: .code)).map(String.init)
+        }
     }
 }
 
-public enum GeminiModel: String, CaseIterable {
-    // Base models
-    case gemini2Flash = "gemini-2.0-flash-exp"
+// MARK: - Native model catalog
+
+extension Gemini {
+    /// `GET models` on the native API.
+    public struct ListModelsRequest: LangToolsRequest, Encodable {
+        public typealias Response = ListModelsResponse
+        public typealias LangTool = Gemini
+        public static var endpoint: String { "models" }
+        public static var httpMethod: HTTPMethod { .get }
+        public var pageToken: String?
+        public init(pageToken: String? = nil) { self.pageToken = pageToken }
+        public func encode(to encoder: Encoder) throws {}
+    }
+
+    public struct ListModelsResponse: Decodable {
+        public let models: [ModelEntry]?
+        public let nextPageToken: String?
+    }
+
+    public struct ModelEntry: Codable {
+        /// The resource name, such as `models/gemini-3-flash`.
+        public let name: String?, displayName: String?, inputTokenLimit: Int?, outputTokenLimit: Int?, supportedGenerationMethods: [String]?
+
+        /// The entry normalized like an OpenAI-compatible catalog entry; nil without a name.
+        public var info: OpenAICompatibleModelInfo? {
+            name.map { OpenAICompatibleModelInfo(id: $0.hasPrefix("models/") ? String($0.dropFirst(7)) : $0, name: displayName, ownedBy: "google", contextWindow: inputTokenLimit, maxOutputTokens: outputTokenLimit, isChatModel: supportedGenerationMethods?.contains("generateContent") ?? false) }
+        }
+    }
+}
+
+// CaseIterable is declared in the extension below rather than here to allow
+// @available(*, deprecated) on individual cases without breaking synthesis.
+public enum GeminiModel: String {
+    // MARK: - Gemini 3.x Models - Active
+    case gemini3Pro = "gemini-3-pro"
+    case gemini3ProPreview = "gemini-3-pro-preview"
+    case gemini3Flash = "gemini-3-flash"
+    case gemini3FlashPreview = "gemini-3-flash-preview"
+    case gemini31Pro = "gemini-3.1-pro"
+
+    // MARK: - Gemini 2.5 Models (Retiring June 17, 2026)
+    @available(*, deprecated, message: "Retiring June 17, 2026. Use gemini3Flash instead.")
+    case gemini25Flash = "gemini-2.5-flash"
+    @available(*, deprecated, message: "Retiring June 17, 2026. Use gemini3Flash instead.")
+    case gemini25FlashLite = "gemini-2.5-flash-lite"
+    @available(*, deprecated, message: "Retiring June 17, 2026. Use gemini3Pro instead.")
+    case gemini25Pro = "gemini-2.5-pro"
+
+    // MARK: - Gemini 2.0 Models (Retiring June 1, 2026)
+    @available(*, deprecated, message: "Retiring June 1, 2026. Use gemini3Flash instead.")
+    case gemini2Flash = "gemini-2.0-flash"
+
+    @available(*, deprecated, message: "Retiring June 1, 2026. Use gemini3FlashLite instead.")
+    case gemini2FlashLite = "gemini-2.0-flash-lite"
+
+    // MARK: - Retired Models (return 404 errors)
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Flash instead.")
     case gemini15Flash = "gemini-1.5-flash"
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Flash instead.")
     case gemini15Flash8B = "gemini-1.5-flash-8b"
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Pro instead.")
     case gemini15Pro = "gemini-1.5-pro"
+    @available(*, deprecated, message: "Retired: Returns 404. Use gemini3Pro instead.")
     case gemini10Pro = "gemini-1.0-pro"
 
-    // Versioned models
-    case gemini15FlashLatest = "gemini-1.5-flash-latest"
-    case gemini15Flash001 = "gemini-1.5-flash-001"
-    case gemini15Flash002 = "gemini-1.5-flash-002"
-    case gemini15Flash8BLatest = "gemini-1.5-flash-8b-latest"
-    case gemini15Flash8B001 = "gemini-1.5-flash-8b-001"
-    case gemini15ProLatest = "gemini-1.5-pro-latest"
-    case gemini15Pro001 = "gemini-1.5-pro-001"
-    case gemini15Pro002 = "gemini-1.5-pro-002"
-
     var openAIModel: OpenAIModel { OpenAIModel(customModelID: rawValue) }
+}
+
+// MARK: - Model Lifecycle
+extension GeminiModel {
+    /// Returns `true` if this model is deprecated (still functional but retiring soon).
+    /// Uses rawValue comparison to avoid triggering deprecation warnings internally.
+    public var isDeprecated: Bool {
+        let deprecatedRawValues: Set<String> = [
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+        ]
+        return deprecatedRawValues.contains(rawValue)
+    }
+
+    /// Returns `true` if this model has been retired (returns 404 errors).
+    /// Uses rawValue comparison to avoid triggering deprecation warnings internally.
+    public var isRetired: Bool {
+        let retiredRawValues: Set<String> = [
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-8b",
+            "gemini-1.5-pro",
+            "gemini-1.0-pro",
+        ]
+        return retiredRawValues.contains(rawValue)
+    }
+}
+
+// MARK: - CaseIterable
+// Manual implementation required: @available(*, deprecated) on enum cases
+// breaks synthesized CaseIterable conformance in Swift.
+extension GeminiModel: CaseIterable {
+    public static var allCases: [GeminiModel] {
+        let active: [GeminiModel] = [
+            .gemini3Pro, .gemini3ProPreview, .gemini3Flash, .gemini3FlashPreview, .gemini31Pro,
+        ]
+        // Use rawValue init to include deprecated/retired cases without re-triggering warnings.
+        let legacy = [
+            "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro",
+            "gemini-2.0-flash", "gemini-2.0-flash-lite",
+            "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-1.0-pro",
+        ].compactMap(GeminiModel.init(rawValue:))
+        return active + legacy
+    }
 }
 
 extension OpenAIModel {
@@ -74,7 +225,7 @@ extension OpenAIModel {
 }
 
 extension OpenAI.ChatCompletionRequest {
-    public init(model: Gemini.Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, choose: @escaping ([Response.Choice]) -> Int = {_ in 0}) {
-        self.init(model: model.openAIModel, messages: messages, temperature: temperature, top_p: top_p, n: n, stream: stream, stream_options: stream_options, stop: stop, max_tokens: max_tokens, presence_penalty: presence_penalty, frequency_penalty: frequency_penalty, logit_bias: logit_bias, logprobs: logprobs, top_logprobs: top_logprobs, user: user, response_type: response_type, seed: seed, tools: tools, tool_choice: tool_choice, parallel_tool_calls: parallel_tool_calls, choose: choose)
+    public init(model: Gemini.Model, messages: [Message], temperature: Double? = nil, top_p: Double? = nil, n: Int? = nil, stream: Bool? = nil, stream_options: StreamOptions? = nil, stop: Stop? = nil, max_tokens: Int? = nil, presence_penalty: Double? = nil, frequency_penalty: Double? = nil, logit_bias: [String: Double]? = nil, logprobs: Bool? = nil, top_logprobs: Int? = nil, user: String? = nil, response_type: ResponseType? = nil, seed: Int? = nil, tools: [Tool]? = nil, tool_choice: ToolChoice? = nil, parallel_tool_calls: Bool? = nil, choose: @escaping ([Response.Choice]) -> Int = {_ in 0}, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = {_ in}) {
+        self.init(model: model.openAIModel, messages: messages, temperature: temperature, top_p: top_p, n: n, stream: stream, stream_options: stream_options, stop: stop, max_tokens: max_tokens, presence_penalty: presence_penalty, frequency_penalty: frequency_penalty, logit_bias: logit_bias, logprobs: logprobs, top_logprobs: top_logprobs, user: user, response_type: response_type, seed: seed, tools: tools, tool_choice: tool_choice, parallel_tool_calls: parallel_tool_calls, choose: choose, toolEventHandler: toolEventHandler)
     }
 }

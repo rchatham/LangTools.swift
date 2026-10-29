@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import LangTools
 
 public extension OpenAI {
@@ -95,12 +98,12 @@ public extension OpenAI {
     /// Returns a configured WebSocket task for communicating with the realtime API.
     public func realtimeWebSocketTask(clientSecret: String) throws -> URLSessionWebSocketTask {
         guard var components = URLComponents(url: configuration.baseURL, resolvingAgainstBaseURL: false) else {
-            throw LangToolError.invalidURL
+            throw LangToolsError.invalidURL
         }
         components.scheme = components.scheme == "http" ? "ws" : "wss"
         components.path = "/v1/realtime"
         guard let url = components.url else {
-            throw LangToolError.invalidURL
+            throw LangToolsError.invalidURL
         }
         var request = URLRequest(url: url)
         request.addValue("Bearer \(clientSecret)", forHTTPHeaderField: "Authorization")

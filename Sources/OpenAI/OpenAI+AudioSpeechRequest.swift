@@ -13,6 +13,7 @@ extension OpenAI {
     /// Generates audio from the input text.
     /// Learn more: [OpenAI Speech – Documentation](https://platform.openai.com/docs/api-reference/audio/createSpeech)
     public struct AudioSpeechRequest: Codable, LangToolsRequest, LangToolsTTSRequest {
+        public typealias Response = Data
         public typealias LangTool = OpenAI
         public static var endpoint: String { "audio/speech" }
 
@@ -67,7 +68,7 @@ extension OpenAI {
 private extension OpenAI.AudioSpeechRequest {
     static func validateSpeechModel(_ inputModel: OpenAI.Model) -> OpenAI.Model {
         guard [.tts_1, .tts_1_hd].contains(inputModel) else {
-            print("[AudioSpeech] 'AudioSpeechQuery' must have a valid Text-To-Speech model, 'tts-1' or 'tts-1-hd'. Setting model to 'tts-1'.")
+            // Invalid TTS model - silently default to tts-1
             return .tts_1
         }
         return inputModel
@@ -75,6 +76,11 @@ private extension OpenAI.AudioSpeechRequest {
 }
 
 public extension OpenAI.AudioSpeechRequest {
+    var speechText: String { input }
+    var speechVoiceIdentifier: String? { voice.rawValue }
+    var speechSpeed: Double? { speed }
+    var speechResponseFormat: String? { responseFormat?.rawValue }
+
     enum Speed: Double {
         case normal = 1.0
         case max = 4.0
@@ -84,7 +90,7 @@ public extension OpenAI.AudioSpeechRequest {
     static func normalizeSpeechSpeed(_ inputSpeed: Double?) -> Double? {
         guard let inputSpeed else { return nil }
         guard inputSpeed >= Speed.min.rawValue && inputSpeed <= Speed.max.rawValue else {
-            print("[AudioSpeech] Speed value must be between 0.25 and 4.0. Setting value to closest valid.")
+            // Speed out of range - silently clamp to valid range
             return min(max(Speed.min.rawValue, inputSpeed), Speed.max.rawValue)
         }
         return inputSpeed

@@ -7,8 +7,8 @@ extension Anthropic {
         public let description: String?
         let input_schema: InputSchema // JSON Schema object
         public var tool_schema: InputSchema { input_schema }
-        public var callback: (([String:JSON]) async throws -> String?)? = nil
-        public init(name: String, description: String?, tool_schema: InputSchema = InputSchema(properties: [:]), callback: (([String:JSON]) async throws -> String?)? = nil) {
+        public var callback: ((LangToolsRequestInfo, [String:JSON]) async throws -> String?)? = nil
+        public init(name: String, description: String?, tool_schema: InputSchema = InputSchema(properties: [:]), callback: ((LangToolsRequestInfo, [String:JSON]) async throws -> String?)? = nil) {
             self.name = name
             self.description = description
             self.input_schema = tool_schema

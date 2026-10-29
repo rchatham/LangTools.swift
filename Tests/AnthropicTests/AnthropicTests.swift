@@ -6,6 +6,9 @@
 //
 
 import XCTest
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 @testable import TestUtils
 @testable import Anthropic
 
@@ -22,13 +25,13 @@ class AnthropicTests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
 
     func testChat() async throws {
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             return (.success(try Anthropic.MessageResponse(
                 content: .string("Hi! My name is Claude."),
                 id: "",
@@ -40,12 +43,12 @@ class AnthropicTests: XCTestCase {
                 usage: .init(input_tokens: 10, output_tokens: 25)).data()), 200)
         }
         let messages = [Anthropic.Message(role: .user, content: "Hey!")]
-        let response = try await api.perform(request: Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages))
+        let response = try await api.perform(request: Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages))
         guard case .string(let str) = response.message?.content, str == "Hi! My name is Claude." else { return XCTFail("Failed to decode content") }
     }
 
     func testChatStream() async throws {
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { _ in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { _ in
             return (.success(try Anthropic.MessageResponse(
                 content: .string("Hi! My name is Claude."),
                 id: "testid",
@@ -58,7 +61,7 @@ class AnthropicTests: XCTestCase {
         }
         let messages = [Anthropic.Message(role: .user, content: "Hey!")]
         var results: [Anthropic.MessageResponse] = []
-        for try await response in api.stream(request: Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: messages)) {
+        for try await response in api.stream(request: Anthropic.MessageRequest(model: .claude46Sonnet, messages: messages)) {
             results.append(response)
         }
         guard let content = results.first?.message?.content.string else { return XCTFail("Failed to decode content") }
@@ -67,11 +70,11 @@ class AnthropicTests: XCTestCase {
     }
 
     func testChatStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { request in
             return (.success(try self.getData(filename: "message_stream_response", fileExtension: "txt")!), 200)
         }
         var results: [Anthropic.MessageResponse] = []
-        for try await response in api.stream(request: Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: [.init(role: .user, content: "Hi")], stream: true)) {
+        for try await response in api.stream(request: Anthropic.MessageRequest(model: .claude46Sonnet, messages: [.init(role: .user, content: "Hi")], stream: true)) {
             results.append(response)
         }
         let content = results.reduce("") { $0 + ($1.message?.content.string ?? $1.stream?.delta?.text ?? "") }
@@ -81,10 +84,10 @@ class AnthropicTests: XCTestCase {
     }
 
     func testToolCallStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { request in
             return (.success(try self.getData(filename: "message_stream_tool_use_response", fileExtension: "txt")!), 200)
         }
-        let request = Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: [.init(role: .user, content: "Hi")], stream: true)
+        let request = Anthropic.MessageRequest(model: .claude46Sonnet, messages: [.init(role: .user, content: "Hi")], stream: true)
         var results: [Anthropic.MessageResponse] = []
         for try await response in api.stream(request: request) {
             results.append(response)
@@ -97,7 +100,7 @@ class AnthropicTests: XCTestCase {
     }
 
     func testToolCallWithFunctionCallbackStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { request in
             return (.success(try self.getData(filename: "message_stream_tool_use_response", fileExtension: "txt")!), 200)
         }
         let tools: [Anthropic.Tool] = [.init(
@@ -115,12 +118,12 @@ class AnthropicTests: XCTestCase {
                 ],
                 required: ["location", "unit"]),
             callback: { _ in
-                MockURLProtocol.mockNetworkHandlers[Anthropic.MessageRequest.endpoint] = { request in
+                MockURLProtocol.setHandler(for: Anthropic.MessageRequest.endpoint) { request in
                     return (.success(try self.getData(filename: "message_stream_response", fileExtension: "txt")!), 200)
                 }
                 return "27"
             })]
-        let request = Anthropic.MessageRequest(model: .claude35Sonnet_20240620, messages: [.init(role: .user, content: "Hi")], stream: true, tools: tools)
+        let request = Anthropic.MessageRequest(model: .claude46Sonnet, messages: [.init(role: .user, content: "Hi")], stream: true, tools: tools)
         var results: [Anthropic.MessageResponse] = []
         for try await response in api.stream(request: request) {
             results.append(response)
@@ -132,6 +135,133 @@ class AnthropicTests: XCTestCase {
         XCTAssertEqual(results[28].stream?.delta?.stop_reason, .tool_use)
         let content = results.reduce("") { $0 + ($1.stream?.delta?.text ?? "") }
         XCTAssertEqual(content, "Okay, let's check the weather for San Francisco, CA:Hello!")
+    }
+
+    func testNewClaude4ModelsAvailable() throws {
+        // Test that new Claude 4.x models are available in the enum
+        let allModels = Anthropic.Model.allCases
+
+        // Test Claude 4.6 models
+        XCTAssertTrue(allModels.contains(.claude46Opus))
+        XCTAssertTrue(allModels.contains(.claude46Sonnet))
+
+        // Test Claude 4.5 models
+        XCTAssertTrue(allModels.contains(.claude45Opus_20251101))
+        XCTAssertTrue(allModels.contains(.claude45Sonnet_20250929))
+        XCTAssertTrue(allModels.contains(.claude45Haiku_20251001))
+
+        // Test Claude 4.1 Opus
+        XCTAssertTrue(allModels.contains(.claude41Opus_20250805))
+    }
+
+    func testNewClaude4ModelsEncodable() throws {
+        // Test that new models can be encoded to correct string values
+        let encoder = JSONEncoder()
+
+        // Claude 4.6 Opus
+        let opus46 = try encoder.encode(Anthropic.Model.claude46Opus)
+        XCTAssertEqual(String(data: opus46, encoding: .utf8), "\"claude-opus-4-6\"")
+
+        // Claude 4.6 Sonnet
+        let sonnet46 = try encoder.encode(Anthropic.Model.claude46Sonnet)
+        XCTAssertEqual(String(data: sonnet46, encoding: .utf8), "\"claude-sonnet-4-6\"")
+
+        // Claude 4.5 Haiku
+        let haiku45Dated = try encoder.encode(Anthropic.Model.claude45Haiku_20251001)
+        XCTAssertEqual(String(data: haiku45Dated, encoding: .utf8), "\"claude-haiku-4-5-20251001\"")
+    }
+
+    func testNewClaude4ModelsDecodable() throws {
+        // Test that new models can be decoded from string values
+        let decoder = JSONDecoder()
+
+        // Claude 4.6 Opus
+        let opus46Data = "\"claude-opus-4-6\"".data(using: .utf8)!
+        let opus46 = try decoder.decode(Anthropic.Model.self, from: opus46Data)
+        XCTAssertEqual(opus46, .claude46Opus)
+
+        // Claude 4.6 Sonnet
+        let sonnet46Data = "\"claude-sonnet-4-6\"".data(using: .utf8)!
+        let sonnet46 = try decoder.decode(Anthropic.Model.self, from: sonnet46Data)
+        XCTAssertEqual(sonnet46, .claude46Sonnet)
+
+        // Claude 4.5 Haiku
+        let haiku45Data = "\"claude-haiku-4-5-20251001\"".data(using: .utf8)!
+        let haiku45 = try decoder.decode(Anthropic.Model.self, from: haiku45Data)
+        XCTAssertEqual(haiku45, .claude45Haiku_20251001)
+    }
+
+    func testIsDeprecatedProperty() throws {
+        // Deprecated models should return true (use rawValue to avoid warnings).
+        XCTAssertTrue(Anthropic.Model(rawValue: "claude-sonnet-4-5-20250929")!.isDeprecated)
+
+        // Active models should return false
+        XCTAssertFalse(Anthropic.Model.claude46Opus.isDeprecated)
+        XCTAssertFalse(Anthropic.Model.claude46Sonnet.isDeprecated)
+        XCTAssertFalse(Anthropic.Model.claude45Haiku_20251001.isDeprecated)
+        XCTAssertFalse(Anthropic.Model.claude55Opus.isDeprecated)
+
+        // Retired models are not "deprecated" (they are retired); `isDeprecated` must return false.
+        XCTAssertFalse(Anthropic.Model(rawValue: "claude-3-7-sonnet-20250219")!.isDeprecated)
+        XCTAssertFalse(Anthropic.Model(rawValue: "claude-3-haiku-20240307")!.isDeprecated)
+        XCTAssertFalse(Anthropic.Model(rawValue: "claude-3-opus-20240229")!.isDeprecated)
+    }
+
+    func testIsRetiredProperty() throws {
+        // Retired models should return true.
+        // Use rawValue init to avoid triggering deprecated-use warnings in tests.
+        let retiredRawValues = [
+            "claude-opus-4-1-latest",
+            "claude-opus-4-1-20250805",
+            "claude-opus-4-20250514",
+            "claude-sonnet-4-20250514",
+            "claude-3-haiku-20240307",
+            "claude-3-7-sonnet-20250219",
+            "claude-3-5-haiku-20241022",
+            "claude-3-5-sonnet-latest",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-sonnet-20240620",
+            "claude-3-opus-latest",
+            "claude-3-opus-20240229",
+            "claude-3-sonnet-20240229",
+        ]
+        for raw in retiredRawValues {
+            let model = Anthropic.Model(rawValue: raw)!
+            XCTAssertTrue(model.isRetired, "\(raw) should be retired")
+        }
+
+        // Active models should return false
+        XCTAssertFalse(Anthropic.Model.claude46Opus.isRetired)
+        XCTAssertFalse(Anthropic.Model.claude46Sonnet.isRetired)
+        XCTAssertFalse(Anthropic.Model.claude55Opus.isRetired)
+
+        // Deprecated (but not yet retired) models should return false
+        XCTAssertFalse(Anthropic.Model(rawValue: "claude-sonnet-4-5-20250929")!.isRetired)
+    }
+
+    // MARK: - Content Block Decoding
+
+    /// Pins the strict `type`-dispatch decoding of content blocks: an unknown `type` must throw
+    /// rather than being silently accepted (the old try-each-shape fallback could misdecode it
+    /// as text). Guards against a fixture or API change reintroducing lenient decoding.
+    func testContentBlockDecodingRejectsUnknownType() {
+        let unknown = #"[{"type":"bogus","text":"hi"}]"#.data(using: .utf8)!
+        XCTAssertThrowsError(try JSONDecoder().decode([Anthropic.Message.Content.ContentType].self, from: unknown)) { error in
+            guard case DecodingError.dataCorrupted = error else {
+                return XCTFail("Expected dataCorrupted for unknown content type, got \(error)")
+            }
+        }
+    }
+
+    /// A block with no `type` field must also throw — it previously decoded as TextContent via
+    /// the fallback chain, hiding malformed payloads.
+    func testContentBlockDecodingRejectsMissingType() {
+        let missing = #"[{"text":"hi"}]"#.data(using: .utf8)!
+        XCTAssertThrowsError(try JSONDecoder().decode([Anthropic.Message.Content.ContentType].self, from: missing)) { error in
+            guard case DecodingError.keyNotFound = error else {
+                return XCTFail("Expected keyNotFound for missing content type, got \(error)")
+            }
+        }
     }
 }
 

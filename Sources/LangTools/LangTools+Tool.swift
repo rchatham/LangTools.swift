@@ -12,16 +12,16 @@ public protocol LangToolsTool: Codable {
     var name: String { get }
     var description: String? { get }
     var tool_schema: ToolSchema { get } // JSON Schema object
-    var callback: (([String:JSON]) async throws -> String?)? { get }
-    init(name: String, description: String?, tool_schema: ToolSchema, callback: (([String:JSON]) async throws -> String?)?)
+    var callback: ((LangToolsRequestInfo, [String:JSON]) async throws -> String?)? { get }
+    init(name: String, description: String?, tool_schema: ToolSchema, callback: ((LangToolsRequestInfo, [String:JSON]) async throws -> String?)?)
 }
 
 extension LangToolsTool {
-    public init(_ tool: any LangToolsTool) {
-        self.init(name: tool.name, description: tool.description, tool_schema: ToolSchema(tool.tool_schema), callback: tool.callback)
-    }
     public init(name: String, description: String?, tool_schema: ToolSchema, callback: (([String:JSON]) async throws -> String?)?) {
-        fatalError("Not implemented for the current tool. Must instantiate using a different initializer.")
+        self.init(name: name, description: description, tool_schema: tool_schema) { try await callback?($1) }
+    }
+    public init(_ tool: any LangToolsTool) {
+        self.init(name: tool.name, description: tool.description, tool_schema: ToolSchema(tool.tool_schema), callback: { try await tool.callback?($0, $1) })
     }
 }
 
@@ -57,8 +57,9 @@ public struct Tool: Codable, LangToolsTool {
     public var description: String?
     public var tool_schema: ToolSchema<ToolSchemaProperty>
     @CodableIgnored
-    public var callback: (([String:JSON]) async throws -> String?)? = nil
-    public init(name: String, description: String?, tool_schema: ToolSchema<ToolSchemaProperty>, callback: (([String:JSON]) async throws -> String?)? = nil) {
+    public var callback: ((LangToolsRequestInfo, [String : JSON]) async throws -> String?)?
+
+    public init(name: String, description: String?, tool_schema: ToolSchema<ToolSchemaProperty>, callback: ((LangToolsRequestInfo, [String:JSON]) async throws -> String?)? = nil) {
         self.name = name
         self.description = description
         self.tool_schema = tool_schema

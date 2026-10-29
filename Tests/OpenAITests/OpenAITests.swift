@@ -6,6 +6,9 @@
 //
 
 import XCTest
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 @testable import TestUtils
 @testable import OpenAI
 
@@ -22,13 +25,13 @@ class OpenAITests: XCTestCase {
     }
 
     override func tearDown() {
-        MockURLProtocol.mockNetworkHandlers.removeAll()
+        MockURLProtocol.resetHandlers()
         URLProtocol.unregisterClass(MockURLProtocol.self)
         super.tearDown()
     }
 
     func testChatStream() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try OpenAI.ChatCompletionResponse(
                 id: "testid",
                 object: "chat.completion.chunk",
@@ -57,8 +60,39 @@ class OpenAITests: XCTestCase {
         XCTAssertEqual(content, "Hello, how are you?")
     }
 
+    func testResponsesStreamUsesResponsesEndpointAndUpdatesToolMetadata() async throws {
+        MockURLProtocol.setHandler(for: OpenAI.ResponsesRequest.endpoint) { request in
+            XCTAssertEqual(request.url?.path, "/v1/responses")
+
+            let data = Data("""
+            event: response.output_item.added
+            data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_123","name":"get_weather","arguments":""}}
+            event: response.function_call_arguments.delta
+            data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{}"}
+            data: [DONE]
+
+            """.utf8)
+            return (.success(data), 200)
+        }
+
+        let request = OpenAI.ResponsesRequest(
+            model: .gpt4o_mini,
+            messages: [.init(role: .user, content: "Use a tool")],
+            stream: true
+        )
+        var results: [OpenAI.ResponsesResponse] = []
+        for try await response in api.stream(request: request) {
+            results.append(response)
+        }
+
+        XCTAssertEqual(results.count, 2)
+        XCTAssertEqual(results.last?.delta?.tool_calls?.first?.id, "call_123")
+        XCTAssertEqual(results.last?.delta?.tool_calls?.first?.name, "get_weather")
+        XCTAssertEqual(results.last?.delta?.tool_calls?.first?.arguments, "{}")
+    }
+
     func testChatStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try self.getData(filename: "assistant_response_stream", fileExtension: "txt")!), 200)
         }
         var results: [OpenAI.ChatCompletionResponse] = []
@@ -138,7 +172,7 @@ class OpenAITests: XCTestCase {
     }
 
     func testToolCallStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try self.getData(filename: "tool_call_stream", fileExtension: "txt")!), 200)
         }
 
@@ -201,7 +235,7 @@ class OpenAITests: XCTestCase {
     }
 
     func testAudioStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try self.getData(filename: "audio_response_stream", fileExtension: "txt")!), 200)
         }
 
@@ -240,7 +274,7 @@ class OpenAITests: XCTestCase {
     }
 
     func testToolCallWithFunctionCallbackStreamResponse() async throws {
-        MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
             return (.success(try self.getData(filename: "tool_call_stream", fileExtension: "txt")!), 200)
         }
         let tools: [OpenAI.Tool] = [.function(.init(
@@ -257,8 +291,8 @@ class OpenAITests: XCTestCase {
                         description: "The temperature unit to use. Infer this from the users location.")
                 ],
                 required: ["location", "format"]),
-            callback: { _ in
-                MockURLProtocol.mockNetworkHandlers[OpenAI.ChatCompletionRequest.endpoint] = { request in
+            callback: { _,_ in
+                MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { request in
                     return (.success(try self.getData(filename: "tool_call_stream_response", fileExtension: "txt")!), 200)
                 }
                 return "27"

@@ -55,6 +55,15 @@ public extension OpenAI {
             refusal = nil
         }
 
+        internal init(copying message: Self, role: Role) {
+            self.role = role
+            content = message.content
+            name = message.name
+            tool_calls = message.tool_calls
+            audio = message.audio
+            refusal = message.refusal
+        }
+
         public init(tool_selection_id: String, result: String) {
             role = .tool
             content = Content.array([.toolResult(.init(tool_selection_id: tool_selection_id, result: result))])
@@ -89,12 +98,8 @@ public extension OpenAI {
             case .system, .developer, .assistant: if case .array(_) = content { throw MessageError.invalidContent }
             }
 
-            if role != .assistant, let tool_calls = tool_calls {
-                print("\(role.rawValue.capitalized) is not able to use tool calls: \(tool_calls.description). Please check your configuration, only assistant messages are allowed to contain tool calls")
-            }
-            if role != .tool, case .array(let arr) = content, case .toolResult(let tool) = arr[0] {
-                print("\(role.rawValue.capitalized) can not have tool_call_id: \(tool.tool_selection_id). Please check your configuration, only tool meesages may have a tool_call_id.")
-            }
+            // Note: tool_calls on non-assistant roles and tool_call_id on non-tool roles
+            // are silently ignored per OpenAI API behavior
 
             self.role = role
             self.content = content
@@ -106,12 +111,19 @@ public extension OpenAI {
 
         public func encode(to encoder: any Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(role, forKey: .role)
-            if let tool_call_id, let toolResult {
-                try container.encode(tool_call_id, forKey: .tool_call_id)
-                try container.encode(Content.string(toolResult.result), forKey: .content)
-            } else {
-                try container.encode(content, forKey: .content)
+            try container.encode(role.rawValue, forKey: .role)
+            switch content {
+            case .string(let text):
+                try container.encode(text, forKey: .content)
+            case .null:
+                try container.encodeNil(forKey: .content)
+            case .array(let parts):
+                if case .toolResult(let result) = parts.first {
+                    try container.encode(result.tool_selection_id, forKey: .tool_call_id)
+                    try container.encode(result.result, forKey: .content)
+                } else {
+                    try container.encode(parts, forKey: .content)
+                }
             }
             try container.encodeIfPresent(name, forKey: .name)
             try container.encodeIfPresent(tool_calls, forKey: .tool_calls)
@@ -192,13 +204,29 @@ public extension OpenAI {
                 case refusal(RefusalContent)
                 case toolResult(ToolResultContent)
 
+                public var toolResultContentType: LangToolsToolResultContentType? { if case .toolResult(let result) = self { return result }; return nil }
+
                 public init(_ contentType: any LangToolsContentType) throws {
                     if let text = contentType.textContentType {
                         self = .text(try .init(text))
+                    } else if let image = contentType.imageContentType {
+                        guard let openAIImage = image as? ImageContent else {
+                            throw LangToolsError.invalidContentType
+                        }
+                        self = .image(openAIImage)
+                    } else if let audio = contentType.audioContentType {
+                        guard let openAIAudio = audio as? AudioContent else {
+                            throw LangToolsError.invalidContentType
+                        }
+                        self = .audio(openAIAudio)
+                    } else if let toolResult = contentType.toolResultContentType {
+                        self = .toolResult(ToolResultContent(
+                            tool_selection_id: toolResult.tool_selection_id,
+                            result: toolResult.result,
+                            is_error: toolResult.is_error
+                        ))
                     } else {
-                        // TODO: - implement audio and image
-                        fatalError("Implement audio and image first ya dingus!")
-                        //throw LangToolError.invalidContentType
+                        throw LangToolsError.invalidContentType
                     }
                 }
 
@@ -313,7 +341,7 @@ public extension OpenAI {
                 }
             }
 
-            public struct ToolResultContent: LangToolsToolSelectionResult {
+            public struct ToolResultContent: LangToolsToolResultContentType {
                 public var tool_selection_id: String
                 public var result: String
                 public var is_error: Bool = false
@@ -322,14 +350,23 @@ public extension OpenAI {
                     self.result = result
                     self.is_error = is_error
                 }
+                public init(_ contentType: any LangToolsContentType) throws {
+                    if let toolResult = contentType.toolResultContentType {
+                        tool_selection_id = toolResult.tool_selection_id
+                        result = toolResult.result
+                        is_error = toolResult.is_error
+                    } else {
+                        throw LangToolsError.invalidContentType
+                    }
+                }
                 enum CodingKeys: CodingKey { case tool_selection_id, result }
             }
 
             public init(from decoder: Decoder) throws {
                 let container = try decoder.singleValueContainer()
-                if let str = try? container.decode(String.self) { self = .string(str) }
-                else if let arr = try? container.decode([ContentType].self) { self = .array(arr) }
-                else if container.decodeNil() { self = .null }
+                if container.decodeNil() { self = .null }
+                else if let str = try? container.decode(String.self) { self = .string(str) }
+                else if let arr = try? container.decode([LenientContentType].self) { self = .array(arr.compactMap(\.part)) }  // Skips unknown part types.
                 else { throw DecodingError.typeMismatch(Content.self, DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Unknown content type")) }
             }
 
@@ -410,5 +447,32 @@ public extension OpenAI {
                 }
             }
         }
+    }
+}
+
+extension OpenAI.Message.Content {
+    /// A content part that decodes to nil instead of failing on an unknown type.
+    fileprivate struct LenientContentType: Decodable {
+        let part: ContentType?
+        init(from decoder: Decoder) throws { part = try? ContentType(from: decoder) }
+    }
+}
+
+extension OpenAI.Message.Delta {
+    private enum DecodingKeys: String, CodingKey { case role, content, tool_calls, audio, refusal }
+    private struct ContentPart: Decodable { let type: String?; let text: String? }
+
+    /// `content` may be a string or, from some compatible providers, typed parts whose text is joined.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DecodingKeys.self)
+        let parts = try? container.decode([ContentPart].self, forKey: .content)
+        let content = (try? container.decodeIfPresent(String.self, forKey: .content)) ?? parts.map { $0.filter { ($0.type ?? "text") == "text" }.compactMap(\.text).joined() }
+        self.init(
+            role: try container.decodeIfPresent(OpenAI.Message.Role.self, forKey: .role),
+            content: content,
+            tool_calls: try container.decodeIfPresent([OpenAI.Message.ToolCall].self, forKey: .tool_calls),
+            audio: try container.decodeIfPresent(OpenAI.Message.AudioResponse.self, forKey: .audio),
+            refusal: try container.decodeIfPresent(String.self, forKey: .refusal)
+        )
     }
 }
