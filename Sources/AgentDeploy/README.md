@@ -130,6 +130,26 @@ let result = try await fleet.waitForResult(of: runID, on: "helper", timeout: 600
 print(result.output ?? result.error ?? "")
 ```
 
+### Subagents on workers
+
+`WorkerSubagent` turns a spec and a worker into a tool an agent can call. The calling model passes a `task` (and optional `context`); the tool appends it to the spec's messages as a user message, runs it on the worker, and returns the subagent's output:
+
+```swift
+let researcher = try WorkerSubagent(
+    toolName: "research",
+    spec: AgentSpec.decode(from: Data(contentsOf: researcherSpecURL)),
+    worker: "helper",
+    timeout: 600
+)
+
+struct Assistant: Agent {
+    // ...
+    var tools: [any LangToolsTool]? { [researcher.tool(fleet: fleet)] }
+}
+```
+
+The spec fixes the subagent's provider, model, instructions and tools, so the calling model can't change which keys or tools the worker uses. Failures (the subagent failed, the worker is unreachable, or it ran past `timeout`) come back to the model as text rather than ending the parent's run; a timeout includes the run ID, and the job keeps running on the worker. For an isolated worker, pass its `owner`.
+
 `AgentFleet` runs `docker`, `ssh` and `doctl` as processes, so it works in macOS and Linux command-line tools and servers, not in sandboxed iOS apps.
 
 ## Limits
