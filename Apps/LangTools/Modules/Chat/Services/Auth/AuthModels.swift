@@ -37,6 +37,8 @@ public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
     case claudeCode
     case xAI
     case gemini
+    // OpenAI-compatible providers; raw values match `CompatibleProvider`.
+    case openrouter, vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
 
     public var id: String { rawValue }
 
@@ -46,6 +48,8 @@ public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
         case .anthropic, .claudeCode: return .anthropic
         case .xAI: return .xAI
         case .gemini: return .gemini
+        case .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
+            return CompatibleProvider(rawValue: rawValue)!.service
         }
     }
 
@@ -73,6 +77,8 @@ public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
         case .claudeCode: return "Claude Code"
         case .xAI: return "xAI"
         case .gemini: return "Gemini"
+        case .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
+            return CompatibleProvider(rawValue: rawValue)!.displayName
         }
     }
 
@@ -84,7 +90,9 @@ public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
         case .claudeCode: return .claudeCode
         case .xAI: return .xAI
         case .gemini: return .gemini
-        case .ollama: return nil
+        case .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
+            return CompatibleProvider(rawValue: model.route.rawValue)!.accessDestination
+        case .ollama, .apple: return nil
         }
     }
 
@@ -94,7 +102,9 @@ public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
         case .anthropic: return .anthropic
         case .xAI: return .xAI
         case .gemini: return .gemini
-        case .ollama, .serper: return nil
+        case .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
+            return CompatibleProvider(service: service)!.accessDestination
+        case .ollama, .apple, .serper: return nil
         }
     }
 }
@@ -322,10 +332,12 @@ public struct ProviderAccessState: Equatable, Identifiable {
             return "Add an API key for API requests or sign in with OpenAI to unlock account-based model access."
         case .anthropic:
             return "Add an Anthropic API key or sign in with Claude Code for account-based access."
-        case .xAI, .gemini:
+        case .xAI, .gemini, .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
             return "Add an API key to enable this provider."
         case .ollama:
             return "Local models do not require sign-in."
+        case .apple:
+            return "Apple Intelligence runs on-device and does not require sign-in."
         case .serper:
             return "Add a Serper API key for search."
         }

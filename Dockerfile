@@ -26,5 +26,6 @@ COPY Tests ./Tests
 # Build the package
 RUN swift build
 
-# Default command runs tests
-CMD ["swift", "test", "--parallel"]
+# Default command runs tests serially: several suites share process-global
+# MockURLProtocol state.
+CMD ["swift", "test", "--no-parallel"]

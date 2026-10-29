@@ -14,17 +14,20 @@ public final class ProviderAccessManager: ObservableObject {
     private let keychainService: KeychainService
     private let sessionStore: AuthSessionStore
     private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
+    private let compatibleCatalog: CompatibleModelCatalog
     private let stateLock = NSLock()
     private var refreshGeneration: UInt64 = 0
 
     public init(
         keychainService: KeychainService = .shared,
         sessionStore: AuthSessionStore = .shared,
-        ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared
+        ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared,
+        compatibleCatalog: CompatibleModelCatalog = .shared
     ) {
         self.keychainService = keychainService
         self.sessionStore = sessionStore
         self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
+        self.compatibleCatalog = compatibleCatalog
         refresh()
     }
 
@@ -104,6 +107,7 @@ public final class ProviderAccessManager: ObservableObject {
         statesForAccessUI()
             .flatMap(\.availableModels)
             + state(for: .ollama).availableModels
+            + state(for: .apple).availableModels
     }
 
     public func validateSelectedModel(_ model: Model) -> Model {
@@ -111,7 +115,9 @@ public final class ProviderAccessManager: ObservableObject {
         if available.contains(model) || model.apiService == .ollama {
             return model
         }
-        return available.first ?? model
+        // The on-device Apple model is listed whenever the OS supports it, so it
+        // must not silently replace a selection whose provider is unconfigured.
+        return available.first { $0.apiService != .apple } ?? model
     }
 
     public func accessibleModelIDs(for service: APIService) -> [String] {
@@ -154,8 +160,8 @@ public final class ProviderAccessManager: ObservableObject {
                 accountIdentifier: claudeCodeSession?.accountIdentifier
             ),
             accessState(for: .xAI),
-            accessState(for: .gemini)
-        ]
+            accessState(for: .gemini),
+        ] + CompatibleProvider.allCases.map { accessState(for: $0.accessDestination) }
     }
 
     private func accessState(for destination: AccessDestination) -> ProviderAccessState {
@@ -169,7 +175,7 @@ public final class ProviderAccessManager: ObservableObject {
     }
 
     public func unavailableReason(for state: ProviderAccessState) -> String? {
-        guard state.service != .ollama, state.service != .serper else { return nil }
+        guard state.service != .ollama, state.service != .apple, state.service != .serper else { return nil }
         if state.authStatus == .notConfigured {
             switch state.accessDestination {
             case .openAI:
@@ -217,6 +223,9 @@ public final class ProviderAccessManager: ObservableObject {
         if service == .ollama {
             return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
         }
+        if service == .apple {
+            return Model.appleModels
+        }
 
         let hasAPIKey = apiKey?.isEmpty == false
         let hasSession = session != nil
@@ -241,7 +250,7 @@ public final class ProviderAccessManager: ObservableObject {
                     guard let model = Anthropic.Model(rawValue: slug) else { return nil }
                     return .claudeCode(model)
                 }
-            case .xAI, .gemini, .ollama, .serper:
+            case .xAI, .gemini, .ollama, .apple, .serper, .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
                 parsed = session.accessibleModelIDs.compactMap(Model.init(rawValue:))
             }
             return parsed
@@ -258,8 +267,13 @@ public final class ProviderAccessManager: ObservableObject {
                 return XAI.Model.allCases.map { .xAI($0) }
             case .gemini:
                 return Gemini.Model.allCases.map { .gemini($0) }
+            case .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
+                let provider = CompatibleProvider(service: service)!
+                return compatibleCatalog.modelIDs(for: provider).map { .compatible(provider, $0) }
             case .ollama:
                 return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
+            case .apple:
+                return Model.appleModels
             case .serper:
                 return []
             }

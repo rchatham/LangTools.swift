@@ -29,7 +29,7 @@ extension OpenAI {
         public typealias Response = ChatCompletionResponse
         public static var endpoint: String { "chat/completions" }
 
-        public let model: Model
+        public private(set) var model: Model
         public var messages: [Message]
         public let temperature: Double?
         public let top_p: Double?
@@ -57,6 +57,22 @@ extension OpenAI {
         public let audio: AudioConfig?
         public let reasoning_effort: ReasoningEffort?
         public let metadata: [String: String]?
+
+        /// Provider-specific body fields without a typed property, such as OpenRouter's
+        /// `provider`; encoding throws for a key in `reservedParameterKeys`. Not decoded.
+        public var additionalParameters: [String: JSON]? = nil
+
+        /// The body keys typed properties encode.
+        public static var reservedParameterKeys: Set<String> {
+            Set(CodingKeys.allCases.filter { $0 != ._choose && $0 != .toolEventHandler }.map(\.stringValue))
+        }
+
+        /// A copy whose model carries `providerID` for toolchain routing (not encoded).
+        public func routed(to providerID: LangToolsProviderID) -> Self {
+            var request = self
+            request.model.providerID = providerID
+            return request
+        }
 
         @CodableIgnored
         var _choose: (([Response.Choice]) -> Int)?
@@ -178,9 +194,21 @@ extension OpenAI {
             if let audio { try container.encode(audio, forKey: .audio) }
             if let reasoning_effort { try container.encode(reasoning_effort, forKey: .reasoning_effort) }
             if let metadata { try container.encode(metadata, forKey: .metadata) }
+            guard let additionalParameters else { return }
+            if let conflict = additionalParameters.keys.sorted().first(where: Self.reservedParameterKeys.contains) {
+                throw LangToolsError.invalidArgument("additionalParameters cannot set '\(conflict)'; use the typed property instead")
+            }
+            var extra = encoder.container(keyedBy: AdditionalParameterKey.self)
+            for (key, value) in additionalParameters { try extra.encode(value, forKey: AdditionalParameterKey(stringValue: key)) }
         }
 
-        private enum CodingKeys: String, CodingKey {
+        private struct AdditionalParameterKey: CodingKey {
+            let stringValue: String, intValue: Int? = nil
+            init(stringValue: String) { self.stringValue = stringValue }
+            init?(intValue: Int) { nil }
+        }
+
+        private enum CodingKeys: String, CodingKey, CaseIterable {
             case model, messages, temperature, top_p, n, stream, stream_options, stop
             case max_tokens, max_completion_tokens, presence_penalty, frequency_penalty
             case logit_bias, logprobs, top_logprobs, user, response_format, seed, tools
@@ -450,6 +478,8 @@ extension OpenAI {
         public var choices: [Choice]
         public let usage: Usage?
         public let service_tier: ServiceTier?
+        /// An error inside a 200 response or stream chunk, as gateways such as OpenRouter send.
+        public let error: ResponseError?
 
         @CodableIgnored
         public var choose: (([Choice]) -> Int)?
@@ -460,7 +490,7 @@ extension OpenAI {
             return choices.indices.contains(index) ? choices[index].message?.content.string : nil
         }
 
-        public init(id: String?, object: String, created: Int, model: String?, system_fingerprint: String?, choices: [Choice], usage: Usage?, service_tier: ServiceTier?, choose: (([Choice]) -> Int)?) {
+        public init(id: String?, object: String, created: Int, model: String?, system_fingerprint: String?, choices: [Choice], usage: Usage?, service_tier: ServiceTier?, error: ResponseError? = nil, choose: (([Choice]) -> Int)?) {
             self.id = id
             self.object = object
             self.created = created
@@ -469,7 +499,47 @@ extension OpenAI {
             self.choices = choices
             self.usage = usage
             self.service_tier = service_tier
+            self.error = error
             self.choose = choose
+        }
+
+        private enum CodingKeys: String, CodingKey { case id, object, created, model, system_fingerprint, choices, usage, service_tier, error }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decodeIfPresent(String.self, forKey: .id)
+            object = try container.decode(String.self, forKey: .object)
+            created = try container.decode(Int.self, forKey: .created)
+            model = try container.decodeIfPresent(String.self, forKey: .model)
+            system_fingerprint = try container.decodeIfPresent(String.self, forKey: .system_fingerprint)
+            choices = try container.decodeIfPresent([Choice].self, forKey: .choices) ?? []  // Absent from error chunks.
+            usage = try container.decodeIfPresent(Usage.self, forKey: .usage)
+            service_tier = try? container.decodeIfPresent(ServiceTier.self, forKey: .service_tier)  // Unknown tiers read as nil.
+            error = try container.decodeIfPresent(ResponseError.self, forKey: .error)
+            choose = nil
+        }
+
+        public func validateStreamChunk() throws {
+            if let error { throw LangToolsError.apiError(error) }
+        }
+
+        /// An in-band error. `code` is a string such as `"server_error"`, or an integer
+        /// status (OpenRouter) as text; `metadata` carries provider detail.
+        public struct ResponseError: Error, Codable, LocalizedError {
+            public let message: String, code: String?, type: String?, param: String?, metadata: JSON?
+            public var errorDescription: String? { code.map { "\(message) (\($0))" } ?? message }
+
+            public init(message: String, code: String? = nil, type: String? = nil, param: String? = nil, metadata: JSON? = nil) {
+                (self.message, self.code, self.type, self.param, self.metadata) = (message, code, type, param, metadata)
+            }
+
+            private enum CodingKeys: String, CodingKey { case message, code, type, param, metadata }
+
+            public init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                let code = (try? container.decodeIfPresent(String.self, forKey: .code)) ?? (try? container.decodeIfPresent(Int.self, forKey: .code)).map(String.init)
+                self.init(message: try container.decode(String.self, forKey: .message), code: code, type: try container.decodeIfPresent(String.self, forKey: .type), param: try container.decodeIfPresent(String.self, forKey: .param), metadata: try container.decodeIfPresent(JSON.self, forKey: .metadata))
+            }
         }
 
         public struct Choice: Codable, LangToolsMultipleChoiceChoice {
@@ -487,9 +557,21 @@ extension OpenAI {
                 self.logprobs = logprobs
             }
 
+            private enum CodingKeys: String, CodingKey { case index, message, finish_reason, delta, logprobs }
+
+            public init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                index = try container.decode(Int.self, forKey: .index)
+                message = try container.decodeIfPresent(Message.self, forKey: .message)
+                finish_reason = try? container.decodeIfPresent(FinishReason.self, forKey: .finish_reason)  // Providers add their own.
+                delta = try container.decodeIfPresent(Message.Delta.self, forKey: .delta)
+                logprobs = try container.decodeIfPresent(LogProbs.self, forKey: .logprobs)
+            }
+
             public enum FinishReason: String, Codable {//, LangToolsFinishReason {
                 case stop, length, content_filter, tool_calls
                 case function_call // Deprecated
+                case error // A gateway's in-stream failure; the chunk also carries `error`.
             }
 
             public struct LogProbs: Codable {
@@ -584,6 +666,17 @@ extension OpenAI {
                     self.rejected_prediction_tokens = rejected_prediction_tokens
                     self.audio_tokens = audio_tokens
                 }
+
+                private enum CodingKeys: String, CodingKey { case reasoning_tokens, accepted_prediction_tokens, rejected_prediction_tokens, audio_tokens }
+
+                /// Compatible providers omit counts their upstream lacks; absent counts read as zero.
+                public init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    reasoning_tokens = try container.decodeIfPresent(Int.self, forKey: .reasoning_tokens) ?? 0
+                    accepted_prediction_tokens = try container.decodeIfPresent(Int.self, forKey: .accepted_prediction_tokens) ?? 0
+                    rejected_prediction_tokens = try container.decodeIfPresent(Int.self, forKey: .rejected_prediction_tokens) ?? 0
+                    audio_tokens = try container.decodeIfPresent(Int.self, forKey: .audio_tokens)
+                }
             }
 
             public struct PromptTokensDetails: Codable {
@@ -594,6 +687,14 @@ extension OpenAI {
                     self.audio_tokens = audio_tokens
                     self.cached_tokens = cached_tokens
                 }
+
+                private enum CodingKeys: String, CodingKey { case audio_tokens, cached_tokens }
+
+                public init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    audio_tokens = try container.decodeIfPresent(Int.self, forKey: .audio_tokens) ?? 0
+                    cached_tokens = try container.decodeIfPresent(Int.self, forKey: .cached_tokens) ?? 0
+                }
             }
         }
 
@@ -602,7 +703,7 @@ extension OpenAI {
         }
 
         public func combining(with next: ChatCompletionResponse) -> ChatCompletionResponse {
-            return ChatCompletionResponse(id: next.id, object: next.object, created: next.created, model: next.model, system_fingerprint: next.system_fingerprint, choices: combining(choices, with: next.choices), usage: next.usage, service_tier: next.service_tier, choose: choose ?? next.choose)
+            return ChatCompletionResponse(id: next.id, object: next.object, created: next.created, model: next.model, system_fingerprint: next.system_fingerprint, choices: combining(choices, with: next.choices), usage: next.usage, service_tier: next.service_tier, error: next.error ?? error, choose: choose ?? next.choose)
         }
 
         func combining(_ choices: [Choice], with next: [Choice]) -> [Choice] {

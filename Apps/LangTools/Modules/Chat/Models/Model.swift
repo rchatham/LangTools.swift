@@ -10,6 +10,7 @@ import Anthropic
 import XAI
 import Gemini
 import Ollama
+import AppleLangTools
 
 public enum ModelRoute: String, Codable, Hashable {
     case openAI = "openai"
@@ -19,6 +20,9 @@ public enum ModelRoute: String, Codable, Hashable {
     case xAI = "xai"
     case gemini = "gemini"
     case ollama = "ollama"
+    case apple = "apple"
+    // OpenAI-compatible providers; raw values match `CompatibleProvider`.
+    case openrouter, vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
 }
 
 public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiable, Equatable {
@@ -29,9 +33,14 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
     case xAI(XAI.Model)
     case gemini(Gemini.Model)
     case ollama(Ollama.Model)
+    case apple(AppleIntelligence.Model)
+    /// A model on an OpenAI-compatible provider, stored as `<provider>/<model-id>`
+    /// (e.g. `openrouter/anthropic/claude-sonnet-4.5`).
+    case compatible(CompatibleProvider, String)
 
     public init?(rawValue: String) {
-        let components = rawValue.split(separator: "/", maxSplits: 1).map(String.init)
+        // Keep an empty slug ("groq/") so it is rejected rather than read as an Ollama name.
+        let components = rawValue.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
         if components.count == 2 {
             let route = components[0]
             let slug = components[1]
@@ -58,8 +67,13 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             case ModelRoute.ollama.rawValue:
                 guard let model = Ollama.Model(rawValue: slug) else { return nil }
                 self = .ollama(model)
+            case ModelRoute.apple.rawValue:
+                guard let model = AppleIntelligence.Model(rawValue: slug) else { return nil }
+                self = .apple(model)
             default:
-                return nil
+                guard let provider = CompatibleProvider(rawValue: route),
+                      let id = CompatibleProvider.validModelID(slug) else { return nil }
+                self = .compatible(provider, id)
             }
             return
         }
@@ -88,6 +102,10 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             return model.rawValue
         case .ollama(let model):
             return model.rawValue
+        case .apple(let model):
+            return model.rawValue
+        case .compatible(_, let id):
+            return id
         }
     }
 
@@ -107,6 +125,10 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             return .gemini
         case .ollama:
             return .ollama
+        case .apple:
+            return .apple
+        case .compatible(let provider, _):
+            return provider.route
         }
     }
 
@@ -119,8 +141,20 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         + Gemini.Model.allCases.map { .gemini($0) }
 
         let ollamaModels = OllamaEndpointConfiguration.shared.cachedModels().map { Model.ollama($0) }
+        return standardModels + ollamaModels + compatibleModels(catalog: .shared) + appleModels
+    }
 
-        return standardModels + ollamaModels
+    /// On-device Apple Intelligence models, listed whenever the OS ships
+    /// Foundation Models. Runtime readiness (Apple Intelligence enabled, model
+    /// downloaded) is reported when a request is made.
+    public static var appleModels: [Model] {
+        AppleIntelligence.isSupportedOnThisOS ? [.apple(.onDevice)] : []
+    }
+
+    static func compatibleModels(catalog: CompatibleModelCatalog) -> [Model] {
+        CompatibleProvider.allCases.flatMap { provider in
+            catalog.modelIDs(for: provider).map { .compatible(provider, $0) }
+        }
     }
 
     public static var chatModels: [Model] {
@@ -129,6 +163,8 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
         + OllamaEndpointConfiguration.shared.cachedModels().map { .ollama($0) }
+        + appleModels
+        + compatibleModels(catalog: .shared)
     }
 
     public var apiService: APIService {
@@ -138,7 +174,14 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         case .xAI: return .xAI
         case .gemini: return .gemini
         case .ollama: return .ollama
+        case .apple: return .apple
+        case .compatible(let provider, _): return provider.service
         }
+    }
+
+    /// The provider or access route a model belongs to, used to group the picker.
+    public var providerDisplayName: String {
+        AccessDestination.destination(for: self)?.displayName ?? apiService.displayName
     }
 
     public static func availableChatModels(accessManager: ProviderAccessManager = .shared) -> [Model] {
@@ -156,6 +199,7 @@ public struct ChatGenerationCapabilities: Equatable, Sendable {
         case openAIMaxCompletionTokens
         case anthropicMaxTokens
         case ollamaNumPredict
+        case appleMaximumResponseTokens
     }
 
     public let maximumOutputField: MaximumOutputField?
@@ -243,6 +287,19 @@ public extension Model {
                 supportsStop: true,
                 contextWindowTokens: nil
             )
+        case .apple:
+            // GenerationOptions supports temperature, a response-token cap, and
+            // top-k / top-p sampling with an optional seed.
+            return .init(
+                maximumOutputField: .appleMaximumResponseTokens,
+                maximumOutputTokenBound: AppleIntelligence.Model.contextWindowTokens,
+                maximumOutputWarning: "The on-device context window is shared by instructions, history, and the response.",
+                supportsTemperature: true,
+                supportsTopP: true,
+                supportsTopK: true,
+                supportsSeed: true,
+                contextWindowTokens: AppleIntelligence.Model.contextWindowTokens
+            )
         case .gemini(let model):
             guard let bound = Self.geminiGenerationModelBounds[model.rawValue] else {
                 return Self.unsupportedGenerationCapabilities
@@ -254,9 +311,27 @@ public extension Model {
                 supportsTopP: true,
                 supportsFrequencyPenalty: true,
                 supportsPresencePenalty: true,
+                supportsTopK: true,
                 supportsSeed: true,
                 supportsStop: true,
                 contextWindowTokens: Self.geminiContextWindows[model.rawValue]
+            )
+        case .compatible(let provider, let id):
+            // Limits vary by model, so only the app guard applies. Parameters a
+            // provider rejects are dropped or renamed by its module.
+            return .init(
+                maximumOutputField: .openAIMaxTokens,
+                maximumOutputTokenBound: ChatGenerationSettings.tokenRange.upperBound,
+                maximumOutputWarning: "The app guard is not a model limit. \(provider.displayName) output capacity depends on the selected model.",
+                supportsTemperature: true,
+                supportsTopP: true,
+                // The Responses format has no penalties, seed, or stop sequences.
+                supportsFrequencyPenalty: provider != .groq && !provider.usesResponses,
+                supportsPresencePenalty: provider != .groq && !provider.usesResponses,
+                supportsTopK: provider == .cohere,
+                supportsSeed: provider != .deepseek && !provider.usesResponses,
+                supportsStop: !provider.usesResponses,
+                contextWindowTokens: CompatibleModelCatalog.shared.entry(for: provider, id: id)?.contextLength
             )
         case .xAI(let model):
             guard Self.xAIGenerationModels.contains(model.rawValue) else {
@@ -447,4 +522,33 @@ public extension Model {
         "gemini-1.5-flash": 1_048_576, "gemini-1.5-flash-8b": 1_048_576,
         "gemini-1.5-pro": 2_097_152, "gemini-1.0-pro": 32_768,
     ]
+}
+
+// MARK: - Picker grouping
+
+/// Models from one provider or access route, for a sectioned picker.
+public struct ModelPickerGroup: Identifiable, Equatable {
+    public let title: String
+    public let models: [Model]
+    public var id: String { title }
+}
+
+public extension Model {
+    /// Groups `models` by provider, in first-seen order, keeping models whose
+    /// raw value or provider name contains every word of `query`
+    /// (case-insensitive). `selected` is kept even when it does not match, so a
+    /// picker's selection stays valid.
+    static func pickerGroups(_ models: [Model], matching query: String = "", keeping selected: Model? = nil) -> [ModelPickerGroup] {
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        var order: [String] = []
+        var grouped: [String: [Model]] = [:]
+        for model in models {
+            let title = model.providerDisplayName
+            let haystack = (model.rawValue + " " + title).lowercased()
+            guard model == selected || words.allSatisfy(haystack.contains) else { continue }
+            if grouped[title] == nil { order.append(title) }
+            grouped[title, default: []].append(model)
+        }
+        return order.map { ModelPickerGroup(title: $0, models: grouped[$0] ?? []) }
+    }
 }
