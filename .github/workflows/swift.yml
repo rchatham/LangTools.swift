@@ -71,6 +71,29 @@ jobs:
       # Speech and WhisperKit suites compile to empty modules on Linux.
       run: swift test --skip-build --no-parallel
 
+  agent-image:
+    # Builds the langtools-agent runtime image and checks it starts and can
+    # validate the example spec. Makes no provider calls.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+    - name: Build image
+      run: docker build -f Dockerfile.agent -t langtools-agent:ci .
+    - name: Smoke test
+      run: |
+        docker run --rm langtools-agent:ci providers
+        docker run --rm langtools-agent:ci tools
+        docker run --rm -e ANTHROPIC_API_KEY=placeholder \
+          -v "$PWD/Examples/AgentRuntime:/work:ro" langtools-agent:ci validate clock.json
+        test "$(docker run --rm --entrypoint id langtools-agent:ci -u)" = 10001
+        test "$(docker run --rm --entrypoint stat langtools-agent:ci -c %U /spool)" = agent
+
   helper-mobile-tests:
     runs-on: macos-latest
     timeout-minutes: 30
