@@ -41,7 +41,7 @@ extension View {
             case .openAI, .codex: return .openAI
             case .xAI: return .xAI
             case .gemini: return .gemini
-            case .ollama: return .ollama
+            case .ollama, .ollamaCloud: return .ollama
             case .apple: return .apple
             case .compatible(let provider, _): return provider.service
             }

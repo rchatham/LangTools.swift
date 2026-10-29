@@ -10,13 +10,44 @@ import Foundation
 /// redirects keeps the validated destination authoritative for the whole
 /// request lifecycle.
 public enum LoopbackURLSession {
-    public static let shared: URLSession = {
+    public static var shared: URLSession {
+        #if DEBUG
+        fixtureSessionLock.lock()
+        let session = fixtureSession
+        fixtureSessionLock.unlock()
+        if let session { return session }
+        #endif
+        return defaultSession
+    }
+
+    #if DEBUG
+    private static let fixtureSessionLock = NSLock()
+    private static var fixtureSession: URLSession?
+
+    /// Install before creating clients in an explicitly isolated test process,
+    /// or replace/reset only after requests using the previous session are quiescent.
+    /// The lock synchronizes selection and replacement, not request lifecycle safety.
+    /// The fixture can replace transport protocols, never redirect policy.
+    public static func installFixtureProtocols(_ protocols: [AnyClass]?) {
+        let replacement = protocols.map { makeSession(protocols: $0) }
+        fixtureSessionLock.lock()
+        let displacedSession = fixtureSession
+        fixtureSession = replacement
+        fixtureSessionLock.unlock()
+        displacedSession?.invalidateAndCancel()
+    }
+    #endif
+
+    private static let defaultSession = makeSession(protocols: nil)
+
+    private static func makeSession(protocols: [AnyClass]?) -> URLSession {
         let configuration = URLSessionConfiguration.default
         configuration.httpShouldSetCookies = false
         configuration.httpCookieAcceptPolicy = .never
         configuration.timeoutIntervalForRequest = 60
+        if let protocols { configuration.protocolClasses = protocols }
         return URLSession(configuration: configuration, delegate: NoRedirectDelegate(), delegateQueue: nil)
-    }()
+    }
 }
 
 private final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {

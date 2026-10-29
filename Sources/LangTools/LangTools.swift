@@ -18,8 +18,12 @@ public protocol LangTools {
     associatedtype Model: RawRepresentable
     associatedtype ErrorResponse: Codable & Error
     var session: URLSession { get }
+    /// Raw transport hooks; overrides are used for every recursive request.
+    func transportData(for request: URLRequest) async throws -> (Data, URLResponse)
+    func transportBody(for request: URLRequest) async throws -> LangToolsResponseBody
     func prepare(request: some LangToolsRequest) throws -> URLRequest
     func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response
+    func perform<Request: LangToolsRequest>(request: Request, onResponse: @escaping (Request.Response) -> Void) async throws -> Request.Response
     func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error>
     ///  When implementing decodeStream yourself, throw an error when the buffer is incomplete and additional lines of data from the response are needed to decode the buffer. If the buffer can be handled it should at least return nil to indicate that the buffer can be cleared. If a nil response is returned the buffer will be cleared and then it will continue reading the data stream, throwing an error will continue appending the data stream to the current buffer.
     static func decodeStream<T: Decodable>(_ buffer: String) throws -> T?
@@ -59,14 +63,7 @@ extension LangTools {
     }
 
     private func perform<Response: Decodable>(request: URLRequest) async throws -> Response {
-        #if canImport(Darwin)
-        let (data, response) = try await session.data(
-            for: request,
-            delegate: session.delegate as? any URLSessionTaskDelegate
-        )
-        #else
-        let (data, response) = try await session.data(for: request)
-        #endif
+        let (data, response) = try await self.transportData(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { throw LangToolsError.requestFailed }
         guard httpResponse.statusCode == 200 else { throw LangToolsError.responseUnsuccessful(statusCode: httpResponse.statusCode, Self.decodeError(data: data)) }
         if let audioResponseType = Response.self as? any LangToolsAudioResponse.Type { return try audioResponseType.init(audioData: data) as! Response } else { return try Self.decodeResponse(data: data) }
@@ -92,17 +89,9 @@ extension LangTools {
                 do {
                     try Task.checkCancellation()
                     log?.debug("Calling session.bytes(for:)...")
-                    #if canImport(Darwin)
-                    // Async byte tasks need the configured task delegate explicitly so
-                    // injected certificate pinning and redirect policies are preserved.
-                    let (bytes, response) = try await session.bytes(
-                        for: httpRequest,
-                        delegate: session.delegate as? any URLSessionTaskDelegate
-                    )
-                    #else
-                    // FoundationNetworking uses the package's compatibility shim.
-                    let (bytes, response) = try await session.bytes(for: httpRequest)
-                    #endif
+                    let body = try await self.transportBody(for: httpRequest)
+                    defer { body.cancel() }
+                    let response = body.response
                     log?.debug("Got response from server")
 
                     guard let httpResponse = response as? HTTPURLResponse else {
@@ -116,7 +105,8 @@ extension LangTools {
                         log?.error("Non-200 status code: \(httpResponse.statusCode)")
                         var error: Error?;
                         do {
-                            let errorBody = try await bytes.lines.reduce("", +)
+                            var errorBody = ""
+                            while let line = try await body.nextLine() { errorBody += line }
                             log?.debug("Error response body: \(errorBody)")
                             error = errorBody.data(using: .utf8).flatMap { Self.decodeError(data: $0) }
                             if let decodedError = error {
@@ -137,7 +127,7 @@ extension LangTools {
                     var errorBuffer: Error?
                     var buffer = ""
                     var lineCount = 0
-                    for try await line in bytes.lines {
+                    while let line = try await body.nextLine() {
                         try Task.checkCancellation()
                         lineCount += 1
                         if lineCount == 1 {

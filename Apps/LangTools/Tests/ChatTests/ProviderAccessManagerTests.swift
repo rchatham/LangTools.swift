@@ -1,6 +1,7 @@
 import XCTest
 import KeychainAccess
 import Anthropic
+import Ollama
 import OpenAI
 @testable import Chat
 
@@ -9,26 +10,193 @@ final class ProviderAccessManagerTests: XCTestCase {
     private var keychainService: KeychainService!
     private var sessionStore: AuthSessionStore!
     private var accessManager: ProviderAccessManager!
+    private var endpointDefaults: UserDefaults!
+    private var endpointSuiteName: String!
+    private var endpointConfiguration: OllamaEndpointConfiguration!
+    private var cloudModelStore: OllamaCloudModelStore!
 
     override func setUp() {
         super.setUp()
         keychain = Keychain(service: "ProviderAccessManagerTests.\(UUID().uuidString)")
         keychainService = KeychainService(keychain: keychain)
         sessionStore = AuthSessionStore(keychain: keychain)
-        accessManager = ProviderAccessManager(keychainService: keychainService, sessionStore: sessionStore)
+        endpointSuiteName = "ProviderAccessManagerTests.\(UUID().uuidString)"
+        endpointDefaults = UserDefaults(suiteName: endpointSuiteName)!
+        endpointDefaults.removePersistentDomain(forName: endpointSuiteName)
+        endpointConfiguration = OllamaEndpointConfiguration(userDefaults: endpointDefaults)
+        cloudModelStore = OllamaCloudModelStore(userDefaults: endpointDefaults)
+        accessManager = ProviderAccessManager(
+            keychainService: keychainService,
+            sessionStore: sessionStore,
+            ollamaEndpointConfiguration: endpointConfiguration,
+            ollamaCloudModelStore: cloudModelStore
+        )
     }
 
     override func tearDown() {
         try? keychain.removeAll()
+        accessManager = nil
+        cloudModelStore = nil
+        endpointConfiguration = nil
+        sessionStore = nil
+        keychainService = nil
+        keychain = nil
+        endpointDefaults.removePersistentDomain(forName: endpointSuiteName)
+        endpointDefaults = nil
         super.tearDown()
     }
 
-    func testNoCredentialsKeepsRequestedSelectionWithoutInventingAccessibleFallback() {
+    /// Seeds local daemon models into the manager's endpoint-scoped cache and
+    /// refreshes access state so the models are visible to `availableChatModels`.
+    private func seedLocalModels(_ models: [Ollama.Model]) {
+        let snapshot = endpointConfiguration.snapshot()
+        XCTAssertTrue(endpointConfiguration.storeModels(models, for: snapshot))
+        accessManager.refresh()
+    }
+
+    func testNoCredentialsDoesNotOfferOrSelectOllamaCloudFallback() {
         let requested = Model.codex(.gpt5_5)
+
+        XCTAssertFalse(accessManager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
         XCTAssertEqual(accessManager.validateSelectedModel(requested), requested)
     }
 
-    func testNoCredentialsHidesRemoteModels() {
+    func testWhitespaceOllamaAPIKeyDoesNotEnableCloudModels() {
+        keychainService.saveApiKey(apiKey: "  \n ", for: .ollama)
+        accessManager.refresh()
+
+        XCTAssertFalse(accessManager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
+    }
+
+    func testOllamaAPIKeyEnablesCloudModels() {
+        keychainService.saveApiKey(apiKey: "ollama-cloud-key", for: .ollama)
+        accessManager.refresh()
+
+        XCTAssertTrue(accessManager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
+    }
+
+    func testEligibilityOverrideEnablesCloudModelsWithoutClientKey() {
+        let manager = ProviderAccessManager(
+            keychainService: keychainService,
+            sessionStore: sessionStore,
+            ollamaEndpointConfiguration: endpointConfiguration,
+            ollamaCloudModelStore: cloudModelStore,
+            ollamaCloudAccessEligibility: { true }
+        )
+
+        XCTAssertTrue(manager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
+    }
+
+    func testEligibilityOverrideCanDisableCloudModelsDespiteClientKey() {
+        keychainService.saveApiKey(apiKey: "ollama-cloud-key", for: .ollama)
+        let manager = ProviderAccessManager(
+            keychainService: keychainService,
+            sessionStore: sessionStore,
+            ollamaEndpointConfiguration: endpointConfiguration,
+            ollamaCloudModelStore: cloudModelStore,
+            ollamaCloudAccessEligibility: { false }
+        )
+
+        XCTAssertFalse(manager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
+    }
+
+    func testConfiguredEligibilityOverrideCanTrackProxyAvailability() {
+        var proxyIsAvailable = false
+        accessManager.configureOllamaCloudAccessEligibilityOverride { proxyIsAvailable }
+        XCTAssertFalse(accessManager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
+
+        proxyIsAvailable = true
+        accessManager.refresh()
+        XCTAssertTrue(accessManager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
+
+        accessManager.configureOllamaCloudAccessEligibilityOverride(nil)
+        XCTAssertFalse(accessManager.availableChatModels().contains(where: { $0.route == .ollamaCloud }))
+    }
+
+    func testTemporarilyIneligibleSelectedCloudModelIsPreservedInsteadOfUsingFallback() throws {
+        let selected = try XCTUnwrap(Model(rawValue: "ollama-cloud/glm-5.2"))
+        let localFallback = try XCTUnwrap(Ollama.Model(rawValue: "local-fallback"))
+        seedLocalModels([localFallback])
+
+        XCTAssertEqual(accessManager.validateSelectedModel(selected), selected)
+    }
+
+    func testSelectedModelValidationUsesSingleEligibilitySnapshot() throws {
+        let selected = try XCTUnwrap(Model(rawValue: "ollama-cloud/glm-5.2"))
+        let localFallback = try XCTUnwrap(Ollama.Model(rawValue: "local-fallback"))
+        seedLocalModels([localFallback])
+        var evaluationCount = 0
+        accessManager.configureOllamaCloudAccessEligibilityOverride {
+            evaluationCount += 1
+            return evaluationCount > 1
+        }
+
+        XCTAssertEqual(accessManager.validateSelectedModel(selected), selected)
+        XCTAssertEqual(evaluationCount, 1)
+    }
+
+    func testUnavailableSelectedLocalModelIsPreservedInsteadOfUsingOrdinaryFallback() throws {
+        seedLocalModels([try XCTUnwrap(Ollama.Model(rawValue: "local-fallback"))])
+        let selected = try XCTUnwrap(Model(rawValue: "ollama/uncached-local"))
+
+        XCTAssertFalse(accessManager.availableChatModels().contains(selected))
+        XCTAssertFalse(accessManager.availableChatModels().isEmpty)
+        XCTAssertEqual(accessManager.validateSelectedModel(selected), selected)
+    }
+
+    func testEligibleUncachedSelectedCloudModelIsPreservedInsteadOfUsingFallback() throws {
+        let selected = try XCTUnwrap(Model(rawValue: "ollama-cloud/uncached-hosted"))
+        seedLocalModels([try XCTUnwrap(Ollama.Model(rawValue: "local-fallback"))])
+        var evaluationCount = 0
+        accessManager.configureOllamaCloudAccessEligibilityOverride {
+            evaluationCount += 1
+            return true
+        }
+
+        XCTAssertEqual(accessManager.validateSelectedModel(selected), selected)
+        XCTAssertEqual(evaluationCount, 1)
+    }
+
+    func testExplicitAppleSelectionSurvivesAvailableLocalAndCloudAlternatives() throws {
+        guard let selected = Model.appleModels.first else {
+            throw XCTSkip("Apple models are not supported on this platform")
+        }
+        seedLocalModels([try XCTUnwrap(Ollama.Model(rawValue: "local-fallback"))])
+        accessManager.configureOllamaCloudAccessEligibilityOverride { true }
+
+        XCTAssertTrue(accessManager.availableChatModels().contains(selected))
+        XCTAssertTrue(accessManager.availableChatModels().contains { $0.route == .ollamaCloud })
+        XCTAssertEqual(accessManager.validateSelectedModel(selected), selected)
+    }
+
+    func testAppleIsNotAnAutomaticFallbackForUnavailableRemoteSelection() throws {
+        guard !Model.appleModels.isEmpty else {
+            throw XCTSkip("Apple models are not supported on this platform")
+        }
+        accessManager.configureOllamaCloudAccessEligibilityOverride { false }
+        let requested = Model.codex(.gpt5_5)
+
+        XCTAssertTrue(accessManager.availableChatModels().contains { $0.apiService == .apple })
+        XCTAssertEqual(accessManager.validateSelectedModel(requested), requested)
+    }
+
+    func testUnavailableOrdinarySelectionUsesAvailableFallback() throws {
+        let fallback = try XCTUnwrap(Ollama.Model(rawValue: "local-fallback"))
+        seedLocalModels([fallback])
+
+        XCTAssertEqual(accessManager.validateSelectedModel(.codex(.gpt5_5)), .ollama(fallback))
+    }
+
+    func testLocalOllamaModelsRemainAvailableWithoutCloudEligibility() throws {
+        let localModel = try XCTUnwrap(Ollama.Model(rawValue: "glm-5.2:cloud"))
+        seedLocalModels([localModel])
+
+        let modelIDs = accessManager.availableChatModels().map(\.rawValue)
+        XCTAssertTrue(modelIDs.contains("ollama/glm-5.2:cloud"))
+        XCTAssertFalse(modelIDs.contains("ollama-cloud/glm-5.2"))
+    }
+
+    func testNoCredentialsHidesCredentialedRemoteModels() {
         accessManager.refresh()
 
         XCTAssertFalse(accessManager.availableChatModels().contains(where: { $0.apiService == .openAI }))

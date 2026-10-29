@@ -132,7 +132,7 @@ final class NetworkClientAuthTests: XCTestCase {
         var receivedEventCount = 0
 
         for model in models {
-            let request = client.request(
+            let request = try client.request(
                 messages: [Message(text: "Hello", role: .user)],
                 model: model,
                 toolEventHandler: { _ in receivedEventCount += 1 }
@@ -154,6 +154,90 @@ final class NetworkClientAuthTests: XCTestCase {
         XCTAssertEqual(receivedEventCount, models.count)
     }
 
+    func testDefaultClientDoesNotRouteOllamaCloudThroughConfiguredOllamaEndpoint() throws {
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager
+        )
+        let cloudModel = try XCTUnwrap(Ollama.Model(rawValue: "glm-5.2"))
+
+        XCTAssertThrowsError(try client.request(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .ollamaCloud(cloudModel)
+        )) { error in
+            XCTAssertEqual(error as? NetworkClient.NetworkError, .ollamaCloudTransportUnavailable)
+        }
+    }
+
+    func testOllamaCloudStreamRefusesBeforeTransport() throws {
+        // Model access is eligible without touching a credential store.
+        // Refusal must come from the unsupported route, not missing credentials.
+        accessManager.configureOllamaCloudAccessEligibilityOverride { true }
+
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager
+        )
+        let cloudModel = try XCTUnwrap(Ollama.Model(rawValue: "glm-5.2"))
+
+        XCTAssertThrowsError(try client.streamChatCompletionRequest(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .ollamaCloud(cloudModel)
+        )) { error in
+            XCTAssertEqual(error as? NetworkClient.NetworkError, .ollamaCloudTransportUnavailable)
+        }
+    }
+
+    func testLocalAgentContextRetainsCapturedSessionWithoutExposingMutableProvider() throws {
+        let suite = "NetworkClientAuthTests.endpoint.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let configuration = OllamaEndpointConfiguration(userDefaults: defaults)
+        let original = try configuration.update("https://original.invalid:11434")
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager,
+            ollamaEndpointConfiguration: configuration
+        )
+        let model = try XCTUnwrap(Ollama.Model(rawValue: "fixture-model"))
+        let context = try client.agentContext(messages: [], model: .ollama(model), eventHandler: { _ in })
+        _ = try configuration.update("https://replacement.invalid:11434")
+
+        XCTAssertNil(context.langTool as? Ollama)
+        XCTAssertTrue(context.langTool.session === original.directSession)
+        let request = try context.langTool.prepare(request: Ollama.ChatRequest(model: model, messages: []))
+        XCTAssertEqual(request.url?.host, "original.invalid")
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testOllamaCloudAgentContextRefusesBeforeToolchain() throws {
+        // Model access is eligible without touching a credential store.
+        // Refusal must come from the unsupported route, not missing credentials.
+        accessManager.configureOllamaCloudAccessEligibilityOverride { true }
+
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager
+        )
+        let cloudModel = try XCTUnwrap(Ollama.Model(rawValue: "glm-5.2"))
+
+        XCTAssertThrowsError(try client.agentContext(
+            messages: [Message(text: "Hello", role: .user)],
+            model: .ollamaCloud(cloudModel),
+            eventHandler: { _ in }
+        )) { error in
+            XCTAssertEqual(error as? NetworkClient.NetworkError, .ollamaCloudTransportUnavailable)
+        }
+    }
+
     func testGeminiRequestEncodesToolsAndToolChoiceAndWiresHandler() throws {
         let client = NetworkClient(
             keychainService: keychainService,
@@ -166,7 +250,7 @@ final class NetworkClientAuthTests: XCTestCase {
         let event = LangToolsToolEvent.toolCalled(TestToolSelection(name: "lookup_weather"))
         var receivedEventCount = 0
 
-        let request = try XCTUnwrap(client.request(
+        let request = try XCTUnwrap(try client.request(
             messages: [Message(text: "What is the weather?", role: .user)],
             model: .gemini(geminiModel),
             tools: [tool],
@@ -1167,7 +1251,7 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
         let provider = CountingGenerationSettingsProvider(settings: first)
         let client = makeClient(provider: { provider.next(replacement: second) })
 
-        let request = client.directRequest(messages: testMessages, model: .openAI(.gpt4o_mini))
+        let request = try client.directRequest(messages: testMessages, model: .openAI(.gpt4o_mini))
         provider.settings = second
         let object = try encodedRequest(request)
 
