@@ -661,6 +661,9 @@ extension OllamaSettingsView {
             do {
                 let previousSnapshot = endpointConfiguration.snapshot()
                 let snapshot = try ollamaService.updateEndpoint(editingServerUrl)
+                serverUrl = endpointConfiguration.directBaseURL?.absoluteString ?? ""
+                editingServerUrl = serverUrl
+                endpointValidationError = nil
                 guard snapshot != previousSnapshot else { return true }
                 loadGeneration &+= 1
                 pullGeneration &+= 1
@@ -670,9 +673,6 @@ extension OllamaSettingsView {
                 pullError = nil
                 helperID = snapshot.helperID
                 helperName = snapshot.helperName
-                serverUrl = endpointConfiguration.directBaseURL?.absoluteString ?? ""
-                editingServerUrl = serverUrl
-                endpointValidationError = nil
                 checkConnection(for: snapshot)
                 return true
             } catch {

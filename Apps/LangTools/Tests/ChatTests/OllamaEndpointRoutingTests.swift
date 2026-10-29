@@ -575,7 +575,11 @@ final class OllamaEndpointRoutingTests: XCTestCase {
         XCTAssertNotNil(vm.endpointValidationError)
         vm.editingServerUrl = " http://localhost:11434/ "
         XCTAssertTrue(vm.updateServerUrl())
+        XCTAssertNil(vm.endpointValidationError)
+        XCTAssertEqual(vm.serverUrl, "http://localhost:11434")
+        XCTAssertEqual(vm.editingServerUrl, vm.serverUrl)
         XCTAssertEqual(endpointConfiguration.snapshot(), original)
+        XCTAssertFalse(vm.isCheckingConnection)
         XCTAssertEqual(vm.loadingModelName, "loading")
         XCTAssertTrue(vm.isPulling)
         XCTAssertEqual(vm.pullProgress, 0.5)
