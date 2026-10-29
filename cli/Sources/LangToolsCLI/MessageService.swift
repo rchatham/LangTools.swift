@@ -154,9 +154,15 @@ class MessageService: ObservableObject {
 
         if UserDefaults.voiceEnabled {
             // In silent (TUI) mode printing would corrupt the screen, so errors are dropped.
-            SpeechService.shared.speakInBackground(finalContent, onError: silent ? nil : { error in
-                print("Voice output failed: \(error.localizedDescription)".red)
-            })
+            let onError: (@Sendable (Error) -> Void)?
+            if silent {
+                onError = nil
+            } else {
+                onError = { error in
+                    print("Voice output failed: \(error.localizedDescription)".red)
+                }
+            }
+            SpeechService.shared.speakInBackground(finalContent, onError: onError)
         }
     }
 
