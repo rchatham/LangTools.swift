@@ -88,6 +88,20 @@ final class AgentWorkerTests: XCTestCase {
         XCTAssertEqual(spool.state(of: "missing"), .unknown)
     }
 
+    func testRunIDThatEndsAnotherIsSeparate() throws {
+        try spool.enqueue(job("research-1"))
+        XCTAssertEqual(spool.state(of: "1"), .unknown)
+        XCTAssertEqual(spool.state(of: "-1"), .unknown)
+        XCTAssertNoThrow(try spool.enqueue(job("1")), "Not a duplicate of research-1")
+        XCTAssertEqual(spool.state(of: "1"), .queued)
+
+        _ = try XCTUnwrap(spool.claimNext())
+        XCTAssertEqual(Set(["research-1", "1"].map { spool.state(of: $0) }), [.running, .queued])
+        XCTAssertEqual(spool.state(of: "search-1"), .unknown)
+        XCTAssertEqual(AgentSpool.runID(fromFileName: "0000000000001-a-b.json"), "a-b")
+        XCTAssertNil(AgentSpool.runID(fromFileName: "0000000000001-.json"))
+    }
+
     func testJobFilesAreOwnerOnly() throws {
         var secretJob = job("secret")
         secretJob.webhookSecret = "whsec"

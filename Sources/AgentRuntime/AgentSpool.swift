@@ -174,9 +174,11 @@ public struct AgentSpool {
     public func state(of runID: String) -> State {
         guard AgentJob.isValidRunID(runID) else { return .unknown }
         if fileManager.fileExists(atPath: done.appendingPathComponent("\(runID).json").path) { return .done }
-        let suffix = "-\(runID).json"
-        if (try? fileManager.contentsOfDirectory(atPath: running.path))?.contains(where: { $0.hasSuffix(suffix) }) == true { return .running }
-        if (try? fileManager.contentsOfDirectory(atPath: queue.path))?.contains(where: { $0.hasSuffix(suffix) }) == true { return .queued }
+        func holds(_ directory: URL) -> Bool {
+            ((try? fileManager.contentsOfDirectory(atPath: directory.path)) ?? []).contains { Self.runID(fromFileName: $0) == runID }
+        }
+        if holds(running) { return .running }
+        if holds(queue) { return .queued }
         return .unknown
     }
 
@@ -199,6 +201,14 @@ public struct AgentSpool {
     // Submission time first so the queue is FIFO; the run ID keeps names unique.
     static func fileName(for job: AgentJob) -> String {
         "\(String(format: "%013.0f", job.submittedAt.timeIntervalSince1970 * 1000))-\(job.runID).json"
+    }
+
+    /// The run ID in a name made by `fileName(for:)`. The timestamp has no '-', so the run
+    /// ID is everything after the first one; matching a suffix would confuse "1" with "job-1".
+    static func runID(fromFileName name: String) -> String? {
+        guard name.hasSuffix(".json"), let dash = name.firstIndex(of: "-") else { return nil }
+        let runID = String(name[name.index(after: dash)..<name.index(name.endIndex, offsetBy: -5)])
+        return runID.isEmpty ? nil : runID
     }
 
     private func sortedJSON(in directory: URL) throws -> [String] {
