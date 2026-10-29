@@ -118,17 +118,56 @@ struct SpecAgent: Agent {
     }
 }
 
+/// Returns when the operation finishes or the time is up, whichever is first. On timeout the
+/// operation is cancelled but not waited for, so a call that ignores cancellation (such as a
+/// stalled request) can't hold the run past its limit.
 private func withTimeout<T>(_ seconds: Double?, _ operation: @escaping () async throws -> T) async throws -> T {
     guard let seconds else { return try await operation() }
-    return try await withThrowingTaskGroup(of: T.self) { group in
-        group.addTask { try await operation() }
-        group.addTask {
-            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-            throw AgentRuntimeError.timedOut(seconds: seconds)
+    let race = Race<T>()
+    let work = Task { race.finish(with: await Result(catching: operation)) }
+    let timer = Task {
+        try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        race.finish(with: .failure(AgentRuntimeError.timedOut(seconds: seconds)))
+    }
+    defer { work.cancel(); timer.cancel() }
+    return try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { race.wait($0) }
+    } onCancel: {
+        race.finish(with: .failure(CancellationError()))
+    }
+}
+
+/// Resumes its continuation once, with whichever result arrives first.
+private final class Race<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, Error>?
+    private var result: Result<T, Error>?
+
+    func wait(_ continuation: CheckedContinuation<T, Error>) {
+        lock.lock()
+        if let result {
+            lock.unlock()
+            continuation.resume(with: result)
+        } else {
+            self.continuation = continuation
+            lock.unlock()
         }
-        defer { group.cancelAll() }
-        guard let first = try await group.next() else { throw CancellationError() }
-        return first
+    }
+
+    func finish(with result: Result<T, Error>) {
+        lock.lock()
+        guard self.result == nil else { lock.unlock(); return }
+        self.result = result
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(with: result)
+    }
+}
+
+extension Result where Failure == Error {
+    fileprivate init(catching body: () async throws -> Success) async {
+        do { self = .success(try await body()) } catch { self = .failure(error) }
     }
 }
 

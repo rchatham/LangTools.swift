@@ -224,6 +224,24 @@ final class AgentRuntimeTests: XCTestCase {
         XCTAssertEqual(calls.values, [], "The cancelled tool should not finish")
     }
 
+    func testTimeoutHoldsWhenWorkIgnoresCancellation() async {
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
+            (.success(self.toolCallResponse(tool: "stuck", arguments: "{}")), 200)
+        }
+        // Blocks without checking for cancellation, like a request that never returns.
+        let stuck = Tool(name: "stuck", description: "Never cooperates.", tool_schema: .init(), callback: { _, _ in
+            let end = Date().addingTimeInterval(3)
+            while Date() < end { usleep(10_000) }
+            return "late"
+        })
+
+        let started = Date()
+        let result = await runner(tools: AgentToolRegistry([stuck])).run(spec(tools: ["stuck"], timeout: 0.3))
+
+        XCTAssertEqual(result.status, .timedOut)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2, "The run must not wait for work that ignores cancellation")
+    }
+
     func testProviderErrorIsReportedAsFailure() async {
         MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
             (.success(Data(#"{"error":{"message":"bad key","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}"#.utf8)), 401)
