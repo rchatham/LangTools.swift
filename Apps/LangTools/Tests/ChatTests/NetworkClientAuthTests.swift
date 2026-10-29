@@ -1,10 +1,12 @@
 import Anthropic
+import Cohere
 import Foundation
 import Gemini
 import KeychainAccess
 import LangTools
 import Ollama
 import OpenAI
+import OpenRouter
 import XAI
 import XCTest
 @testable import Chat
@@ -123,6 +125,8 @@ final class NetworkClientAuthTests: XCTestCase {
             .xAI(xAIModel),
             .gemini(geminiModel),
             .ollama(ollamaModel),
+            .compatible(.openrouter, "openai/gpt-4o"),
+            .compatible(.groq, "llama-3.3-70b-versatile"),
         ]
         let event = LangToolsToolEvent.toolCalled(TestToolSelection())
         var receivedEventCount = 0
@@ -139,6 +143,8 @@ final class NetworkClientAuthTests: XCTestCase {
             case let request as OpenAI.ChatCompletionRequest:
                 request.toolEventHandler?(event)
             case let request as Ollama.ChatRequest:
+                request.toolEventHandler?(event)
+            case let request as Gemini.GenerateContentRequest:
                 request.toolEventHandler?(event)
             default:
                 XCTFail("Unexpected request type for \(model)")
@@ -226,14 +232,14 @@ final class NetworkClientAuthTests: XCTestCase {
             tools: [tool],
             toolChoice: .required,
             toolEventHandler: { _ in receivedEventCount += 1 }
-        ) as? OpenAI.ChatCompletionRequest)
+        ) as? Gemini.GenerateContentRequest)
         let encoded = try JSONEncoder().encode(request)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         let encodedTools = try XCTUnwrap(object["tools"] as? [[String: Any]])
-        let encodedFunction = try XCTUnwrap(encodedTools.first?["function"] as? [String: Any])
+        let encodedFunction = try XCTUnwrap((encodedTools.first?["functionDeclarations"] as? [[String: Any]])?.first)
 
         XCTAssertEqual(encodedFunction["name"] as? String, "lookup_weather")
-        XCTAssertEqual(object["tool_choice"] as? String, "required")
+        XCTAssertEqual(((object["toolConfig"] as? [String: Any])?["functionCallingConfig"] as? [String: Any])?["mode"] as? String, "ANY")
         request.toolEventHandler?(event)
         XCTAssertEqual(receivedEventCount, 1)
     }
@@ -845,6 +851,86 @@ final class NetworkClientAuthTests: XCTestCase {
             XCTAssertEqual(error, expectedError)
         }
     }
+
+    // MARK: - OpenAI-compatible providers
+
+    private func compatibleClient(_ provider: CompatibleProvider, catalogEntries: [CompatibleModelCatalog.Entry]) -> NetworkClient {
+        let suiteName = "NetworkClientAuthTests.Compatible.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        let catalog = CompatibleModelCatalog(userDefaults: defaults, fetcher: { _, _ in [] })
+        catalog.store(catalogEntries, for: provider)
+        return NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager,
+            compatibleCatalog: catalog
+        )
+    }
+
+    func testCompatibleRequestIsTaggedForItsProvider() throws {
+        let client = compatibleClient(.groq, catalogEntries: [.init(id: "openai/gpt-oss-120b", supportsTools: true)])
+        let tool = Tool(name: "lookup_weather", description: "Look up weather", tool_schema: ToolSchema())
+
+        let request = try XCTUnwrap(client.request(
+            messages: [Message(text: "What is the weather?", role: .user)],
+            model: .compatible(.groq, "openai/gpt-oss-120b"),
+            tools: [tool],
+            toolChoice: .required
+        ) as? OpenAI.ChatCompletionRequest)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+
+        XCTAssertEqual(object["model"] as? String, "openai/gpt-oss-120b")
+        XCTAssertTrue(request.model.belongs(to: CompatibleProvider.groq.providerID))
+        XCTAssertFalse(OpenAI.requestValidators.contains { $0(request) }, "an OpenAI-looking ID must still route to Groq")
+        XCTAssertFalse(OpenRouter.requestValidators.contains { $0(request) })
+        XCTAssertEqual((object["tools"] as? [Any])?.count, 1)
+    }
+
+    func testCompatibleRequestOmitsToolsForModelsWithoutToolSupport() throws {
+        let client = compatibleClient(.mistral, catalogEntries: [.init(id: "mistral-embed-chat", supportsTools: false)])
+        let tool = Tool(name: "lookup_weather", description: "Look up weather", tool_schema: ToolSchema())
+
+        let request = try XCTUnwrap(client.request(
+            messages: [Message(text: "Hi", role: .user)],
+            model: .compatible(.mistral, "mistral-embed-chat"),
+            tools: [tool],
+            toolChoice: .required
+        ) as? OpenAI.ChatCompletionRequest)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+
+        XCTAssertNil(object["tools"])
+        XCTAssertNil(object["tool_choice"])
+    }
+
+    func testSavingACompatibleProviderKeyRefreshesItsCatalog() async throws {
+        let suiteName = "NetworkClientAuthTests.Compatible.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let fetched = expectation(description: "catalog fetched with the saved key")
+        let catalog = CompatibleModelCatalog(userDefaults: defaults, fetcher: { provider, apiKey in
+            XCTAssertEqual(provider, .together)
+            XCTAssertEqual(apiKey, "together-key")
+            fetched.fulfill()
+            return [.init(id: "meta-llama/Llama-3.3-70B-Instruct-Turbo")]
+        })
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager,
+            compatibleCatalog: catalog
+        )
+
+        try client.updateApiKey("together-key", for: .together)
+
+        await fulfillment(of: [fetched], timeout: 5)
+        for _ in 0..<50 where catalog.entries(for: .together).isEmpty {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(catalog.modelIDs(for: .together), ["meta-llama/Llama-3.3-70B-Instruct-Turbo"])
+    }
 }
 
 @MainActor
@@ -1007,6 +1093,14 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
         }
     }
 
+    func testCohereUsesItsNativeChatAPIWithTopK() throws {
+        let settings = try ChatGenerationSettings(temperature: 0.3, topK: 40)
+        let request = try XCTUnwrap(makeClient().request(messages: testMessages, model: .compatible(.cohere, "command-a-03-2025"), generationSettings: settings) as? Cohere.ChatRequest)
+
+        XCTAssertEqual(request.temperature, 0.3)
+        XCTAssertEqual(request.k, 40)
+    }
+
     func testXAIAndGeminiTranslationAndUnsupportedXAIFields() throws {
         let xAIModel = try XCTUnwrap(XAI.Model(rawValue: "grok-3"))
         let unsupportedXAIModel = try XCTUnwrap(XAI.Model(rawValue: "grok-imagine-video"))
@@ -1014,16 +1108,13 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
         let client = makeClient()
         let settings = try ChatGenerationSettings(maxOutputTokens: 1_024, temperature: 0.5)
 
-        for model in [Model.xAI(xAIModel), .gemini(geminiModel)] {
-            let object = try encodedRequest(client.request(
-                messages: testMessages,
-                model: model,
-                generationSettings: settings
-            ))
-            XCTAssertEqual(object["max_tokens"] as? Int, 1_024)
-            XCTAssertEqual(object["temperature"] as? Double, 0.5)
-            XCTAssertNil(object["max_completion_tokens"])
-        }
+        let object = try encodedRequest(client.request(messages: testMessages, model: .xAI(xAIModel), generationSettings: settings))
+        XCTAssertEqual(object["max_tokens"] as? Int, 1_024)
+        XCTAssertEqual(object["temperature"] as? Double, 0.5)
+        XCTAssertNil(object["max_completion_tokens"])
+        let gemini = try geminiConfig(client.request(messages: testMessages, model: .gemini(geminiModel), generationSettings: settings))
+        XCTAssertEqual(gemini["maxOutputTokens"] as? Int, 1_024)
+        XCTAssertEqual(gemini["temperature"] as? Double, 0.5)
 
         let unsupported = try encodedRequest(client.request(
             messages: testMessages,
@@ -1049,13 +1140,13 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
         XCTAssertEqual(xAI["temperature"] as? Double, 0.55)
 
         for (tokens, expected) in [(65_536, 65_536), (65_537, nil)] as [(Int, Int?)] {
-            let object = try encodedRequest(client.request(
+            let config = try geminiConfig(client.request(
                 messages: testMessages,
                 model: .gemini(geminiModel),
                 generationSettings: try ChatGenerationSettings(maxOutputTokens: tokens, temperature: 0.55)
             ))
-            XCTAssertEqual(object["max_tokens"] as? Int, expected)
-            XCTAssertEqual(object["temperature"] as? Double, 0.55)
+            XCTAssertEqual(config["maxOutputTokens"] as? Int, expected)
+            XCTAssertEqual(config["temperature"] as? Double, 0.55)
         }
     }
 
@@ -1073,13 +1164,8 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
         XCTAssertEqual(xAI["max_tokens"] as? Int, 8_192)
         XCTAssertEqual(xAI["temperature"] as? Double, 0.55)
 
-        let gemini = try encodedRequest(client.request(
-            messages: testMessages,
-            model: .gemini(geminiModel),
-            generationSettings: settings
-        ))
-        XCTAssertNil(gemini["max_tokens"])
-        XCTAssertNil(gemini["max_completion_tokens"])
+        let gemini = try geminiConfig(client.request(messages: testMessages, model: .gemini(geminiModel), generationSettings: settings))
+        XCTAssertNil(gemini["maxOutputTokens"])
         XCTAssertEqual(gemini["temperature"] as? Double, 0.55)
     }
 
@@ -1234,6 +1320,11 @@ final class NetworkClientGenerationSettingsTests: XCTestCase {
     ) throws -> [String: Any] {
         let data = try JSONEncoder().encode(request)
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    /// The `generationConfig` of a native Gemini request.
+    private func geminiConfig(_ request: any LangToolsChatRequest & LangToolsStreamableRequest) throws -> [String: Any] {
+        try XCTUnwrap(encodedRequest(request)["generationConfig"] as? [String: Any])
     }
 }
 
