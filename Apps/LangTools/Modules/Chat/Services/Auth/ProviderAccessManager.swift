@@ -54,6 +54,7 @@ public final class ProviderAccessManager: ObservableObject {
         stateLock.lock()
         ollamaCloudAccessEligibilityOverride = eligibility
         stateLock.unlock()
+        refresh()
     }
 
     public func refresh() {
@@ -83,6 +84,9 @@ public final class ProviderAccessManager: ObservableObject {
             // newer refresh, server switch, repair, or helper disconnect.
             guard generation == self.refreshGeneration,
                   self.ollamaEndpointConfiguration.isCurrent(ollamaSnapshot) else { return }
+            // Published notifications are synchronous while stateLock is held.
+            // Subscribers must not synchronously reenter this manager; defer
+            // any state reads or refresh/configure calls until after delivery.
             self.states = newStates
         }
         if Thread.isMainThread {
@@ -141,6 +145,7 @@ public final class ProviderAccessManager: ObservableObject {
             // or access is temporarily unavailable. Neither becomes a new fallback.
             return model
         default:
+            // Do not silently replace an unavailable provider with on-device Apple.
             return available.contains(model)
                 ? model
                 : (available.first { $0.apiService != .apple } ?? model)
