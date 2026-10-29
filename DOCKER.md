@@ -147,19 +147,9 @@ To speed up builds:
 
 ## CI/CD Integration
 
-Example GitHub Actions workflow:
-
-```yaml
-name: Linux Tests
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Run tests
-        run: make docker-test
-```
+The `linux-build` job in `.github/workflows/swift.yml` builds and runs the test
+suite in a `swift:6.2-noble` container on pushes and pull requests to `main`, so Linux
+regressions surface in CI rather than only in the Docker setup.
 
 ## Platform Support
 
@@ -174,3 +164,12 @@ jobs:
   - This doesn't affect functionality, only release builds
   - Tests run fine in debug mode
 - Some tests may take longer on Linux due to different Foundation implementation
+- `AppleLangTools` and `WhisperKitLangTools` (and their test targets) compile to empty
+  modules on Linux because Apple's Speech framework and WhisperKit are unavailable there
+- The Linux `URLSession.bytes(for:)` shim loads the full response before yielding lines,
+  so streamed responses arrive all at once rather than incrementally
+- Two Ollama tests that split fixtures into byte-sized `URLProtocol` chunks are skipped on
+  Linux: FoundationNetworking keeps only the last chunk for completion-handler tasks served
+  by a custom `URLProtocol` (real HTTP responses are delivered whole)
+- Swift versions before 6.1 resolve older `swift-crypto` and `swift-asn1` releases than the
+  ones pinned in `Package.resolved`, because the pinned releases require tools-version 6.1

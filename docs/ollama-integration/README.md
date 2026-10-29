@@ -1,5 +1,13 @@
 # Shared Ollama settings integration evidence
 
+## 2026-10-29 — Synchronization with current main
+
+Merged main `8da5cbc1b0653c2c8a6cdad9683e24c9cb6eff50` into the published `37d6c32` source. Resolved eight file conflicts by retaining independent local/Cloud model identities and Cloud transport refusal alongside main's Apple Intelligence and compatible-provider routes. The combined provider manager retains Cloud eligibility and explicit selections, supports compatible catalogs, and preserves main's rule against silently falling back to Apple. The settings model retains transport-aware capabilities, missing-selection presentation, and main's picker search/grouping.
+
+Added three in-memory regressions for combined provider availability, explicit Cloud/local retention, and fallback behavior; updated the existing catalog enumeration assertions to include inherited providers. App compilation and test-bundle compilation passed. Guarded XCTest selections passed **71 tests, zero failures and zero skips**: 52 merge/endpoint/routing/refresh tests, 15 generation/Apple request-mapping tests, and four settings-capability/picker tests. Runtime execution used a minimal environment without production credentials, temporary HOME/preferences, denial of all four SecItem operations, and network denial. Guard activation and a separate denial probe were verified; attempted Keychain operations were denied, not evidence of no attempted calls.
+
+This is bounded source-integration verification. Full-suite, live provider, native app/UI, current screenshots, and authenticated operational acceptance were not rerun. Historical visuals below remain dated evidence. Current-head hosted CI must be checked after publication; this synchronization does not establish merge readiness or authorize deployment.
+
 Actual public `ChatSettingsView` rendered in a consuming host with isolated synthetic fixtures. These images show only shared package views and fake/default model state—not credentials, standalone LangTools transport, or live providers.
 
 ## Current shared Chat status — 2026-10-22

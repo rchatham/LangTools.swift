@@ -50,7 +50,9 @@ extension LangTools {
     public func perform<Request: LangToolsRequest>(request: Request) async throws -> Request.Response { try await perform(request: request, onResponse: { _ in }) }
 
     public func perform<Request: LangToolsRequest>(request: Request, onResponse: @escaping (Request.Response) -> Void) async throws -> Request.Response {
-        return try await complete(request: request, response: try request.update(response: try await perform(request: try prepare(request: request.updating(stream: false))) as Request.Response), onResponse: onResponse)
+        let response: Request.Response = try await perform(request: try prepare(request: request.updating(stream: false)))
+        try (response as? any LangToolsStreamableResponse)?.validateStreamChunk()
+        return try await complete(request: request, response: try request.update(response: response), onResponse: onResponse)
     }
 
     private func perform<Response: Decodable>(request: URLRequest) async -> Result<Response, Error> {
@@ -155,6 +157,7 @@ extension LangTools {
                             continue
                         }
                         if let response {
+                            try response.validateStreamChunk()  // Outside the do/catch: not an incomplete buffer.
                             // If we were able to create a response object, enrich it with the accumulated stream state and request-specific information before adding it to the combined response used to handle tool completions.
                             let streamUpdatedResponse = response.updating(with: combinedResponse)
                             let updatedResponse = try request.update(response: streamUpdatedResponse)

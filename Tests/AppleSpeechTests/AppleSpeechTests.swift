@@ -6,8 +6,10 @@
 //
 
 import XCTest
-import Speech
 import LangTools
+
+#if canImport(Speech)
+import Speech
 @testable import AppleLangTools
 
 final class AppleSpeechTests: XCTestCase {
@@ -159,3 +161,4 @@ final class AppleSpeechTests: XCTestCase {
         XCTAssertEqual(decoded, model)
     }
 }
+#endif

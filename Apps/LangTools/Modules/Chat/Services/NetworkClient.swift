@@ -10,7 +10,9 @@ import OpenAI
 import Anthropic
 import XAI
 import Gemini
+import Cohere
 import Ollama
+import AppleLangTools
 
 public typealias Role = OpenAI.Message.Role
 
@@ -68,6 +70,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     private let accountProxyTransport: AccountProxyTransportProtocol
     private let openAIAccountChatBridge: OpenAIAccountChatBridging
     private let generationSettingsProvider: @Sendable () -> ChatGenerationSettings
+    private let compatibleCatalog: CompatibleModelCatalog
     public let providerAccessManager: ProviderAccessManager
     private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
     private let ollamaSession: URLSession?
@@ -88,7 +91,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         ollamaSession: URLSession? = nil,
         generationSettingsProvider: @escaping @Sendable () -> ChatGenerationSettings = {
             ChatGenerationSettingsStore().load()
-        }
+        },
+        compatibleCatalog: CompatibleModelCatalog = .shared
     ) {
         self.keychainService = keychainService
         self.accountLoginService = accountLoginService
@@ -98,6 +102,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
         self.ollamaSession = ollamaSession
         self.generationSettingsProvider = generationSettingsProvider
+        self.compatibleCatalog = compatibleCatalog
         super.init()
         APIService.llms.forEach { llm in keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) } }
         providerAccessManager.refresh()
@@ -334,6 +339,51 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                 tool_choice: toolChoice,
                 toolEventHandler: toolEventHandler
             )
+        case .compatible(let provider, let id):
+            // Tools go only to models the catalog does not
+            // list as lacking tool support.
+            let supportsTools = compatibleCatalog.entry(for: provider, id: id)?.supportsTools ?? true
+            if provider == .cohere, let model = Cohere.Model(rawValue: id) {
+                return Cohere.ChatRequest(
+                    model: model,
+                    messages: replayMessages.toOpenAIMessages().map { Cohere.Message($0) },
+                    stream: stream,
+                    tools: supportsTools ? tools?.convertTools() : nil,
+                    tool_choice: supportsTools ? toolChoice.flatMap { .init($0) } : nil,
+                    temperature: temperature,
+                    max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                    p: topP, k: topK, seed: seed, stop_sequences: stop,
+                    frequency_penalty: frequencyPenalty, presence_penalty: presencePenalty,
+                    toolEventHandler: toolEventHandler
+                )
+            }
+            if provider.usesResponses {
+                return OpenAI.ResponsesRequest(
+                    model: provider.openAIModel(id: id),
+                    messages: replayMessages.toOpenAIMessages(),
+                    stream: stream,
+                    max_output_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                    temperature: temperature,
+                    top_p: topP,
+                    tools: supportsTools ? tools?.convertTools() : nil,
+                    toolEventHandler: toolEventHandler
+                )
+            }
+            return OpenAI.ChatCompletionRequest(
+                model: provider.openAIModel(id: id),
+                messages: replayMessages.toOpenAIMessages(),
+                temperature: temperature,
+                top_p: topP,
+                stream: stream,
+                stop: stop.map { .array($0) },
+                max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
+                presence_penalty: presencePenalty,
+                frequency_penalty: frequencyPenalty,
+                seed: seed,
+                tools: supportsTools ? tools?.convertTools() : nil,
+                tool_choice: supportsTools ? toolChoice : nil,
+                toolEventHandler: toolEventHandler
+            )
         case .xAI(let providerModel):
             return OpenAI.ChatCompletionRequest(
                 model: providerModel,
@@ -351,19 +401,13 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                 toolEventHandler: toolEventHandler
             )
         case .gemini(let providerModel):
-            return OpenAI.ChatCompletionRequest(
+            return Gemini.GenerateContentRequest(
                 model: providerModel,
-                messages: replayMessages.toOpenAIMessages(),
-                temperature: temperature,
-                top_p: topP,
+                messages: replayMessages.toOpenAIMessages().map { Gemini.Message($0) },
                 stream: stream,
-                stop: stop.map { .array($0) },
-                max_tokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil,
-                presence_penalty: presencePenalty,
-                frequency_penalty: frequencyPenalty,
-                seed: seed,
                 tools: tools?.convertTools(),
-                tool_choice: toolChoice,
+                functionCallingMode: toolChoice.map { .init($0) },
+                generationConfig: .init(temperature: temperature, topP: topP, topK: topK, maxOutputTokens: capabilities.maximumOutputField == .openAIMaxTokens ? maximumOutputTokens : nil, stopSequences: stop, seed: seed, presencePenalty: presencePenalty, frequencyPenalty: frequencyPenalty),
                 toolEventHandler: toolEventHandler
             )
         case .ollama(let providerModel):
@@ -393,11 +437,34 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             )
         case .ollamaCloud:
             throw NetworkError.ollamaCloudTransportUnavailable
+        case .apple(let providerModel):
+            // Tool calling is not bridged to Foundation Models yet, so tools are
+            // not sent; the on-device model answers from the conversation alone.
+            // GenerationOptions takes a single sampling mode, so top-k wins when
+            // both top-k and top-p are set (ranges are validated by the settings).
+            let appleSeed = seed.map(UInt64.init(truncatingIfNeeded:))
+            let sampling: AppleIntelligence.Sampling? = if let topK {
+                .topK(topK, seed: appleSeed)
+            } else if let topP {
+                .topP(topP, seed: appleSeed)
+            } else {
+                nil
+            }
+            return AppleIntelligence.ChatRequest(
+                model: providerModel,
+                messages: replayMessages.toAppleIntelligenceMessages(),
+                stream: stream,
+                temperature: temperature,
+                maximumResponseTokens: maximumOutputTokens,
+                sampling: sampling
+            )
         }
     }
 
     public func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
         let effectiveModel = ToolSettings.shared.agentModelOverride ?? model
+        // Agents need tool calling, which the on-device route lacks regardless of availability.
+        if effectiveModel.apiService == .apple { throw AppleIntelligenceError.toolCallingUnsupported }
         try ensureModelAccess(for: effectiveModel)
         if accountSession(for: effectiveModel) != nil {
             throw NetworkError.accountProxyTransportFailed("Account-backed agent execution is not supported. Use an API key for agent runs.")
@@ -411,10 +478,18 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .gemini(let model): return AgentContext(langTool: try requiredLangTool(Gemini.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
         case .openAI(let model), .codex(let model): return AgentContext(langTool: try requiredLangTool(OpenAI.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
         case .xAI(let model): return AgentContext(langTool: try requiredLangTool(XAI.self), model: model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler)
+        case .compatible(let provider, let id):
+            guard let context = provider.providerContext(id: id, toolchain: toolchainSnapshot()) else {
+                throw NetworkError.langToolNotRegistered(provider.displayName)
+            }
+            // The existential initializer: the provider's concrete type is erased here.
+            return AgentContext(langTool: context.langTool, model: context.model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler, parent: nil, tools: nil)
         case .ollama(let model):
             let snapshot = ollamaEndpointConfiguration.snapshot()
             return try snapshot.makeAgentContext(model: model, messages: replayMessages.toOllamaMessages(), eventHandler: eventHandler, directSession: ollamaSession ?? snapshot.directSession)
         case .ollamaCloud: throw NetworkError.ollamaCloudTransportUnavailable
+        case .apple:
+            throw AppleIntelligenceError.toolCallingUnsupported
         }
     }
 
@@ -434,6 +509,9 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             // Register the captured capability, not a host-reconfigurable concrete provider.
             return try endpoint.makeToolchain(directSession: ollamaSession ?? endpoint.directSession)
         }
+        if model.apiService == .apple {
+            snapshot.register(AppleIntelligence())
+        }
         return snapshot
     }
 
@@ -448,6 +526,9 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         keychainService.saveApiKey(apiKey: apiKey, for: llm)
         registerLangTool(apiKey, for: llm)
         providerAccessManager.refresh()
+        if let provider = CompatibleProvider(service: llm) {
+            compatibleCatalog.refreshInBackground(provider, keychainService: keychainService, accessManager: providerAccessManager)
+        }
     }
 
     public func removeApiKey(for llm: APIService) throws {
@@ -525,7 +606,9 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         case .openAI: return if let baseURL { OpenAI(baseURL: baseURL, apiKey: apiKey) } else { OpenAI(apiKey: apiKey) }
         case .xAI: return if let baseURL { XAI(baseURL: baseURL, apiKey: apiKey) } else { XAI(apiKey: apiKey) }
         case .gemini: return if let baseURL { Gemini(baseURL: baseURL, apiKey: apiKey) } else { Gemini(apiKey: apiKey) }
-        case .ollama: return nil
+        case .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
+            return CompatibleProvider(service: llm)?.makeClient(apiKey: apiKey)
+        case .ollama, .apple: return nil
         default: return nil
         }
     }
@@ -535,6 +618,11 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         }
         switch model.apiService {
         case .ollama:
+            return
+        case .apple:
+            if case .unavailable(let reason) = AppleIntelligence.availability {
+                throw AppleIntelligenceError.unavailable(reason)
+            }
             return
         case .serper:
             throw NetworkError.incompatibleRequest
@@ -574,11 +662,13 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
 }
 
 public enum APIService: String, CaseIterable, Codable, Identifiable {
-    case openAI, anthropic, xAI, gemini, ollama, serper
+    case openAI, anthropic, xAI, gemini, ollama, apple, serper
+    // OpenAI-compatible providers; raw values match `CompatibleProvider`.
+    case openrouter, vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
 
     public var id: String { rawValue }
 
-    static var llms: [APIService] = [.openAI, .anthropic, .xAI, .gemini, .ollama]
+    static var llms: [APIService] = [.openAI, .anthropic, .xAI, .gemini, .ollama] + CompatibleProvider.allCases.map(\.service)
 }
 
 extension NetworkClient {
@@ -613,4 +703,9 @@ extension NetworkClient {
             }
         }
     }
+}
+
+public extension Error {
+    /// Whether this error came from Apple Intelligence on-device generation.
+    var isAppleIntelligenceError: Bool { AppleIntelligence.isProviderError(self) }
 }

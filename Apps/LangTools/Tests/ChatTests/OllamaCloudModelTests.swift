@@ -111,13 +111,15 @@ final class OllamaCloudModelTests: XCTestCase {
             + XAI.Model.allCases.map { .xAI($0) }
             + Gemini.Model.allCases.map { .gemini($0) }
         let independent: [Model] = local.map { .ollama($0) } + cloud.map { .ollamaCloud($0) }
+        let compatible = Model.compatibleModels(catalog: .shared)
+        let apple = Model.appleModels
         XCTAssertEqual(Model.allCases(ollamaModels: local, ollamaCloudModels: cloud),
-                       OpenAI.Model.allCases.map { .openAI($0) } + ordinary + independent)
+                       OpenAI.Model.allCases.map { .openAI($0) } + ordinary + independent + compatible + apple)
         XCTAssertEqual(Model.chatModels(ollamaModels: local, ollamaCloudModels: cloud),
-                       OpenAI.Model.chatModels.map { .openAI($0) } + ordinary + independent)
+                       OpenAI.Model.chatModels.map { .openAI($0) } + ordinary + independent + apple + compatible)
         XCTAssertEqual(Model.allCases(ollamaModels: [], ollamaCloudModels: []),
-                       OpenAI.Model.allCases.map { .openAI($0) } + ordinary)
+                       OpenAI.Model.allCases.map { .openAI($0) } + ordinary + compatible + apple)
         XCTAssertEqual(Model.chatModels(ollamaModels: [], ollamaCloudModels: []),
-                       OpenAI.Model.chatModels.map { .openAI($0) } + ordinary)
+                       OpenAI.Model.chatModels.map { .openAI($0) } + ordinary + apple + compatible)
     }
 }

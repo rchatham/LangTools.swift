@@ -19,6 +19,7 @@ public final class ProviderAccessManager: ObservableObject {
     private var ollamaCloudAccessEligibilityOverride: OllamaCloudAccessEligibility?
     private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
     private let ollamaCloudModelStore: OllamaCloudModelStore
+    private let compatibleCatalog: CompatibleModelCatalog
     private let stateLock = NSLock()
     private var refreshGeneration: UInt64 = 0
 
@@ -27,11 +28,13 @@ public final class ProviderAccessManager: ObservableObject {
         sessionStore: AuthSessionStore = .shared,
         ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared,
         ollamaCloudModelStore: OllamaCloudModelStore = .init(),
-        ollamaCloudAccessEligibility: OllamaCloudAccessEligibility? = nil
+        ollamaCloudAccessEligibility: OllamaCloudAccessEligibility? = nil,
+        compatibleCatalog: CompatibleModelCatalog = .shared
     ) {
         self.keychainService = keychainService
         self.sessionStore = sessionStore
         self.ollamaEndpointConfiguration = ollamaEndpointConfiguration
+        self.compatibleCatalog = compatibleCatalog
         self.ollamaCloudModelStore = ollamaCloudModelStore
         self.defaultOllamaCloudAccessEligibility = {
             keychainService.getApiKey(for: .ollama)?
@@ -139,7 +142,8 @@ public final class ProviderAccessManager: ObservableObject {
             // or access is temporarily unavailable. Neither becomes a new fallback.
             return model
         default:
-            return available.contains(model) ? model : (available.first ?? model)
+            // Do not silently replace an unavailable provider with on-device Apple.
+            return available.contains(model) ? model : (available.first { $0.apiService != .apple } ?? model)
         }
     }
 
@@ -151,6 +155,7 @@ public final class ProviderAccessManager: ObservableObject {
             .flatMap(\.availableModels)
             + state(for: .ollama).availableModels
             + cloudModels
+            + state(for: .apple).availableModels
     }
 
     private func isOllamaCloudAccessEligible() -> Bool {
@@ -200,8 +205,8 @@ public final class ProviderAccessManager: ObservableObject {
                 accountIdentifier: claudeCodeSession?.accountIdentifier
             ),
             accessState(for: .xAI),
-            accessState(for: .gemini)
-        ]
+            accessState(for: .gemini),
+        ] + CompatibleProvider.allCases.map { accessState(for: $0.accessDestination) }
     }
 
     private func accessState(for destination: AccessDestination) -> ProviderAccessState {
@@ -215,7 +220,7 @@ public final class ProviderAccessManager: ObservableObject {
     }
 
     public func unavailableReason(for state: ProviderAccessState) -> String? {
-        guard state.service != .ollama, state.service != .serper else { return nil }
+        guard state.service != .ollama, state.service != .apple, state.service != .serper else { return nil }
         if state.authStatus == .notConfigured {
             switch state.accessDestination {
             case .openAI:
@@ -263,6 +268,9 @@ public final class ProviderAccessManager: ObservableObject {
         if service == .ollama {
             return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
         }
+        if service == .apple {
+            return Model.appleModels
+        }
 
         let hasAPIKey = apiKey?.isEmpty == false
         let hasSession = session != nil
@@ -287,7 +295,7 @@ public final class ProviderAccessManager: ObservableObject {
                     guard let model = Anthropic.Model(rawValue: slug) else { return nil }
                     return .claudeCode(model)
                 }
-            case .xAI, .gemini, .ollama, .serper:
+            case .xAI, .gemini, .ollama, .apple, .serper, .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
                 parsed = session.accessibleModelIDs.compactMap(Model.init(rawValue:))
             }
             return parsed
@@ -304,8 +312,13 @@ public final class ProviderAccessManager: ObservableObject {
                 return XAI.Model.allCases.map { .xAI($0) }
             case .gemini:
                 return Gemini.Model.allCases.map { .gemini($0) }
+            case .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
+                let provider = CompatibleProvider(service: service)!
+                return compatibleCatalog.modelIDs(for: provider).map { .compatible(provider, $0) }
             case .ollama:
                 return ollamaEndpointConfiguration.cachedModels(for: ollamaSnapshot).map { .ollama($0) }
+            case .apple:
+                return Model.appleModels
             case .serper:
                 return []
             }

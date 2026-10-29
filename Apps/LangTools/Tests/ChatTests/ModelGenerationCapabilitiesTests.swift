@@ -32,6 +32,12 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
     private let anthropicBounds: [String: Int] = [
         "claude-opus-4-6": 128_000, "claude-opus-4-6-20260205": 128_000,
         "claude-sonnet-4-6": 128_000, "claude-sonnet-4-6-20260217": 128_000,
+        "claude-opus-4-7": 128_000, "claude-opus-4-8": 128_000,
+        "claude-opus-5": 128_000, "claude-sonnet-5": 128_000,
+        "claude-fable-5": 128_000, "claude-mythos-5": 128_000,
+        "claude-fable-5-1": 128_000, "claude-mythos-5-1": 128_000,
+        "claude-opus-5-5": 128_000, "claude-sonnet-5-5": 128_000,
+        "claude-haiku-5-5": 128_000,
         "claude-opus-4-5-20251101": 64_000, "claude-sonnet-4-5-latest": 64_000,
         "claude-sonnet-4-5-20250929": 64_000, "claude-haiku-4-5-latest": 64_000,
         "claude-haiku-4-5-20251001": 64_000,
@@ -189,11 +195,27 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
             XCTAssertTrue(capabilities.supportsTopP, providerModel.rawValue)
             XCTAssertTrue(capabilities.supportsFrequencyPenalty, providerModel.rawValue)
             XCTAssertTrue(capabilities.supportsPresencePenalty, providerModel.rawValue)
-            XCTAssertFalse(capabilities.supportsTopK, providerModel.rawValue)
+            XCTAssertTrue(capabilities.supportsTopK, providerModel.rawValue)  // native topK
             XCTAssertTrue(capabilities.supportsSeed, providerModel.rawValue)
             XCTAssertTrue(capabilities.supportsStop, providerModel.rawValue)
         }
         XCTAssertEqual(Set(Gemini.Model.allCases.map(\.rawValue)).intersection(geminiBounds.keys), Set(geminiBounds.keys))
+    }
+
+    func testCompatibleModelsUseAppCeilingWithOpenAIParameters() {
+        let capabilities = Model.compatible(.openrouter, "vendor/model-not-in-any-catalog").generationCapabilities
+        XCTAssertEqual(capabilities.maximumOutputField, .openAIMaxTokens)
+        XCTAssertEqual(capabilities.maximumOutputTokenBound, ChatGenerationSettings.tokenRange.upperBound)
+        XCTAssertTrue(capabilities.supportsTemperature)
+        XCTAssertTrue(capabilities.supportsTopP)
+        XCTAssertTrue(capabilities.supportsFrequencyPenalty)
+        XCTAssertTrue(capabilities.supportsPresencePenalty)
+        XCTAssertFalse(capabilities.supportsTopK, "the OpenAI request type has no top_k field")
+        XCTAssertTrue(capabilities.supportsSeed)
+        XCTAssertTrue(capabilities.supportsStop)
+        XCTAssertNil(capabilities.contextWindowTokens, "unknown models have no catalog context length")
+        XCTAssertNil(capabilities.unsupportedReason)
+        XCTAssertTrue(capabilities.maximumOutputWarning?.contains("not a model limit") == true)
     }
 
     func testArbitraryOllamaModelsUseAppCeilingWithWarning() throws {

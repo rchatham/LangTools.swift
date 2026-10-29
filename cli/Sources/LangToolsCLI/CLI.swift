@@ -159,6 +159,8 @@ struct CLI {
           OPENAI_API_KEY      OpenAI API key
           XAI_API_KEY         xAI (Grok) API key
           GEMINI_API_KEY      Google Gemini API key
+          OPENROUTER_API_KEY  OpenRouter API key (models: openrouter/<creator>/<model>)
+        \(CompatibleProvider.allCases.map { "  \($0.environmentVariable.padding(toLength: 18, withPad: " ", startingAt: 0))  \($0.displayName) API key (models: \($0.prefix)<model>)" }.joined(separator: "\n"))
           OLLAMA_HOST         Ollama base URL (default: http://localhost:11434)
 
         COMMANDS (in chat)
@@ -220,12 +222,15 @@ struct CLI {
         case "xai", "grok":
             return XAI.Model(rawValue: id).map { .xAI($0) }
         default:
-            return nil
+            guard let compatible = CompatibleProvider(rawValue: provider),
+                  let id = CompatibleProvider.validModelID(id) else { return nil }
+            return .compatible(compatible, id)
         }
     }
 
     static func runTraditionalCLI(runMode: CLIRunMode) async throws {
         await networkClient.fetchOllamaModels()
+        await networkClient.fetchCompatibleModels()
         try await checkAndRequestAPIKeys(runMode: runMode)
 
         print("LangTools \(cliVersion)")
@@ -339,7 +344,7 @@ struct CLI {
             .openAI: "OPENAI_API_KEY",
             .xAI: "XAI_API_KEY",
             .gemini: "GEMINI_API_KEY",
-        ]
+        ].merging(CompatibleProvider.allCases.map { ($0.apiService, $0.environmentVariable) }) { current, _ in current }
 
         return variableByService.reduce(into: [:]) { result, entry in
             guard let key = environment[entry.value]?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -686,6 +691,7 @@ struct CLI {
         case .openAI:    defaultService = .openAI
         case .xAI:       defaultService = .xAI
         case .gemini:    defaultService = .gemini
+        case .compatible(let provider, _): defaultService = provider.apiService
         case .ollama:    return // Ollama is local — no API key needed
         }
 
@@ -748,6 +754,14 @@ struct CLI {
             ollamaManualIndex = nil
         }
 
+        // OpenAI-compatible providers: models are entered by ID.
+        var compatibleManualIndices: [Int: CompatibleProvider] = [:]
+        for provider in CompatibleProvider.allCases {
+            compatibleManualIndices[models.count] = provider
+            let suggested = provider.knownModelIDs.first ?? ""
+            models.append(("\(provider.displayName) (enter model ID)", .compatible(provider, suggested)))
+        }
+
         print("\n\("Available models".blue)")
         print("─────────────────")
         for (i, (name, _)) in models.enumerated() {
@@ -771,6 +785,18 @@ struct CLI {
             } else {
                 print("Invalid model name. Keeping current model.".yellow)
                 return
+            }
+        }
+
+        if let provider = compatibleManualIndices[idx - 1] {
+            let catalog = (Model.compatibleCatalogs[provider] ?? []).map(\.id)
+            let examples = (catalog.isEmpty ? provider.knownModelIDs : catalog).prefix(3).joined(separator: ", ")
+            print("Enter \(provider.displayName) model ID (e.g. \(examples), or press Enter for the first): ", terminator: "")
+            let id = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !id.isEmpty {
+                newModel = .compatible(provider, id)
+            } else if let first = catalog.first {
+                newModel = .compatible(provider, first)
             }
         }
 
