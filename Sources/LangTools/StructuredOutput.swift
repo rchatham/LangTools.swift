@@ -36,7 +36,15 @@ extension StructuredOutput {
         guard let data = jsonString.data(using: .utf8) else {
             throw StructuredOutputError.invalidResponse("Unable to convert string to UTF-8 data")
         }
-        try self.init(jsonData: data)
+        do {
+            try self.init(jsonData: data)
+        } catch {
+            #if DEBUG
+            // Privacy-safe: category + allowlisted coding path + byte count/shape only.
+            RichResultDiagnostics.logDecodeFailure(for: Self.self, raw: jsonString, error: error)
+            #endif
+            throw error
+        }
     }
 
     /// Decode a StructuredOutput value from a `JSON` value.

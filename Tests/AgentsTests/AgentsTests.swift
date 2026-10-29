@@ -99,6 +99,35 @@ final class AgentsTests: XCTestCase {
         XCTAssertEqual(result, "The answer is 42.")
     }
 
+    func testFinalizerPublishesAndReturnsOnlyFinalizedResult() async throws {
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
+            (.success(self.mockChatResponse(content: "unstructured model output")), 200)
+        }
+        var events: [AgentEvent] = []
+        let result = try await TestAgent().execute(context: makeContext(events: { events.append($0) }), finalizingResponse: { _ in "canonical result" })
+        XCTAssertEqual(result, "canonical result")
+        XCTAssertTrue(events.contains(.completed(agent: "TestAgent", result: "canonical result")))
+        XCTAssertFalse(events.contains(.completed(agent: "TestAgent", result: "unstructured model output")))
+    }
+
+    func testFinalizerFailureDoesNotPublishSuccessOrRetryRequest() async throws {
+        var requests = 0
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
+            requests += 1
+            return (.success(self.mockChatResponse(content: "unstructured model output")), 200)
+        }
+        var events: [AgentEvent] = []
+        do {
+            _ = try await TestAgent().execute(context: makeContext(events: { events.append($0) }), finalizingResponse: { _ in
+                throw AgentError("Invalid structured result")
+            })
+            XCTFail("Expected finalization failure")
+        } catch { XCTAssertTrue(error is AgentError) }
+        XCTAssertEqual(requests, 1)
+        XCTAssertFalse(events.contains { if case .completed(_, _, false) = $0 { return true }; return false })
+        XCTAssertTrue(events.contains { if case .completed(_, _, true) = $0 { return true }; return false })
+    }
+
     func testAgentExecuteEmptyResponseThrows() async throws {
         let emptyJSON = """
         {"id":"x","object":"chat.completion","created":0,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}

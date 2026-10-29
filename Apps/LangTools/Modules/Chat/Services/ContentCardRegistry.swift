@@ -47,6 +47,7 @@
 import Foundation
 import os
 import SwiftUI
+import ChatUI
 import LangTools
 
 // MARK: - ContentCardRegistry
@@ -59,6 +60,20 @@ import LangTools
 ///   `register(...)` and `agentResultParser` may be called from any context, but
 ///   registration is typically done once at app startup on the main thread.
 ///   Access `shared` only after the app has finished launching.
+///
+/// - Note: A `cardType` string is a **global** identity: the registry keeps a
+///   single decoder/renderer map keyed by card type, shared across the agent
+///   and tool namespaces. It identifies both the schema (`Item` decoding
+///   contract) and the render closure for the cards it produces, and it
+///   survives persistence in `ContentCardsContent.cardType`. Agent names and
+///   tool names are separate namespaces, but they are not separate card type
+///   namespaces: registering a second agent or tool under an existing
+///   `cardType` replaces the previous decoder and renderer for that card
+///   type, even when built from the same generic template. Sharing one
+///   `cardType` across agents or tools is deliberate and valid only when both
+///   registrations use a compatible decode/render contract; registrations
+///   with incompatible schemas or renderers must use distinct `cardType`
+///   strings. Never change the `cardType` string for an existing card type.
 public final class ContentCardRegistry: @unchecked Sendable {
 
     public static let shared = ContentCardRegistry()
@@ -70,11 +85,12 @@ public final class ContentCardRegistry: @unchecked Sendable {
         /// Converts raw agent result JSON → ContentCardsContent (for messaging / persistence).
         let parseResult: (String) -> ContentCardsContent?
         /// Converts a ContentCardsContent → type-erased SwiftUI view (for rendering).
-        let buildView: @MainActor @Sendable (ContentCardsContent) -> AnyView
+        let buildView: @MainActor @Sendable (ContentCardsContent, Bool) -> AnyView
     }
 
     private struct Storage {
         var byAgentKey: [AnyHashable: Entry] = [:]
+        var byToolName: [AnyHashable: Entry] = [:]
         var byCardType: [String: Entry] = [:]
     }
 
@@ -87,7 +103,12 @@ public final class ContentCardRegistry: @unchecked Sendable {
     /// - Parameters:
     ///   - agent:    Any `Hashable` agent key (e.g. an `AgentID` enum case or a plain `String`).
     ///   - cardType: Stable string key written into `ContentCardsContent.cardType`.
-    ///               It survives persistence, so never change it for an existing agent.
+    ///               It globally identifies the schema and renderer across
+    ///               agents and tools (separate agent names are not separate
+    ///               card type namespaces) and survives persistence, so never
+    ///               change it for an existing card type. Sharing a `cardType`
+    ///               with another registration is valid only when their
+    ///               decode/render contracts are compatible.
     ///   - type:     The `StructuredOutput` type the registry encodes/decodes.
     ///   - decode:   Converts the raw agent result JSON into `(message?, [Item])`.
     ///               The optional message appears above the cards in the UI.
@@ -100,7 +121,20 @@ public final class ContentCardRegistry: @unchecked Sendable {
         decode: @escaping (String) -> (message: String?, items: [Item])?,
         @ViewBuilder render: @escaping @Sendable ([Item]) -> V
     ) {
-        let entry = Entry(
+        let entry = Self.makeEntry(cardType: cardType, as: type, decode: decode, render: render)
+        storage.withLock {
+            $0.byAgentKey[AnyHashable(agent)] = entry
+            $0.byCardType[cardType] = entry
+        }
+    }
+
+    private static func makeEntry<Item: StructuredOutput, V: View>(
+        cardType: String,
+        as type: Item.Type,
+        decode: @escaping (String) -> (message: String?, items: [Item])?,
+        @ViewBuilder render: @escaping @Sendable ([Item]) -> V
+    ) -> Entry {
+        Entry(
             parseResult: { json in
                 guard let (message, items) = decode(json),
                       let data = try? JSONEncoder().encode(items),
@@ -114,14 +148,9 @@ public final class ContentCardRegistry: @unchecked Sendable {
                     cardCount: items.count
                 )
             },
-            buildView: { content in
+            buildView: { content, showsSummary in
                 guard let items = try? content.decodeCards(as: Item.self) else {
-                    #if DEBUG
-                    assertionFailure(
-                        "[ContentCardRegistry] Failed to decode \(Item.self) from cardsJSON " +
-                        "for cardType '\(cardType)'. Encoding/decoding mismatch?"
-                    )
-                    #endif
+                    Self.logDecodeFailure(type: Item.self, cardType: cardType)
                     return AnyView(
                         Text("Could not display \(content.message ?? cardType + " card")")
                             .font(.subheadline)
@@ -130,22 +159,41 @@ public final class ContentCardRegistry: @unchecked Sendable {
                 }
                 return AnyView(
                     VStack(alignment: .leading, spacing: 12) {
+                        if showsSummary, let summary = Self.nonemptySummary(content.message) {
+                            Text(summary)
+                        }
                         render(items)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 )
             }
         )
+    }
 
-        storage.withLock {
-            $0.byAgentKey[AnyHashable(agent)] = entry
-            $0.byCardType[cardType] = entry
-        }
+    private static func nonemptySummary(_ summary: String?) -> String? {
+        guard let summary, !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return summary
+    }
+
+    /// Non-fatal log for stale/corrupt persisted display payloads.
+    private static func logDecodeFailure(type: Any.Type, cardType: String) {
+        #if DEBUG
+        print(RichResultDiagnostics.renderDecodeFailureLog(
+            type: .label(forType: type), cardType: .label(for: cardType)
+        ))
+        #endif
     }
 
     /// Convenience overload for agents whose result is a single top-level `StructuredOutput`
     /// object (not a wrapper response). The JSON is decoded directly as `Item` and wrapped
     /// in a one-element array before being passed to `render`.
+    ///
+    /// - Parameter cardType: Stable string key written into
+    ///   `ContentCardsContent.cardType`. It globally identifies the schema and
+    ///   renderer across agents and tools and survives persistence, so never
+    ///   change it for an existing card type. Sharing a `cardType` with another
+    ///   registration is valid only when their decode/render contracts are
+    ///   compatible.
     public func register<AgentKey: Hashable, Item: StructuredOutput, V: View>(
         agent: AgentKey,
         cardType: String,
@@ -171,21 +219,30 @@ public final class ContentCardRegistry: @unchecked Sendable {
     /// key or if the decode closure returns `nil`.
     public func parseResult<AgentKey: Hashable>(_ json: String, for agentKey: AgentKey) -> ContentCardsContent? {
         let entry = storage.withLock { $0.byAgentKey[AnyHashable(agentKey)] }
-        return entry?.parseResult(json)
+        guard let entry else {
+            #if DEBUG
+            print(RichResultDiagnostics.registryLog(
+                namespace: .agent,
+                agent: .label(for: String(describing: agentKey)),
+                outcome: .registryMiss
+            ))
+            #endif
+            return nil
+        }
+        let content = entry.parseResult(json)
+        #if DEBUG
+        print(RichResultDiagnostics.registryLog(
+            namespace: .agent,
+            agent: .label(for: String(describing: agentKey)),
+            outcome: Self.debugParseOutcome(for: content),
+            cardType: content.map { RichResultDiagnostics.CardTypeLabel.label(for: $0.cardType) },
+            itemCount: content.map(\.cardCount)
+        ))
+        #endif
+        return content
     }
 
     /// Ready-made closure for `MessageService.agentResultParser`.
-    ///
-    /// Looks up the agent by its raw name string (the value `MessageService` passes in) and
-    /// converts results containing cards into a `Message.contentCards`.
-    /// Returns `nil` for unregistered agents or results with no cards. In the latter
-    /// case the outer model's follow-up supplies the sole prose answer, rather than
-    /// showing both the agent's summary and the follow-up as separate bubbles.
-    ///
-    /// Usage (in any app target):
-    ///
-    ///     service.agentResultParser = ContentCardRegistry.shared.agentResultParser
-    ///
     public var agentResultParser: (String, String) -> Message? {
         { [weak self] result, agentName in
             guard let self,
@@ -196,22 +253,122 @@ public final class ContentCardRegistry: @unchecked Sendable {
         }
     }
 
+    // MARK: - Tool registration
+
+    /// Register a tool with full control over decoding and rendering.
+    /// Uses a separate tool-name namespace so the same name can be registered
+    /// as both an agent and a tool without collision. The tool-name namespace
+    /// is separate, but `cardType` remains a single global identity shared with
+    /// agent registrations: it identifies the schema and renderer for the cards
+    /// it produces and survives persistence, so registrations with incompatible
+    /// schemas or renderers must use distinct `cardType` strings.
+    ///
+    /// - Parameter cardType: Stable string key written into
+    ///   `ContentCardsContent.cardType`. Sharing a `cardType` with another
+    ///   registration is valid only when their decode/render contracts are
+    ///   compatible; never change it for an existing card type.
+    public func register<ToolKey: Hashable, Item: StructuredOutput, V: View>(
+        tool: ToolKey,
+        cardType: String,
+        as type: Item.Type,
+        decode: @escaping (String) -> (message: String?, items: [Item])?,
+        @ViewBuilder render: @escaping @Sendable ([Item]) -> V
+    ) {
+        let entry = Self.makeEntry(cardType: cardType, as: type, decode: decode, render: render)
+        storage.withLock { $0.byToolName[AnyHashable(tool)] = entry; $0.byCardType[cardType] = entry }
+    }
+
+    /// Convenience overload for tools whose result is a single top-level `StructuredOutput`.
+    ///
+    /// - Parameter cardType: Stable string key written into
+    ///   `ContentCardsContent.cardType`. It globally identifies the schema and
+    ///   renderer across agents and tools and survives persistence, so never
+    ///   change it for an existing card type. Sharing a `cardType` with another
+    ///   registration is valid only when their decode/render contracts are
+    ///   compatible.
+    public func register<ToolKey: Hashable, Item: StructuredOutput, V: View>(
+        tool: ToolKey, cardType: String, as type: Item.Type,
+        @ViewBuilder render: @escaping @Sendable ([Item]) -> V
+    ) {
+        register(tool: tool, cardType: cardType, as: type,
+                  decode: { json in guard let item = try? Item(jsonString: json) else { return nil }; return (message: nil, items: [item]) },
+                  render: render)
+    }
+
+    // MARK: - Tool parse path
+
+    /// Convert a raw tool result JSON string into a `ContentCardsContent`.
+    public func parseToolResult<ToolKey: Hashable>(_ json: String, for toolKey: ToolKey) -> ContentCardsContent? {
+        let entry = storage.withLock { $0.byToolName[AnyHashable(toolKey)] }
+        guard let entry else {
+            #if DEBUG
+            print(RichResultDiagnostics.registryLog(
+                namespace: .tool,
+                agent: nil,
+                outcome: .registryMiss
+            ))
+            #endif
+            return nil
+        }
+        let content = entry.parseResult(json)
+        #if DEBUG
+        print(RichResultDiagnostics.registryLog(
+            namespace: .tool,
+            agent: nil,
+            outcome: Self.debugParseOutcome(for: content),
+            cardType: content.map { RichResultDiagnostics.CardTypeLabel.label(for: $0.cardType) },
+            itemCount: content.map(\.cardCount)
+        ))
+        #endif
+        return content
+    }
+
+    /// Maps a parsed `ContentCardsContent?` to a fixed registry outcome for diagnostics.
+    /// DEBUG-only; release builds do not reference this symbol.
+    #if DEBUG
+    private static func debugParseOutcome(for content: ContentCardsContent?) -> RichResultDiagnostics.ParseOutcome {
+        guard let content else { return .decodeNil }
+        return content.cardCount > 0 ? .parsed : .emptyItems
+    }
+    #endif
+
+    /// Ready-made closure for `MessageService.resultContentParser`.
+    public var resultContentParser: (String, String, ChatToolCall.Kind) -> ChatToolCall.DisplayContent? {
+        { [weak self] result, name, kind in
+            guard let self else { return nil }
+            let content: ContentCardsContent? = switch kind {
+            case .agent: self.parseResult(result, for: name)
+            case .tool: self.parseToolResult(result, for: name)
+            }
+            guard let content, content.cardCount > 0 else { return nil }
+            return ChatToolCall.DisplayContent(type: content.cardType, json: content.cardsJSON, summary: content.message, itemCount: content.cardCount)
+        }
+    }
+
+    // MARK: - DisplayContent view path
+
+    /// Build an attached result view, including its nonempty summary above the
+    /// decoded items. Decode failures and unknown types retain a single fallback.
+    @MainActor @ViewBuilder
+    public func view(for displayContent: ChatToolCall.DisplayContent) -> some View {
+        let entry: Entry? = storage.withLock { $0.byCardType[displayContent.type] }
+        if let entry {
+            let content = ContentCardsContent(cardType: displayContent.type, message: displayContent.summary, cardsJSON: displayContent.json, cardCount: displayContent.itemCount)
+            entry.buildView(content, true)
+        } else {
+            Text(Self.nonemptySummary(displayContent.summary) ?? "Unknown card type: \(displayContent.type)").font(.subheadline).foregroundStyle(.secondary)
+        }
+    }
+
     // MARK: - View path
 
-    /// Build a SwiftUI view for the given content. Falls back to plain secondary text
-    /// if no registration is found for `content.cardType` (e.g. cards persisted from
-    /// an older app version whose type was later removed).
-    @MainActor
-    @ViewBuilder
+    /// Build legacy standalone cards. Their summary is already presented by
+    /// `Message.text`, so do not repeat it in the registered item renderer.
+    @MainActor @ViewBuilder
     public func view(for content: ContentCardsContent) -> some View {
         let entry: Entry? = storage.withLock { $0.byCardType[content.cardType] }
-        if let entry {
-            entry.buildView(content)
-        } else {
-            Text(content.message ?? "Unknown card type: \(content.cardType)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
+        if let entry { entry.buildView(content, false) }
+        else { Text(content.message ?? "Unknown card type: \(content.cardType)").font(.subheadline).foregroundStyle(.secondary) }
     }
 
     // MARK: - Batch registration
