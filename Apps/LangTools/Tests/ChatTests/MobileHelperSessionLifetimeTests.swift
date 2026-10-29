@@ -1,13 +1,16 @@
 import Agents
 import Foundation
 import HelperLink
+import KeychainAccess
 import LangTools
 import Ollama
 import XCTest
 @testable import Chat
 
-/// No real credentials, account services or network sockets. The health/data
-/// response gate makes release and selection races deterministic.
+/// Synthetic helper credentials and URLProtocol-gated responses make helper
+/// release and selection races deterministic. The NetworkClient integration
+/// test additionally constructs UUID-scoped Keychain readers and requires the
+/// guarded host harness; a unique service name alone does not provide isolation.
 @MainActor
 final class MobileHelperSessionLifetimeTests: XCTestCase {
     private var suite: String!
@@ -99,6 +102,48 @@ final class MobileHelperSessionLifetimeTests: XCTestCase {
         XCTAssertTrue(context?.langTool.session === probe.session)
         let capturedRequest = try context?.langTool.prepare(request: Ollama.ChatRequest(model: .init(rawValue: "fixture-model")!, messages: []))
         XCTAssertEqual(capturedRequest?.value(forHTTPHeaderField: "Authorization"), "Bearer \(credential().token)")
+        context = nil
+        try await assertRetired(probe)
+    }
+
+    // NetworkClient initialization reads credentials. Run this regression only
+    // under the guarded host harness, like NetworkClientAuthTests.
+    func testNetworkClientAgentRetainsCapturedHelperUntilContextRelease() async throws {
+        let probe = RetirementProbe()
+        try selectConnection(probe: probe)
+        // Read-only fixture: do not seed credentials or add a real-store cleanup
+        // mutation. Future credential-writing setup requires a memory-store seam
+        // or a separately reviewed guarded lifecycle, not UUID-only isolation.
+        let keychain = Keychain(service: "MobileHelperSessionLifetimeTests.\(UUID().uuidString)")
+        let keychainService = KeychainService(keychain: keychain)
+        let access = ProviderAccessManager(
+            keychainService: keychainService,
+            sessionStore: AuthSessionStore(keychain: keychain),
+            ollamaEndpointConfiguration: configuration,
+            ollamaCloudModelStore: OllamaCloudModelStore(userDefaults: defaults),
+            ollamaCloudAccessEligibility: { false }
+        )
+        var client: NetworkClient? = NetworkClient(
+            keychainService: keychainService,
+            providerAccessManager: access,
+            ollamaEndpointConfiguration: configuration
+        )
+        let model = try XCTUnwrap(Ollama.Model(rawValue: "fixture-model"))
+        var context: AgentContext? = try client?.agentContext(
+            messages: [], model: .ollama(model), eventHandler: { _ in })
+        XCTAssertNotNil(context)
+        client = nil
+        let replacement = RetirementProbe()
+        try selectConnection(probe: replacement)
+        try configuration.disconnectHelper()
+        try await assertRetired(replacement)
+
+        XCTAssertNil(context?.langTool as? Ollama)
+        XCTAssertNotNil(probe.session)
+        XCTAssertTrue(context?.langTool.session === probe.session)
+        let request = try context?.langTool.prepare(request: Ollama.ChatRequest(model: model, messages: []))
+        XCTAssertEqual(request?.url?.path, "/v1/ollama/api/chat")
+        XCTAssertEqual(request?.value(forHTTPHeaderField: "Authorization"), "Bearer \(credential().token)")
         context = nil
         try await assertRetired(probe)
     }

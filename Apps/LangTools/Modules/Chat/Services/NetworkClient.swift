@@ -486,7 +486,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             return AgentContext(langTool: context.langTool, model: context.model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler, parent: nil, tools: nil)
         case .ollama(let model):
             let snapshot = ollamaEndpointConfiguration.snapshot()
-            return AgentContext(langTool: try snapshot.provider(directSession: ollamaSession ?? snapshot.directSession), model: model, messages: replayMessages.toOllamaMessages(), eventHandler: eventHandler)
+            return try snapshot.makeAgentContext(model: model, messages: replayMessages.toOllamaMessages(), eventHandler: eventHandler, directSession: ollamaSession ?? snapshot.directSession)
         case .ollamaCloud: throw NetworkError.ollamaCloudTransportUnavailable
         case .apple:
             throw AppleIntelligenceError.toolCallingUnsupported

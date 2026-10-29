@@ -192,6 +192,30 @@ final class NetworkClientAuthTests: XCTestCase {
         }
     }
 
+    func testLocalAgentContextRetainsCapturedSessionWithoutExposingMutableProvider() throws {
+        let suite = "NetworkClientAuthTests.endpoint.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let configuration = OllamaEndpointConfiguration(userDefaults: defaults)
+        let original = try configuration.update("https://original.invalid:11434")
+        let client = NetworkClient(
+            keychainService: keychainService,
+            accountLoginService: StubAccountLoginService(),
+            accountProxyTransport: TestAccountProxyTransport(),
+            providerAccessManager: accessManager,
+            ollamaEndpointConfiguration: configuration
+        )
+        let model = try XCTUnwrap(Ollama.Model(rawValue: "fixture-model"))
+        let context = try client.agentContext(messages: [], model: .ollama(model), eventHandler: { _ in })
+        _ = try configuration.update("https://replacement.invalid:11434")
+
+        XCTAssertNil(context.langTool as? Ollama)
+        XCTAssertTrue(context.langTool.session === original.directSession)
+        let request = try context.langTool.prepare(request: Ollama.ChatRequest(model: model, messages: []))
+        XCTAssertEqual(request.url?.host, "original.invalid")
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+    }
+
     func testOllamaCloudAgentContextRefusesBeforeToolchain() throws {
         // Model access is eligible without touching a credential store.
         // Refusal must come from the unsupported route, not missing credentials.
