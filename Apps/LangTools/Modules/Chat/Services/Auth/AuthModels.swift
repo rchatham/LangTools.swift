@@ -92,7 +92,7 @@ public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
         case .gemini: return .gemini
         case .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
             return CompatibleProvider(rawValue: model.route.rawValue)!.accessDestination
-        case .ollama: return nil
+        case .ollama, .apple: return nil
         }
     }
 
@@ -104,7 +104,7 @@ public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
         case .gemini: return .gemini
         case .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
             return CompatibleProvider(service: service)!.accessDestination
-        case .ollama, .serper: return nil
+        case .ollama, .apple, .serper: return nil
         }
     }
 }
@@ -336,6 +336,8 @@ public struct ProviderAccessState: Equatable, Identifiable {
             return "Add an API key to enable this provider."
         case .ollama:
             return "Local models do not require sign-in."
+        case .apple:
+            return "Apple Intelligence runs on-device and does not require sign-in."
         case .serper:
             return "Add a Serper API key for search."
         }

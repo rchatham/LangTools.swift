@@ -10,6 +10,7 @@ import Anthropic
 import XAI
 import Gemini
 import Ollama
+import AppleLangTools
 
 public enum ModelRoute: String, Codable, Hashable {
     case openAI = "openai"
@@ -19,6 +20,7 @@ public enum ModelRoute: String, Codable, Hashable {
     case xAI = "xai"
     case gemini = "gemini"
     case ollama = "ollama"
+    case apple = "apple"
     // OpenAI-compatible providers; raw values match `CompatibleProvider`.
     case openrouter, vercel, groq, mistral, deepseek, cerebras, together, fireworks, cohere, perplexity
 }
@@ -31,6 +33,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
     case xAI(XAI.Model)
     case gemini(Gemini.Model)
     case ollama(Ollama.Model)
+    case apple(AppleIntelligence.Model)
     /// A model on an OpenAI-compatible provider, stored as `<provider>/<model-id>`
     /// (e.g. `openrouter/anthropic/claude-sonnet-4.5`).
     case compatible(CompatibleProvider, String)
@@ -64,6 +67,9 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             case ModelRoute.ollama.rawValue:
                 guard let model = Ollama.Model(rawValue: slug) else { return nil }
                 self = .ollama(model)
+            case ModelRoute.apple.rawValue:
+                guard let model = AppleIntelligence.Model(rawValue: slug) else { return nil }
+                self = .apple(model)
             default:
                 guard let provider = CompatibleProvider(rawValue: route),
                       let id = CompatibleProvider.validModelID(slug) else { return nil }
@@ -96,6 +102,8 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             return model.rawValue
         case .ollama(let model):
             return model.rawValue
+        case .apple(let model):
+            return model.rawValue
         case .compatible(_, let id):
             return id
         }
@@ -117,6 +125,8 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
             return .gemini
         case .ollama:
             return .ollama
+        case .apple:
+            return .apple
         case .compatible(let provider, _):
             return provider.route
         }
@@ -131,7 +141,14 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         + Gemini.Model.allCases.map { .gemini($0) }
 
         let ollamaModels = OllamaEndpointConfiguration.shared.cachedModels().map { Model.ollama($0) }
-        return standardModels + ollamaModels + compatibleModels(catalog: .shared)
+        return standardModels + ollamaModels + compatibleModels(catalog: .shared) + appleModels
+    }
+
+    /// On-device Apple Intelligence models, listed whenever the OS ships
+    /// Foundation Models. Runtime readiness (Apple Intelligence enabled, model
+    /// downloaded) is reported when a request is made.
+    public static var appleModels: [Model] {
+        AppleIntelligence.isSupportedOnThisOS ? [.apple(.onDevice)] : []
     }
 
     static func compatibleModels(catalog: CompatibleModelCatalog) -> [Model] {
@@ -146,6 +163,7 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         + XAI.Model.allCases.map { .xAI($0) }
         + Gemini.Model.allCases.map { .gemini($0) }
         + OllamaEndpointConfiguration.shared.cachedModels().map { .ollama($0) }
+        + appleModels
         + compatibleModels(catalog: .shared)
     }
 
@@ -156,13 +174,14 @@ public enum Model: Codable, RawRepresentable, Hashable, CaseIterable, Identifiab
         case .xAI: return .xAI
         case .gemini: return .gemini
         case .ollama: return .ollama
+        case .apple: return .apple
         case .compatible(let provider, _): return provider.service
         }
     }
 
     /// The provider or access route a model belongs to, used to group the picker.
     public var providerDisplayName: String {
-        AccessDestination.destination(for: self)?.displayName ?? "Ollama"
+        AccessDestination.destination(for: self)?.displayName ?? apiService.displayName
     }
 
     public static func availableChatModels(accessManager: ProviderAccessManager = .shared) -> [Model] {
@@ -180,6 +199,7 @@ public struct ChatGenerationCapabilities: Equatable, Sendable {
         case openAIMaxCompletionTokens
         case anthropicMaxTokens
         case ollamaNumPredict
+        case appleMaximumResponseTokens
     }
 
     public let maximumOutputField: MaximumOutputField?
@@ -266,6 +286,19 @@ public extension Model {
                 supportsSeed: true,
                 supportsStop: true,
                 contextWindowTokens: nil
+            )
+        case .apple:
+            // GenerationOptions supports temperature, a response-token cap, and
+            // top-k / top-p sampling with an optional seed.
+            return .init(
+                maximumOutputField: .appleMaximumResponseTokens,
+                maximumOutputTokenBound: AppleIntelligence.Model.contextWindowTokens,
+                maximumOutputWarning: "The on-device context window is shared by instructions, history, and the response.",
+                supportsTemperature: true,
+                supportsTopP: true,
+                supportsTopK: true,
+                supportsSeed: true,
+                contextWindowTokens: AppleIntelligence.Model.contextWindowTokens
             )
         case .gemini(let model):
             guard let bound = Self.geminiGenerationModelBounds[model.rawValue] else {
@@ -401,6 +434,12 @@ public extension Model {
     private static let anthropicGenerationModelBounds: [String: Int] = [
         "claude-opus-4-6": 128_000, "claude-opus-4-6-20260205": 128_000,
         "claude-sonnet-4-6": 128_000, "claude-sonnet-4-6-20260217": 128_000,
+        "claude-opus-4-7": 128_000, "claude-opus-4-8": 128_000,
+        "claude-opus-5": 128_000, "claude-sonnet-5": 128_000,
+        "claude-fable-5": 128_000, "claude-mythos-5": 128_000,
+        "claude-fable-5-1": 128_000, "claude-mythos-5-1": 128_000,
+        "claude-opus-5-5": 128_000, "claude-sonnet-5-5": 128_000,
+        "claude-haiku-5-5": 128_000,
         "claude-opus-4-5-20251101": 64_000, "claude-sonnet-4-5-latest": 64_000,
         "claude-sonnet-4-5-20250929": 64_000, "claude-haiku-4-5-latest": 64_000,
         "claude-haiku-4-5-20251001": 64_000,
@@ -467,6 +506,12 @@ public extension Model {
     private static let anthropicContextWindows: [String: Int] = [
         "claude-opus-4-6": 200_000, "claude-opus-4-6-20260205": 200_000,
         "claude-sonnet-4-6": 200_000, "claude-sonnet-4-6-20260217": 200_000,
+        "claude-opus-4-7": 1_000_000, "claude-opus-4-8": 1_000_000,
+        "claude-opus-5": 1_000_000, "claude-sonnet-5": 1_000_000,
+        "claude-fable-5": 1_000_000, "claude-mythos-5": 1_000_000,
+        "claude-fable-5-1": 1_000_000, "claude-mythos-5-1": 1_000_000,
+        "claude-opus-5-5": 1_000_000, "claude-sonnet-5-5": 1_000_000,
+        "claude-haiku-5-5": 1_000_000,
         "claude-opus-4-5-20251101": 200_000, "claude-sonnet-4-5-latest": 200_000,
         "claude-sonnet-4-5-20250929": 200_000, "claude-haiku-4-5-latest": 200_000,
         "claude-haiku-4-5-20251001": 200_000,

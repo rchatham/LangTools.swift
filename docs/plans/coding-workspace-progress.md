@@ -76,3 +76,7 @@ Implement the helper-owned tmux/PTY service with injectable test configuration;
 prove argument safety, independent attachment, detachment, explicit stop, and
 server-restart identity handling using a disposable tmux socket before UI work.
 The policy is currently a tested building block, not exposed over any endpoint.
+
+## 2026-10-29 — Current-main synchronization
+
+Merged `origin/main` at `8da5cbc` into the existing feature branch without conflicts. The four branch-owned workspace implementation/test/documentation files were preserved. Focused CLI verification passed 23 `CodingWorkspaceAccessTests|LocalHelperServerTests` tests, plus all three private-socket synthetic terminal lifecycle tests; staged whitespace checks passed. This does not rerun the previously timed-out full CLI suite or establish app UI/transport readiness.

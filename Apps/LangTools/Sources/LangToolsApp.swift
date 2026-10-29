@@ -310,6 +310,8 @@ extension MessageService: @retroactive ChatMessageService {
                 return ChatAlertInfo(title: "Decoding Error", message: "Failed to decode function arguments.")
             case .missingRequiredFunctionArguments:
                 return ChatAlertInfo(title: "Missing Arguments", message: "Required function arguments are missing.")
+            case .toolIterationLimitReached:
+                return ChatAlertInfo(title: "Tool Limit Reached", message: error.localizedDescription)
             }
 
         case is LangToolchainError:
@@ -343,6 +345,12 @@ extension MessageService: @retroactive ChatMessageService {
             return handleCLIAccountError(error)
 
         default:
+            // On-device generation errors (availability, guardrails, context
+            // window) carry their own localized descriptions. Match on the error
+            // itself, not the saved default model, so attribution stays correct.
+            if error.isAppleIntelligenceError {
+                return ChatAlertInfo(title: "Apple Intelligence", message: error.localizedDescription)
+            }
             return nil
         }
     }
