@@ -206,6 +206,39 @@ final class AgentWorkerTests: XCTestCase {
         XCTAssertTrue(logs.values.contains { $0.contains("run=crash failed: interrupted") }, "\(logs.values)")
     }
 
+    func testJobThatFinishedBeforeCrashIsDeliveredNotRerun() async throws {
+        let delivered = RequestLog()
+        MockURLProtocol.setHandler(for: "/hooks/done") { request in delivered.append(request); return (.success(Data()), 200) }
+        try spool.enqueue(job("saved", webhook: "https://example.com/hooks/done"))
+        _ = try spool.claimNext()
+        // The worker saved the result, then died before removing the job file.
+        let now = Date()
+        try spool.write(AgentRunResult(runID: "saved", agent: "Helper", provider: "openai", model: "gpt-4o", status: .completed, output: "First run", startedAt: now, finishedAt: now))
+        MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in
+            XCTFail("A finished job must not run again")
+            return (.failure(URLError(.badServerResponse)), nil)
+        }
+        let logs = CallLog()
+
+        // maxAttempts 1 would otherwise report it failed over the saved result.
+        try await runWorker(worker(maxAttempts: 1, logs: logs)) { delivered.requests.count == 1 }
+
+        XCTAssertEqual(try spool.result(for: "saved")?.output, "First run")
+        XCTAssertEqual(try AgentRunResult.decode(from: XCTUnwrap(delivered.requests.first?.bodyData ?? delivered.requests.first?.httpBody)).output, "First run")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("running").path), [])
+        XCTAssertTrue(logs.values.contains { $0.contains("run=saved had finished") }, "\(logs.values)")
+    }
+
+    func testRecoveryToleratesAnotherWorkerMovingTheJob() throws {
+        try spool.enqueue(job("shared"))
+        let claimed = try XCTUnwrap(spool.claimNext())
+        // Another worker sharing the spool requeues it first.
+        try FileManager.default.moveItem(at: claimed.file, to: root.appendingPathComponent("queue").appendingPathComponent(claimed.file.lastPathComponent))
+        let other = AgentSpool(root: root)
+        XCTAssertNoThrow(try other.recoverInterrupted(maxAttempts: 2))
+        XCTAssertEqual(spool.state(of: "shared"), .queued)
+    }
+
     func testFailedRunStillProducesResult() async throws {
         MockURLProtocol.setHandler(for: OpenAI.ChatCompletionRequest.endpoint) { _ in (.failure(URLError(.notConnectedToInternet)), nil) }
         try spool.enqueue(job("net"))

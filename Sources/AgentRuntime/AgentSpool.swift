@@ -156,24 +156,30 @@ public struct AgentSpool {
     }
 
     /// Jobs left in running/ by a worker that stopped mid-run. Each is returned to the
-    /// queue, or reported failed if it has already been started `maxAttempts` times.
-    func recoverInterrupted(maxAttempts: Int) throws -> (requeued: [AgentJob], abandoned: [(job: AgentJob, file: URL)]) {
+    /// queue, or reported failed if it has already been started `maxAttempts` times. A job
+    /// whose result was saved before the stop is finished: it isn't run again, and its saved
+    /// result is returned so it can still be delivered.
+    func recoverInterrupted(maxAttempts: Int) throws -> (requeued: [AgentJob], abandoned: [(job: AgentJob, file: URL)], finished: [(job: AgentJob, result: AgentRunResult)]) {
         var requeued: [AgentJob] = []
         var abandoned: [(job: AgentJob, file: URL)] = []
+        var finished: [(job: AgentJob, result: AgentRunResult)] = []
         for name in try sortedJSON(in: running) {
             let file = running.appendingPathComponent(name)
             guard let job = try? AgentJob.decode(from: Data(contentsOf: file)) else {
                 try? quarantine(file)
                 continue
             }
-            if job.attempts >= maxAttempts {
+            if let result = try? result(for: job.runID) {
+                // Another worker sharing the spool may get here first; only the one that
+                // removes the file reports it.
+                if (try? fileManager.removeItem(at: file)) != nil { finished.append((job, result)) }
+            } else if job.attempts >= maxAttempts {
                 abandoned.append((job, file))
-            } else {
-                try fileManager.moveItem(at: file, to: queue.appendingPathComponent(name))
+            } else if (try? fileManager.moveItem(at: file, to: queue.appendingPathComponent(name))) != nil {
                 requeued.append(job)
             }
         }
-        return (requeued, abandoned)
+        return (requeued, abandoned, finished)
     }
 
     public func state(of runID: String) -> State {

@@ -494,6 +494,18 @@ final class AgentDeployTests: XCTestCase {
         XCTAssertThrowsError(try WorkerNames.validate(owner: "a:b"))
     }
 
+    func testChildThatIgnoresStdinDoesNotKillUs() async throws {
+        // `true` exits without reading, so writing 8 MB to its stdin hits a closed pipe.
+        let output = try await ProcessCommandRunner().run("true", [], stdin: Data(count: 8 << 20))
+        XCTAssertEqual(output.status, 0)
+    }
+
+    func testFleetFileIsOwnerOnly() throws {
+        try store.save(FleetRegistry())
+        let permissions = try FileManager.default.attributesOfItem(atPath: store.file.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(permissions?.intValue, 0o600)
+    }
+
     func testSetupScriptInstallsOnlyDocker() {
         let script = HostBootstrap.script
         XCTAssertTrue(script.hasPrefix("#!/bin/bash\n"))

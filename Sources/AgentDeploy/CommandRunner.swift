@@ -67,8 +67,13 @@ public enum DeployError: Error, LocalizedError, Equatable {
 public struct ProcessCommandRunner: CommandRunner {
     public init() {}
 
+    // Writing to a pipe whose reader has exited raises SIGPIPE, which would end this process.
+    // Ignored once, writes to a closed pipe fail with EPIPE instead.
+    private static let ignoreBrokenPipe: Void = { signal(SIGPIPE, SIG_IGN) }()
+
     public func run(_ executable: String, _ arguments: [String], stdin: Data?) async throws -> CommandOutput {
-        try await withCheckedThrowingContinuation { continuation in
+        _ = Self.ignoreBrokenPipe
+        return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
             process.arguments = [executable] + arguments
@@ -100,8 +105,10 @@ public struct ProcessCommandRunner: CommandRunner {
             }
             if let stdin {
                 DispatchQueue.global().async {
-                    stdinPipe.fileHandleForWriting.write(stdin)
-                    stdinPipe.fileHandleForWriting.closeFile()
+                    // A child that exits without reading all of stdin closes the pipe; that's
+                    // its business, and its exit status reports it, so the error is ignored.
+                    try? stdinPipe.fileHandleForWriting.write(contentsOf: stdin)
+                    try? stdinPipe.fileHandleForWriting.close()
                 }
             }
         }

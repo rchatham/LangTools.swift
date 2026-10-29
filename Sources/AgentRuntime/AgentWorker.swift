@@ -106,8 +106,12 @@ public final class AgentWorker: @unchecked Sendable {
     // A job left running by a stopped worker is retried, or reported failed once it has
     // used its attempts, since a tool it called may already have had side effects.
     private func recover() async throws {
-        let (requeued, abandoned) = try spool.recoverInterrupted(maxAttempts: options.maxAttempts)
+        let (requeued, abandoned, finished) = try spool.recoverInterrupted(maxAttempts: options.maxAttempts)
         for job in requeued { log("run=\(job.runID) requeued after an interrupted attempt") }
+        for (job, result) in finished {
+            log("run=\(job.runID) had finished before the worker stopped; delivering its result")
+            await deliver(result, for: job)
+        }
         for (job, file) in abandoned {
             let now = Date()
             let result = AgentRunResult(runID: job.runID, agent: job.spec.name, provider: job.spec.provider.rawValue, model: job.spec.model, status: .failed,
