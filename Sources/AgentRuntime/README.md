@@ -213,3 +213,9 @@ Set `requiresAPIKey: false` for providers, like a local Ollama server, that work
 ## Built-in providers
 
 `openai`, `anthropic`, `gemini`, `xai`, `ollama` (key optional), `openrouter`, `groq`, `mistral`, `deepseek`, `cerebras`, `together`, `fireworks`, `vercel`, `perplexity`, `cohere`.
+
+## Synchronization verification — 2026-10-29
+
+Merged main `8da5cbc1b0653c2c8a6cdad9683e24c9cb6eff50` into this branch without conflicts. App-provider model additions and Anthropic lifecycle changes are inherited; deployment/runtime implementation sources remain unchanged. Compilation of the package and test bundles passed.
+
+Credential-free unit verification: **90 deployment/runtime tests passed**; the incoming Anthropic suite executed **63 tests with four skips and zero failures**. Runs used temporary HOME/preferences, mocked provider/webhook transports and fake deployment command runners, with network access and all four SecItem operations denied. No Docker daemon, SSH host, cloud provider, real webhook or live-model acceptance was exercised. Current-commit hosted CI remains a separate publication check.
