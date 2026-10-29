@@ -171,7 +171,7 @@ extension Result where Failure == Error {
     }
 }
 
-private final class EventRecorder {
+private final class EventRecorder: @unchecked Sendable {  // State is behind `lock`.
     private let lock = NSLock()
     private var recorded: [AgentRunResult.Event] = []
     private let onEvent: (AgentRunResult.Event) -> Void

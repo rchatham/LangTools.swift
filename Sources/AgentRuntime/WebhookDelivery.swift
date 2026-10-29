@@ -109,7 +109,7 @@ public struct WebhookDelivery {
                 }
                 outcome.error = "Webhook answered HTTP \(status)."
                 guard Self.isRetryable(status: status) else { return outcome }
-                retryAfter = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
+                retryAfter = Self.retryAfter((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After"))
             } catch {
                 outcome.error = error.localizedDescription
             }
@@ -119,6 +119,18 @@ public struct WebhookDelivery {
             catch { break }
         }
         return outcome
+    }
+
+    /// A `Retry-After` value in seconds. The header is either a number of seconds or an
+    /// HTTP date (RFC 9110); a date in the past means retry now.
+    static func retryAfter(_ value: String?, now: Date = Date()) -> TimeInterval? {
+        guard let value = value?.trimmingCharacters(in: .whitespaces), !value.isEmpty else { return nil }
+        if let seconds = TimeInterval(value), seconds >= 0 { return seconds }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        return formatter.date(from: value).map { max(0, $0.timeIntervalSince(now)) }
     }
 
     static func isRetryable(status: Int) -> Bool {

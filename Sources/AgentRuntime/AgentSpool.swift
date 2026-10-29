@@ -111,7 +111,8 @@ public struct AgentSpool {
         guard fileManager.createFile(atPath: staged.path, contents: try job.encoded(), attributes: [.posixPermissions: 0o600]) else {
             throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: staged.path])
         }
-        try fileManager.moveItem(at: staged, to: queue.appendingPathComponent(name))
+        do { try fileManager.moveItem(at: staged, to: queue.appendingPathComponent(name)) }
+        catch { try? fileManager.removeItem(at: staged); throw error }
     }
 
     /// Moves the oldest queued job to running/ and returns it, or nil when the queue is empty.
@@ -148,7 +149,9 @@ public struct AgentSpool {
         }
         // rename(2) replaces an existing result in one step, so a reader never finds it missing.
         guard rename(staged.path, destination.path) == 0 else {
-            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: destination.path, NSUnderlyingErrorKey: POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)])
+            let code = errno
+            try? fileManager.removeItem(at: staged)
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: destination.path, NSUnderlyingErrorKey: POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)])
         }
     }
 

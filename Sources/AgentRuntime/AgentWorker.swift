@@ -11,7 +11,8 @@ import Foundation
 import FoundationNetworking
 #endif
 
-public final class AgentWorker {
+// Mutable state is behind a lock; makeWebhookDelivery is set before run() and only read after.
+public final class AgentWorker: @unchecked Sendable {
     public struct Options {
         /// Jobs run at the same time.
         public var concurrency: Int

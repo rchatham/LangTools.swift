@@ -110,6 +110,13 @@ final class WebhookDeliveryTests: XCTestCase {
         XCTAssertEqual((1...5).map { config.backoff(afterAttempt: $0, retryAfter: nil) }, [1, 2, 4, 8, 10])
         XCTAssertEqual(config.backoff(afterAttempt: 1, retryAfter: 7), 7)
         XCTAssertEqual(config.backoff(afterAttempt: 1, retryAfter: 120), 10, "Retry-After is capped too")
+        let now = Date(timeIntervalSince1970: 1_793_000_000)  // 2026-10-26T07:33:20Z
+        XCTAssertEqual(WebhookDelivery.retryAfter("7", now: now), 7)
+        XCTAssertEqual(WebhookDelivery.retryAfter("Mon, 26 Oct 2026 07:33:50 GMT", now: now), 30, "HTTP-date form")
+        XCTAssertEqual(WebhookDelivery.retryAfter("Mon, 26 Oct 2026 07:00:00 GMT", now: now), 0, "A past date means now")
+        XCTAssertNil(WebhookDelivery.retryAfter("soon", now: now))
+        XCTAssertNil(WebhookDelivery.retryAfter("-5", now: now))
+        XCTAssertNil(WebhookDelivery.retryAfter(nil, now: now))
     }
 
     func testDoesNotRetryClientErrors() async throws {
