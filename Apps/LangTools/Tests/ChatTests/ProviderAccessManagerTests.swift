@@ -157,6 +157,29 @@ final class ProviderAccessManagerTests: XCTestCase {
         XCTAssertEqual(evaluationCount, 1)
     }
 
+    func testExplicitAppleSelectionSurvivesAvailableLocalAndCloudAlternatives() throws {
+        guard let selected = Model.appleModels.first else {
+            throw XCTSkip("Apple models are not supported on this platform")
+        }
+        seedLocalModels([try XCTUnwrap(Ollama.Model(rawValue: "local-fallback"))])
+        accessManager.configureOllamaCloudAccessEligibilityOverride { true }
+
+        XCTAssertTrue(accessManager.availableChatModels().contains(selected))
+        XCTAssertTrue(accessManager.availableChatModels().contains { $0.route == .ollamaCloud })
+        XCTAssertEqual(accessManager.validateSelectedModel(selected), selected)
+    }
+
+    func testAppleIsNotAnAutomaticFallbackForUnavailableRemoteSelection() throws {
+        guard !Model.appleModels.isEmpty else {
+            throw XCTSkip("Apple models are not supported on this platform")
+        }
+        accessManager.configureOllamaCloudAccessEligibilityOverride { false }
+        let requested = Model.codex(.gpt5_5)
+
+        XCTAssertTrue(accessManager.availableChatModels().contains { $0.apiService == .apple })
+        XCTAssertEqual(accessManager.validateSelectedModel(requested), requested)
+    }
+
     func testUnavailableOrdinarySelectionUsesAvailableFallback() throws {
         let fallback = try XCTUnwrap(Ollama.Model(rawValue: "local-fallback"))
         seedLocalModels([fallback])

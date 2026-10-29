@@ -130,7 +130,6 @@ public final class ProviderAccessManager: ObservableObject {
 
     public func availableChatModels() -> [Model] {
         availableChatModels(ollamaCloudAccessEligible: isOllamaCloudAccessEligible())
-            + state(for: .apple).availableModels
     }
 
     public func validateSelectedModel(_ model: Model) -> Model {
@@ -156,6 +155,7 @@ public final class ProviderAccessManager: ObservableObject {
             .flatMap(\.availableModels)
             + state(for: .ollama).availableModels
             + cloudModels
+            + state(for: .apple).availableModels
     }
 
     private func isOllamaCloudAccessEligible() -> Bool {
