@@ -21,7 +21,10 @@ public final class RealtimeMicStreamer: ObservableObject {
     @Published public private(set) var isStreaming = false
     @Published public private(set) var audioLevel: Float = 0
 
-    /// Receives converted PCM16 chunks (~100ms each). Called off the main thread.
+    /// Receives converted PCM16 chunks, one per tap buffer (2400 input frames,
+    /// about 50 ms at a 48 kHz input; the system may choose another size).
+    /// Called on the audio engine's real-time thread. Set it before `start()`,
+    /// which captures it.
     public var onAudioChunk: (@Sendable (Data) -> Void)?
 
     private var audioEngine: AVAudioEngine?
@@ -68,6 +71,9 @@ public final class RealtimeMicStreamer: ObservableObject {
         }
         self.converter = converter
 
+        // Capture the callback here, on the main actor, so the real-time tap
+        // never reads this main-actor property itself.
+        let onAudioChunk = self.onAudioChunk
         inputNode.installTap(onBus: 0, bufferSize: 2400, format: inputFormat) { [weak self] buffer, _ in
             guard let self else { return }
 
@@ -100,7 +106,7 @@ public final class RealtimeMicStreamer: ObservableObject {
                   let int16Data = outBuffer.int16ChannelData else { return }
 
             let data = Data(bytes: int16Data[0], count: Int(outBuffer.frameLength) * MemoryLayout<Int16>.size)
-            self.onAudioChunk?(data)
+            onAudioChunk?(data)
         }
 
         engine.prepare()

@@ -237,7 +237,9 @@ public final class RealtimeSessionViewModel: ObservableObject {
             // only the client knows how much was played, so truncate the
             // item there to keep the conversation in line with what was heard.
             if isModelSpeaking, let truncation = stopPlayback(), let session {
-                Task {
+                Task { [weak self] in
+                    // Skip if the session was torn down before this ran.
+                    guard self?.session === session else { return }
                     try? await session.truncateItem(itemId: truncation.itemId, contentIndex: 0, audioEndMs: truncation.audioEndMs)
                 }
             }

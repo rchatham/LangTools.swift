@@ -319,7 +319,13 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
                         guard !Task.isCancelled else { return }
                         self.eventHandler?.onTranscriptReceived?(result.text, result.isFinal)
                         if mode == .modular, result.isFinal, !result.text.isEmpty {
-                            try? await self.sendText(result.text)
+                            // No caller here to throw to, so report LLM/TTS
+                            // failures through onError rather than dropping them.
+                            do {
+                                try await self.sendText(result.text)
+                            } catch {
+                                self.eventHandler?.onError?(error)
+                            }
                         }
                     }
                 } catch {

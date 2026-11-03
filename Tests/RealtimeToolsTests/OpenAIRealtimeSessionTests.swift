@@ -539,6 +539,31 @@ final class RealtimePipelineModeTests: XCTestCase {
         }
     }
 
+    /// Regression test: a failing LLM/TTS step on a speech-driven turn was
+    /// swallowed (`try?`), so nothing reported why no reply came back.
+    func testSpeechDrivenTurnFailureReachesOnError() async throws {
+        struct LLMFailure: Error {}
+        let stt = StubSTT()
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.modular)
+            .build()
+        pipeline.setProviders(stt: stt, tts: StubTTS())
+        pipeline.textProcessor = { _ in throw LLMFailure() }
+
+        let reported = expectation(description: "onError fired")
+        let handler = RealtimeEventHandler()
+        handler.onError = { error in
+            if error is LLMFailure { reported.fulfill() }
+        }
+        pipeline.eventHandler = handler
+        try await pipeline.start()
+
+        stt.push(TranscriptionResult(text: "hello", isFinal: true))
+
+        await fulfillment(of: [reported], timeout: 5)
+        await pipeline.stop()
+    }
+
     /// Regression test: STTProvider used to expose one long-lived stream.
     /// stop() cancelled its consumer, which terminated that stream, so a
     /// restarted pipeline never received another transcription.

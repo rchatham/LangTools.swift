@@ -279,10 +279,12 @@ public struct AudioProcessingSettings: Sendable {
         bitsPerSample: 16
     )
 
-    /// Optimized for ElevenLabs
+    /// Optimized for ElevenLabs. The output rate matches
+    /// `ElevenLabsWebSocketSession`'s default `pcm_24000` format; change both
+    /// together.
     public static let elevenLabs = AudioProcessingSettings(
         inputSampleRate: 16000,
-        outputSampleRate: 22050,
+        outputSampleRate: 24000,
         channels: 1,
         bitsPerSample: 16
     )

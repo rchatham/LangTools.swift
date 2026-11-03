@@ -118,7 +118,7 @@ final class RealtimeToolsTests: XCTestCase {
         let settings = AudioProcessingSettings.elevenLabs
 
         XCTAssertEqual(settings.inputSampleRate, 16000)
-        XCTAssertEqual(settings.outputSampleRate, 22050)
+        XCTAssertEqual(settings.outputSampleRate, 24000, "Must match ElevenLabsWebSocketSession's default pcm_24000")
     }
 
     // MARK: - VAD Configuration Tests
