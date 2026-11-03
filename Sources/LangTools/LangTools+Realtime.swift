@@ -208,11 +208,19 @@ public struct RealtimeSessionConfiguration: Codable, Sendable {
         }
     }
 
-    public enum ToolChoice: Codable, Sendable {
+    /// Encodes as OpenAI's `tool_choice`: the strings "auto", "none" and
+    /// "required", or `{"type": "function", "name": ...}` to force one
+    /// specific function.
+    public enum ToolChoice: Codable, Sendable, Equatable {
         case auto
         case none
         case required
         case function(String)
+
+        private struct FunctionChoice: Codable {
+            var type = "function"
+            var name: String
+        }
 
         public init(from decoder: Decoder) throws {
             let container = try decoder.singleValueContainer()
@@ -221,8 +229,11 @@ public struct RealtimeSessionConfiguration: Codable, Sendable {
                 case "auto": self = .auto
                 case "none": self = .none
                 case "required": self = .required
-                default: self = .function(str)
+                default:
+                    throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid tool choice: \(str)")
                 }
+            } else if let function = try? container.decode(FunctionChoice.self), function.type == "function" {
+                self = .function(function.name)
             } else {
                 throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid tool choice")
             }
@@ -234,7 +245,7 @@ public struct RealtimeSessionConfiguration: Codable, Sendable {
             case .auto: try container.encode("auto")
             case .none: try container.encode("none")
             case .required: try container.encode("required")
-            case .function(let name): try container.encode(name)
+            case .function(let name): try container.encode(FunctionChoice(name: name))
             }
         }
     }

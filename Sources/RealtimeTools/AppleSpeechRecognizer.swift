@@ -305,7 +305,6 @@ public final class AppleAudioSessionManager: @unchecked Sendable {
 public enum AppleSpeechError: Error, LocalizedError {
     case recognizerNotAvailable
     case notAuthorized(SFSpeechRecognizerAuthorizationStatus)
-    case requestCreationFailed
     case requestNotInitialized
     case notRecognizing
     case alreadyRecognizing
@@ -318,8 +317,6 @@ public enum AppleSpeechError: Error, LocalizedError {
             return "Speech recognizer is not available"
         case .notAuthorized(let status):
             return "Speech recognition not authorized: \(status)"
-        case .requestCreationFailed:
-            return "Failed to create recognition request"
         case .requestNotInitialized:
             return "Recognition request not initialized"
         case .notRecognizing:

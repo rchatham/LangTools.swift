@@ -260,6 +260,18 @@ final class OpenAIRealtimeSessionTests: XCTestCase {
         await session.disconnect()
     }
 
+    func testUpdateSessionSendsFunctionToolChoiceAsObject() async throws {
+        let (session, mock) = try await makeConnectedSession()
+
+        try await session.updateSession(configuration: RealtimeSessionConfiguration(toolChoice: .function("get_weather")))
+
+        let sent = try XCTUnwrap(mock.sentMessages.last)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sent.utf8)) as? [String: Any])
+        let sessionJSON = try XCTUnwrap(json["session"] as? [String: Any])
+        XCTAssertEqual(sessionJSON["tool_choice"] as? [String: String], ["type": "function", "name": "get_weather"])
+        await session.disconnect()
+    }
+
     func testModelIsPercentEncodedInConnectURL() async throws {
         let mock = MockWebSocketTask()
         let session = OpenAIRealtimeSession(apiKey: "test-key", model: "custom model&x=1")
@@ -635,6 +647,58 @@ final class RealtimePipelineStateMachineTests: XCTestCase {
         }
 
         func reset() async {}
+    }
+
+    /// The documented barge-in wiring: with a VAD configured and the player
+    /// reporting playback, user speech interrupts the reply.
+    func testSpeechDuringReportedPlaybackFiresInterruption() async throws {
+        let vadConfig = VADConfiguration(mode: .onDevice, minSpeechDuration: 0, silenceTimeout: 0)
+        let vad = ControllableVAD(configuration: vadConfig)
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.modular)
+            .withAudioSettings(AudioProcessingSettings(vadConfig: vadConfig))
+            .build()
+        pipeline.setProviders(vad: vad)
+
+        let interrupted = expectation(description: "onInterruption fired")
+        let handler = RealtimeEventHandler()
+        handler.onInterruption = { interrupted.fulfill() }
+        pipeline.eventHandler = handler
+        try await pipeline.start()
+
+        pipeline.notifyPlaybackStarted()
+        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.00))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.15))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+
+        await fulfillment(of: [interrupted], timeout: 5)
+    }
+
+    /// Without a playback report, the same speech is a normal turn.
+    func testSpeechWithoutReportedPlaybackDoesNotInterrupt() async throws {
+        let vadConfig = VADConfiguration(mode: .onDevice, minSpeechDuration: 0, silenceTimeout: 0)
+        let vad = ControllableVAD(configuration: vadConfig)
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.modular)
+            .withAudioSettings(AudioProcessingSettings(vadConfig: vadConfig))
+            .build()
+        pipeline.setProviders(vad: vad)
+
+        let interrupted = expectation(description: "onInterruption fired")
+        interrupted.isInverted = true
+        let handler = RealtimeEventHandler()
+        handler.onInterruption = { interrupted.fulfill() }
+        pipeline.eventHandler = handler
+        try await pipeline.start()
+
+        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.00))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.15))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+
+        await fulfillment(of: [interrupted], timeout: 0.5)
+        XCTAssertEqual(pipeline.state, .processing)
     }
 
     /// Regression test for a bug where a normal (non-interrupting) end of

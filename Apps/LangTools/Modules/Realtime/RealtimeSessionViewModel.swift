@@ -247,8 +247,13 @@ public final class RealtimeSessionViewModel: ObservableObject {
             upsertTranscript(id: e.itemId, role: .user, text: e.transcript, isFinal: true)
 
         case .responseOutputItemAdded(let e):
-            currentAssistantItemId = e.item.id
-            player.resetPlaybackPosition()
+            // Only message items carry the assistant's audio. A function_call
+            // item has no audio to truncate, so it must not become the
+            // barge-in truncation target.
+            if e.item.type == "message" {
+                currentAssistantItemId = e.item.id
+                player.resetPlaybackPosition()
+            }
 
         case .responseAudioTranscriptDelta(let e):
             appendDelta(id: e.itemId, role: .assistant, delta: e.delta)

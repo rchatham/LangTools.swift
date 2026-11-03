@@ -25,16 +25,38 @@ let pipeline = RealtimePipelineBuilder()
     .withTTS(TTSProviderConfiguration(provider: .elevenLabs, voice: "your-voice-id"))
     .withLLM(LLMProviderConfiguration(provider: .openAI, model: "gpt-4o"))
     .withInterruption(InterruptionConfiguration(enabled: true, mode: .immediate))
+    // On-device VAD drives turn-taking and barge-in; without a vadConfig
+    // there's no interruption detector.
+    .withAudioSettings(AudioProcessingSettings(vadConfig: VADConfiguration(mode: .onDevice)))
     .build()
 
-// Set up event handlers
-pipeline.eventHandler = RealtimeEventHandler()
-pipeline.eventHandler?.onAudioReceived = { audioData in
-    // Play the audio
+// The configurations above describe the providers; supply the instances.
+pipeline.setProviders(stt: AppleSpeechRecognizer(), tts: myTTSProvider)
+
+// The LLM step for .modular mode: final transcriptions go in, the reply
+// to speak comes out.
+pipeline.textProcessor = { text in
+    try await myLLM.reply(to: text)
 }
-pipeline.eventHandler?.onTranscriptReceived = { text, isFinal in
+
+// Set up event handlers. Callbacks run on background threads, so hop to
+// the main actor before touching UI. Assign all of these before start().
+let handler = RealtimeEventHandler()
+handler.onAudioReceived = { audioData in
+    player.enqueue(audioData)
+}
+handler.onTranscriptReceived = { text, isFinal in
     // Display transcription
 }
+handler.onInterruption = {
+    player.flush() // the user spoke over the reply: stop playing it
+}
+pipeline.eventHandler = handler
+
+// Barge-in only fires while the pipeline knows audio is playing, and only
+// your player knows that — the pipeline just hands it bytes. Tell it:
+player.onPlaybackStarted = { pipeline.notifyPlaybackStarted() }
+player.onPlaybackFinished = { pipeline.notifyPlaybackStopped() }
 
 // Start the pipeline
 try await pipeline.start()
@@ -42,6 +64,8 @@ try await pipeline.start()
 // Send audio for processing
 try await pipeline.sendAudio(audioData)
 ```
+
+`myTTSProvider`, `myLLM` and `player` stand in for your own `TTSProvider`, LLM call and audio player.
 
 ### Preset Configurations
 

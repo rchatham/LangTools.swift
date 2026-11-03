@@ -308,8 +308,20 @@ final class OpenAIRealtimeTests: XCTestCase {
         let requiredData = try encoder.encode(requiredChoice)
         XCTAssertEqual(String(data: requiredData, encoding: .utf8), "\"required\"")
 
+        // A specific function is an object, not the bare function name.
         let functionData = try encoder.encode(functionChoice)
-        XCTAssertEqual(String(data: functionData, encoding: .utf8), "\"get_weather\"")
+        let functionJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: functionData) as? [String: String])
+        XCTAssertEqual(functionJSON, ["type": "function", "name": "get_weather"])
+    }
+
+    func testToolChoiceDecodingRoundTrips() throws {
+        let decoder = JSONDecoder()
+        for choice: RealtimeSessionConfiguration.ToolChoice in [.auto, .none, .required, .function("get_weather")] {
+            let data = try JSONEncoder().encode(choice)
+            XCTAssertEqual(try decoder.decode(RealtimeSessionConfiguration.ToolChoice.self, from: data), choice)
+        }
+        // A bare unknown string used to decode as .function(name); it isn't a valid tool_choice.
+        XCTAssertThrowsError(try decoder.decode(RealtimeSessionConfiguration.ToolChoice.self, from: Data(#""get_weather""#.utf8)))
     }
 
     // MARK: - Max Tokens Tests

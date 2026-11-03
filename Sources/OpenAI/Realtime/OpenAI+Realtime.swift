@@ -236,14 +236,7 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
                     parameters: $0.parameters
                 )
             },
-            toolChoice: configuration.toolChoice.map { choice -> String in
-                switch choice {
-                case .auto: return "auto"
-                case .none: return "none"
-                case .required: return "required"
-                case .function(let name): return name
-                }
-            },
+            toolChoice: configuration.toolChoice,
             temperature: configuration.temperature,
             maxResponseOutputTokens: configuration.maxResponseOutputTokens.map { maxTokens -> SessionUpdateEvent.Session.MaxTokens in
                 switch maxTokens {

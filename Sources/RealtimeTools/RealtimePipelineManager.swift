@@ -113,11 +113,13 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         task?.cancel()
 
         // Stop STT if running
-        try? await sttProviderInstance?.stopTranscription()
+        try? await currentSTT?.stopTranscription()
 
         // Cancel TTS if synthesizing
-        try? await ttsProviderInstance?.cancel()
+        try? await currentTTS?.cancel()
 
+        // Don't let a restart begin mid-utterance as far as the VAD path knows.
+        isProcessing = false
         setState(.stopped)
     }
 
@@ -126,6 +128,23 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         _state = newState
         lock.unlock()
         onPipelineStateChanged?(newState)
+    }
+
+    // Locked reads of the provider instances, which setProviders() writes
+    // under the same lock.
+    private var currentSTT: (any STTProvider)? {
+        lock.lock(); defer { lock.unlock() }
+        return sttProviderInstance
+    }
+
+    private var currentTTS: (any TTSProvider)? {
+        lock.lock(); defer { lock.unlock() }
+        return ttsProviderInstance
+    }
+
+    private var currentDetector: InterruptionDetector? {
+        lock.lock(); defer { lock.unlock() }
+        return interruptionDetector
     }
 
     /// Moves to `newState` only if the current state is `expected`, as one
@@ -182,7 +201,7 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         }
 
         // Forward to STT provider
-        try await sttProviderInstance?.transcribe(audio: data)
+        try await currentSTT?.transcribe(audio: data)
     }
 
     // MARK: - Text Input
@@ -227,8 +246,8 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         eventHandler?.onInterruption?()
 
         // Cancel TTS and mark playback stopped so the detector re-arms cleanly
-        try? await ttsProviderInstance?.cancel()
-        interruptionDetector?.playbackStopped()
+        try? await currentTTS?.cancel()
+        currentDetector?.playbackStopped()
 
         // Reset state, unless something else (stop(), new speech) moved it on.
         _ = transition(from: .interrupted, to: .running)
@@ -324,18 +343,21 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
     }
 
     /// Notify the pipeline that assistant audio playback started, enabling
-    /// barge-in detection for subsequent user speech.
+    /// barge-in detection for subsequent user speech. Call this from your
+    /// audio player: the pipeline only hands audio to `onAudioReceived` and
+    /// can't tell when it's actually heard, so barge-in never fires unless
+    /// the player reports playback here and through `notifyPlaybackStopped()`.
     public func notifyPlaybackStarted(at timestamp: TimeInterval? = nil) {
-        interruptionDetector?.playbackStarted(at: timestamp)
+        currentDetector?.playbackStarted(at: timestamp)
     }
 
     /// Notify the pipeline that assistant audio playback finished or was stopped.
     public func notifyPlaybackStopped() {
-        interruptionDetector?.playbackStopped()
+        currentDetector?.playbackStopped()
     }
 
     private func synthesizeAndStream(_ text: String) async throws {
-        guard let tts = ttsProviderInstance else {
+        guard let tts = currentTTS else {
             throw RealtimePipelineError.providerNotConfigured("TTS")
         }
 
@@ -380,7 +402,7 @@ public enum RealtimePipelineError: Error, LocalizedError {
 // MARK: - Pipeline Builder
 
 /// Builder for creating configured pipeline instances
-public final class RealtimePipelineBuilder: @unchecked Sendable {
+public final class RealtimePipelineBuilder {
     private var sttConfig: STTProviderConfiguration?
     private var ttsConfig: TTSProviderConfiguration?
     private var llmConfig: LLMProviderConfiguration?

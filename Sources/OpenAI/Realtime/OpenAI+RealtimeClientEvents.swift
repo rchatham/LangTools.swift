@@ -88,7 +88,7 @@ public struct SessionUpdateEvent: Codable, Sendable {
         public var inputAudioTranscription: InputAudioTranscription?
         public var turnDetection: TurnDetection?
         public var tools: [Tool]?
-        public var toolChoice: String?
+        public var toolChoice: RealtimeSessionConfiguration.ToolChoice?
         public var temperature: Double?
         public var maxResponseOutputTokens: MaxTokens?
 
@@ -101,7 +101,7 @@ public struct SessionUpdateEvent: Codable, Sendable {
             inputAudioTranscription: InputAudioTranscription? = nil,
             turnDetection: TurnDetection? = nil,
             tools: [Tool]? = nil,
-            toolChoice: String? = nil,
+            toolChoice: RealtimeSessionConfiguration.ToolChoice? = nil,
             temperature: Double? = nil,
             maxResponseOutputTokens: MaxTokens? = nil
         ) {
@@ -401,7 +401,7 @@ public struct ResponseCreateEvent: Codable, Sendable {
         public var voice: String?
         public var outputAudioFormat: String?
         public var tools: [SessionUpdateEvent.Session.Tool]?
-        public var toolChoice: String?
+        public var toolChoice: RealtimeSessionConfiguration.ToolChoice?
         public var temperature: Double?
         public var maxOutputTokens: SessionUpdateEvent.Session.MaxTokens?
 
@@ -411,7 +411,7 @@ public struct ResponseCreateEvent: Codable, Sendable {
             voice: String? = nil,
             outputAudioFormat: String? = nil,
             tools: [SessionUpdateEvent.Session.Tool]? = nil,
-            toolChoice: String? = nil,
+            toolChoice: RealtimeSessionConfiguration.ToolChoice? = nil,
             temperature: Double? = nil,
             maxOutputTokens: SessionUpdateEvent.Session.MaxTokens? = nil
         ) {

@@ -131,7 +131,7 @@ public final class EnergyVAD: VoiceActivityDetector, @unchecked Sendable {
 
     private func rmsEnergy(of samples: [Int16]) -> Double {
         let sumOfSquares = samples.reduce(0.0) { sum, sample in
-            let normalized = Double(sample) / Double(Int16.max)
+            let normalized = Double(sample) / 32768
             return sum + normalized * normalized
         }
         return (sumOfSquares / Double(samples.count)).squareRoot()
