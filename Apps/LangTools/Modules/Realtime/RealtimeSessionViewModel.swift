@@ -135,8 +135,10 @@ public final class RealtimeSessionViewModel: ObservableObject {
     }
 
     private func teardown() async {
-        mic.stop()
+        // Stop playback before the mic: mic.stop() deactivates the shared
+        // audio session, which shouldn't happen under a running engine.
         player.stop()
+        mic.stop()
         eventTask?.cancel()
         eventTask = nil
         // Clear `session` before awaiting disconnect so audio chunks still

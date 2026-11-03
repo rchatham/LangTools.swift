@@ -109,8 +109,14 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         lock.lock()
         let task = processingTask
         processingTask = nil
+        // start() builds a fresh detector; reset the reused VAD too, so a
+        // restart doesn't inherit the previous session's timestamps and
+        // adapted noise floor.
+        interruptionDetector = nil
+        let vad = vadInstance
         lock.unlock()
         task?.cancel()
+        await vad?.reset()
 
         // Stop STT if running
         try? await currentSTT?.stopTranscription()

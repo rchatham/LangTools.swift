@@ -116,6 +116,12 @@ public final class RealtimeMicStreamer: ObservableObject {
         converter = nil
         isStreaming = false
         audioLevel = 0
+
+        // Undo start()'s .playAndRecord/.voiceChat activation so the voice
+        // route and ducking don't outlive the session.
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        #endif
     }
 }
 

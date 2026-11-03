@@ -31,6 +31,9 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
     /// a task delivers after stopTranscription() lands on that session's
     /// already-finished stream and is dropped.
     private var continuation: AsyncThrowingStream<TranscriptionResult, Error>.Continuation?
+    /// Identifies the current session, so a recognition error clears state
+    /// only for the session it belongs to, never a newer one.
+    private var sessionToken: UUID?
     private var _isRecognizing: Bool = false
 
     public var isRecognizing: Bool {
@@ -135,14 +138,16 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
 
         // Start recognition task
         let (stream, continuation) = AsyncThrowingStream.makeStream(of: TranscriptionResult.self)
+        let token = UUID()
         let recognitionTask = speechRecognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            self?.handleRecognitionResult(result, error: error, continuation: continuation)
+            self?.handleRecognitionResult(result, error: error, continuation: continuation, session: token)
         }
 
         lock.lock()
         self.recognitionRequest = recognitionRequest
         self.recognitionTask = recognitionTask
         self.continuation = continuation
+        self.sessionToken = token
         _isRecognizing = true
         lock.unlock()
 
@@ -158,6 +163,7 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
         recognitionRequest = nil
         recognitionTask = nil
         self.continuation = nil
+        sessionToken = nil
         _isRecognizing = false
         lock.unlock()
 
@@ -193,9 +199,22 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
     private func handleRecognitionResult(
         _ result: SFSpeechRecognitionResult?,
         error: Error?,
-        continuation: AsyncThrowingStream<TranscriptionResult, Error>.Continuation
+        continuation: AsyncThrowingStream<TranscriptionResult, Error>.Continuation,
+        session token: UUID
     ) {
         if let error = error {
+            // The session is over: clear it so startTranscription() works
+            // again without an explicit stopTranscription(). Skip if a stop
+            // or a newer session already replaced it.
+            lock.lock()
+            if sessionToken == token {
+                recognitionRequest = nil
+                recognitionTask = nil
+                self.continuation = nil
+                sessionToken = nil
+                _isRecognizing = false
+            }
+            lock.unlock()
             continuation.finish(throwing: AppleSpeechError.recognitionFailed(error))
             return
         }

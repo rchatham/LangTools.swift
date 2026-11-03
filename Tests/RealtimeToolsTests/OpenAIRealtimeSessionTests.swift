@@ -646,7 +646,34 @@ final class RealtimePipelineStateMachineTests: XCTestCase {
             return queue.isEmpty ? VADResult(isSpeech: false, probability: 0, timestamp: 0) : queue.removeFirst()
         }
 
-        func reset() async {}
+        private var _resetCount = 0
+        var resetCount: Int {
+            lock.lock(); defer { lock.unlock() }
+            return _resetCount
+        }
+
+        func reset() async {
+            incrementResetCount()
+        }
+
+        private func incrementResetCount() {
+            lock.lock(); _resetCount += 1; lock.unlock()
+        }
+    }
+
+    func testStopResetsTheVAD() async throws {
+        let vadConfig = VADConfiguration(mode: .onDevice)
+        let vad = ControllableVAD(configuration: vadConfig)
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.modular)
+            .withAudioSettings(AudioProcessingSettings(vadConfig: vadConfig))
+            .build()
+        pipeline.setProviders(vad: vad)
+
+        try await pipeline.start()
+        await pipeline.stop()
+
+        XCTAssertEqual(vad.resetCount, 1, "A restart shouldn't inherit the previous session's VAD state")
     }
 
     /// The documented barge-in wiring: with a VAD configured and the player
