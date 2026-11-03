@@ -54,11 +54,14 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
     /// Set by disconnect() or a failed connection; see the type's doc comment.
     private var _closed = false
 
-    /// Factory for the underlying WebSocket transport. Overridable in tests.
+    /// Factory for the underlying WebSocket transport. Overridable in tests;
+    /// set it before `connect()`.
     internal var webSocketTaskFactory: ((URLRequest) -> any LangToolsWebSocketTask)?
 
     /// Called when a server message fails to decode. The stream keeps
-    /// running — a single malformed message isn't fatal.
+    /// running — a single malformed message isn't fatal. Set it before
+    /// `connect()`: it's called from the background receive loop and isn't
+    /// guarded by a lock.
     public var onDecodeError: (@Sendable (Error) -> Void)?
 
     public var isConnected: Bool {
@@ -242,7 +245,10 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
             throw ElevenLabsSTTError.encodingError
         }
 
-        guard let socket else { return }
+        // The socket can go away between a caller's isConnected check and
+        // here (a concurrent disconnect); report that rather than dropping
+        // the message.
+        guard let socket else { throw ElevenLabsSTTError.notConnected }
         try await sendQueue.run { try await socket.send(.string(jsonString)) }
     }
 

@@ -21,6 +21,10 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
     /// the STT stream — not on the main thread. Hop to the main actor
     /// yourself before touching UI. The same applies to
     /// `onPipelineStateChanged`.
+    ///
+    /// Assign `eventHandler`, `onPipelineStateChanged` and `textProcessor`
+    /// before `start()`. They're read from those background tasks without a
+    /// lock, so reassigning them while the pipeline runs is a data race.
     public var eventHandler: RealtimeEventHandler?
 
     // Mutable state is written from caller methods, the interruption

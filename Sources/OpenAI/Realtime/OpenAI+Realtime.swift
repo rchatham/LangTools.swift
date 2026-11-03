@@ -72,13 +72,15 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
     private var receiveTask: Task<Void, Never>?
 
     /// Factory for the underlying WebSocket transport. Overridable in tests
-    /// to inject a scripted transport instead of a live connection.
+    /// to inject a scripted transport instead of a live connection; set it
+    /// before `connect()`.
     internal var webSocketTaskFactory: ((URLRequest) -> any LangToolsWebSocketTask)?
 
     /// Called when a server message fails to decode (e.g. an unrecognized
     /// event type). The stream keeps running — a single malformed message
-    /// isn't fatal — but this makes the failure observable instead of only
-    /// reaching stdout.
+    /// isn't fatal — but this makes the failure observable. Set it before
+    /// `connect()`: it's called from the background receive loop and isn't
+    /// guarded by a lock.
     public var onDecodeError: (@Sendable (Error) -> Void)?
 
     private let encoder = JSONEncoder()

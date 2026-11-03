@@ -62,11 +62,14 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
     /// that generation.
     private var _endOfStreamRequested = false
 
-    /// Factory for the underlying WebSocket transport. Overridable in tests.
+    /// Factory for the underlying WebSocket transport. Overridable in tests;
+    /// set it before `connect()`.
     internal var webSocketTaskFactory: ((URLRequest) -> any LangToolsWebSocketTask)?
 
     /// Called when a server message fails to decode. The stream keeps
-    /// running — a single malformed message isn't fatal.
+    /// running — a single malformed message isn't fatal. Set it before
+    /// `connect()`: it's called from the background receive loop and isn't
+    /// guarded by a lock.
     public var onDecodeError: (@Sendable (Error) -> Void)?
 
     public var isConnected: Bool {
@@ -255,7 +258,10 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
             throw ElevenLabsWebSocketError.encodingError
         }
 
-        guard let socket else { return }
+        // The socket can go away between a caller's isConnected check and
+        // here (a concurrent disconnect); report that rather than dropping
+        // the message.
+        guard let socket else { throw ElevenLabsWebSocketError.notConnected }
         try await sendQueue.run { try await socket.send(.string(jsonString)) }
     }
 
