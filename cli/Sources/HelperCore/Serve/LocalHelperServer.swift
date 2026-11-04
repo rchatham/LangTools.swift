@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import AgentDeploy
 
 public struct LocalHelperServer: Sendable {
     let host: String
@@ -11,6 +12,7 @@ public struct LocalHelperServer: Sendable {
     private let onReady: (@Sendable () -> Void)?
     private let pairingCodeConsumer: (@Sendable (String) async -> Bool)?
     private let beforeSessionRegistration: (@Sendable () -> Void)?
+    private let subagents: SubagentService?
 
     static let maximumHeaderBytes = 32 * 1_024
     static let maximumBodyBytes = 4 * 1_048_576
@@ -22,7 +24,8 @@ public struct LocalHelperServer: Sendable {
         port: UInt16,
         bearerToken: String,
         onReady: (@Sendable () -> Void)? = nil,
-        pairingCodeConsumer: (@Sendable (String) async -> Bool)? = nil
+        pairingCodeConsumer: (@Sendable (String) async -> Bool)? = nil,
+        subagents: SubagentService? = nil
     ) {
         self.init(
             host: host,
@@ -30,7 +33,8 @@ public struct LocalHelperServer: Sendable {
             bearerToken: bearerToken,
             onReady: onReady,
             pairingCodeConsumer: pairingCodeConsumer,
-            beforeSessionRegistration: nil
+            beforeSessionRegistration: nil,
+            subagents: subagents
         )
     }
 
@@ -40,7 +44,8 @@ public struct LocalHelperServer: Sendable {
         bearerToken: String,
         onReady: (@Sendable () -> Void)? = nil,
         pairingCodeConsumer: (@Sendable (String) async -> Bool)? = nil,
-        beforeSessionRegistration: (@Sendable () -> Void)?
+        beforeSessionRegistration: (@Sendable () -> Void)?,
+        subagents: SubagentService? = nil
     ) {
         self.host = host
         self.port = port
@@ -49,6 +54,7 @@ public struct LocalHelperServer: Sendable {
         self.onReady = onReady
         self.pairingCodeConsumer = pairingCodeConsumer
         self.beforeSessionRegistration = beforeSessionRegistration
+        self.subagents = subagents
     }
 
     public func run() async throws {
@@ -194,6 +200,11 @@ public struct LocalHelperServer: Sendable {
                 }
                 await CodexRuntimeService.shared.endConversation(id: conversationID)
                 await respond(session: session, status: .noContent, body: "")
+                return
+            }
+
+            if let subagentResponse = await HelperSubagentRoutes.respond(path: request.path, body: request.body, service: subagents) {
+                await respond(session: session, status: subagentResponse.status, body: subagentResponse.body)
                 return
             }
 
@@ -367,7 +378,7 @@ public struct LocalHelperServer: Sendable {
         switch path {
         case "/health", "/v1/auth/status", "/v1/models/codex": return "GET"
         case "/v1/auth/login", "/v1/auth/logout", "/v1/account/chat/completions", "/v1/pairing/exchange": return "POST"
-        default: return nil
+        default: return HelperSubagentRoutes.paths[path]
         }
     }
 

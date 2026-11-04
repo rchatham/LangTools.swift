@@ -25,12 +25,14 @@ let package = Package(
             dependencies: [
                 .product(name: "HelperLink", package: "langtools-cli"),
                 .product(name: "OpenAI", package: "langtools-cli"),
+                .product(name: "AgentDeploy", package: "langtools-cli"),
             ]
         ),
         .executableTarget(
             name: "CLI",
             dependencies: [
                 "HelperCore",
+                .product(name: "AgentDeploy", package: "langtools-cli"),
                 .product(name: "LangTools", package: "langtools-cli"),
                 .product(name: "OpenAI", package: "langtools-cli"),
                 .product(name: "Anthropic", package: "langtools-cli"),
@@ -49,7 +51,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "LangToolsHelper",
-            dependencies: ["HelperCore", .product(name: "HelperLink", package: "langtools-cli")]
+            dependencies: ["HelperCore", .product(name: "HelperLink", package: "langtools-cli"), .product(name: "AgentDeploy", package: "langtools-cli")]
         ),
         .testTarget(
             name: "CLITests",
@@ -58,6 +60,8 @@ let package = Package(
                 "HelperCore",
                 "LangToolsHelper",
                 .product(name: "HelperLink", package: "langtools-cli"),
+                .product(name: "AgentDeploy", package: "langtools-cli"),
+                .product(name: "AgentRuntime", package: "langtools-cli"),
                 .product(name: "LangTools", package: "langtools-cli"),
                 .product(name: "OpenAI", package: "langtools-cli"),
                 .product(name: "Ollama", package: "langtools-cli"),

@@ -65,7 +65,24 @@ public enum DeployError: Error, LocalizedError, Equatable {
 #if os(macOS) || os(Linux)
 /// Runs commands with `Process`, resolving the executable through `/usr/bin/env`.
 public struct ProcessCommandRunner: CommandRunner {
-    public init() {}
+    /// Directories added to the end of `PATH` for the commands it runs.
+    public var extraSearchPaths: [String]
+
+    public init(extraSearchPaths: [String] = []) {
+        self.extraSearchPaths = extraSearchPaths
+    }
+
+    /// Where Homebrew and Docker Desktop install `docker`, `ssh` and `doctl` on a Mac.
+    public static func commonToolDirectories(home: String) -> [String] {
+        ["/opt/homebrew/bin", "/usr/local/bin", "\(home)/.docker/bin", "/Applications/Docker.app/Contents/Resources/bin"]
+    }
+
+    /// `path` with `directories` appended, skipping any it already has.
+    static func searchPath(_ path: String?, adding directories: [String]) -> String {
+        var parts = (path ?? "").split(separator: ":").map(String.init)
+        for directory in directories where !parts.contains(directory) { parts.append(directory) }
+        return parts.joined(separator: ":")
+    }
 
     // Writing to a pipe whose reader has exited raises SIGPIPE, which would end this process.
     // Ignored once, writes to a closed pipe fail with EPIPE instead.
@@ -77,6 +94,11 @@ public struct ProcessCommandRunner: CommandRunner {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
             process.arguments = [executable] + arguments
+            if !extraSearchPaths.isEmpty {
+                var environment = ProcessInfo.processInfo.environment
+                environment["PATH"] = Self.searchPath(environment["PATH"], adding: extraSearchPaths)
+                process.environment = environment
+            }
             let stdoutPipe = Pipe(), stderrPipe = Pipe(), stdinPipe = Pipe()
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe

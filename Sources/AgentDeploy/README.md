@@ -150,6 +150,26 @@ struct Assistant: Agent {
 
 The spec fixes the subagent's provider, model, instructions and tools, so the calling model can't change which keys or tools the worker uses. Failures (the subagent failed, the worker is unreachable, or it ran past `timeout`) come back to the model as text rather than ending the parent's run; a timeout includes the run ID, and the job keeps running on the worker. For an isolated worker, pass its `owner`.
 
+### Subagents in the LangTools macOS app
+
+The app is sandboxed, so it can't run `docker` or `ssh`. The LangTools Helper (the menu-bar app, or `make codex-helper`, see [cli/README.md](../../cli/README.md)) runs them for it. The helper reads subagent definitions from `~/.config/langtools-agent/subagents/*.json`:
+
+```json
+{
+  "toolName": "worker_clock",
+  "description": "Asks an agent on a langtools-agent worker what time it is somewhere.",
+  "worker": "helper",
+  "timeoutSeconds": 120,
+  "spec": { "name": "Clock", "instructions": "Use the current_time tool to answer.", "provider": "anthropic", "model": "claude-sonnet-4-6", "tools": ["current_time"] }
+}
+```
+
+`spec` is an agent spec without `messages`; the task becomes the user message. `owner` is optional, for an isolated worker. [Examples/Subagents/clock.json](../../Examples/Subagents/clock.json) is a complete example.
+
+With the helper paired, each definition appears in the app under **Settings → Tools** as a tool with an on/off switch, and the chat model can call it. The app sends the task to the helper, which submits it to the worker, and polls until the result comes back. Definitions are read on every request, so edits take effect on the next **Refresh** in Settings, without restarting the helper. A file that can't be used is listed there with the reason.
+
+The helper runs `docker` and `ssh` as you, using the same `~/.config/langtools-agent/fleet.json` as `langtools-agent-deploy`, so create the worker with that tool first. When started from Finder, it also looks for commands in `/opt/homebrew/bin`, `/usr/local/bin` and Docker Desktop's folders.
+
 `AgentFleet` runs `docker`, `ssh` and `doctl` as processes, so it works in macOS and Linux command-line tools and servers, not in sandboxed iOS apps.
 
 ## Limits

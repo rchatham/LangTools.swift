@@ -68,6 +68,11 @@ public struct WorkerSubagent {
         } catch {
             return "The \(spec.name) agent did not finish in time (run \(job.runID) on worker '\(worker)'): \(error.localizedDescription)"
         }
+        return message(for: result)
+    }
+
+    /// The text the calling model gets for a finished run: the output, or what went wrong.
+    public func message(for result: AgentRunResult) -> String {
         switch result.status {
         case .completed: return result.output ?? ""
         default: return "The \(spec.name) agent \(result.status.rawValue): \(result.error ?? "no details")"
