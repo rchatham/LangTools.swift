@@ -120,7 +120,13 @@ public final class AgentWorker: @unchecked Sendable {
             let now = Date()
             let result = AgentRunResult(runID: job.runID, agent: job.spec.name, provider: job.spec.provider.rawValue, model: job.spec.model, status: .failed,
                                         error: "The worker stopped during the run \(job.attempts) time(s); not retrying.", startedAt: now, finishedAt: now)
-            try spool.complete(file, result: result)
+            // One job that can't be recorded shouldn't keep the others, or the worker, down;
+            // it stays in running/ for the next start to try again.
+            do { try spool.complete(file, result: result) }
+            catch {
+                log("error: run=\(job.runID) could not be recorded as failed: \(error.localizedDescription)")
+                continue
+            }
             log("run=\(job.runID) failed: interrupted \(job.attempts) time(s)")
             await deliver(result, for: job)
         }

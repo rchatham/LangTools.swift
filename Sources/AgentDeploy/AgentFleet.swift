@@ -253,6 +253,7 @@ public struct AgentFleet {
             let status = try await status(of: runID, on: name)
             if let result = status.result { return result }
             guard status.state != .unknown else { throw DeployError.unexpectedOutput("Worker '\(name)' has no job '\(runID)'.") }
+            guard status.state != .done else { throw DeployError.unexpectedOutput("Worker '\(name)' reported job '\(runID)' done without a result.") }
             if let deadline, Date() >= deadline { throw DeployError.notReady("Job '\(runID)' was still \(status.state.rawValue) after \(Int(timeout ?? 0))s.") }
             try await sleep(pollInterval)
         }

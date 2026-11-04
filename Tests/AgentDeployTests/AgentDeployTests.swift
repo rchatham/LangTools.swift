@@ -359,6 +359,17 @@ final class AgentDeployTests: XCTestCase {
         XCTAssertEqual(injection, 2)
     }
 
+    func testWaitStopsWhenDoneHasNoResult() async throws {
+        try givenRegistry(workers: [WorkerRecord(name: "w1", host: "local")])
+        runner.on("langtools-agent status", stdout: #"{"runID":"r","state":"done"}"#)
+        do {
+            _ = try await fleet().waitForResult(of: "r", on: "w1")  // No timeout: must not spin forever.
+            XCTFail("Should fail")
+        } catch let error as DeployError {
+            XCTAssertTrue(error.localizedDescription.contains("done without a result"), error.localizedDescription)
+        }
+    }
+
     func testSubmitRejectsBadJobsLocally() async throws {
         try givenRegistry(workers: [WorkerRecord(name: "w1", host: "local")])
         files["bad.json"] = Data(#"{"name": "x"}"#.utf8)

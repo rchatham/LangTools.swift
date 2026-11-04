@@ -197,6 +197,23 @@ final class AgentWorkerTests: XCTestCase {
         XCTAssertEqual(try spool.result(for: "crash")?.output, "Recovered")
     }
 
+    func testOneUnrecordableJobDoesntStopRecovery() async throws {
+        try spool.enqueue(job("stuck", submittedAt: Date(timeIntervalSince1970: 1)))
+        try spool.enqueue(job("fine", submittedAt: Date(timeIntervalSince1970: 2)))
+        _ = try spool.claimNext()
+        _ = try spool.claimNext()
+        // A directory where "stuck"'s result would go makes recording it fail.
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("done/stuck.json"), withIntermediateDirectories: true)
+        let logs = CallLog()
+
+        try await runWorker(worker(maxAttempts: 1, logs: logs)) { self.spool.state(of: "fine") == .done }
+
+        XCTAssertEqual(try spool.result(for: "fine")?.status, .failed)
+        XCTAssertTrue(logs.values.contains { $0.contains("run=stuck could not be recorded") }, "\(logs.values)")
+        XCTAssertEqual(spool.state(of: "stuck"), .done, "Its directory is still in done/, and its job file stays for the next start")
+        XCTAssertTrue((try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("running").path)).contains { $0.hasSuffix("-stuck.json") })
+    }
+
     func testJobInterruptedTooOftenIsReportedFailed() async throws {
         let delivered = RequestLog()
         MockURLProtocol.setHandler(for: "/hooks/fail") { request in delivered.append(request); return (.success(Data()), 200) }
