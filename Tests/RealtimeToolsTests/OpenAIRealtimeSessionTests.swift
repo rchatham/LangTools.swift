@@ -739,9 +739,13 @@ final class RealtimePipelineStateMachineTests: XCTestCase {
         try await pipeline.start()
 
         pipeline.notifyPlaybackStarted()
-        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.00))
+        // The first frame after the report anchors the 0.5 s grace period;
+        // speech then commits at 0.75 s, past it.
+        vad.enqueue(VADResult(isSpeech: false, probability: 0.1, timestamp: 0.00))
         try await pipeline.sendAudio(Data([0x00, 0x00]))
-        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.15))
+        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.60))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.75))
         try await pipeline.sendAudio(Data([0x00, 0x00]))
 
         let deadline = Date().addingTimeInterval(5)
@@ -798,12 +802,69 @@ final class RealtimePipelineStateMachineTests: XCTestCase {
         try await pipeline.start()
 
         pipeline.notifyPlaybackStarted()
+        // The first frame after the report anchors the 0.5 s grace period;
+        // speech then commits at 0.75 s, past it.
+        vad.enqueue(VADResult(isSpeech: false, probability: 0.1, timestamp: 0.00))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.60))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.75))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+
+        await fulfillment(of: [interrupted], timeout: 5)
+    }
+
+    /// Regression test: notifyPlaybackStarted() without a timestamp skipped
+    /// the grace period, so echo right after playback began interrupted it.
+    func testSpeechInsideGracePeriodDoesNotInterrupt() async throws {
+        let vadConfig = VADConfiguration(mode: .onDevice, minSpeechDuration: 0, silenceTimeout: 0)
+        let vad = ControllableVAD(configuration: vadConfig)
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.modular)
+            .withAudioSettings(AudioProcessingSettings(vadConfig: vadConfig))
+            .build()
+        pipeline.setProviders(vad: vad)
+
+        let interrupted = expectation(description: "onInterruption fired")
+        interrupted.isInverted = true
+        let handler = RealtimeEventHandler()
+        handler.onInterruption = { interrupted.fulfill() }
+        pipeline.eventHandler = handler
+        try await pipeline.start()
+
+        pipeline.notifyPlaybackStarted()
         vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.00))
         try await pipeline.sendAudio(Data([0x00, 0x00]))
         vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.15))
         try await pipeline.sendAudio(Data([0x00, 0x00]))
 
-        await fulfillment(of: [interrupted], timeout: 5)
+        await fulfillment(of: [interrupted], timeout: 0.5)
+    }
+
+    /// Push-to-talk (.manual) leaves turns to the caller: no barge-in.
+    func testManualVADModeNeverAutoInterrupts() async throws {
+        let vadConfig = VADConfiguration(mode: .manual, minSpeechDuration: 0, silenceTimeout: 0)
+        let vad = ControllableVAD(configuration: vadConfig)
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.modular)
+            .withAudioSettings(AudioProcessingSettings(vadConfig: vadConfig))
+            .build()
+        pipeline.setProviders(vad: vad)
+
+        let interrupted = expectation(description: "onInterruption fired")
+        interrupted.isInverted = true
+        let handler = RealtimeEventHandler()
+        handler.onInterruption = { interrupted.fulfill() }
+        pipeline.eventHandler = handler
+        try await pipeline.start()
+
+        pipeline.notifyPlaybackStarted()
+        for t in [0.00, 0.60, 0.75] {
+            vad.enqueue(VADResult(isSpeech: t > 0, probability: 0.9, timestamp: t))
+            try await pipeline.sendAudio(Data([0x00, 0x00]))
+        }
+
+        await fulfillment(of: [interrupted], timeout: 0.5)
     }
 
     /// Without a playback report, the same speech is a normal turn.

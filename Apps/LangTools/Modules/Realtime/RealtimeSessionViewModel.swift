@@ -59,6 +59,9 @@ public final class RealtimeSessionViewModel: ObservableObject {
 
     /// Tracks the current assistant audio item for truncation on barge-in
     private var currentAssistantItemId: String?
+    /// The item the user barged in on. Its audio deltas can still arrive
+    /// after the flush; they're dropped so the cut-off reply doesn't resume.
+    private var interruptedItemId: String?
 
     public init(apiKeyProvider: @escaping () -> String?) {
         self.apiKeyProvider = apiKeyProvider
@@ -205,6 +208,7 @@ public final class RealtimeSessionViewModel: ObservableObject {
         let playedMs = player.playedMilliseconds
         player.flush()
         isModelSpeaking = false
+        interruptedItemId = currentAssistantItemId
         return currentAssistantItemId.map { ($0, playedMs) }
     }
 
@@ -272,7 +276,7 @@ public final class RealtimeSessionViewModel: ObservableObject {
             upsertTranscript(id: e.itemId, role: .assistant, text: e.text, isFinal: true)
 
         case .responseAudioDelta(let e):
-            if let audio = e.audioData {
+            if e.itemId != interruptedItemId, let audio = e.audioData {
                 isModelSpeaking = true
                 player.enqueue(pcm16: audio)
             }

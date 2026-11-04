@@ -84,6 +84,11 @@ public final class InterruptionDetector: @unchecked Sendable {
 
     /// Tell the detector that assistant audio playback started.
     /// While playback is active, detected speech is treated as a barge-in.
+    ///
+    /// `timestamp` is on the VAD's timeline (`VADResult.timestamp`). Callers
+    /// usually don't know that timeline, so when it's nil the grace period
+    /// (`minPlaybackBeforeInterrupt`) starts at the next processed frame
+    /// instead of being skipped.
     public func playbackStarted(at timestamp: TimeInterval? = nil) {
         lock.lock()
         defer { lock.unlock() }
@@ -126,6 +131,11 @@ public final class InterruptionDetector: @unchecked Sendable {
 
         var events: [InterruptionEvent] = []
         let now = result.timestamp
+        // Anchor a playback start reported without a timestamp to the first
+        // frame after it, so the grace period still applies.
+        if playbackActive && playbackStartedAt == nil {
+            playbackStartedAt = now
+        }
 
         switch (state, result.isSpeech) {
         case (.silence, true):

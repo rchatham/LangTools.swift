@@ -270,8 +270,10 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
     private func initializeProviders() async throws {
         // Initialize on-device VAD + interruption detection if configured.
         // Server VAD modes (e.g. OpenAI Realtime) handle this remotely, so we
-        // only build the local detector for onDevice/automatic/manual modes.
-        if let vadConfig = configuration.audioSettings.vadConfig, vadConfig.mode != .server {
+        // only build the local detector for onDevice and automatic modes.
+        // .manual is push-to-talk: the caller decides turns, so no automatic
+        // turn-taking or barge-in either.
+        if let vadConfig = configuration.audioSettings.vadConfig, vadConfig.mode != .server, vadConfig.mode != .manual {
             lock.lock()
             let vad = vadInstance ?? EnergyVAD(
                 configuration: vadConfig,
