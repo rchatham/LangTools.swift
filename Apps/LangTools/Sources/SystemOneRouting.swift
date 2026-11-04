@@ -103,8 +103,11 @@ final class SystemOneRoutingController: ObservableObject {
         modelFolder = Self.resolveModelFolder(defaults)
     }
 
-    /// Attaches the service and loads the router if routing is on.
+    /// Attaches the service and loads the router if routing is on. Attaching the
+    /// same service again does nothing, because the view's `.task` reruns each time
+    /// it appears, and settings changes already call `reload()`.
     func attach(to service: MessageService) {
+        guard messageService !== service else { return }
         messageService = service
         reload()
     }
@@ -149,7 +152,7 @@ final class SystemOneRoutingController: ObservableObject {
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         do {
             #if os(macOS)
-            let bookmark = try url.bookmarkData(options: .withSecurityScope)
+            let bookmark = try url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess])
             #else
             let bookmark = try url.bookmarkData()
             #endif
@@ -175,13 +178,23 @@ final class SystemOneRoutingController: ObservableObject {
             return try await .server(endpoint: url, routingDescriptions: routingDescriptions)
         case .onDevice:
             guard let modelFolder else { throw SystemOneRoutingError.noModelFolder }
+            // Only the load needs the folder: d1 copies its weights into MLX and
+            // never reads or writes the folder again.
             let scoped = modelFolder.startAccessingSecurityScopedResource()
             defer { if scoped { modelFolder.stopAccessingSecurityScopedResource() } }
-            return try await .d1(
-                modelFolder: modelFolder,
-                precision: precision,
-                routingDescriptions: routingDescriptions
-            )
+            do {
+                return try await .d1(
+                    modelFolder: modelFolder,
+                    precision: precision,
+                    routingDescriptions: routingDescriptions
+                )
+            } catch {
+                let weights = modelFolder.appendingPathComponent("model.safetensors").path
+                if (try? FileManager.default.destinationOfSymbolicLink(atPath: weights)) != nil {
+                    throw SystemOneRoutingError.modelFolderHasLinks(underlying: error.localizedDescription)
+                }
+                throw error
+            }
         }
     }
 
@@ -203,6 +216,9 @@ final class SystemOneRoutingController: ObservableObject {
 enum SystemOneRoutingError: LocalizedError {
     case invalidServerURL(String)
     case noModelFolder
+    /// Hugging Face cache snapshots link into a sibling `blobs` folder, and the app
+    /// sandbox only grants the folder that was chosen.
+    case modelFolderHasLinks(underlying: String)
 
     var errorDescription: String? {
         switch self {
@@ -210,6 +226,8 @@ enum SystemOneRoutingError: LocalizedError {
             return "'\(url)' is not a URL."
         case .noModelFolder:
             return "Choose the d1-omni-600M folder."
+        case .modelFolderHasLinks(let underlying):
+            return "\(underlying) This folder links to files outside it, which the app may not be able to read. Run `hf download LiquidAI/d1-omni-600M --local-dir <folder>` and choose that folder."
         }
     }
 }

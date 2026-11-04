@@ -27,10 +27,19 @@ best on the request it handles, so `routingDescriptions` replaces them for routi
 
 ## In the LangTools app
 
-Routing is off by default. Turn it on in **Settings › System One** and choose a
-[LiquidAI/d1-omni-600M](https://huggingface.co/LiquidAI/d1-omni-600M) snapshot folder.
-Each routed message then shows its route, such as `System One: calendarAgent 0.93`.
-Build the app in Release for routing speed, because MLX is far slower in Debug.
+Routing is off by default. Turn it on in **Settings › System One** and choose a folder
+holding [LiquidAI/d1-omni-600M](https://huggingface.co/LiquidAI/d1-omni-600M). Each routed
+message then shows its route, such as `System One: calendarAgent 0.93`. Build the app in
+Release for routing speed, because MLX is far slower in Debug.
+
+Download the model with `--local-dir` so the folder holds real files:
+
+```bash
+hf download LiquidAI/d1-omni-600M --local-dir ~/Models/d1-omni-600M
+```
+
+A snapshot folder in the Hugging Face cache holds links into a sibling `blobs` folder, and
+the app sandbox only grants access to the folder you choose.
 
 ## Which tools a request receives
 

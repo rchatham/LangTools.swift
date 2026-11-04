@@ -274,6 +274,27 @@ final class ToolRoutingTests: XCTestCase {
         XCTAssertTrue(service.toolRoutes.isEmpty)
     }
 
+    func testClearingMessagesDuringRoutingRecordsNoRoute() async throws {
+        let service = try makeService(router: nil)
+        service.toolRouter = ClearingRouter(service: service)
+        addTeardownBlock { @MainActor in service.toolRouter = nil }
+        let message = userMessage("Hello")
+
+        _ = try await service.routedTools(tools, for: message, in: [message])
+
+        XCTAssertTrue(service.toolRoutes.isEmpty)
+    }
+
+    func testScoresForToolsNotOfferedDoNotLowerNoToolCertainty() {
+        let outcome = ToolRoutingPolicy.followUpOutcome(
+            for: ToolRoutingDecision(toolProbabilities: ["calendarAgent": 0.01, "madeUp": 0.5]),
+            offered: [ToolRoutingOption(name: "calendarAgent", description: "Calendar")],
+            keeping: ["calendarAgent"]
+        )
+
+        XCTAssertEqual(outcome.route, .noTool)
+    }
+
     func testSendPassesOnlyTheRoutedToolToTheModel() async throws {
         let toolName = "routing_test_\(UUID().uuidString)"
         let manager = ToolManager.shared
@@ -281,7 +302,10 @@ final class ToolRoutingTests: XCTestCase {
         manager.toolsEnabled = true
         manager.register(ToolConfiguration(id: toolName, displayName: "Test", description: "Test", iconName: "gear"))
         manager[toolName] = true
-        addTeardownBlock { @MainActor in manager.toolsEnabled = wasEnabled }
+        addTeardownBlock { @MainActor in
+            manager[toolName] = false
+            manager.toolsEnabled = wasEnabled
+        }
 
         let network = UnusedNetworkClient()
         let service = try makeService(router: ScriptedRouter(scores([toolName: 0.9])), network: network)
@@ -311,6 +335,16 @@ final class ToolRoutingTests: XCTestCase {
 
 private struct RouterFailure: LocalizedError {
     var errorDescription: String? { "router offline" }
+}
+
+/// Clears the conversation while a message is being routed.
+private struct ClearingRouter: LangToolsToolRouter {
+    let service: MessageService
+
+    func route(message: String, options: [ToolRoutingOption]) async throws -> ToolRoutingDecision {
+        await service.clearMessages()
+        return ToolRoutingDecision(toolProbabilities: ["calendarAgent": 0.9])
+    }
 }
 
 private actor ScriptedRouter: LangToolsToolRouter {

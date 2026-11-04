@@ -121,7 +121,7 @@ public enum ToolRoutingPolicy {
         case .tools(let tools):
             scored = tools
         case .noTool:
-            let noToolProbability = 1 - decision.toolProbabilities.values.reduce(0, +)
+            let noToolProbability = 1 - offered.reduce(0) { $0 + (decision.toolProbabilities[$1.name] ?? 0) }
             if noToolProbability >= noToolCertainty { return own }
             scored = []
         case .followUp, .routerFailed:

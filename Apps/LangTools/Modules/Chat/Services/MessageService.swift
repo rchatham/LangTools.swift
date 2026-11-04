@@ -306,6 +306,7 @@ public class MessageService {
         let previousMessage = history.last { $0.isUser && $0.uuid != userMessage.uuid }
         let kept = ToolRoutingPolicy.toolsToKeep(after: previousMessage.flatMap { toolRoutes[$0.uuid] })
         let options = tools.map { ToolRoutingOption(name: $0.name, description: $0.description ?? $0.name) }
+        let routedConversationID = conversationID
         let outcome: ToolRoutingOutcome
         do {
             let decision = try await toolRouter.route(message: text, options: options)
@@ -328,7 +329,9 @@ public class MessageService {
             if error is CancellationError { throw error }
             outcome = ToolRoutingOutcome(route: .routerFailed(error.localizedDescription))
         }
-        toolRoutes[userMessage.uuid] = outcome
+        if conversationID == routedConversationID {
+            toolRoutes[userMessage.uuid] = outcome
+        }
         return ToolRoutingPolicy.apply(outcome, to: tools)
     }
 
