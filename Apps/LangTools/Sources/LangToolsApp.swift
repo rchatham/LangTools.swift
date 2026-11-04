@@ -176,6 +176,7 @@ struct LangToolsApp: App {
 
 struct ChatContainerView: View {
     @StateObject private var messageService: MessageService
+    @StateObject private var systemOneRouting = SystemOneRoutingController()
     @ObservedObject var voiceInputHandler: VoiceInputHandlerAdapter
 
     init(voiceInputHandler: VoiceInputHandlerAdapter) {
@@ -215,6 +216,15 @@ struct ChatContainerView: View {
                 settingsView: { chatSettingsView },
                 voiceInputHandler: voiceInputHandler,
                 supplementaryContent: { message in
+                    if message.isUser, let route = messageService.toolRoutes[message.uuid] {
+                        return AnyView(
+                            Text("System One: \(route.summary)")
+                                .font(.caption.monospaced())
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                                .padding(.horizontal, 10)
+                        )
+                    }
                     guard ToolSettings.shared.richContentEnabled,
                           case .contentCards(let content) = message.contentType
                     else { return nil }
@@ -223,6 +233,11 @@ struct ChatContainerView: View {
             )
         }
         .fixtureConditionalAccessPrompts()
+        .task {
+            // Fixture mode must stay free of models and local servers.
+            guard !ChatUITestEnvironment.isFixtureActive else { return }
+            systemOneRouting.attach(to: messageService)
+        }
     }
 
     private var chatSettingsView: AnyView {
@@ -249,6 +264,14 @@ struct ChatContainerView: View {
                 isLoading: handler.whisperKitLoadingState.isLoading,
                 description: handler.whisperKitLoadingState.description
             )
+        }
+
+        if !fixtureActive {
+            viewModel.customTabs = [
+                CustomSettingsTab(id: "systemOne", name: "System One", icon: "arrow.triangle.branch") {
+                    AnyView(SystemOneRoutingSettings(controller: systemOneRouting))
+                }
+            ]
         }
 
         return AnyView(ChatSettingsView(viewModel: viewModel))
