@@ -204,6 +204,7 @@ public struct AgentFleet {
 
     /// Stops and removes a worker. Its queue and results are deleted too unless `keepResults`.
     public func destroyWorker(_ name: String, keepResults: Bool = false) async throws {
+        try WorkerNames.validate(name: name)
         let (_, _, shell) = try locate(name)
         try await shell.run(WorkerContainer.removeContainerCommand(name))
         if !keepResults {

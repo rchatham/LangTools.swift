@@ -131,7 +131,10 @@ public enum WorkerContainer {
         catch { throw DeployError.unexpectedOutput("Could not read `docker inspect` output: \(error)") }
         return containers.compactMap { container in
             let labels = container.Config?.Labels ?? [:]
-            guard let name = labels[workerLabel] else { return nil }
+            // Labels come from whoever started the container; a name or owner that
+            // `create` would refuse is ignored rather than adopted.
+            guard let name = labels[workerLabel], (try? WorkerNames.validate(name: name)) != nil else { return nil }
+            if let owner = labels[ownerLabel], (try? WorkerNames.validate(owner: owner)) == nil { return nil }
             return Found(name: name, owner: labels[ownerLabel], image: container.Config?.Image ?? "?", state: container.State?.Status ?? "unknown",
                          concurrency: labels[concurrencyLabel].flatMap(Int.init), network: labels[networkLabel])
         }.sorted { $0.name < $1.name }

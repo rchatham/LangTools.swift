@@ -478,6 +478,37 @@ final class AgentDeployTests: XCTestCase {
         XCTAssertEqual(try WorkerContainer.parseInspect(Data(#"[{"Config":{"Labels":{"other":"x"}}}]"#.utf8)), [], "Unlabelled containers are ignored")
     }
 
+    func testHostileLabelsAreNotAdopted() async throws {
+        let hostile = #"[{"Config":{"Image":"x","Labels":{"dev.langtools.agent.worker":"x$(touch /tmp/pwned)y"}}},"#
+            + #"{"Config":{"Image":"x","Labels":{"dev.langtools.agent.worker":"ok","dev.langtools.agent.owner":"a\"b"}}},"#
+            + #"{"Config":{"Image":"x","Labels":{"dev.langtools.agent.worker":"fine"}}}]"#
+        XCTAssertEqual(try WorkerContainer.parseInspect(Data(hostile.utf8)).map(\.name), ["fine"])
+
+        runner.on(WorkerContainer.inspectAllCommand, stdout: hostile)
+        _ = await command().run(["list"])
+        XCTAssertEqual(try store.load().workers.map(\.name), ["fine"], "Only the valid container is adopted")
+    }
+
+    func testDestroyRefusesUnsafeNameBeforeRunningAnything() async throws {
+        try givenRegistry(workers: [WorkerRecord(name: "x$(reboot)", host: "local")])
+        let status = await command().run(["destroy", "x$(reboot)", "--force"])
+        XCTAssertEqual(status, 2)
+        XCTAssertTrue(runner.calls.isEmpty, "\(runner.calls)")
+    }
+
+    func testHostPathEscapesShellCharacters() async throws {
+        let hostile = "a$(touch PWNED)`id`\"b\\c"
+        let path = HostPath.home("dir", hostile)
+        XCTAssertEqual(path.description, #""$HOME/dir/a\$(touch PWNED)\`id\`\"b\\c""#)
+
+        // A real shell prints the name literally and runs nothing.
+        let home = temp.appendingPathComponent("home", isDirectory: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let output = try await ProcessCommandRunner().run("/bin/sh", ["-c", "cd \"\(home.path)\" && export HOME=\"\(home.path)\" && printf %s \(path)"], stdin: nil)
+        XCTAssertEqual(output.stdoutString, "\(home.path)/dir/\(hostile)")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent("PWNED").path))
+    }
+
     func testEnvFileValidation() throws {
         XCTAssertEqual(try WorkerContainer.validateEnvFile("# keys\nOPENAI_API_KEY=sk-1\n\nX_2=a=b\n"), ["OPENAI_API_KEY", "X_2"])
         XCTAssertThrowsError(try WorkerContainer.validateEnvFile("export OPENAI_API_KEY=sk"))

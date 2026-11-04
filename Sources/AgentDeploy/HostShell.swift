@@ -46,11 +46,24 @@ public struct HostPath: CustomStringConvertible, Equatable {
     let directory: String
     let staged: String
 
-    /// `components` must already be safe in double quotes: letters, digits, `.`, `_` and `-`.
+    /// A path under `$HOME`. Components are escaped for double quotes, so even a
+    /// name that slipped past validation can't run a command.
     static func home(_ components: String...) -> HostPath {
-        let relative = components.joined(separator: "/")
-        let directory = components.dropLast().joined(separator: "/")
+        let escaped = components.map(escapeForDoubleQuotes)
+        let relative = escaped.joined(separator: "/")
+        let directory = escaped.dropLast().joined(separator: "/")
         return HostPath(description: "\"$HOME/\(relative)\"", directory: "\"$HOME/\(directory)\"", staged: "\"$HOME/\(relative).new\"")
+    }
+
+    /// Inside double quotes the shell still expands `$` and backquotes and treats `\` and
+    /// `"` specially; a backslash before each makes them literal.
+    static func escapeForDoubleQuotes(_ text: String) -> String {
+        var result = ""
+        for character in text {
+            if "$`\"\\".contains(character) { result.append("\\") }
+            result.append(character)
+        }
+        return result
     }
 }
 
