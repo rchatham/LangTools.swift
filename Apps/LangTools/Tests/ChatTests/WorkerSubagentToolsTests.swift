@@ -40,6 +40,24 @@ final class WorkerSubagentToolsTests: XCTestCase {
         XCTAssertEqual(tools.subagents, [research])
     }
 
+    func testRemovedSubagentIsUnregistered() async {
+        let client = MockSubagentClient(list: HelperSubagentsResponse(subagents: [research]))
+        let tools = WorkerSubagentTools(client: client, toolManager: toolManager, sleep: { _ in })
+        await tools.refresh()
+        XCTAssertNotNil(toolManager.configuration(for: "research"))
+
+        client.list = HelperSubagentsResponse(subagents: [])
+        await tools.refresh()
+        XCTAssertNil(toolManager.configuration(for: "research"))
+        XCTAssertEqual(tools.subagents, [])
+
+        // The name is free again for another tool.
+        toolManager.register(ToolConfiguration(id: "research", displayName: "Research", description: "In-app agent", iconName: "magnifyingglass", isAgent: true))
+        client.list = HelperSubagentsResponse(subagents: [research])
+        await tools.refresh()
+        XCTAssertEqual(toolManager.configuration(for: "research")?.description, "In-app agent")
+    }
+
     func testSubagentCantTakeAnExistingToolsName() async {
         toolManager.register(ToolConfiguration(id: "research", displayName: "Research", description: "In-app agent", iconName: "magnifyingglass", isAgent: true))
         let tools = WorkerSubagentTools(client: MockSubagentClient(list: HelperSubagentsResponse(subagents: [research])), toolManager: toolManager, sleep: { _ in })
@@ -92,7 +110,7 @@ final class WorkerSubagentToolsTests: XCTestCase {
 }
 
 private final class MockSubagentClient: HelperSubagentClientProtocol, @unchecked Sendable {
-    private let list: HelperSubagentsResponse
+    var list: HelperSubagentsResponse
     private let listError: Error?
     private let startError: Error?
     private var statuses: [HelperSubagentStatusResponse]

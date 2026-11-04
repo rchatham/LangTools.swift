@@ -288,6 +288,7 @@ public struct AgentRuntimeCommand {
             let spool = try self.spool(&options)
             guard options.count == 1 else { return usageError("status takes one run ID.") }
             let runID = options[0]
+            guard AgentJob.isValidRunID(runID) else { return usageError("Invalid run ID '\(runID)'.") }
             let state = spool.state(of: runID)
             var fields: [String: Any] = ["runID": runID, "state": state.rawValue]
             if state == .done, let result = try spool.result(for: runID) {

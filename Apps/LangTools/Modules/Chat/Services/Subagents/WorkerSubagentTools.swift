@@ -117,8 +117,8 @@ public final class WorkerSubagentTools: ObservableObject {
         self.sleep = sleep
     }
 
-    /// Asks the helper for its subagents and registers each one as a tool. A subagent
-    /// whose name is already taken by another tool is skipped.
+    /// Asks the helper for its subagents and registers each one as a tool, removing
+    /// ones it no longer offers. A subagent whose name another tool has is skipped.
     public func refresh() async {
         isRefreshing = true
         defer { isRefreshing = false }
@@ -135,8 +135,11 @@ public final class WorkerSubagentTools: ObservableObject {
                 configurations.append(configuration(for: subagent))
                 registered.append(subagent)
             }
+            // Subagents the helper no longer offers would fail if called, so they go.
+            let current = Set(registered.map(\.toolName))
+            toolManager.unregister(ids: registeredIDs.subtracting(current))
             toolManager.register(configurations)
-            registeredIDs.formUnion(registered.map(\.toolName))
+            registeredIDs = current
             self.subagents = registered
             self.problems = problems
         } catch {

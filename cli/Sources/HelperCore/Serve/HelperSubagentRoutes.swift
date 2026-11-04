@@ -26,9 +26,11 @@ enum HelperSubagentRoutes {
             case HelperSubagentRoute.run:
                 let request = try JSONDecoder().decode(HelperSubagentRunRequest.self, from: body)
                 return (.ok, try json(try await service.start(request)))
-            default:
+            case HelperSubagentRoute.status:
                 let request = try JSONDecoder().decode(HelperSubagentStatusRequest.self, from: body)
                 return (.ok, try json(try await service.status(request)))
+            default:
+                return (.notFound, errorBody("Not found."))
             }
         } catch let error as DeployError {
             switch error {

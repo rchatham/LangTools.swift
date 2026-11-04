@@ -186,7 +186,7 @@ public struct AgentSpool {
         guard AgentJob.isValidRunID(runID) else { return .unknown }
         if fileManager.fileExists(atPath: done.appendingPathComponent("\(runID).json").path) { return .done }
         func holds(_ directory: URL) -> Bool {
-            ((try? fileManager.contentsOfDirectory(atPath: directory.path)) ?? []).contains { Self.runID(fromFileName: $0) == runID }
+            ((try? fileManager.contentsOfDirectory(atPath: directory.path)) ?? []).contains { !$0.hasPrefix(".") && Self.runID(fromFileName: $0) == runID }
         }
         if holds(running) { return .running }
         if holds(queue) { return .queued }

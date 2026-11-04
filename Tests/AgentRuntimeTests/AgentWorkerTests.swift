@@ -102,6 +102,13 @@ final class AgentWorkerTests: XCTestCase {
         XCTAssertNil(AgentSpool.runID(fromFileName: "0000000000001-.json"))
     }
 
+    func testHiddenFilesDontCountAsJobs() throws {
+        let queue = root.appendingPathComponent("queue")
+        try spool.prepare()
+        try Data().write(to: queue.appendingPathComponent(".0000000000001-ghost.json"))
+        XCTAssertEqual(spool.state(of: "ghost"), .unknown)
+    }
+
     func testJobFilesAreOwnerOnly() throws {
         var secretJob = job("secret")
         secretJob.webhookSecret = "whsec"

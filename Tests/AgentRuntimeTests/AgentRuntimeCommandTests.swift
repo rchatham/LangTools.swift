@@ -224,6 +224,8 @@ final class AgentRuntimeCommandTests: XCTestCase {
 
         let unknown = await command(environment: env).run(["status", "nope"])
         XCTAssertEqual(unknown, 1)
+        let invalid = await command(environment: env).run(["status", "../x"])
+        XCTAssertEqual(invalid, 2, "A malformed run ID is a usage error, not an unknown run")
     }
 
     func testEnqueueValidatesAgainstWorkerEnvironment() async {
