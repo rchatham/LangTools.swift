@@ -11,7 +11,6 @@ import Crypto
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
-import Crypto
 
 public struct WebhookConfiguration: Equatable {
     public var url: URL
@@ -81,13 +80,19 @@ public struct WebhookDelivery {
     /// The delivery ID for a run: the same every time that run's result is sent, so a
     /// receiver that ignores repeated IDs also ignores a result redelivered after the
     /// worker restarts.
+    /// It's an RFC 4122 version 5 UUID (SHA-1, name-based) of the run ID in a fixed namespace.
     public static func deliveryID(forRun runID: String) -> String {
-        var bytes = Array(SHA256.hash(data: Data("langtools-agent.delivery.\(runID)".utf8)).prefix(16))
-        bytes[6] = (bytes[6] & 0x0F) | 0x50  // Version 5 (name-based)
+        var name = Data(withUnsafeBytes(of: deliveryNamespace.uuid) { Array($0) })
+        name.append(Data(runID.utf8))
+        var bytes = Array(Insecure.SHA1.hash(data: name).prefix(16))
+        bytes[6] = (bytes[6] & 0x0F) | 0x50  // Version 5
         bytes[8] = (bytes[8] & 0x3F) | 0x80  // RFC 4122 variant
         return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
                            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15])).uuidString
     }
+
+    /// The namespace for delivery IDs. Never change it: receivers may have stored IDs made with it.
+    static let deliveryNamespace = UUID(uuidString: "6F2C4E1A-9B3D-4E8F-A7C5-2D1B0E9F8A64")!
 
     /// Sends the result. The delivery ID defaults to one derived from the result's run ID.
     public func deliver(_ result: AgentRunResult, deliveryID: String? = nil) async -> WebhookDeliveryOutcome {

@@ -66,6 +66,8 @@ final class WebhookDeliveryTests: XCTestCase {
         let uuid = UUID(uuidString: first)
         XCTAssertNotNil(uuid)
         XCTAssertEqual(first.split(separator: "-")[2].first, "5", "Name-based UUID version")
+        // Computed independently: python3 -c 'import uuid; print(uuid.uuid5(uuid.UUID("6F2C4E1A-9B3D-4E8F-A7C5-2D1B0E9F8A64"), "job-42"))'
+        XCTAssertEqual(first.lowercased(), "bd96fb31-9f39-5224-9989-1b0f6268d3b8")
     }
 
     func testRejectsPlainHTTPExceptLocalhost() {

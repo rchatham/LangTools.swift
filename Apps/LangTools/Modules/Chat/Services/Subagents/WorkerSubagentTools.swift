@@ -103,7 +103,8 @@ public final class WorkerSubagentTools: ObservableObject {
     private let toolManager: ToolManager
     private let pollInterval: TimeInterval
     private let sleep: @Sendable (TimeInterval) async throws -> Void
-    private var registeredIDs: Set<String> = []
+    /// The display names of the tools this registered, by id, to tell them from other tools.
+    private var registered: [String: String] = [:]
 
     public init(
         client: HelperSubagentClientProtocol = HelperSubagentClient(),
@@ -124,23 +125,30 @@ public final class WorkerSubagentTools: ObservableObject {
         defer { isRefreshing = false }
         do {
             let response = try await client.listSubagents()
-            var registered: [HelperSubagent] = []
+            var accepted: [HelperSubagent] = []
             var problems = response.problems
             var configurations: [ToolConfiguration] = []
             for subagent in response.subagents {
-                if toolManager.configuration(for: subagent.toolName) != nil, !registeredIDs.contains(subagent.toolName) {
+                guard !accepted.contains(where: { $0.toolName == subagent.toolName }) else {
+                    problems.append("The helper listed '\(subagent.toolName)' more than once; the first is used.")
+                    continue
+                }
+                // A tool with this name that isn't the one this registered belongs to something else.
+                if let existing = toolManager.configuration(for: subagent.toolName), existing.displayName != registered[subagent.toolName] {
                     problems.append("'\(subagent.toolName)' is already the name of another tool; rename the subagent.")
                     continue
                 }
                 configurations.append(configuration(for: subagent))
-                registered.append(subagent)
+                accepted.append(subagent)
             }
             // Subagents the helper no longer offers would fail if called, so they go.
-            let current = Set(registered.map(\.toolName))
-            toolManager.unregister(ids: registeredIDs.subtracting(current))
+            let current = Set(accepted.map(\.toolName))
+            // Only remove tools this registered and still owns.
+            let stale = registered.filter { id, name in !current.contains(id) && toolManager.configuration(for: id)?.displayName == name }
+            toolManager.unregister(ids: Set(stale.keys))
             toolManager.register(configurations)
-            registeredIDs = current
-            self.subagents = registered
+            registered = Dictionary(uniqueKeysWithValues: configurations.map { ($0.id, $0.displayName) })
+            self.subagents = accepted
             self.problems = problems
         } catch {
             self.problems = [error.localizedDescription]
