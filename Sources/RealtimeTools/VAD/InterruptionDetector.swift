@@ -161,8 +161,20 @@ public final class InterruptionDetector: @unchecked Sendable {
             state = .trailingSilence(speechSince: since, silenceSince: now)
 
         case (.trailingSilence(let speechSince, _), true):
-            // Speech resumed within the silence timeout — same utterance
+            // Speech resumed within the silence timeout — same utterance.
+            // Playback may have started during the pause, so check for
+            // barge-in here too.
             state = .speaking(since: speechSince)
+            if let interruption = interruptionEventIfNeeded(at: now) {
+                events.append(interruption)
+            }
+
+        case (.speaking, true):
+            // Continued speech: playback may have started mid-utterance.
+            // interruptionEventIfNeeded fires at most once per utterance.
+            if let interruption = interruptionEventIfNeeded(at: now) {
+                events.append(interruption)
+            }
 
         case (.trailingSilence(let speechSince, let silenceSince), false):
             if now - silenceSince >= vad.configuration.silenceTimeout {
@@ -171,7 +183,7 @@ public final class InterruptionDetector: @unchecked Sendable {
                 events.append(.speechEnded(timestamp: now, duration: silenceSince - speechSince))
             }
 
-        case (.speaking, true), (.silence, false):
+        case (.silence, false):
             break
         }
 

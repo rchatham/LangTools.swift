@@ -217,6 +217,39 @@ final class InterruptionDetectorTests: XCTestCase {
         }
     }
 
+    /// Regression test: playback starting mid-utterance was never treated
+    /// as a barge-in, because only the first speech commit checked.
+    func testInterruptionFiresWhenPlaybackStartsDuringContinuedSpeech() {
+        let (detector, events) = makeDetector(minPlaybackBeforeInterrupt: 0.5)
+
+        detector.handle(result: speech(at: 0.00))
+        detector.handle(result: speech(at: 0.15))   // speechStarted, no playback yet
+        detector.playbackStarted(at: 0.20)
+        detector.handle(result: speech(at: 0.40))   // inside the grace period
+        XCTAssertFalse(events().contains { if case .interruptionDetected = $0 { return true }; return false })
+        detector.handle(result: speech(at: 0.80))   // past it
+
+        guard case .interruptionDetected? = events().last else {
+            return XCTFail("Expected interruptionDetected, got \(events())")
+        }
+    }
+
+    /// Regression test: speech resuming after a short pause skipped the
+    /// barge-in check, so playback that started during the pause was missed.
+    func testInterruptionFiresWhenSpeechResumesAfterPauseDuringPlayback() {
+        let (detector, events) = makeDetector(minPlaybackBeforeInterrupt: 0.5)
+
+        detector.handle(result: speech(at: 0.00))
+        detector.handle(result: speech(at: 0.15))   // speechStarted
+        detector.handle(result: silence(at: 0.20))  // pause begins
+        detector.playbackStarted(at: 0.20)
+        detector.handle(result: speech(at: 0.90))   // resumes, past the grace period
+
+        guard case .interruptionDetected? = events().last else {
+            return XCTFail("Expected interruptionDetected, got \(events())")
+        }
+    }
+
     func testNoInterruptionWithoutPlayback() {
         let (detector, events) = makeDetector()
 

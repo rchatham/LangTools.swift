@@ -80,6 +80,13 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         self.interruptionConfig = interruptionConfig
     }
 
+    deinit {
+        // Can't await stop() here; cancelling the STT consumer at least ends
+        // its session stream. Call stop() before releasing a running pipeline
+        // to also stop the STT and TTS providers.
+        processingTask?.cancel()
+    }
+
     // MARK: - Lifecycle
 
     public func start() async throws {
