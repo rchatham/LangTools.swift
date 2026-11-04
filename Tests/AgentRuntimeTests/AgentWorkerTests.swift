@@ -52,9 +52,9 @@ final class AgentWorkerTests: XCTestCase {
 
     private func worker(maxAttempts: Int = 2, logs: CallLog = CallLog()) -> AgentWorker {
         let runner = AgentRunner(providers: .builtIn, credentials: .keys([openAI: "sk-test"]), session: session)
-        let worker = AgentWorker(spool: spool, runner: runner, options: .init(concurrency: 1, pollInterval: 0.02, maxAttempts: maxAttempts, webhookSecret: "worker-secret"), session: session, log: logs.append)
-        worker.makeWebhookDelivery = { WebhookDelivery(configuration: $0, session: self.session, sleep: { _ in }, now: Date.init) }
-        return worker
+        let session = self.session!
+        return AgentWorker(spool: spool, runner: runner, options: .init(concurrency: 1, pollInterval: 0.02, maxAttempts: maxAttempts, webhookSecret: "worker-secret"),
+                           log: logs.append, makeWebhookDelivery: { WebhookDelivery(configuration: $0, session: session, sleep: { _ in }, now: Date.init) })
     }
 
     /// Runs the worker until `condition` holds, then stops it.
@@ -232,6 +232,8 @@ final class AgentWorkerTests: XCTestCase {
 
         XCTAssertEqual(try spool.result(for: "saved")?.output, "First run")
         XCTAssertEqual(try AgentRunResult.decode(from: XCTUnwrap(delivered.requests.first?.bodyData ?? delivered.requests.first?.httpBody)).output, "First run")
+        XCTAssertEqual(delivered.requests.first?.value(forHTTPHeaderField: WebhookDelivery.deliveryHeader), WebhookDelivery.deliveryID(forRun: "saved"),
+                       "A redelivery carries the run's delivery ID, so receivers that dedupe on it drop the repeat")
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("running").path), [])
         XCTAssertTrue(logs.values.contains { $0.contains("run=saved had finished") }, "\(logs.values)")
     }

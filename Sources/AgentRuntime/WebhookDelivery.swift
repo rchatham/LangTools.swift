@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Crypto
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -77,7 +78,20 @@ public struct WebhookDelivery {
         self.now = now
     }
 
-    public func deliver(_ result: AgentRunResult, deliveryID: String = UUID().uuidString) async -> WebhookDeliveryOutcome {
+    /// The delivery ID for a run: the same every time that run's result is sent, so a
+    /// receiver that ignores repeated IDs also ignores a result redelivered after the
+    /// worker restarts.
+    public static func deliveryID(forRun runID: String) -> String {
+        var bytes = Array(SHA256.hash(data: Data("langtools-agent.delivery.\(runID)".utf8)).prefix(16))
+        bytes[6] = (bytes[6] & 0x0F) | 0x50  // Version 5 (name-based)
+        bytes[8] = (bytes[8] & 0x3F) | 0x80  // RFC 4122 variant
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15])).uuidString
+    }
+
+    /// Sends the result. The delivery ID defaults to one derived from the result's run ID.
+    public func deliver(_ result: AgentRunResult, deliveryID: String? = nil) async -> WebhookDeliveryOutcome {
+        let deliveryID = deliveryID ?? result.runID.map(Self.deliveryID(forRun:)) ?? UUID().uuidString
         let body: Data
         do { body = try result.encoded(prettyPrinted: false) }
         catch { return WebhookDeliveryOutcome(delivered: false, attempts: 0, error: "Could not encode result: \(error)", deliveryID: deliveryID) }

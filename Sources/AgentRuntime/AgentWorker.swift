@@ -11,7 +11,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-// Mutable state is behind a lock; makeWebhookDelivery is set before run() and only read after.
+// Mutable state is behind `lock`; everything else is set in init.
 public final class AgentWorker: @unchecked Sendable {
     public struct Options {
         /// Jobs run at the same time.
@@ -37,18 +37,22 @@ public final class AgentWorker: @unchecked Sendable {
     public let spool: AgentSpool
     public let runner: AgentRunner
     public let options: Options
-    var makeWebhookDelivery: (WebhookConfiguration) -> WebhookDelivery
+    let makeWebhookDelivery: (WebhookConfiguration) -> WebhookDelivery
     private let log: (String) -> Void
     private let lock = NSLock()
     private var stopping = false
     private var active = 0
 
-    public init(spool: AgentSpool, runner: AgentRunner, options: Options = Options(), session: URLSession = URLSession(configuration: .default), log: @escaping (String) -> Void = { print($0) }) {
+    public convenience init(spool: AgentSpool, runner: AgentRunner, options: Options = Options(), session: URLSession = URLSession(configuration: .default), log: @escaping (String) -> Void = { print($0) }) {
+        self.init(spool: spool, runner: runner, options: options, log: log, makeWebhookDelivery: { WebhookDelivery(configuration: $0, session: session) })
+    }
+
+    init(spool: AgentSpool, runner: AgentRunner, options: Options, log: @escaping (String) -> Void, makeWebhookDelivery: @escaping (WebhookConfiguration) -> WebhookDelivery) {
         self.spool = spool
         self.runner = runner
         self.options = options
         self.log = log
-        self.makeWebhookDelivery = { WebhookDelivery(configuration: $0, session: session) }
+        self.makeWebhookDelivery = makeWebhookDelivery
     }
 
     /// Stops claiming new jobs; `run()` returns once the jobs already running finish.

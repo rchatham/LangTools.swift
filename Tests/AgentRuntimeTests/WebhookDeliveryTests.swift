@@ -59,6 +59,15 @@ final class WebhookDeliveryTests: XCTestCase {
 
     // MARK: - Configuration
 
+    func testDeliveryIDIsStablePerRun() {
+        let first = WebhookDelivery.deliveryID(forRun: "job-42")
+        XCTAssertEqual(first, WebhookDelivery.deliveryID(forRun: "job-42"))
+        XCTAssertNotEqual(first, WebhookDelivery.deliveryID(forRun: "job-43"))
+        let uuid = UUID(uuidString: first)
+        XCTAssertNotNil(uuid)
+        XCTAssertEqual(first.split(separator: "-")[2].first, "5", "Name-based UUID version")
+    }
+
     func testRejectsPlainHTTPExceptLocalhost() {
         XCTAssertThrowsError(try WebhookConfiguration(url: URL(string: "http://hooks.example.com/x")!, secret: nil))
         XCTAssertThrowsError(try WebhookConfiguration(url: URL(string: "ftp://hooks.example.com/x")!, secret: nil))

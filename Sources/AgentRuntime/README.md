@@ -86,7 +86,7 @@ The URL can also come from `LANGTOOLS_WEBHOOK_URL`. The secret is read only from
 | Header | Value |
 |--------|-------|
 | `X-LangTools-Signature` | `t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<body>" keyed with the secret>` |
-| `X-LangTools-Delivery` | A UUID that stays the same across retries; use it to ignore duplicates. |
+| `X-LangTools-Delivery` | A UUID derived from the run ID, so it stays the same across retries and if a worker redelivers a result after a restart; use it to ignore duplicates. |
 | `X-LangTools-Run-ID` | The result's `runID`. |
 
 Rules:

@@ -238,10 +238,9 @@ public struct AgentRuntimeCommand {
         if workerOptions.webhookSecret == nil { standardError("warning: \(Self.webhookSecretVariable) is not set; jobs without their own secret get unsigned webhook deliveries.") }
 
         let runner = AgentRunner(providers: providers, tools: tools, credentials: .environment(environment), session: session)
-        let worker = AgentWorker(spool: spool, runner: runner, options: workerOptions, session: session, log: standardError)
         let session = self.session
         let makeDelivery = makeWebhookDelivery
-        worker.makeWebhookDelivery = { makeDelivery($0, session) }
+        let worker = AgentWorker(spool: spool, runner: runner, options: workerOptions, log: standardError, makeWebhookDelivery: { makeDelivery($0, session) })
         onStopSignal { worker.stop() }
         do { try await worker.run() }
         catch {
