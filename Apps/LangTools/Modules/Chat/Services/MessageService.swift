@@ -288,6 +288,50 @@ public class MessageService {
     /// Register this from the app target to keep `Chat` agnostic of specific agents.
     public var agentResultParser: ((_ result: String, _ agentName: String) -> Message?)?
 
+    /// Narrows each request's tools to what the message needs. `nil` sends every
+    /// enabled tool. Register this from the app target to keep `Chat` agnostic of
+    /// specific routers.
+    public var toolRouter: (any LangToolsToolRouter)?
+    public var toolRoutingMinimumProbability = ToolRoutingPolicy.defaultMinimumProbability
+    /// How each routed message was handled, keyed by the user message's id.
+    public private(set) var toolRoutes: [UUID: ToolRoutingOutcome] = [:]
+
+    /// Applies `toolRouter` to one message's tools. A router failure sends every
+    /// enabled tool, as if routing were off, because it must not block the message.
+    func routedTools(_ tools: [Tool]?, for userMessage: Message, in history: [Message]) async throws -> [Tool]? {
+        guard let toolRouter, let tools, !tools.isEmpty,
+              let text = userMessage.text, !text.isEmpty
+        else { return tools }
+
+        let previousMessage = history.last { $0.isUser && $0.uuid != userMessage.uuid }
+        let kept = ToolRoutingPolicy.toolsToKeep(after: previousMessage.flatMap { toolRoutes[$0.uuid] })
+        let options = tools.map { ToolRoutingOption(name: $0.name, description: $0.description ?? $0.name) }
+        let outcome: ToolRoutingOutcome
+        do {
+            let decision = try await toolRouter.route(message: text, options: options)
+            if let kept {
+                outcome = ToolRoutingPolicy.followUpOutcome(
+                    for: decision,
+                    offered: options,
+                    keeping: kept,
+                    minimumProbability: toolRoutingMinimumProbability
+                )
+            } else {
+                outcome = ToolRoutingPolicy.outcome(
+                    for: decision,
+                    offered: options,
+                    minimumProbability: toolRoutingMinimumProbability
+                )
+            }
+        } catch {
+            try Task.checkCancellation()
+            if error is CancellationError { throw error }
+            outcome = ToolRoutingOutcome(route: .routerFailed(error.localizedDescription))
+        }
+        toolRoutes[userMessage.uuid] = outcome
+        return ToolRoutingPolicy.apply(outcome, to: tools)
+    }
+
     /// Snapshot of tools filtered by the current ToolManager state.
     /// Delegates to `ToolManager.filteredTools()` for the enabled-id set, then
     /// intersects with `self.tools` so future changes to ToolManager filtering
@@ -427,7 +471,13 @@ public class MessageService {
             var currentMessages = requestSnapshot
             currentMessages.insert(Message(text: systemMessage(), role: .system), at: 0)
 
-            let activeTools = budgetedTools(filteredTools(for: sendID), budget: toolBudget)
+            let selectedTools = try await routedTools(
+                filteredTools(for: sendID),
+                for: userMessage,
+                in: requestSnapshot
+            )
+            guard conversationID == requestConversationID else { throw CancellationError() }
+            let activeTools = budgetedTools(selectedTools, budget: toolBudget)
             let agentToolNames = Set(agents.map(\.name))
             let toolEventHandler: (LangToolsToolEvent) -> Void = { [weak self] event in
                 self?.enqueueToolEvent(event, for: sendID, agentToolNames: agentToolNames)
@@ -665,6 +715,7 @@ public class MessageService {
         sends.keys.forEach { eventBuffer.remove($0) }
         conversationID = UUID()
         failedAttemptGeneratedMessageIDs.removeAll()
+        toolRoutes.removeAll()
         messages.removeAll()
         sendsToDrain.forEach { $0.cancel() }
 
