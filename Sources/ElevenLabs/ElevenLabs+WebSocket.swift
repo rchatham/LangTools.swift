@@ -230,9 +230,13 @@ public final class ElevenLabsWebSocketSession: @unchecked Sendable {
         try await sendMessage(message)
     }
 
-    /// Flush the buffer and generate remaining audio
+    /// Flush the buffer and generate remaining audio.
+    ///
+    /// Sends a single space with `flush: true`, not an empty string:
+    /// ElevenLabs treats empty text as end-of-stream (see `endStream()`) and
+    /// closes the connection, while a space is harmless filler.
     public func flush() async throws {
-        try await send(text: "", flush: true)
+        try await send(text: " ", flush: true)
     }
 
     /// Send end of stream signal

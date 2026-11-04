@@ -57,6 +57,20 @@ final class ElevenLabsWebSocketSessionTests: XCTestCase {
         session.disconnect()
     }
 
+    /// An empty text is ElevenLabs' end-of-stream signal, so flush() must
+    /// send a space instead or it would close the connection.
+    func testFlushSendsSpaceNotEndOfStream() async throws {
+        let (session, mock) = try await makeConnectedSession()
+
+        try await session.flush()
+
+        let sent = try XCTUnwrap(mock.sentMessages.last)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sent.utf8)) as? [String: Any])
+        XCTAssertEqual(json["text"] as? String, " ")
+        XCTAssertEqual(json["flush"] as? Bool, true)
+        session.disconnect()
+    }
+
     func testConcurrentSendsNeverOverlapOnTheSocket() async throws {
         let (session, mock) = try await makeConnectedSession()
         mock.sendDelayNanoseconds = 20_000_000
