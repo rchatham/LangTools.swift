@@ -124,7 +124,7 @@ public final class SubagentService: @unchecked Sendable {  // Immutable after in
     public func start(_ request: HelperSubagentRunRequest) async throws -> HelperSubagentRunResponse {
         let subagent = try subagent(named: request.toolName)
         guard !request.task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw DeployError.invalidArgument("A task is required.") }
-        let job = subagent.job(task: request.task, context: request.context?.isEmpty == true ? nil : request.context)
+        let job = subagent.job(task: request.task, context: request.context)
         try await fleet.submit(job, to: subagent.worker)
         return HelperSubagentRunResponse(runID: job.runID)
     }

@@ -194,6 +194,8 @@ public final class WorkerSubagentTools: ObservableObject {
         let runID: String
         do {
             runID = try await client.startSubagent(HelperSubagentRunRequest(toolName: subagent.toolName, task: task, context: context)).runID
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             return "The \(subagent.toolName) subagent could not be started: \(error.localizedDescription)"
         }

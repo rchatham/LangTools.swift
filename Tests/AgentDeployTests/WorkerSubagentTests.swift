@@ -111,6 +111,12 @@ final class WorkerSubagentTests: XCTestCase {
         XCTAssertEqual(enqueuedJob?.owner, "alice")
     }
 
+    func testBlankContextIsDropped() throws {
+        let subagent = try WorkerSubagent(toolName: "research", spec: spec, worker: "helper")
+        XCTAssertEqual(subagent.job(task: "Go", context: "  \n ").spec.messages.last?.content, "Go")
+        XCTAssertEqual(subagent.job(task: "Go", context: " note ").spec.messages.last?.content, "Go\n\nContext:\nnote")
+    }
+
     func testCancellationPropagates() async throws {
         runner.on("langtools-agent status", stdout: #"{"runID":"r","state":"running"}"#)
         fleet.sleep = { _ in throw CancellationError() }

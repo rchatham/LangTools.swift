@@ -125,6 +125,15 @@ final class WorkerSubagentToolsTests: XCTestCase {
         XCTAssertEqual(missingTask, "A task is required.")
     }
 
+    func testCancellationWhileStartingPropagates() async {
+        do {
+            _ = try await WorkerSubagentTools.run(research, task: "x", context: nil, client: MockSubagentClient(startError: CancellationError()), pollInterval: 0, sleep: { _ in })
+            XCTFail("Should be cancelled")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+    }
+
     func testCancellationStopsWaiting() async {
         let client = MockSubagentClient(statuses: [.init(runID: "r1", state: .running)])
         do {

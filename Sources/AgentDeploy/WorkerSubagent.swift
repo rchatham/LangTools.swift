@@ -45,7 +45,8 @@ public struct WorkerSubagent {
     /// The job for one task: the spec with the task appended as the last user message.
     public func job(task: String, context: String? = nil) -> AgentJob {
         var spec = spec
-        let content = context.map { "\(task)\n\nContext:\n\($0)" } ?? task
+        let context = context?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let content = context.flatMap { $0.isEmpty ? nil : "\(task)\n\nContext:\n\($0)" } ?? task
         spec.messages.append(.init(role: .user, content: content))
         return AgentJob(spec: spec, owner: owner)
     }
@@ -57,6 +58,8 @@ public struct WorkerSubagent {
         let job = job(task: task, context: context)
         do {
             try await fleet.submit(job, to: worker)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             return "The \(spec.name) agent could not be started: \(error.localizedDescription)"
         }
