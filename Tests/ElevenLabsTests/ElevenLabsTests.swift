@@ -144,6 +144,19 @@ final class ElevenLabsTests: XCTestCase {
         XCTAssertEqual(error.detail?.message, "Invalid API key")
     }
 
+    func testErrorResponseDecodesStringDetail() throws {
+        let data = Data(#"{"detail": "Incorrect API key provided"}"#.utf8)
+        let error = try JSONDecoder().decode(ElevenLabsErrorResponse.self, from: data)
+        XCTAssertNil(error.detail?.status)
+        XCTAssertEqual(error.detail?.message, "Incorrect API key provided")
+    }
+
+    func testErrorResponseDecodesArrayDetail() throws {
+        let data = Data(#"{"detail": [{"loc": ["body", "text"], "msg": "field required", "type": "value_error.missing"}]}"#.utf8)
+        let error = try JSONDecoder().decode(ElevenLabsErrorResponse.self, from: data)
+        XCTAssertEqual(error.detail?.message, "field required")
+    }
+
     // MARK: - WebSocket Error Tests
 
     func testWebSocketErrorDescriptions() {

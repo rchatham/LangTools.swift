@@ -840,6 +840,48 @@ final class RealtimePipelineStateMachineTests: XCTestCase {
         XCTAssertEqual(pipeline.state, .stopped)
     }
 
+    /// Regression test: the detector's barge-in used to go through a
+    /// spawned interrupt() Task, so a silence frame right after it could
+    /// fire .speechEnded first, move state to .running, and make the
+    /// interrupt skip cancelling TTS.
+    func testSpeechEndedRightAfterBargeInDoesNotSkipTheInterrupt() async throws {
+        let vadConfig = VADConfiguration(mode: .onDevice, minSpeechDuration: 0, silenceTimeout: 0)
+        let vad = ControllableVAD(configuration: vadConfig)
+        let tts = GatedTTS()
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.modular)
+            .withAudioSettings(AudioProcessingSettings(vadConfig: vadConfig))
+            .build()
+        pipeline.setProviders(tts: tts, vad: vad)
+        try await pipeline.start()
+
+        pipeline.notifyPlaybackStarted()
+        vad.enqueue(VADResult(isSpeech: false, probability: 0.1, timestamp: 0.00))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.60))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.75))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+
+        // The barge-in is claimed synchronously, before any later frame.
+        XCTAssertEqual(pipeline.state, .interrupted)
+
+        // The user stops talking immediately.
+        vad.enqueue(VADResult(isSpeech: false, probability: 0.1, timestamp: 0.80))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+        vad.enqueue(VADResult(isSpeech: false, probability: 0.1, timestamp: 0.85))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+        XCTAssertEqual(pipeline.state, .interrupted, ".speechEnded must not clobber an in-flight interrupt")
+
+        tts.release()
+        let deadline = Date().addingTimeInterval(5)
+        while pipeline.state != .running && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(pipeline.state, .running)
+        await pipeline.stop()
+    }
+
     func testStopResetsTheVAD() async throws {
         let vadConfig = VADConfiguration(mode: .onDevice)
         let vad = ControllableVAD(configuration: vadConfig)

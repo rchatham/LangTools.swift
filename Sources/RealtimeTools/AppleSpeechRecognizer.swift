@@ -106,9 +106,13 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
     // MARK: - STTProvider Protocol
 
     public func startTranscription() async throws -> AsyncThrowingStream<TranscriptionResult, Error> {
-        if isRecognizing {
+        // Reserve the session atomically so two concurrent calls can't both
+        // pass the check and start two recognition tasks.
+        guard reserveSession() else {
             throw AppleSpeechError.alreadyRecognizing
         }
+        var committed = false
+        defer { if !committed { releaseReservation() } }
 
         guard let speechRecognizer = speechRecognizer else {
             throw AppleSpeechError.recognizerNotAvailable
@@ -148,10 +152,22 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
         self.recognitionTask = recognitionTask
         self.continuation = continuation
         self.sessionToken = token
-        _isRecognizing = true
         lock.unlock()
+        committed = true
 
         return stream
+    }
+
+    private func reserveSession() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !_isRecognizing else { return false }
+        _isRecognizing = true
+        return true
+    }
+
+    private func releaseReservation() {
+        lock.lock(); defer { lock.unlock() }
+        _isRecognizing = false
     }
 
     public func stopTranscription() async throws {

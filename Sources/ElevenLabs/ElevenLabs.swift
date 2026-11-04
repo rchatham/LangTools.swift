@@ -84,9 +84,44 @@ public final class ElevenLabs: LangTools {
 public struct ElevenLabsErrorResponse: Error, Codable {
     public let detail: Detail?
 
+    /// ElevenLabs returns `detail` as an object, a plain string, or (for
+    /// validation errors) an array of objects; all three decode here.
     public struct Detail: Codable {
         public let status: String?
         public let message: String?
+
+        public init(status: String? = nil, message: String? = nil) {
+            self.status = status
+            self.message = message
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case status, message, msg
+        }
+
+        public init(from decoder: Decoder) throws {
+            if let single = try? decoder.singleValueContainer() {
+                if let text = try? single.decode(String.self) {
+                    self.init(message: text)
+                    return
+                }
+                if let items = try? single.decode([Detail].self) {
+                    let messages = items.compactMap(\.message)
+                    self.init(status: items.first?.status, message: messages.isEmpty ? nil : messages.joined(separator: "; "))
+                    return
+                }
+            }
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let message = try container.decodeIfPresent(String.self, forKey: .message)
+                ?? container.decodeIfPresent(String.self, forKey: .msg)
+            self.init(status: try container.decodeIfPresent(String.self, forKey: .status), message: message)
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeIfPresent(status, forKey: .status)
+            try container.encodeIfPresent(message, forKey: .message)
+        }
     }
 }
 

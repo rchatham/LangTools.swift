@@ -272,6 +272,14 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         // from another thread (e.g. .speechEnded → .running) between a
         // separate read and write.
         guard transition(from: .processing, to: .interrupted) else { return }
+        await finishInterrupt()
+    }
+
+    /// The work after the `.processing → .interrupted` transition has been
+    /// claimed. Split out so the detector can claim the transition
+    /// synchronously, before a following `.speechEnded` could move state on
+    /// and make the barge-in's TTS cancel be skipped.
+    private func finishInterrupt() async {
         eventHandler?.onInterruption?()
 
         // Cancel TTS and mark playback stopped so the detector re-arms cleanly
@@ -312,10 +320,15 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
                     self.eventHandler?.onSpeechStarted?()
                 case .speechEnded:
                     self.eventHandler?.onSpeechStopped?()
-                    self.isProcessing = false
-                    self.setState(.running)
+                    // Don't clobber .interrupted: a barge-in in progress
+                    // resets state itself when its cancel completes.
+                    if self.transition(from: .processing, to: .running) {
+                        self.isProcessing = false
+                    }
                 case .interruptionDetected:
-                    Task { try? await self.interrupt() }
+                    guard self.interruptionConfig.enabled,
+                          self.transition(from: .processing, to: .interrupted) else { return }
+                    Task { await self.finishInterrupt() }
                 }
             }
             lock.lock()
