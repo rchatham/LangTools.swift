@@ -104,7 +104,12 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
             throw error
         }
 
-        setState(.running)
+        // A stop() can arrive while providers initialize. Only go to .running
+        // if nothing moved the state on; otherwise release what
+        // initializeProviders() just started.
+        if !transition(from: .starting, to: .running) {
+            await releaseProviders()
+        }
     }
 
     public func stop() async {
@@ -112,10 +117,17 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         // .interrupted is a live state: interrupt() sits in it while TTS
         // cancels, and a stop() issued then must not be lost. interrupt()
         // only returns to .running if nothing moved the state on meanwhile.
-        guard current == .running || current == .processing || current == .interrupted else { return }
+        // .starting too: start() checks for a stop when its setup finishes.
+        guard current == .running || current == .processing || current == .interrupted || current == .starting else { return }
 
         setState(.stopping)
+        await releaseProviders()
+        setState(.stopped)
+    }
 
+    /// Stops what start() set up. Safe to run twice: stop() and a start()
+    /// that a stop() overtook can both call it.
+    private func releaseProviders() async {
         lock.lock()
         let task = processingTask
         processingTask = nil
@@ -136,7 +148,6 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
 
         // Don't let a restart begin mid-utterance as far as the VAD path knows.
         isProcessing = false
-        setState(.stopped)
     }
 
     private func setState(_ newState: RealtimePipelineState) {
@@ -267,9 +278,11 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         try? await currentTTS?.cancel()
         currentDetector?.playbackStopped()
 
-        // Reset state, unless something else (stop(), new speech) moved it on.
-        _ = transition(from: .interrupted, to: .running)
-        isProcessing = false
+        // Reset state, unless something else (stop(), new speech) moved it on;
+        // in that case leave isProcessing to whatever moved it.
+        if transition(from: .interrupted, to: .running) {
+            isProcessing = false
+        }
     }
 
     // MARK: - Private Methods

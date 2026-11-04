@@ -539,6 +539,77 @@ final class RealtimePipelineModeTests: XCTestCase {
         }
     }
 
+    /// STT whose startTranscription() blocks until release(), holding
+    /// start() in .starting; counts stopTranscription() calls.
+    private final class GatedSTT: RealtimeTools.STTProvider, @unchecked Sendable {
+        private let lock = NSLock()
+        private var released = false
+        private var waiter: CheckedContinuation<Void, Never>?
+        private var _stopCount = 0
+
+        var stopCount: Int {
+            lock.lock(); defer { lock.unlock() }
+            return _stopCount
+        }
+
+        func startTranscription() async throws -> AsyncThrowingStream<TranscriptionResult, Error> {
+            await withCheckedContinuation { continuation in
+                if !park(continuation) { continuation.resume() }
+            }
+            return AsyncThrowingStream { _ in }
+        }
+
+        func stopTranscription() async throws {
+            countStop()
+        }
+
+        func transcribe(audio: Data) async throws {}
+
+        func release() {
+            lock.lock()
+            released = true
+            let pending = waiter
+            waiter = nil
+            lock.unlock()
+            pending?.resume()
+        }
+
+        private func park(_ continuation: CheckedContinuation<Void, Never>) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard !released else { return false }
+            waiter = continuation
+            return true
+        }
+
+        private func countStop() {
+            lock.lock(); _stopCount += 1; lock.unlock()
+        }
+    }
+
+    /// Regression test: a stop() while start() was initializing providers
+    /// was ignored, and the pipeline then went to .running anyway.
+    func testStopDuringStartIsNotLost() async throws {
+        let stt = GatedSTT()
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.transcriptionOnly)
+            .build()
+        pipeline.setProviders(stt: stt)
+
+        let starting = Task { try await pipeline.start() }
+        let deadline = Date().addingTimeInterval(5)
+        while pipeline.state != .starting && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(pipeline.state, .starting)
+
+        await pipeline.stop()
+        stt.release()
+        try await starting.value
+
+        XCTAssertEqual(pipeline.state, .stopped, "start() must not override the stop")
+        XCTAssertGreaterThanOrEqual(stt.stopCount, 2, "The STT session start() opened after the stop must be stopped too")
+    }
+
     /// Regression test: a failing LLM/TTS step on a speech-driven turn was
     /// swallowed (`try?`), so nothing reported why no reply came back.
     func testSpeechDrivenTurnFailureReachesOnError() async throws {

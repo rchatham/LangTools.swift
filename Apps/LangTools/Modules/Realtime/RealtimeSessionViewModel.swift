@@ -260,6 +260,7 @@ public final class RealtimeSessionViewModel: ObservableObject {
             // barge-in truncation target.
             if e.item.type == "message" {
                 currentAssistantItemId = e.item.id
+                interruptedItemId = nil
                 player.resetPlaybackPosition()
             }
 
