@@ -204,16 +204,22 @@ public extension OpenAI {
                 case refusal(RefusalContent)
                 case toolResult(ToolResultContent)
 
+                public var textContentType: LangToolsTextContentType? { if case .text(let text) = self { return text }; return nil }
+                public var imageContentType: LangToolsImageContentType? { if case .image(let image) = self { return image }; return nil }
+                public var audioContentType: LangToolsAudioContentType? { if case .audio(let audio) = self { return audio }; return nil }
                 public var toolResultContentType: LangToolsToolResultContentType? { if case .toolResult(let result) = self { return result }; return nil }
 
                 public init(_ contentType: any LangToolsContentType) throws {
                     if let text = contentType.textContentType {
                         self = .text(try .init(text))
                     } else if let image = contentType.imageContentType {
-                        guard let openAIImage = image as? ImageContent else {
+                        if let openAIImage = image as? ImageContent {
+                            self = .image(openAIImage)
+                        } else if let url = image.imageURL {
+                            self = .image(ImageContent(image_url: .init(url: url)))
+                        } else {
                             throw LangToolsError.invalidContentType
                         }
-                        self = .image(openAIImage)
                     } else if let audio = contentType.audioContentType {
                         guard let openAIAudio = audio as? AudioContent else {
                             throw LangToolsError.invalidContentType
@@ -286,6 +292,8 @@ public extension OpenAI {
                 }
 
                 enum CodingKeys: String, CodingKey { case type, image_url }
+
+                public var imageURL: String? { image_url.url }
 
                 public struct ImageURL: Codable {
                     public let url: String
