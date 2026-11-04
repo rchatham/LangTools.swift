@@ -115,6 +115,7 @@ extension AgentSpec {
     /// Checks the spec's own structure. Provider, model and tool names are checked
     /// against registries by `AgentRunner.validate(_:)`.
     public func validateStructure() throws {
+        guard version >= 1 else { throw AgentRuntimeError.invalidSpec("Spec version \(version) is invalid; versions start at 1.") }
         guard version <= AgentSpec.currentVersion else {
             throw AgentRuntimeError.invalidSpec("Spec version \(version) is newer than this runtime supports (\(AgentSpec.currentVersion)).")
         }

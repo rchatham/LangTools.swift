@@ -117,6 +117,11 @@ final class AgentRuntimeTests: XCTestCase {
         var future = spec()
         future.version = AgentSpec.currentVersion + 1
         XCTAssertThrowsError(try future.validateStructure())
+        for bad in [0, -1] {
+            var invalid = spec()
+            invalid.version = bad
+            XCTAssertThrowsError(try invalid.validateStructure(), "version \(bad)")
+        }
     }
 
     func testAllToolNamesIncludesDelegates() {

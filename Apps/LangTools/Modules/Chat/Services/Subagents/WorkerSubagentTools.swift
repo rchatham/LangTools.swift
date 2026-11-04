@@ -18,7 +18,7 @@ import HelperLink
 import Combine
 #endif
 
-public protocol HelperSubagentClientProtocol {
+public protocol HelperSubagentClientProtocol: Sendable {
     func listSubagents() async throws -> HelperSubagentsResponse
     func startSubagent(_ request: HelperSubagentRunRequest) async throws -> HelperSubagentRunResponse
     func subagentStatus(_ request: HelperSubagentStatusRequest) async throws -> HelperSubagentStatusResponse
@@ -40,7 +40,7 @@ public enum HelperSubagentClientError: Error, LocalizedError, Equatable {
 
 /// Talks to the paired LangTools Helper's subagent routes, using the same URL and token
 /// as the Codex helper.
-public final class HelperSubagentClient: HelperSubagentClientProtocol {
+public final class HelperSubagentClient: HelperSubagentClientProtocol, @unchecked Sendable {  // Immutable after init.
     private let configurationProvider: () -> AccountBackendConfiguration
     private let urlSession: URLSession
     private let encoder = JSONEncoder()
