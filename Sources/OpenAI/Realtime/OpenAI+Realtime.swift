@@ -128,7 +128,13 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
 
     // MARK: - Connection
 
-    /// Connect to the OpenAI Realtime API
+    /// Connect to the OpenAI Realtime API.
+    ///
+    /// Returns once the socket is opening, without waiting for the
+    /// handshake: `state` reads `.connected` from then on, and sends issued
+    /// meanwhile are buffered by the WebSocket task until it opens. If the
+    /// handshake fails, `events` throws `connectionFailed` and `state`
+    /// becomes `.error`.
     public func connect() async throws {
         let (shouldConnect, factory) = try beginConnecting()
         guard shouldConnect else { return }

@@ -51,67 +51,85 @@ public final class RealtimeMicStreamer: ObservableObject {
         try session.setActive(true)
         #endif
 
-        let engine = AVAudioEngine()
-        audioEngine = engine
+        do {
+            let engine = AVAudioEngine()
+            audioEngine = engine
 
-        let inputNode = engine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
+            let inputNode = engine.inputNode
+            let inputFormat = inputNode.outputFormat(forBus: 0)
 
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-            throw RealtimeAudioError.invalidInputFormat
-        }
-
-        guard let targetFormat = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: Self.targetSampleRate,
-            channels: 1,
-            interleaved: true
-        ), let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
-            throw RealtimeAudioError.converterSetupFailed
-        }
-        self.converter = converter
-
-        // Capture the callback here, on the main actor, so the real-time tap
-        // never reads this main-actor property itself.
-        let onAudioChunk = self.onAudioChunk
-        inputNode.installTap(onBus: 0, bufferSize: 2400, format: inputFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-
-            // Level metering for the UI
-            if let channelData = buffer.floatChannelData?[0] {
-                let frameLength = Int(buffer.frameLength)
-                var sum: Float = 0
-                for i in 0..<frameLength { sum += abs(channelData[i]) }
-                let level = min((sum / Float(max(frameLength, 1))) * 10, 1.0)
-                Task { @MainActor in self.audioLevel = level }
+            guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+                throw RealtimeAudioError.invalidInputFormat
             }
 
-            // Convert to PCM16 24kHz mono and hand off
-            let ratio = targetFormat.sampleRate / buffer.format.sampleRate
-            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
-            guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else { return }
+            guard let targetFormat = AVAudioFormat(
+                commonFormat: .pcmFormatInt16,
+                sampleRate: Self.targetSampleRate,
+                channels: 1,
+                interleaved: true
+            ), let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
+                throw RealtimeAudioError.converterSetupFailed
+            }
+            self.converter = converter
 
-            var consumed = false
-            var conversionError: NSError?
-            converter.convert(to: outBuffer, error: &conversionError) { _, outStatus in
-                if consumed {
-                    outStatus.pointee = .noDataNow
-                    return nil
+            // Capture the callback here, on the main actor, so the real-time tap
+            // never reads this main-actor property itself.
+            let onAudioChunk = self.onAudioChunk
+            inputNode.installTap(onBus: 0, bufferSize: 2400, format: inputFormat) { [weak self] buffer, _ in
+                guard let self else { return }
+
+                // Level metering for the UI
+                if let channelData = buffer.floatChannelData?[0] {
+                    let frameLength = Int(buffer.frameLength)
+                    var sum: Float = 0
+                    for i in 0..<frameLength { sum += abs(channelData[i]) }
+                    let level = min((sum / Float(max(frameLength, 1))) * 10, 1.0)
+                    Task { @MainActor in self.audioLevel = level }
                 }
-                consumed = true
-                outStatus.pointee = .haveData
-                return buffer
+
+                // Convert to PCM16 24kHz mono and hand off
+                let ratio = targetFormat.sampleRate / buffer.format.sampleRate
+                let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
+                guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else { return }
+
+                var consumed = false
+                var conversionError: NSError?
+                converter.convert(to: outBuffer, error: &conversionError) { _, outStatus in
+                    if consumed {
+                        outStatus.pointee = .noDataNow
+                        return nil
+                    }
+                    consumed = true
+                    outStatus.pointee = .haveData
+                    return buffer
+                }
+                guard conversionError == nil, outBuffer.frameLength > 0,
+                      let int16Data = outBuffer.int16ChannelData else { return }
+
+                let data = Data(bytes: int16Data[0], count: Int(outBuffer.frameLength) * MemoryLayout<Int16>.size)
+                onAudioChunk?(data)
             }
-            guard conversionError == nil, outBuffer.frameLength > 0,
-                  let int16Data = outBuffer.int16ChannelData else { return }
 
-            let data = Data(bytes: int16Data[0], count: Int(outBuffer.frameLength) * MemoryLayout<Int16>.size)
-            onAudioChunk?(data)
+            engine.prepare()
+            try engine.start()
+        } catch {
+            // Undo what start() set up so far: stop() only cleans up after
+            // a successful start, so a tap or active session left here
+            // would leak.
+            abortStart()
+            throw error
         }
-
-        engine.prepare()
-        try engine.start()
         isStreaming = true
+    }
+
+    private func abortStart() {
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        audioEngine?.stop()
+        audioEngine = nil
+        converter = nil
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        #endif
     }
 
     public func stop() {

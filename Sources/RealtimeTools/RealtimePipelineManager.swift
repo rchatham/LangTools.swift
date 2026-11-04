@@ -102,7 +102,10 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
 
     public func stop() async {
         let current = state
-        guard current == .running || current == .processing else { return }
+        // .interrupted is a live state: interrupt() sits in it while TTS
+        // cancels, and a stop() issued then must not be lost. interrupt()
+        // only returns to .running if nothing moved the state on meanwhile.
+        guard current == .running || current == .processing || current == .interrupted else { return }
 
         setState(.stopping)
 
@@ -171,7 +174,9 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
 
     public func sendAudio(_ data: Data) async throws {
         let current = state
-        guard current == .running || current == .processing else {
+        // Accept audio during a barge-in (.interrupted): it's the user's
+        // speech that caused the interruption.
+        guard current == .running || current == .processing || current == .interrupted else {
             throw RealtimePipelineError.notRunning
         }
 
@@ -214,7 +219,7 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
 
     public func sendText(_ text: String) async throws {
         let current = state
-        guard current == .running || current == .processing else {
+        guard current == .running || current == .processing || current == .interrupted else {
             throw RealtimePipelineError.notRunning
         }
 

@@ -686,6 +686,85 @@ final class RealtimePipelineStateMachineTests: XCTestCase {
         }
     }
 
+    /// TTS whose cancel() blocks until release(), holding interrupt() in
+    /// its .interrupted window.
+    private final class GatedTTS: RealtimeTools.TTSProvider, @unchecked Sendable {
+        var isSynthesizing = false
+        private let lock = NSLock()
+        private var released = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func synthesize(text: String) async throws -> AsyncThrowingStream<Data, Error> {
+            let (stream, continuation) = AsyncThrowingStream.makeStream(of: Data.self)
+            continuation.finish()
+            return stream
+        }
+
+        func cancel() async throws {
+            await withCheckedContinuation { continuation in
+                if !enqueue(continuation) { continuation.resume() }
+            }
+        }
+
+        func release() {
+            lock.lock()
+            released = true
+            let pending = waiters
+            waiters = []
+            lock.unlock()
+            pending.forEach { $0.resume() }
+        }
+
+        /// Returns false if already released (the caller resumes directly).
+        private func enqueue(_ continuation: CheckedContinuation<Void, Never>) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard !released else { return false }
+            waiters.append(continuation)
+            return true
+        }
+    }
+
+    /// Regression test: stop() during interrupt()'s .interrupted window was
+    /// silently ignored (and the pipeline then went back to .running), and
+    /// sendAudio() threw notRunning, dropping the user's barge-in speech.
+    func testStopAndAudioDuringInterruptionAreNotLost() async throws {
+        let vadConfig = VADConfiguration(mode: .onDevice, minSpeechDuration: 0, silenceTimeout: 0)
+        let vad = ControllableVAD(configuration: vadConfig)
+        let tts = GatedTTS()
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.modular)
+            .withAudioSettings(AudioProcessingSettings(vadConfig: vadConfig))
+            .build()
+        pipeline.setProviders(tts: tts, vad: vad)
+        try await pipeline.start()
+
+        pipeline.notifyPlaybackStarted()
+        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.00))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+        vad.enqueue(VADResult(isSpeech: true, probability: 0.9, timestamp: 0.15))
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+
+        let deadline = Date().addingTimeInterval(5)
+        while pipeline.state != .interrupted && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(pipeline.state, .interrupted)
+
+        // The user's speech keeps arriving during the barge-in.
+        try await pipeline.sendAudio(Data([0x00, 0x00]))
+
+        let stopping = Task { await pipeline.stop() }
+        while pipeline.state == .interrupted && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        tts.release()
+        await stopping.value
+
+        // Give interrupt() time to finish; it must not revert to .running.
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(pipeline.state, .stopped)
+    }
+
     func testStopResetsTheVAD() async throws {
         let vadConfig = VADConfiguration(mode: .onDevice)
         let vad = ControllableVAD(configuration: vadConfig)
