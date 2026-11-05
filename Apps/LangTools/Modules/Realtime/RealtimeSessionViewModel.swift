@@ -190,7 +190,10 @@ public final class RealtimeSessionViewModel: ObservableObject {
     /// interrupts automatically on speech).
     public func interrupt() async {
         guard let session else { return }
-        let truncation = stopPlayback()
+        // A barge-in may already have stopped and truncated this reply;
+        // don't send a second truncate for the same item.
+        let alreadyTruncated = interruptedItemId != nil && interruptedItemId == currentAssistantItemId
+        let truncation = alreadyTruncated ? nil : stopPlayback()
         do {
             try await session.cancelResponse()
         } catch {
