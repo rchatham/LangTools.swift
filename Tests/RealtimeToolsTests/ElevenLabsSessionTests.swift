@@ -185,6 +185,45 @@ final class ElevenLabsWebSocketSessionTests: XCTestCase {
         }
     }
 
+    /// Regression test: two concurrent connect() calls both passed the
+    /// not-connected check and each opened a socket, leaking the first.
+    func testConcurrentConnectsOpenOneSocket() async throws {
+        let mock = MockWebSocketTask()
+        mock.sendDelayNanoseconds = 20_000_000
+        let lock = NSLock()
+        var created = 0
+        let session = ElevenLabsWebSocketSession(apiKey: "test-key", voiceId: "voice-123")
+        session.webSocketTaskFactory = { _ in
+            lock.lock(); created += 1; lock.unlock()
+            return mock
+        }
+
+        async let first: Void = session.connect()
+        async let second: Void = session.connect()
+        _ = try await (first, second)
+
+        XCTAssertEqual(created, 1)
+        session.disconnect()
+    }
+
+    /// A disconnect() during the handshake must not be undone when the
+    /// handshake then completes.
+    func testDisconnectDuringConnectKeepsSessionClosed() async throws {
+        let mock = MockWebSocketTask()
+        mock.sendDelayNanoseconds = 100_000_000
+        let session = ElevenLabsWebSocketSession(apiKey: "test-key", voiceId: "voice-123")
+        session.webSocketTaskFactory = { _ in mock }
+
+        let connecting = Task { try await session.connect() }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        session.disconnect()
+
+        do {
+            try await connecting.value
+        } catch {}
+        XCTAssertFalse(session.isConnected)
+    }
+
     /// Regression test: a failed initial send used to leave the resumed
     /// socket attached, so the next connect() overwrote (leaked) it.
     func testFailedConnectTearsDownSocketAndAllowsRetry() async throws {

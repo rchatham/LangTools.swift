@@ -375,6 +375,9 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
                             do {
                                 try await self.sendText(result.text)
                             } catch {
+                                // stop() cancels this task; the resulting
+                                // cancellation isn't a failure to report.
+                                guard !Task.isCancelled, !(error is CancellationError) else { return }
                                 self.eventHandler?.onError?(error)
                             }
                         }

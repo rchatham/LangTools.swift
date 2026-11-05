@@ -53,6 +53,9 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
     private var urlSession: URLSession?
     private var receiveTask: Task<Void, Never>?
     private var _isConnected: Bool = false
+    /// Set while a connect() is in flight, so a concurrent connect() doesn't
+    /// open a second socket and leak the first.
+    private var _connecting = false
     /// Set by disconnect() or a failed connection; see the type's doc comment.
     private var _closed = false
 
@@ -107,6 +110,7 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
     public func connect() async throws {
         let (shouldConnect, factory) = try beginConnecting()
         guard shouldConnect else { return }
+        defer { endConnecting() }
 
         var urlComponents = URLComponents()
         urlComponents.scheme = "wss"
@@ -156,9 +160,12 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
             throw error
         }
 
-        lock.lock()
-        _isConnected = true
-        lock.unlock()
+        // A disconnect() during the handshake closed the session; don't
+        // revive it.
+        guard markConnected() else {
+            tearDownSocket()
+            throw ElevenLabsSTTError.sessionClosed
+        }
         startReceiving()
     }
 
@@ -173,11 +180,23 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
 
     /// Returns the transport factory to connect with, or `shouldConnect:
     /// false` when already connected.
+    private func endConnecting() {
+        lock.lock(); _connecting = false; lock.unlock()
+    }
+
+    private func markConnected() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !_closed else { return false }
+        _isConnected = true
+        return true
+    }
+
     private func beginConnecting() throws -> (shouldConnect: Bool, factory: ((URLRequest) -> any LangToolsWebSocketTask)?) {
         lock.lock()
         defer { lock.unlock() }
         if _closed { throw ElevenLabsSTTError.sessionClosed }
-        guard !_isConnected else { return (false, nil) }
+        guard !_isConnected, !_connecting else { return (false, nil) }
+        _connecting = true
         return (true, webSocketTaskFactory)
     }
 
