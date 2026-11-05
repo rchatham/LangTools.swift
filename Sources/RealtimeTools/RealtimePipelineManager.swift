@@ -448,6 +448,9 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
 
         do {
             for try await audioData in try await tts.synthesize(text: text) {
+                // interrupt() cut this reply: drop audio the provider still
+                // delivers rather than playing it after the barge-in.
+                guard interruptGeneration == generation else { break }
                 eventHandler?.onAudioReceived?(audioData)
             }
         } catch {
@@ -457,6 +460,10 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
             throw error
         }
 
+        // A provider's cancel may finish the stream instead of failing it.
+        // Either way an interrupted reply ends with onInterruption, not
+        // onResponseCompleted.
+        guard interruptGeneration == generation else { return }
         eventHandler?.onResponseCompleted?()
     }
 

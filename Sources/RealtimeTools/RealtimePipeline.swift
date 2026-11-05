@@ -149,7 +149,9 @@ public protocol TTSProvider: AnyObject, Sendable {
     /// audio.
     func synthesize(text: String) async throws -> AsyncThrowingStream<Data, Error>
 
-    /// Cancel current synthesis
+    /// Cancel current synthesis. The in-flight stream from `synthesize(text:)`
+    /// may either finish or throw; the pipeline treats both as an
+    /// interrupted reply.
     func cancel() async throws
 
     /// Whether synthesis is in progress

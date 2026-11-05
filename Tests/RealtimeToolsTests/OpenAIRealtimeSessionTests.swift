@@ -650,10 +650,16 @@ final class RealtimePipelineModeTests: XCTestCase {
     }
 
     /// TTS whose stream stays open until cancel(), which then fails it the
-    /// way a real provider's cancelled stream does.
+    /// way a real provider's cancelled stream does. With
+    /// `finishesCleanlyOnCancel`, cancel() instead delivers one late chunk
+    /// and finishes the stream without an error, as some providers do.
     private final class CancellableTTS: RealtimeTools.TTSProvider, @unchecked Sendable {
         struct Cancelled: Error {}
         var isSynthesizing = false
+        let finishesCleanlyOnCancel: Bool
+        init(finishesCleanlyOnCancel: Bool = false) {
+            self.finishesCleanlyOnCancel = finishesCleanlyOnCancel
+        }
         private let lock = NSLock()
         private var continuation: AsyncThrowingStream<Data, Error>.Continuation?
         private var _cancelCount = 0
@@ -674,7 +680,12 @@ final class RealtimePipelineModeTests: XCTestCase {
             let pending = continuation
             continuation = nil
             lock.unlock()
-            pending?.finish(throwing: Cancelled())
+            if finishesCleanlyOnCancel {
+                pending?.yield(Data([0xFF]))
+                pending?.finish()
+            } else {
+                pending?.finish(throwing: Cancelled())
+            }
         }
 
         private func store(_ c: AsyncThrowingStream<Data, Error>.Continuation) {
@@ -709,6 +720,51 @@ final class RealtimePipelineModeTests: XCTestCase {
             XCTFail("An interrupted reply shouldn't fail: \(error)")
         }
         XCTAssertEqual(pipeline.state, .running)
+        await pipeline.stop()
+    }
+
+    /// Regression test: a provider whose cancel() finishes the stream
+    /// cleanly made an interrupted reply report onResponseCompleted, and
+    /// audio it delivered after the cut was still forwarded for playback.
+    func testInterruptWithCleanlyFinishingTTSDoesNotCompleteOrForwardLateAudio() async throws {
+        let tts = CancellableTTS(finishesCleanlyOnCancel: true)
+        let handler = RealtimeEventHandler()
+        let lock = NSLock()
+        var audio: [Data] = []
+        var completed = 0
+        var interrupted = 0
+        handler.onAudioReceived = { data in lock.lock(); audio.append(data); lock.unlock() }
+        handler.onResponseCompleted = { lock.lock(); completed += 1; lock.unlock() }
+        handler.onInterruption = { lock.lock(); interrupted += 1; lock.unlock() }
+
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.speechOnly)
+            .build()
+        pipeline.eventHandler = handler
+        pipeline.setProviders(tts: tts)
+        try await pipeline.start()
+
+        let speaking = Task { try await pipeline.sendText("hello") }
+        // Wait until the first chunk has been forwarded, so the interrupt
+        // lands mid-reply rather than before the pipeline reads anything.
+        func forwardedCount() -> Int { lock.lock(); defer { lock.unlock() }; return audio.count }
+        let deadline = Date().addingTimeInterval(5)
+        while forwardedCount() == 0 && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(forwardedCount(), 1)
+
+        try await pipeline.interrupt()
+        try await speaking.value
+
+        lock.lock()
+        let received = audio
+        let completions = completed
+        let interruptions = interrupted
+        lock.unlock()
+        XCTAssertEqual(received, [Data([0x01])], "Audio delivered after the interrupt must not be forwarded")
+        XCTAssertEqual(completions, 0, "An interrupted reply must not report completion")
+        XCTAssertEqual(interruptions, 1)
         await pipeline.stop()
     }
 
