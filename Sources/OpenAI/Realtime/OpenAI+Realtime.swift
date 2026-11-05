@@ -160,24 +160,46 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
         request.addValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
 
         let task: any LangToolsWebSocketTask
+        var ownedSession: URLSession?
         if let factory {
             task = factory(request)
         } else {
             let session = URLSession(configuration: .default)
-            lock.lock(); urlSession = session; lock.unlock()
+            ownedSession = session
             task = session.webSocketTask(with: request)
         }
 
-        lock.lock()
-        webSocketTask = task
-        lock.unlock()
+        // A disconnect() while connecting closed the session: don't attach
+        // (and leak) a socket it can no longer see.
+        guard attachSocket(task, session: ownedSession) else {
+            task.cancel(with: .normalClosure, reason: nil)
+            ownedSession?.invalidateAndCancel()
+            throw OpenAIRealtimeError.sessionClosed
+        }
 
         task.resume()
 
         // Start receiving messages
         startReceiving()
 
-        setState(.connected)
+        // Only report .connected if a disconnect() hasn't moved the state
+        // on meanwhile (it has already torn the socket down).
+        guard markConnected() else { throw OpenAIRealtimeError.sessionClosed }
+    }
+
+    private func attachSocket(_ task: any LangToolsWebSocketTask, session: URLSession?) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !_closed else { return false }
+        webSocketTask = task
+        urlSession = session
+        return true
+    }
+
+    private func markConnected() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !_closed, _state == .connecting else { return false }
+        _state = .connected
+        return true
     }
 
     /// Disconnect from the session

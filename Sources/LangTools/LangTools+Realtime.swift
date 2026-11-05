@@ -389,9 +389,10 @@ public final class RealtimeEventHandler: @unchecked Sendable {
     public var onInterruption: InterruptionHandler?
     public var onSpeechStarted: InterruptionHandler?
     public var onSpeechStopped: InterruptionHandler?
-    /// A response began. It ends with `onResponseCompleted`, or with an error:
-    /// thrown from `sendText` when you called it, or delivered to `onError`
-    /// for turns the pipeline drives from speech.
+    /// A response began. It ends with `onResponseCompleted`; with
+    /// `onInterruption` if it was interrupted; or with an error: thrown from
+    /// `sendText` when you called it, or delivered to `onError` for turns the
+    /// pipeline drives from speech.
     public var onResponseStarted: InterruptionHandler?
     public var onResponseCompleted: InterruptionHandler?
 

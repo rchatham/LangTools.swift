@@ -190,10 +190,7 @@ public final class RealtimeSessionViewModel: ObservableObject {
     /// interrupts automatically on speech).
     public func interrupt() async {
         guard let session else { return }
-        // A barge-in may already have stopped and truncated this reply;
-        // don't send a second truncate for the same item.
-        let alreadyTruncated = interruptedItemId != nil && interruptedItemId == currentAssistantItemId
-        let truncation = alreadyTruncated ? nil : stopPlayback()
+        let truncation = stopPlayback()
         do {
             try await session.cancelResponse()
         } catch {
@@ -208,6 +205,14 @@ public final class RealtimeSessionViewModel: ObservableObject {
     /// item: the audio the user actually heard, not everything received.
     /// Reads the position before flushing, since flush() resets it.
     private func stopPlayback() -> (itemId: String, audioEndMs: Int)? {
+        // Already stopped and truncated (a barge-in and a manual interrupt
+        // can both fire): another truncate would use the reset play count
+        // and cut the item further than what was heard.
+        if let current = currentAssistantItemId, interruptedItemId == current {
+            player.flush()
+            isModelSpeaking = false
+            return nil
+        }
         let playedMs = player.playedMilliseconds
         player.flush()
         isModelSpeaking = false

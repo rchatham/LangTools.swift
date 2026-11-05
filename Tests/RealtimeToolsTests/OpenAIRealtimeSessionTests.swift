@@ -304,6 +304,34 @@ final class OpenAIRealtimeSessionTests: XCTestCase {
         }
     }
 
+    /// Regression test: a disconnect() while connect() was setting up let
+    /// connect() attach its socket and report .connected afterwards.
+    func testDisconnectDuringConnectKeepsSessionClosed() async throws {
+        let mock = MockWebSocketTask()
+        let session = OpenAIRealtimeSession(apiKey: "test-key")
+        session.webSocketTaskFactory = { _ in
+            // disconnect() lands between beginConnecting() and attaching.
+            let done = DispatchSemaphore(value: 0)
+            Task.detached {
+                await session.disconnect()
+                done.signal()
+            }
+            done.wait()
+            return mock
+        }
+
+        do {
+            try await session.connect()
+            XCTFail("Expected sessionClosed")
+        } catch let error as OpenAIRealtimeError {
+            guard case .sessionClosed = error else {
+                return XCTFail("Expected sessionClosed, got \(error)")
+            }
+        }
+        XCTAssertEqual(session.state, .disconnected)
+        XCTAssertTrue(mock.isClosed, "The socket created during the race must be cancelled, not leaked")
+    }
+
     /// Regression test: state used to stay .connected after the socket
     /// failed, so the session looked usable while `events` had ended.
     func testSocketFailureMovesStateToErrorAndClosesSession() async throws {
