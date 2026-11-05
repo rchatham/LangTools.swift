@@ -134,6 +134,16 @@ final class WorkerSubagentToolsTests: XCTestCase {
         }
     }
 
+    func testCancellationWhilePollingPropagates() async {
+        let client = MockSubagentClient(statusError: CancellationError())
+        do {
+            _ = try await WorkerSubagentTools.run(research, task: "x", context: nil, client: client, pollInterval: 0, sleep: { _ in })
+            XCTFail("Should be cancelled")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+    }
+
     func testCancellationStopsWaiting() async {
         let client = MockSubagentClient(statuses: [.init(runID: "r1", state: .running)])
         do {
@@ -149,11 +159,13 @@ private final class MockSubagentClient: HelperSubagentClientProtocol, @unchecked
     var list: HelperSubagentsResponse
     private let listError: Error?
     private let startError: Error?
+    private let statusError: Error?
     private var statuses: [HelperSubagentStatusResponse]
     private(set) var started: [HelperSubagentRunRequest] = []
     private(set) var polls = 0
 
-    init(list: HelperSubagentsResponse = HelperSubagentsResponse(subagents: []), listError: Error? = nil, startError: Error? = nil, statuses: [HelperSubagentStatusResponse] = []) {
+    init(list: HelperSubagentsResponse = HelperSubagentsResponse(subagents: []), listError: Error? = nil, startError: Error? = nil, statusError: Error? = nil, statuses: [HelperSubagentStatusResponse] = []) {
+        self.statusError = statusError
         self.list = list
         self.listError = listError
         self.startError = startError
@@ -173,6 +185,7 @@ private final class MockSubagentClient: HelperSubagentClientProtocol, @unchecked
 
     func subagentStatus(_ request: HelperSubagentStatusRequest) async throws -> HelperSubagentStatusResponse {
         polls += 1
+        if let statusError { throw statusError }
         // Repeats the last status once the script runs out.
         return statuses.count > 1 ? statuses.removeFirst() : statuses[0]
     }

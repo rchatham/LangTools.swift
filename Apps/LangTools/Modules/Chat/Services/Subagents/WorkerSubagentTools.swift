@@ -43,8 +43,6 @@ public enum HelperSubagentClientError: Error, LocalizedError, Equatable {
 public final class HelperSubagentClient: HelperSubagentClientProtocol, @unchecked Sendable {  // Immutable after init.
     private let configurationProvider: () -> AccountBackendConfiguration
     private let urlSession: URLSession
-    private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
 
     public init(
         configurationProvider: @escaping () -> AccountBackendConfiguration = { AccountBackendConfiguration() },
@@ -74,12 +72,14 @@ public final class HelperSubagentClient: HelperSubagentClientProtocol, @unchecke
         if let body {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try encoder.encode(body)
+            request.httpBody = try JSONEncoder().encode(body)
         } else {
             request.httpMethod = "GET"
         }
         let (data, response) = try await urlSession.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw HelperSubagentClientError.invalidResponse }
+        // A coder per request: tools can run concurrently, and coders aren't documented as thread-safe.
+        let decoder = JSONDecoder()
         guard (200..<300).contains(http.statusCode) else {
             let message = (try? decoder.decode(HelperErrorPayload.self, from: data).error) ?? "no details"
             throw HelperSubagentClientError.helper(status: http.statusCode, message: message)
@@ -205,6 +205,8 @@ public final class WorkerSubagentTools: ObservableObject {
             do {
                 let status = try await client.subagentStatus(HelperSubagentStatusRequest(toolName: subagent.toolName, runID: runID))
                 if status.state == .done { return status.output ?? "" }
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 return "Lost track of the \(subagent.toolName) subagent (run \(runID) on worker '\(subagent.worker)'): \(error.localizedDescription)"
             }

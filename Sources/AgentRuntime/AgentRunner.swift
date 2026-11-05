@@ -121,7 +121,7 @@ struct SpecAgent: Agent {
 /// Returns when the operation finishes or the time is up, whichever is first. On timeout the
 /// operation is cancelled but not waited for, so a call that ignores cancellation (such as a
 /// stalled request) can't hold the run past its limit.
-private func withTimeout<T>(_ seconds: Double?, _ operation: @escaping () async throws -> T) async throws -> T {
+private func withTimeout<T: Sendable>(_ seconds: Double?, _ operation: @escaping () async throws -> T) async throws -> T {
     guard let seconds else { return try await operation() }
     let race = Race<T>()
     let work = Task { race.finish(with: await Result(catching: operation)) }
@@ -138,7 +138,7 @@ private func withTimeout<T>(_ seconds: Double?, _ operation: @escaping () async 
 }
 
 /// Resumes its continuation once, with whichever result arrives first.
-private final class Race<T>: @unchecked Sendable {
+private final class Race<T: Sendable>: @unchecked Sendable {  // State is behind `lock`.
     private let lock = NSLock()
     private var continuation: CheckedContinuation<T, Error>?
     private var result: Result<T, Error>?
