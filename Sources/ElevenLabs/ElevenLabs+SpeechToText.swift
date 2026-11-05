@@ -33,9 +33,11 @@ extension ElevenLabs {
 
 /// ElevenLabs WebSocket session for real-time speech-to-text (Scribe).
 ///
-/// A session is single-use: once it's disconnected, or its connection fails,
-/// its output stream has finished and `connect()` throws `sessionClosed`.
-/// Create a new session to reconnect.
+/// A session is single-use: once it's disconnected, or an established
+/// connection fails, its output stream has finished and `connect()` throws
+/// `sessionClosed`. Create a new session to reconnect. A `connect()` that
+/// throws before connecting (its initial send failed) leaves the session
+/// unused, so `connect()` can be retried.
 public final class ElevenLabsSTTSession: @unchecked Sendable {
     // MARK: - Properties
 
