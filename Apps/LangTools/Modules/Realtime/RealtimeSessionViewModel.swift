@@ -289,7 +289,10 @@ public final class RealtimeSessionViewModel: ObservableObject {
             upsertTranscript(id: e.itemId, role: .assistant, text: e.text, isFinal: true)
 
         case .responseAudioDelta(let e):
-            if e.itemId != interruptedItemId, let audio = e.audioData {
+            // Play only the current, uninterrupted item: a late delta for an
+            // item cut off by a barge-in can arrive after the next item has
+            // started (and cleared interruptedItemId).
+            if e.itemId == currentAssistantItemId, e.itemId != interruptedItemId, let audio = e.audioData {
                 isModelSpeaking = true
                 player.enqueue(pcm16: audio)
             }
