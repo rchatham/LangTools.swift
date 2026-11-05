@@ -90,17 +90,19 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
     // MARK: - Lifecycle
 
     public func start() async throws {
-        let current = state
-        guard current == .idle || current == .stopped else { return }
-
-        setState(.starting)
+        // Check-and-set atomically so two concurrent start() calls can't
+        // both initialize providers.
+        guard transition(from: .idle, to: .starting) || transition(from: .stopped, to: .starting) else { return }
 
         // Initialize providers based on configuration
         do {
             try await initializeProviders()
         } catch {
-            // Return to .idle so start() can be retried.
-            setState(.idle)
+            // Release whatever was set up before the failure (detector, VAD
+            // state, a started STT session), then return to .idle so start()
+            // can be retried, unless a stop() already moved the state on.
+            await releaseProviders()
+            _ = transition(from: .starting, to: .idle)
             throw error
         }
 

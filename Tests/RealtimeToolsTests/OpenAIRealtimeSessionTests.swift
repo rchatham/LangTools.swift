@@ -546,6 +546,12 @@ final class RealtimePipelineModeTests: XCTestCase {
         private var released = false
         private var waiter: CheckedContinuation<Void, Never>?
         private var _stopCount = 0
+        private var _startCount = 0
+
+        var startCount: Int {
+            lock.lock(); defer { lock.unlock() }
+            return _startCount
+        }
 
         var stopCount: Int {
             lock.lock(); defer { lock.unlock() }
@@ -553,6 +559,7 @@ final class RealtimePipelineModeTests: XCTestCase {
         }
 
         func startTranscription() async throws -> AsyncThrowingStream<TranscriptionResult, Error> {
+            countStart()
             await withCheckedContinuation { continuation in
                 if !park(continuation) { continuation.resume() }
             }
@@ -572,6 +579,10 @@ final class RealtimePipelineModeTests: XCTestCase {
             waiter = nil
             lock.unlock()
             pending?.resume()
+        }
+
+        private func countStart() {
+            lock.lock(); _startCount += 1; lock.unlock()
         }
 
         private func park(_ continuation: CheckedContinuation<Void, Never>) -> Bool {
@@ -608,6 +619,67 @@ final class RealtimePipelineModeTests: XCTestCase {
 
         XCTAssertEqual(pipeline.state, .stopped, "start() must not override the stop")
         XCTAssertGreaterThanOrEqual(stt.stopCount, 2, "The STT session start() opened after the stop must be stopped too")
+    }
+
+    /// Regression test: start() read the state and set .starting in two
+    /// steps, so concurrent calls could both initialize providers.
+    func testConcurrentStartsInitializeOnce() async throws {
+        let stt = GatedSTT()
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.transcriptionOnly)
+            .build()
+        pipeline.setProviders(stt: stt)
+
+        let first = Task { try await pipeline.start() }
+        let second = Task { try await pipeline.start() }
+        let deadline = Date().addingTimeInterval(5)
+        while stt.startCount == 0 && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        stt.release()
+        try await first.value
+        try await second.value
+
+        XCTAssertEqual(stt.startCount, 1)
+        XCTAssertEqual(pipeline.state, .running)
+        await pipeline.stop()
+    }
+
+    /// Regression test: a start() that failed partway left what it had set
+    /// up attached; it now releases it and can be retried.
+    func testFailedStartReleasesProvidersAndCanRetry() async throws {
+        struct STTFailure: Error {}
+        final class FailingOnceSTT: RealtimeTools.STTProvider, @unchecked Sendable {
+            private let lock = NSLock()
+            private var _calls = 0
+            private var _stops = 0
+            var stops: Int { lock.lock(); defer { lock.unlock() }; return _stops }
+            func startTranscription() async throws -> AsyncThrowingStream<TranscriptionResult, Error> {
+                if nextCall() == 1 { throw STTFailure() }
+                return AsyncThrowingStream { _ in }
+            }
+            func stopTranscription() async throws { lock.lock(); _stops += 1; lock.unlock() }
+            func transcribe(audio: Data) async throws {}
+            private func nextCall() -> Int { lock.lock(); defer { lock.unlock() }; _calls += 1; return _calls }
+        }
+
+        let stt = FailingOnceSTT()
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.transcriptionOnly)
+            .build()
+        pipeline.setProviders(stt: stt)
+
+        do {
+            try await pipeline.start()
+            XCTFail("Expected start() to throw")
+        } catch is STTFailure {}
+        XCTAssertEqual(pipeline.state, .idle)
+        XCTAssertEqual(stt.stops, 1, "The failed start should release its providers")
+
+        try await pipeline.start()
+        XCTAssertEqual(pipeline.state, .running)
+        await pipeline.stop()
     }
 
     /// Regression test: a failing LLM/TTS step on a speech-driven turn was
