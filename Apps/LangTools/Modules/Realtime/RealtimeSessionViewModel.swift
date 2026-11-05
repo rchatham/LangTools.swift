@@ -224,8 +224,12 @@ public final class RealtimeSessionViewModel: ObservableObject {
                     self.handle(event)
                 }
             } catch {
-                guard let self, self.connectionState == .connected else { return }
+                guard let self, self.connectionState == .connected, self.session === session else { return }
                 self.lastError = error.localizedDescription
+                // The connection is gone: stop the mic, player and audio
+                // session too, as a failed connect() does, rather than
+                // leaving them running until the user ends the session.
+                await self.teardown()
                 self.connectionState = .error
             }
         }

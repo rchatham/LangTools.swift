@@ -324,7 +324,9 @@ public struct VADConfiguration: Sendable {
         /// Use on-device VAD
         case onDevice
 
-        /// Automatic based on provider capabilities
+        /// Currently the same as `.onDevice`: the pipeline runs local VAD and
+        /// barge-in detection. Use `.server` to leave turn detection to the
+        /// provider.
         case automatic
 
         /// Manual push-to-talk

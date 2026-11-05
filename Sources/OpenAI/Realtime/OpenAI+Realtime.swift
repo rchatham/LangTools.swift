@@ -29,7 +29,10 @@ extension OpenAI: LangToolsRealtime {
     ///   - model: The realtime-capable model to connect to (e.g. `.gpt4o_realtimePreview`)
     ///   - configuration: Session configuration, applied via `session.update`
     ///     once the socket is connected.
-    /// - Returns: A connected realtime session
+    /// - Returns: A session whose socket is opening, with the configuration
+    ///   sent. Like `connect()`, this doesn't wait for the handshake: a
+    ///   handshake failure is reported by `session.events` throwing
+    ///   `connectionFailed`.
     public func createRealtimeSession(model: Model, configuration: RealtimeSessionConfiguration = RealtimeSessionConfiguration()) async throws -> OpenAIRealtimeSession {
         let session = OpenAIRealtimeSession(
             apiKey: apiKey,
