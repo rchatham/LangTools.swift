@@ -182,6 +182,7 @@ public struct RealtimeSessionConfiguration: Codable, Sendable {
 
         public enum TurnDetectionType: String, Codable, Sendable {
             case serverVad = "server_vad"
+            /// Turn detection off (push-to-talk); sent as `"turn_detection": null`.
             case none
         }
 

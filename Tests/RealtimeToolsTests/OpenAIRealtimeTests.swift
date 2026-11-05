@@ -88,6 +88,28 @@ final class OpenAIRealtimeTests: XCTestCase {
         XCTAssertEqual(event.session.instructions, "Test instructions")
     }
 
+    /// The API disables VAD with `"turn_detection": null`; a `"none"` type
+    /// is rejected.
+    func testTurnDetectionNoneEncodesAsNull() throws {
+        let session = SessionUpdateEvent.Session(
+            turnDetection: .init(type: RealtimeSessionConfiguration.TurnDetection.TurnDetectionType.none.rawValue)
+        )
+        let data = try JSONEncoder().encode(SessionUpdateEvent(session: session))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let body = try XCTUnwrap(json["session"] as? [String: Any])
+        XCTAssertTrue(body.keys.contains("turn_detection"), "turn_detection must be sent, as null")
+        XCTAssertTrue(body["turn_detection"] is NSNull)
+    }
+
+    func testServerVadTurnDetectionEncodesAsObject() throws {
+        let session = SessionUpdateEvent.Session(turnDetection: .init(type: "server_vad", silenceDurationMs: 500))
+        let data = try JSONEncoder().encode(SessionUpdateEvent(session: session))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let detection = try XCTUnwrap((json["session"] as? [String: Any])?["turn_detection"] as? [String: Any])
+        XCTAssertEqual(detection["type"] as? String, "server_vad")
+        XCTAssertEqual(detection["silence_duration_ms"] as? Int, 500)
+    }
+
     func testInputAudioBufferAppendEventType() {
         let event = InputAudioBufferAppendEvent(audio: "base64encodedaudio")
 

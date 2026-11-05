@@ -157,6 +157,23 @@ public struct SessionUpdateEvent: Codable, Sendable {
                 case createResponse = "create_response"
                 case interruptResponse = "interrupt_response"
             }
+
+            /// The Realtime API turns VAD off with `"turn_detection": null`,
+            /// not a `"none"` type, so a `"none"` type encodes as null.
+            public func encode(to encoder: Encoder) throws {
+                if type == "none" {
+                    var container = encoder.singleValueContainer()
+                    try container.encodeNil()
+                    return
+                }
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(type, forKey: .type)
+                try container.encodeIfPresent(threshold, forKey: .threshold)
+                try container.encodeIfPresent(prefixPaddingMs, forKey: .prefixPaddingMs)
+                try container.encodeIfPresent(silenceDurationMs, forKey: .silenceDurationMs)
+                try container.encodeIfPresent(createResponse, forKey: .createResponse)
+                try container.encodeIfPresent(interruptResponse, forKey: .interruptResponse)
+            }
         }
 
         public struct Tool: Codable, Sendable {
