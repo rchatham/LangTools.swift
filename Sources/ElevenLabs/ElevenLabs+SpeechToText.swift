@@ -424,6 +424,13 @@ public struct STTTranscription: Sendable {
         public let start: TimeInterval
         public let end: TimeInterval
         public let confidence: Double?
+
+        public init(word: String, start: TimeInterval, end: TimeInterval, confidence: Double? = nil) {
+            self.word = word
+            self.start = start
+            self.end = end
+            self.confidence = confidence
+        }
     }
 }
 

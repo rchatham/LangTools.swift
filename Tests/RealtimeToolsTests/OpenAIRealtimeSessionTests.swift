@@ -621,6 +621,69 @@ final class RealtimePipelineModeTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(stt.stopCount, 2, "The STT session start() opened after the stop must be stopped too")
     }
 
+    /// TTS whose stream stays open until cancel(), which then fails it the
+    /// way a real provider's cancelled stream does.
+    private final class CancellableTTS: RealtimeTools.TTSProvider, @unchecked Sendable {
+        struct Cancelled: Error {}
+        var isSynthesizing = false
+        private let lock = NSLock()
+        private var continuation: AsyncThrowingStream<Data, Error>.Continuation?
+        private var _cancelCount = 0
+
+        var cancelCount: Int { lock.lock(); defer { lock.unlock() }; return _cancelCount }
+        var isStreaming: Bool { lock.lock(); defer { lock.unlock() }; return continuation != nil }
+
+        func synthesize(text: String) async throws -> AsyncThrowingStream<Data, Error> {
+            let (stream, continuation) = AsyncThrowingStream.makeStream(of: Data.self)
+            continuation.yield(Data([0x01]))
+            store(continuation)
+            return stream
+        }
+
+        func cancel() async throws {
+            lock.lock()
+            _cancelCount += 1
+            let pending = continuation
+            continuation = nil
+            lock.unlock()
+            pending?.finish(throwing: Cancelled())
+        }
+
+        private func store(_ c: AsyncThrowingStream<Data, Error>.Continuation) {
+            lock.lock(); continuation = c; lock.unlock()
+        }
+    }
+
+    /// Regression tests: interrupt() only worked from .processing, so a
+    /// manual interrupt while a reply played (.running) did nothing, and a
+    /// cancelled reply's stream error surfaced as a failure.
+    func testManualInterruptDuringPlaybackStopsReplyWithoutError() async throws {
+        let tts = CancellableTTS()
+        let pipeline = RealtimePipelineBuilder()
+            .withMode(.speechOnly)
+            .build()
+        pipeline.setProviders(tts: tts)
+        try await pipeline.start()
+        XCTAssertEqual(pipeline.state, .running)
+
+        let speaking = Task { try await pipeline.sendText("hello") }
+        let deadline = Date().addingTimeInterval(5)
+        while !tts.isStreaming && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertTrue(tts.isStreaming)
+
+        try await pipeline.interrupt()
+        XCTAssertEqual(tts.cancelCount, 1, "A manual interrupt during playback must cancel TTS")
+        do {
+            try await speaking.value
+        } catch {
+            XCTFail("An interrupted reply shouldn't fail: \(error)")
+        }
+        XCTAssertEqual(pipeline.state, .running)
+        await pipeline.stop()
+    }
+
     /// Regression test: start() read the state and set .starting in two
     /// steps, so concurrent calls could both initialize providers.
     func testConcurrentStartsInitializeOnce() async throws {

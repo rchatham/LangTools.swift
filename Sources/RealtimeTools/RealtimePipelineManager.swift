@@ -31,6 +31,7 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
     // detector's callback, and background tasks — guarded by `lock`.
     private let lock = NSLock()
     private var _state: RealtimePipelineState = .idle
+    private var _interruptGeneration = 0
     private var _isProcessing: Bool = false
     private var sttProviderInstance: (any STTProvider)?
     private var ttsProviderInstance: (any TTSProvider)?
@@ -268,12 +269,17 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
 
     // MARK: - Interruption
 
+    /// Stops the current reply. Works while the user is speaking
+    /// (`.processing`, a barge-in) and while the pipeline is `.running`, which
+    /// is its state while a reply plays, so an "interrupt" button can stop
+    /// the assistant mid-sentence.
     public func interrupt() async throws {
         guard interruptionConfig.enabled else { return }
         // Check-and-set atomically: the interruption detector can move state
         // from another thread (e.g. .speechEnded → .running) between a
         // separate read and write.
-        guard transition(from: .processing, to: .interrupted) else { return }
+        guard transition(from: .processing, to: .interrupted)
+                || transition(from: .running, to: .interrupted) else { return }
         await finishInterrupt()
     }
 
@@ -282,6 +288,9 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
     /// synchronously, before a following `.speechEnded` could move state on
     /// and make the barge-in's TTS cancel be skipped.
     private func finishInterrupt() async {
+        // Mark replies in flight as interrupted before cancelling, so the
+        // stream error the cancel causes isn't reported through onError.
+        bumpInterruptGeneration()
         eventHandler?.onInterruption?()
 
         // Cancel TTS and mark playback stopped so the detector re-arms cleanly
@@ -415,13 +424,30 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
             throw RealtimePipelineError.providerNotConfigured("TTS")
         }
 
+        let generation = interruptGeneration
         eventHandler?.onResponseStarted?()
 
-        for try await audioData in try await tts.synthesize(text: text) {
-            eventHandler?.onAudioReceived?(audioData)
+        do {
+            for try await audioData in try await tts.synthesize(text: text) {
+                eventHandler?.onAudioReceived?(audioData)
+            }
+        } catch {
+            // A reply cut off by interrupt() ends with whatever error the
+            // provider's cancel produces; that's expected, not a failure.
+            if interruptGeneration != generation { return }
+            throw error
         }
 
         eventHandler?.onResponseCompleted?()
+    }
+
+    private var interruptGeneration: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _interruptGeneration
+    }
+
+    private func bumpInterruptGeneration() {
+        lock.lock(); _interruptGeneration += 1; lock.unlock()
     }
 }
 
