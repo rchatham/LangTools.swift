@@ -360,17 +360,11 @@ public struct InterruptionConfiguration: Sendable {
         self.speechDetectionDebounce = speechDetectionDebounce
     }
 
+    /// How an interruption is handled. Only `.immediate` is implemented;
+    /// other strategies (fade-out, waiting for a sentence boundary) can be
+    /// added as new cases once the pipeline supports them.
     public enum InterruptionMode: String, Codable, Sendable {
         /// Immediately stop playback and cancel response
         case immediate
-
-        /// Fade out audio and cancel response
-        case fadeOut
-
-        /// Queue the interruption until current response completes
-        case queued
-
-        /// Only interrupt at natural sentence boundaries
-        case sentenceBoundary
     }
 }

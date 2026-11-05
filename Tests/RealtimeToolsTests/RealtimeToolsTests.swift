@@ -150,9 +150,6 @@ final class RealtimeToolsTests: XCTestCase {
 
     func testInterruptionModes() {
         XCTAssertEqual(InterruptionConfiguration.InterruptionMode.immediate.rawValue, "immediate")
-        XCTAssertEqual(InterruptionConfiguration.InterruptionMode.fadeOut.rawValue, "fadeOut")
-        XCTAssertEqual(InterruptionConfiguration.InterruptionMode.queued.rawValue, "queued")
-        XCTAssertEqual(InterruptionConfiguration.InterruptionMode.sentenceBoundary.rawValue, "sentenceBoundary")
     }
 
     // MARK: - Pipeline Builder Tests
