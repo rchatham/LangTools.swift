@@ -58,6 +58,34 @@ final class LangToolsTransportTests: XCTestCase {
         XCTAssertTrue(fixture.snapshot.requests.last?.contains("tool result") == true)
     }
 
+    /// Canonical multi-chunk counterpart of the single-chunk test above. The provider stream is
+    /// real SSE — a tool-call delta chunk, an empty-delta terminal chunk carrying
+    /// `finish_reason: "tool_calls"`, and a terminal usage-only chunk — before `[DONE]`. Locks
+    /// the realistic shape in alongside the single-chunk boundary proof: the recursive tool
+    /// completion must still dispatch, with no duplicate tool-call accumulation and no dropped
+    /// finish_reason.
+    func testBodyOverrideDispatchesForRecursiveProviderCompletionWithCanonicalMultiChunkStream() async throws {
+        let events = TransportEvents()
+        let toolCallChunk = #"{"object":"chat.completion.chunk","created":1,"choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"echo","arguments":"{}"}}]}}]}"#
+        let finishChunk = #"{"object":"chat.completion.chunk","created":1,"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#
+        let usageChunk = #"{"object":"chat.completion.chunk","created":1,"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#
+        let fixture = TransportFixture(payloads: [
+            [toolCallChunk, finishChunk, usageChunk].joined(separator: "\n"),
+            response(finalMessage, streaming: true)
+        ])
+        let client = MemoryTransport(fixture: fixture)
+        var content: [String] = []
+        for try await result in client.stream(request: request(events, streaming: true)) {
+            content.append(result.delta?.content ?? "")
+        }
+        XCTAssertTrue(content.contains("finished"))
+        XCTAssertEqual(fixture.snapshot.bodyCalls, 2)
+        XCTAssertEqual(fixture.snapshot.dataCalls, 0)
+        XCTAssertEqual(fixture.snapshot.cleanups, 2)
+        XCTAssertEqual(events.values, ["called", "callback", "completed"])
+        XCTAssertTrue(fixture.snapshot.requests.last?.contains("tool result") == true)
+    }
+
     func testHeaderRejectionCleansUnconsumedBody() async {
         let cleaned = expectation(description: "header-rejected body cleaned")
         let fixture = TransportFixture(payloads: ["unused"], http: false, cleaned: cleaned)
@@ -123,7 +151,10 @@ private struct MemoryTransport: LangTools {
 
     func transportBody(for request: URLRequest) async throws -> LangToolsResponseBody {
         let payload = try fixture.take(request, streaming: true)
-        var responseLines = fixture.status == 200 ? ["data: " + payload] : [payload]
+        // A payload may carry a full multi-chunk SSE stream as newline-separated JSON chunks;
+        // each becomes its own `data:` line. Single-JSON payloads (no newline) produce the
+        // same single data line as before.
+        var responseLines = fixture.status == 200 ? payload.components(separatedBy: "\n").map { "data: " + $0 } : [payload]
         if fixture.status == 200 && fixture.appendDoneMarker {
             responseLines.append("data: [DONE]")
         }
