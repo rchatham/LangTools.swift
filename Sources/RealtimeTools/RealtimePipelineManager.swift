@@ -116,14 +116,13 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
     }
 
     public func stop() async {
-        let current = state
         // .interrupted is a live state: interrupt() sits in it while TTS
         // cancels, and a stop() issued then must not be lost. interrupt()
         // only returns to .running if nothing moved the state on meanwhile.
         // .starting too: start() checks for a stop when its setup finishes.
-        guard current == .running || current == .processing || current == .interrupted || current == .starting else { return }
-
-        setState(.stopping)
+        // Check-and-set in one step so concurrent stop() calls don't both
+        // run, and nothing moves the state between the check and the set.
+        guard transition(fromAnyOf: [.running, .processing, .interrupted, .starting], to: .stopping) else { return }
         await releaseProviders()
         setState(.stopped)
     }
@@ -179,6 +178,18 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
 
     /// Moves to `newState` only if the current state is `expected`, as one
     /// locked step. Returns whether the transition happened.
+    private func transition(fromAnyOf expected: Set<RealtimePipelineState>, to newState: RealtimePipelineState) -> Bool {
+        lock.lock()
+        guard expected.contains(_state) else {
+            lock.unlock()
+            return false
+        }
+        _state = newState
+        lock.unlock()
+        onPipelineStateChanged?(newState)
+        return true
+    }
+
     private func transition(from expected: RealtimePipelineState, to newState: RealtimePipelineState) -> Bool {
         lock.lock()
         guard _state == expected else {
@@ -216,9 +227,14 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
         let vad = vadInstance
         lock.unlock()
 
+        // .manual is push-to-talk and .server leaves turn detection to the
+        // provider: in both, an injected VAD must not drive turn state.
+        let vadMode = configuration.audioSettings.vadConfig?.mode
+        let localTurnDetection = vadMode != .manual && vadMode != .server
+
         if let detector {
             await detector.process(audio: data)
-        } else if let vad {
+        } else if localTurnDetection, let vad {
             let result = await vad.process(audio: data)
 
             if result.isSpeech && !isProcessing {

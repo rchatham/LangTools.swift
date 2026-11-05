@@ -36,8 +36,14 @@ extension OpenAI: LangToolsRealtime {
             model: model.rawValue,
             sessionConfiguration: configuration
         )
-        try await session.connect()
-        try await session.updateSession(configuration: configuration)
+        do {
+            try await session.connect()
+            try await session.updateSession(configuration: configuration)
+        } catch {
+            // The caller never gets the session, so close it here.
+            await session.disconnect()
+            throw error
+        }
         return session
     }
 }

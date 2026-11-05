@@ -1113,6 +1113,9 @@ final class RealtimePipelineStateMachineTests: XCTestCase {
         }
 
         await fulfillment(of: [interrupted], timeout: 0.5)
+        // Push-to-talk: the injected VAD must not drive turn state either.
+        XCTAssertEqual(pipeline.state, .running)
+        await pipeline.stop()
     }
 
     /// Without a playback report, the same speech is a normal turn.
