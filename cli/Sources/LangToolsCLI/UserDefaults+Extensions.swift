@@ -24,6 +24,11 @@ extension UserDefaults {
         get { return standard.double(forKey: "temperature")}
         set { standard.set(newValue, forKey: "temperature")}
     }
+
+    static var voiceEnabled: Bool {
+        get { standard.bool(forKey: "voice_enabled") }
+        set { standard.set(newValue, forKey: "voice_enabled") }
+    }
 }
 
 extension UserDefaults {
