@@ -179,12 +179,12 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
 
         task.resume()
 
-        // Start receiving messages
-        startReceiving()
-
         // Only report .connected if a disconnect() hasn't moved the state
         // on meanwhile (it has already torn the socket down).
         guard markConnected() else { throw OpenAIRealtimeError.sessionClosed }
+
+        // Start receiving messages
+        startReceiving()
     }
 
     private func attachSocket(_ task: any LangToolsWebSocketTask, session: URLSession?) -> Bool {
