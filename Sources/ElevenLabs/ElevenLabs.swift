@@ -144,7 +144,7 @@ public struct ElevenLabsModel: Codable, CaseIterable, Equatable, Identifiable, R
         id = customModelID
     }
 
-    public var id: String
+    public let id: String
     public var rawValue: String { id }
 
     // TTS Models
