@@ -49,6 +49,268 @@ final class MobileHelperTests: XCTestCase {
         }
     }
 
+    func testCustomSchemeClassifierAndCoordinatorRejectOtherSchemes() throws {
+        let scheme = "botsworth+helper.v1"
+        let url = try payload().pairingURL(scheme: scheme)
+        let classifyDefault: (URL) -> Bool = MobileHelperPairingCoordinator.isPairingURL
+        let classifyConfigured: (URL, String) -> Bool = MobileHelperPairingCoordinator.isPairingURL
+        XCTAssertFalse(classifyDefault(url))
+        XCTAssertTrue(classifyConfigured(url, scheme))
+        XCTAssertFalse(classifyConfigured(url, "other-helper"))
+        XCTAssertTrue(classifyDefault(try payload().pairingURL()))
+        let coordinator = try makeCoordinator(scheme: scheme)
+        coordinator.handle(url)
+        XCTAssertEqual(coordinator.pendingPairing, payload())
+        XCTAssertNil(coordinator.errorMessage)
+        coordinator.handle(try payload().pairingURL())
+        XCTAssertNil(coordinator.pendingPairing)
+        XCTAssertNotNil(coordinator.errorMessage)
+        XCTAssertTrue(HelperPairingTestProtocol.requests.isEmpty)
+        XCTAssertTrue(store.records.isEmpty)
+    }
+
+    func testConfiguredSchemesAcceptASCIIGrammarAndKeepExactParsing() throws {
+        for scheme in ["b", "Botsworth", "botsworth1", "botsworth+helper", "botsworth-helper", "botsworth.helper"] {
+            let coordinator = try makeCoordinator(scheme: scheme)
+            let url = try payload().pairingURL(scheme: scheme)
+            XCTAssertTrue(MobileHelperPairingCoordinator.isPairingURL(url, scheme: scheme))
+            coordinator.handle(url)
+            XCTAssertEqual(coordinator.pendingPairing, payload())
+            XCTAssertNil(coordinator.errorMessage)
+        }
+        let coordinator = try makeCoordinator(scheme: "Botsworth")
+        let lowercase = try payload().pairingURL(scheme: "botsworth")
+        // Admission remains case-insensitive, as before; strict payload parsing
+        // still requires the exact configured spelling, as the wire API does.
+        XCTAssertTrue(MobileHelperPairingCoordinator.isPairingURL(lowercase, scheme: "Botsworth"))
+        coordinator.handle(lowercase)
+        XCTAssertNil(coordinator.pendingPairing)
+        XCTAssertNotNil(coordinator.errorMessage)
+    }
+
+    func testCustomSchemeHandleStillRejectsMalformedEnvelope() throws {
+        let coordinator = try makeCoordinator(scheme: "botsworth")
+        let valid = try payload().pairingURL(scheme: "botsworth")
+        for suffix in ["&code=duplicate", "&unknown=1", "#fragment"] {
+            coordinator.handle(URL(string: valid.absoluteString + suffix)!)
+            XCTAssertNil(coordinator.pendingPairing)
+            XCTAssertNotNil(coordinator.errorMessage)
+        }
+        XCTAssertTrue(HelperPairingTestProtocol.requests.isEmpty)
+        XCTAssertTrue(store.records.isEmpty)
+    }
+
+    func testInvalidConfiguredSchemesFailBeforePairing() throws {
+        let url = try payload().pairingURL()
+        for scheme in ["", " ", " botsworth", "botsworth ", "1botsworth", "botsworth:",
+                       "botsworth://", "bots/worth", "bots?worth", "bots#worth", "bötsworth", "bots\nworth"] {
+            XCTAssertThrowsError(try MobileHelperPairingCoordinator(configuration: configuration,
+                scheme: scheme, didSelect: {})) { error in
+                XCTAssertTrue(error is MobileHelperLinkError, scheme)
+            }
+            XCTAssertFalse(MobileHelperPairingCoordinator.isPairingURL(url, scheme: scheme), scheme)
+        }
+        XCTAssertTrue(HelperPairingTestProtocol.requests.isEmpty)
+        XCTAssertTrue(store.records.isEmpty)
+    }
+
+    func testPublicCoordinatorUsesOnlyInjectedConfigurationAndCallback() throws {
+        var selections = 0
+        let coordinator = try MobileHelperPairingCoordinator(configuration: configuration,
+            scheme: "botsworth", didSelect: { selections += 1 })
+        // Inspect inert dependencies rather than redeeming through the production
+        // session factory or instantiating the personal shared configuration.
+        let fields = Mirror(reflecting: coordinator).children
+        let ownConfiguration = try XCTUnwrap(fields.first { $0.label == "configuration" }?.value as? OllamaEndpointConfiguration)
+        XCTAssertTrue(ownConfiguration === configuration)
+        let callback = try XCTUnwrap(fields.first { $0.label == "didSelect" }?.value as? () -> Void)
+        callback()
+        XCTAssertEqual(selections, 1)
+        coordinator.handle(try payload().pairingURL(scheme: "botsworth"))
+        XCTAssertEqual(coordinator.pendingPairing, payload())
+        XCTAssertTrue(HelperPairingTestProtocol.requests.isEmpty)
+        XCTAssertTrue(store.records.isEmpty)
+    }
+
+    func testCustomSchemeSelectionNotifiesCallbackAndLeavesOtherConfigurationAlone() async throws {
+        let otherSuite = suite + ".other"
+        let otherDefaults = UserDefaults(suiteName: otherSuite)!
+        defer { otherDefaults.removePersistentDomain(forName: otherSuite) }
+        let otherStore = MemoryHelperStore()
+        let other = OllamaEndpointConfiguration(userDefaults: otherDefaults, credentialStore: otherStore)
+        let originalOther = other.snapshot()
+        var selections = 0
+        installSuccessfulResponses()
+        let coordinator = try makeCoordinator(scheme: "botsworth", didSelect: { selections += 1 })
+        coordinator.handle(try payload().pairingURL(scheme: "botsworth"))
+        coordinator.confirm(deviceName: "Phone")
+        try await waitUntil { !coordinator.isPairing }
+        XCTAssertNil(coordinator.errorMessage)
+        XCTAssertEqual(selections, 1)
+        XCTAssertEqual(configuration.snapshot().helperID, helperID)
+        XCTAssertEqual(other.snapshot(), originalOther)
+        XCTAssertTrue(otherStore.records.isEmpty)
+        XCTAssertNil(otherDefaults.string(forKey: OllamaEndpointConfiguration.helperSelectionKey))
+        XCTAssertEqual(HelperPairingTestProtocol.requests.map { $0.url!.path },
+            ["/v1/mobile/pair", "/v1/mobile/health"])
+    }
+
+    func testCustomSchemeHealthAndPersistenceFailuresNeverNotifyCallback() async throws {
+        let original = configuration.snapshot()
+        var selections = 0
+        let coordinator = try makeCoordinator(scheme: "botsworth", didSelect: { selections += 1 })
+        installSuccessfulResponses(healthHelperID: UUID().uuidString)
+        coordinator.handle(try payload().pairingURL(scheme: "botsworth"))
+        coordinator.confirm(deviceName: "Phone")
+        try await waitUntil { !coordinator.isPairing }
+        XCTAssertNotNil(coordinator.errorMessage)
+        XCTAssertEqual(selections, 0)
+        XCTAssertEqual(configuration.snapshot(), original)
+        XCTAssertTrue(store.records.isEmpty)
+        installSuccessfulResponses()
+        store.failWrites = true
+        coordinator.handle(try payload().pairingURL(scheme: "botsworth"))
+        coordinator.confirm(deviceName: "Phone")
+        try await waitUntil { !coordinator.isPairing }
+        XCTAssertNotNil(coordinator.errorMessage)
+        XCTAssertEqual(selections, 0)
+        XCTAssertEqual(configuration.snapshot(), original)
+        XCTAssertTrue(store.records.isEmpty)
+    }
+
+    func testCustomSchemeConsentStillRejectsAToBToA() throws {
+        let coordinator = try makeCoordinator(scheme: "botsworth")
+        let a = payload()
+        let b = MobileHelperPairingPayload(endpoint: a.endpoint, helperID: UUID().uuidString,
+            fingerprint: a.fingerprint, code: String(repeating: "d", count: 64), name: "Other Mac")
+        coordinator.handle(try a.pairingURL(scheme: "botsworth"))
+        let consent = coordinator.pendingGeneration
+        coordinator.handle(try b.pairingURL(scheme: "botsworth"))
+        coordinator.confirm(a, generation: consent, deviceName: "Phone")
+        XCTAssertEqual(coordinator.pendingPairing, b)
+        coordinator.handle(try a.pairingURL(scheme: "botsworth"))
+        coordinator.confirm(a, generation: consent, deviceName: "Phone")
+        XCTAssertEqual(coordinator.pendingPairing, a)
+        XCTAssertFalse(coordinator.isPairing)
+        XCTAssertTrue(HelperPairingTestProtocol.requests.isEmpty)
+        XCTAssertTrue(store.records.isEmpty)
+    }
+
+    func testInvalidKeychainNamespacesRejectBeforeConfigurationInitialization() {
+        // A selection would trigger a credential read if initialization proceeded.
+        defaults.set(helperID, forKey: OllamaEndpointConfiguration.helperSelectionKey)
+        let before = defaults.persistentDomain(forName: suite)! as NSDictionary
+        for service in ["", " ", "\t", "\n", "service\u{0}", "service\n", "service\u{7f}", "service\u{85}"] {
+            XCTAssertThrowsError(try OllamaEndpointConfiguration(userDefaults: defaults, keychainService: service)) { error in
+                XCTAssertEqual(error as? OllamaEndpointConfiguration.ConfigurationError, .invalidKeychainService)
+            }
+            XCTAssertEqual(defaults.persistentDomain(forName: suite)! as NSDictionary, before)
+        }
+    }
+
+    func testPublicNamespacesKeepExactServiceAndDeviceOnlyAccessibilityWithoutKeychainIO() throws {
+        let otherSuite = suite + ".namespace"
+        let otherDefaults = UserDefaults(suiteName: otherSuite)!
+        defer { otherDefaults.removePersistentDomain(forName: otherSuite) }
+        let serviceA = " " + suite + ".a " // Accepted namespaces are never trimmed.
+        let serviceB = suite + ".b"
+        let a = try OllamaEndpointConfiguration(userDefaults: defaults, keychainService: serviceA)
+        let b = try OllamaEndpointConfiguration(userDefaults: otherDefaults, keychainService: serviceB)
+        // No selected helper means constructing these objects performs no Keychain
+        // query. Reflection proves the public constructor's inert store wiring.
+        func keychain(_ configuration: OllamaEndpointConfiguration) throws -> Keychain {
+            let store = try XCTUnwrap(Mirror(reflecting: configuration).children.first {
+                $0.label == "credentialStore"
+            }?.value as? MobileHelperCredentialStore)
+            return try XCTUnwrap(Mirror(reflecting: store).children.first {
+                $0.label == "keychain"
+            }?.value as? Keychain)
+        }
+        XCTAssertEqual(try keychain(a).service, serviceA)
+        XCTAssertEqual(try keychain(b).service, serviceB)
+        XCTAssertEqual(try keychain(a).accessibility, .afterFirstUnlockThisDeviceOnly)
+        XCTAssertEqual(try keychain(b).accessibility, .afterFirstUnlockThisDeviceOnly)
+        _ = try a.update("http://own.local:11434")
+        XCTAssertEqual(b.directBaseURL, OllamaEndpointConfiguration.defaultBaseURL)
+        XCTAssertNil(otherDefaults.string(forKey: OllamaEndpointConfiguration.helperSelectionKey))
+        XCTAssertTrue(HelperPairingTestProtocol.requests.isEmpty)
+    }
+
+    func testPublicProviderKeepsDirectSessionAndFailClosedHelperGuards() throws {
+        let direct = try configuration.snapshot().provider(directSession: session)
+        XCTAssertTrue(direct.session === session)
+        XCTAssertNil(direct.configuration.apiKey)
+        let disconnected = OllamaEndpointConfiguration.Snapshot(baseURL: payload().endpoint, revision: 1,
+            helperID: helperID, helperName: "Mac", helper: nil, helperError: nil)
+        XCTAssertThrowsError(try disconnected.provider(directSession: session)) { error in
+            XCTAssertEqual(error as? MobileHelperError, .disconnected)
+        }
+        let revoked = OllamaEndpointConfiguration.Snapshot(baseURL: payload().endpoint, revision: 2,
+            helperID: helperID, helperName: "Mac", helper: nil, helperError: .revoked)
+        XCTAssertThrowsError(try revoked.provider(directSession: session)) { error in
+            XCTAssertEqual(error as? MobileHelperError, .revoked)
+        }
+        XCTAssertTrue(HelperPairingTestProtocol.requests.isEmpty)
+    }
+
+    func testMockNamespacesRestoreAndDisconnectIndependentlyForSameHelperID() throws {
+        let otherSuite = suite + ".isolated"
+        let otherDefaults = UserDefaults(suiteName: otherSuite)!
+        defer { otherDefaults.removePersistentDomain(forName: otherSuite) }
+        let otherStore = MemoryHelperStore()
+        let other = OllamaEndpointConfiguration(userDefaults: otherDefaults, credentialStore: otherStore)
+        try configuration.selectHelper(MobileHelperConnection(credential: credential(), session: session))
+        let otherCredential = credential(token: String(repeating: "d", count: 64))
+        try other.selectHelper(MobileHelperConnection(credential: otherCredential, session: session))
+        let ownSnapshot = configuration.snapshot()
+        let otherSnapshot = other.snapshot()
+        XCTAssertTrue(configuration.storeModels([.init(rawValue: "own")!], for: ownSnapshot))
+        XCTAssertTrue(other.storeModels([.init(rawValue: "other")!], for: otherSnapshot))
+        let restored = OllamaEndpointConfiguration(userDefaults: otherDefaults, credentialStore: otherStore)
+        XCTAssertEqual(try restored.snapshot().provider(directSession: session).configuration.apiKey, otherCredential.token)
+        try configuration.disconnectHelper()
+        XCTAssertTrue(store.records.isEmpty)
+        XCTAssertEqual(otherStore.records[helperID], otherCredential)
+        XCTAssertEqual(other.snapshot(), otherSnapshot)
+        XCTAssertEqual(other.cachedModels().map(\.rawValue), ["other"])
+        XCTAssertThrowsError(try configuration.snapshot().provider(directSession: session))
+        XCTAssertEqual(try ownSnapshot.provider(directSession: session).configuration.apiKey, credential().token)
+        XCTAssertEqual(try restored.snapshot().provider(directSession: session).configuration.apiKey, otherCredential.token)
+    }
+
+    func testInvalidTypedPayloadIsRejectedBeforeCreatingSession() async throws {
+        var madeSession = false
+        let client = MobileHelperPairingClient(sessionFactory: { _, _ in madeSession = true; return self.session })
+        let valid = payload()
+        let invalidEndpoints = ["http://192.168.1.10:8086", "https://127.0.0.1:8086", "https://8.8.8.8:8086",
+            "https://mac.local:8086", "https://192.168.1.10", "https://user@192.168.1.10:8086",
+            "https://192.168.1.10:8086/path", "https://192.168.1.10:8086?query", "https://192.168.1.10:8086#fragment"]
+        var invalidPayloads = invalidEndpoints.map {
+            MobileHelperPairingPayload(endpoint: URL(string: $0)!, helperID: valid.helperID,
+                fingerprint: valid.fingerprint, code: valid.code, name: valid.name)
+        }
+        invalidPayloads += [
+            MobileHelperPairingPayload(version: 2, endpoint: valid.endpoint, helperID: valid.helperID,
+                fingerprint: valid.fingerprint, code: valid.code, name: valid.name),
+            MobileHelperPairingPayload(endpoint: valid.endpoint, helperID: "invalid",
+                fingerprint: valid.fingerprint, code: valid.code, name: valid.name),
+            MobileHelperPairingPayload(endpoint: valid.endpoint, helperID: valid.helperID,
+                fingerprint: "invalid", code: valid.code, name: valid.name),
+            MobileHelperPairingPayload(endpoint: valid.endpoint, helperID: valid.helperID,
+                fingerprint: valid.fingerprint, code: "invalid", name: valid.name),
+            MobileHelperPairingPayload(endpoint: valid.endpoint, helperID: valid.helperID,
+                fingerprint: valid.fingerprint, code: valid.code, name: "Mac\n")
+        ]
+        for invalid in invalidPayloads {
+            do {
+                _ = try await client.pair(invalid, deviceName: "Phone")
+                XCTFail("Invalid typed payload must not reach transport")
+            } catch { XCTAssertTrue(error is MobileHelperLinkError) }
+            XCTAssertFalse(madeSession)
+        }
+        XCTAssertTrue(HelperPairingTestProtocol.requests.isEmpty)
+    }
+
     func testConfirmationHealthThenPersistenceAndReconnect() async throws {
         installSuccessfulResponses()
         let coordinator = makeCoordinator()
@@ -312,6 +574,14 @@ final class MobileHelperTests: XCTestCase {
                 config.protocolClasses = [HelperPairingTestProtocol.self]
                 return URLSession(configuration: config)
             }), didSelect: {})
+    }
+    private func makeCoordinator(scheme: String, didSelect: @escaping () -> Void = {}) throws -> MobileHelperPairingCoordinator {
+        try MobileHelperPairingCoordinator(configuration: configuration, scheme: scheme,
+            client: MobileHelperPairingClient(sessionFactory: { _, _ in
+                let config = URLSessionConfiguration.ephemeral
+                config.protocolClasses = [HelperPairingTestProtocol.self]
+                return URLSession(configuration: config)
+            }), didSelect: didSelect)
     }
     private func payload() -> MobileHelperPairingPayload {
         MobileHelperPairingPayload(version: 1, endpoint: URL(string: "https://192.168.1.10:8086")!, helperID: helperID,

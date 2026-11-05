@@ -4,12 +4,20 @@ import UIKit
 #endif
 
 private struct MobileHelperPairingPresentation: ViewModifier {
-    @ObservedObject private var coordinator = MobileHelperPairingCoordinator.shared
+    @ObservedObject private var coordinator: MobileHelperPairingCoordinator
+    private let brandingTitle: String
+    private let isEnabled: Bool
+
+    init(coordinator: MobileHelperPairingCoordinator, brandingTitle: String, isEnabled: Bool = true) {
+        self.isEnabled = isEnabled
+        self.coordinator = coordinator
+        self.brandingTitle = brandingTitle
+    }
 
     func body(content: Content) -> some View {
         content
-            .sheet(isPresented: Binding(get: { coordinator.pendingPairing != nil }, set: {
-                if !$0, coordinator.pendingPairing != nil { coordinator.cancel() }
+            .sheet(isPresented: Binding(get: { isEnabled && coordinator.pendingPairing != nil }, set: {
+                if !$0, isEnabled, coordinator.pendingPairing != nil { coordinator.cancel() }
             })) {
                 if let pairing = coordinator.pendingPairing {
                     let generation = coordinator.pendingGeneration
@@ -29,7 +37,7 @@ private struct MobileHelperPairingPresentation: ViewModifier {
                             Spacer()
                         }
                         .padding(24)
-                        .navigationTitle("Connect LangToolsHelper")
+                        .navigationTitle(brandingTitle)
                         #if os(iOS)
                         .navigationBarTitleDisplayMode(.inline)
                         #endif
@@ -38,7 +46,7 @@ private struct MobileHelperPairingPresentation: ViewModifier {
                 }
             }
             .overlay(alignment: .top) {
-                if coordinator.isPairing {
+                if isEnabled && coordinator.isPairing {
                     HStack {
                         ProgressView()
                         Text("Verifying helper identity…")
@@ -47,8 +55,8 @@ private struct MobileHelperPairingPresentation: ViewModifier {
                     .padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                 }
             }
-            .alert("Helper Pairing Failed", isPresented: Binding(get: { coordinator.errorMessage != nil }, set: {
-                if !$0 { coordinator.dismissError() }
+            .alert("Helper Pairing Failed", isPresented: Binding(get: { isEnabled && coordinator.errorMessage != nil }, set: {
+                if !$0 && isEnabled { coordinator.dismissError() }
             })) {
                 Button("OK", role: .cancel) { coordinator.dismissError() }
             } message: { Text(coordinator.errorMessage ?? "") }
@@ -65,6 +73,19 @@ private struct MobileHelperPairingPresentation: ViewModifier {
 
 extension View {
     public func mobileHelperPairingPresentation() -> some View {
-        modifier(MobileHelperPairingPresentation())
+        modifier(MobileHelperPairingPresentation(coordinator: .shared, brandingTitle: "Connect LangToolsHelper"))
+    }
+
+    public func mobileHelperPairingPresentation(coordinator: MobileHelperPairingCoordinator,
+                                               brandingTitle: String) -> some View {
+        modifier(MobileHelperPairingPresentation(coordinator: coordinator, brandingTitle: brandingTitle))
+    }
+}
+
+public extension View {
+    func mobileHelperPairingPresentation(coordinator: MobileHelperPairingCoordinator,
+                                        brandingTitle: String, isEnabled: Bool) -> some View {
+        modifier(MobileHelperPairingPresentation(coordinator: coordinator,
+            brandingTitle: brandingTitle, isEnabled: isEnabled))
     }
 }
