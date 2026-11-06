@@ -8,12 +8,13 @@ import SwiftUI
 import ToolKit
 
 public struct ChatSettingsView: View {
-    @ObservedObject public var viewModel: ViewModel
+    @StateObject public var viewModel: ViewModel
     @State private var isEditingSystemMessage = false
     @State private var showingOllamaSettings = false
     @Environment(\.colorScheme) private var colorScheme
     @State private var selectedTab: SettingsTab = .general
     @State private var selectedCustomTab: String? = nil
+    @State private var didLoadMobileSettings = false
     @ObservedObject private var pairingCoordinator = CodexHelperPairingCoordinator.shared
     private let ollamaSettingsPresentation: OllamaSettingsPresentation
     private let accessPromptPresentation: AccessPromptPresentation
@@ -39,19 +40,19 @@ public struct ChatSettingsView: View {
     }
 
     public init(viewModel: ViewModel) {
-        self.viewModel = viewModel
+        self._viewModel = StateObject(wrappedValue: viewModel)
         self.ollamaSettingsPresentation = .legacy
         self.accessPromptPresentation = .legacy
     }
 
     public init(viewModel: ViewModel, ollamaService: OllamaService) {
-        self.viewModel = viewModel
+        self._viewModel = StateObject(wrappedValue: viewModel)
         self.ollamaSettingsPresentation = .injected(ollamaService)
         self.accessPromptPresentation = .legacy
     }
 
     public init(viewModel: ViewModel, ollamaService: OllamaService, accessPrompts: AccessPromptContext) {
-        self.viewModel = viewModel
+        self._viewModel = StateObject(wrappedValue: viewModel)
         self.ollamaSettingsPresentation = .injected(ollamaService)
         self.accessPromptPresentation = .injected(accessPrompts)
     }
@@ -256,7 +257,13 @@ public struct ChatSettingsView: View {
             }
         }
         .navigationTitle("Settings")
-        .onAppear { viewModel.loadSettings() }
+        .onAppear {
+            // Returning from a submenu can appear before its save-on-disappear.
+            // Load once per Settings presentation to avoid replacing pending edits.
+            guard !didLoadMobileSettings else { return }
+            didLoadMobileSettings = true
+            viewModel.loadSettings()
+        }
         .onDisappear { saveMobileSettings() }
     }
 
