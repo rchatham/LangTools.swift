@@ -34,6 +34,7 @@ application executable. Build the app using Xcode/the workspace.
 - `Sources/LangToolsApp.swift`: shared SwiftUI entry point and chat container.
 - `Sources/ContentCards`: app-specific content card views.
 - `Modules/Chat`: conversation services, settings, and provider integration.
+- `Modules/ChatHistory`: persistent conversations for any LangTools host (see below).
 - `Modules/Audio`: voice-input adapters and recording.
 - `Modules/ExampleAgents`: existing calendar, reminder, and research agents.
   Its module name is retained to avoid an unrelated API rename.
@@ -45,6 +46,43 @@ The core library remains in the repository's top-level `Sources` and `Package.sw
 No app dependencies are added to library consumers. `LangToolsApp` is the internal
 app target/Swift module and package name, preventing a collision with `import LangTools`.
 The built application and user-visible name are **LangTools**.
+
+## Chat history
+
+`ChatHistory` makes stored conversations a standard feature. A host creates one
+of each per process and shares them across windows:
+
+```swift
+let storage = try SwiftDataChatHistoryStorage(location: .applicationSupport(directory: "MyApp"))
+let sessions = ChatSessionManager(
+    storage: storage,
+    hooks: .standard(networkClient: myClient, agents: myAgents)
+)
+let library = ChatHistoryLibrary(sessions: sessions, exporter: ChatHistoryExporter(appName: "MyApp"))
+
+// One live session per conversation; ChatView<ChatSession> renders it.
+let session = sessions.draftSession(ConversationDraft())   // stored on its first message
+```
+
+- **Storage.** `ChatHistoryStorage` has SwiftData and in-memory backends that
+  share one row codec, so they behave identically. Messages are flat rows whose
+  payload is the full `Message` JSON. Stores use an explicit file URL, never the
+  process-wide `default.store`, and never enable CloudKit implicitly.
+- **Sessions.** `ChatSession` debounces streaming saves (0.5 s, at most 2 s
+  late), saves a finished send immediately, and retries a failed save without
+  repeating the request. Retry, stop markers and message deletes are persisted.
+- **Ownership.** `ConversationOwner` and `threadKind` let a host attach
+  conversations to its own entities (Botsworth uses them for bots) and filter
+  lists with `ConversationQuery`, without ChatHistory knowing what they are.
+- **Settings.** `ConversationSettingsOverrides` (model, system prompt, context
+  limits) apply per conversation through `ChatSettingsResolving`.
+  `MessageService.requestPreparer` is the hook for compaction and memory.
+- **Retention.** `ChatRetentionPolicy` defaults to keep forever. Pinned,
+  `isRetentionExempt` and live conversations are never deleted.
+- **Export.** Markdown, plain text, and a versioned JSON document that
+  `ChatHistoryLibrary.importDocument` restores losslessly.
+- **Views.** `ChatHistoryListView`, `ChatHistorySettingsView` and
+  `CustomSettingsTab.chatHistory(library:)`.
 
 ## Compatibility
 
