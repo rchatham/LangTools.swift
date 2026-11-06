@@ -87,6 +87,10 @@ public final class RealtimeSessionViewModel: ObservableObject {
 
         connectionState = .connecting
 
+        // Item IDs belong to the previous session; start tracking afresh.
+        currentAssistantItemId = nil
+        interruptedItemId = nil
+
         let session = OpenAIRealtimeSession(apiKey: apiKey)
         self.session = session
 
