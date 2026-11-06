@@ -297,6 +297,9 @@ public class MessageService {
     @ObservationIgnored private let agents: [any Agent]
     private(set) var conversationID = UUID()
     private var activeSends: [UUID: [UUID: Task<Void, Error>]] = [:]
+    /// The prompt each active send answers, keyed by send id. A request
+    /// preparer must not fold another send's unfinished turn into a summary.
+    private var activeSendPromptIDs: [UUID: UUID] = [:]
     /// Generated messages owned by failed attempts, keyed by the stable user message id.
     /// This is intentionally ephemeral and excluded from persisted conversation history.
     private var failedAttemptGeneratedMessageIDs: [UUID: Set<UUID>] = [:]
@@ -441,6 +444,7 @@ public class MessageService {
             }
         }
         activeSends[requestConversationID, default: [:]][sendID] = completion
+        activeSendPromptIDs[sendID] = userMessage.uuid
         let establishmentTask = Task { try await establishment.wait() }
 
         return ChatSendOperation(
@@ -482,8 +486,15 @@ public class MessageService {
             var history = requestSnapshot
             var systemPrompt = systemMessage()
             if let requestPreparer {
+                let otherSendIDs = (activeSends[requestConversationID] ?? [:]).keys.filter { $0 != sendID }
                 let prepared = try await requestPreparer(
-                    ChatRequestContext(systemPrompt: systemPrompt, history: history, model: selectedModel)
+                    ChatRequestContext(
+                        systemPrompt: systemPrompt,
+                        history: history,
+                        model: selectedModel,
+                        settings: dependencies.conversationSettings(),
+                        inFlightMessageIDs: Set(otherSendIDs.compactMap { activeSendPromptIDs[$0] })
+                    )
                 )
                 guard conversationID == requestConversationID else { throw CancellationError() }
                 systemPrompt = prepared.systemPrompt
@@ -695,6 +706,7 @@ public class MessageService {
 
     private func removeActiveSend(id: UUID, conversationID: UUID) {
         activeSends[conversationID]?.removeValue(forKey: id)
+        activeSendPromptIDs.removeValue(forKey: id)
         if activeSends[conversationID]?.isEmpty == true {
             activeSends.removeValue(forKey: conversationID)
         }
@@ -725,6 +737,7 @@ public class MessageService {
     public func clearMessages() {
         let previousConversationID = conversationID
         let sends = activeSends.removeValue(forKey: previousConversationID) ?? [:]
+        for sendID in sends.keys { activeSendPromptIDs.removeValue(forKey: sendID) }
         let sendsToDrain = Array(sends.values)
         sends.keys.forEach { eventBuffer.remove($0) }
         conversationID = UUID()

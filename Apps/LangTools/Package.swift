@@ -15,6 +15,9 @@ let package = Package(
             name: "Chat",
             targets: ["Chat"]),
         .library(
+            name: "ChatContext",
+            targets: ["ChatContext"]),
+        .library(
             name: "ChatHistory",
             targets: ["ChatHistory"]),
         .library(
@@ -66,9 +69,18 @@ let package = Package(
             ],
             path: "Modules/Chat"),
         .target(
+            name: "ChatContext",
+            dependencies: [
+                "Chat",
+                .product(name: "LangTools", package: "langtools.swift"),
+                .product(name: "OpenAI", package: "langtools.swift"),
+            ],
+            path: "Modules/ChatContext"),
+        .target(
             name: "ChatHistory",
             dependencies: [
                 "Chat",
+                "ChatContext",
                 "ToolKit",
                 .product(name: "ChatUI", package: "ChatUI"),
                 .product(name: "LangTools", package: "langtools.swift"),
@@ -129,9 +141,21 @@ let package = Package(
             path: "Tests/ChatTests",
             resources: [.copy("Resources/HelperCertificates")]),
         .testTarget(
+            name: "ChatContextTests",
+            dependencies: [
+                "ChatContext",
+                "Chat",
+                .product(name: "ChatUI", package: "ChatUI"),
+                .product(name: "LangTools", package: "langtools.swift"),
+                .product(name: "Agents", package: "langtools.swift"),
+                .product(name: "OpenAI", package: "langtools.swift"),
+            ],
+            path: "Tests/ChatContextTests"),
+        .testTarget(
             name: "ChatHistoryTests",
             dependencies: [
                 "ChatHistory",
+                "ChatContext",
                 "Chat",
                 .product(name: "ChatUI", package: "ChatUI"),
                 .product(name: "LangTools", package: "langtools.swift"),
