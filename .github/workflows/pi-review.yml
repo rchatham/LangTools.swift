@@ -6,13 +6,20 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened]
 
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Same-repository pull request to review
+        required: true
+        type: string
+
 concurrency:
-  group: pi-review-${{ github.event.pull_request.number }}
+  group: pi-review-${{ github.event.pull_request.number || inputs.pr_number }}
   cancel-in-progress: true
 
 jobs:
   review:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -23,9 +30,18 @@ jobs:
       PI_CODING_AGENT_DIR: ${{ github.workspace }}/.github/pi
       PI_SKIP_VERSION_CHECK: "1"
       PI_TELEMETRY: "0"
-      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
       REPOSITORY: ${{ github.repository }}
     steps:
+      - name: Validate review target
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$PR_NUMBER" in ""|*[!0-9]*) exit 1 ;; esac
+          gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/target.json"
+          jq -e --arg repo "$REPOSITORY" '.state == "open" and .head.repo.full_name == $repo' "$RUNNER_TEMP/target.json" > /dev/null
+          jq -r '"BASE_SHA=" + .base.sha, "HEAD_SHA=" + .head.sha' "$RUNNER_TEMP/target.json" >> "$GITHUB_ENV"
+
       - name: Check out trusted default branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -54,9 +70,6 @@ jobs:
             --directory "$package_dir" --strip-components=1
 
       - name: Fetch pull request diff
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -99,6 +112,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" | jq -e --arg head "$HEAD_SHA" --arg repo "$REPOSITORY" '.state == "open" and .head.sha == $head and .head.repo.full_name == $repo' > /dev/null
           marker='<!-- pi-code-review -->'
           body_file="$RUNNER_TEMP/review-comment.md"
           jq -Rs '
