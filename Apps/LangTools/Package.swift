@@ -111,6 +111,7 @@ let package = Package(
                 .product(name: "AppleLangTools", package: "langtools.swift"),
                 .product(name: "HelperLink", package: "langtools.swift"),
                 "KeychainAccess",
+                "ToolKit",
             ],
             path: "Tests/ChatTests",
             resources: [.copy("Resources/HelperCertificates")]),

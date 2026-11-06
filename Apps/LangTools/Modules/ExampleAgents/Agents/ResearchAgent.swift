@@ -67,9 +67,8 @@ public struct ResearchAgent: Agent {
             return false
         }
 
-        // Then check Keychain as backup
-        let keychainKey = KeychainService().getApiKey(for: .serper)
-        return keychainKey == nil || keychainKey?.isEmpty == true
+        // Then check Keychain as backup, without reading the key itself
+        return !KeychainService().hasApiKey(for: .serper)
     }
 
     public init(serperApiKey: String? = nil) {
@@ -86,9 +85,13 @@ public struct ResearchAgent: Agent {
             }
         }
 
-        // If explicit API key is provided, use that instead
+        // If explicit API key is provided, use that instead, and persist it.
+        // Keys that were just loaded are not written back, so creating the
+        // agent never writes to the Keychain.
         if let serperApiKey = serperApiKey, !serperApiKey.isEmpty {
             apiKey = serperApiKey
+            UserDefaults.serperApiKey = serperApiKey
+            KeychainService().saveApiKey(apiKey: serperApiKey, for: .serper)
         }
 
         setupTools(with: apiKey)
@@ -96,10 +99,6 @@ public struct ResearchAgent: Agent {
 
     mutating func setupTools(with apiKey: String?) {
         if let apiKey, !apiKey.isEmpty {
-            // Update both UserDefaults and Keychain
-            UserDefaults.serperApiKey = apiKey
-            KeychainService().saveApiKey(apiKey: apiKey, for: .serper)
-
             self.tools = [
                 SerperTool(apiKey: apiKey)
             ]
@@ -110,6 +109,10 @@ public struct ResearchAgent: Agent {
 
     // Method to update API key
     mutating func updateApiKey(_ apiKey: String) {
+        if !apiKey.isEmpty {
+            UserDefaults.serperApiKey = apiKey
+            KeychainService().saveApiKey(apiKey: apiKey, for: .serper)
+        }
         setupTools(with: apiKey)
     }
 
