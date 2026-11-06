@@ -77,6 +77,7 @@ class PromptTest < Minitest::Test
       target_env = env.merge('PR_NUMBER' => '456', 'GITHUB_ENV' => File.join(dir, 'github-env'))
       run_step('pi-review.yml', 'Validate review target', target_env, dir)
       assert_includes File.read(target_env['GITHUB_ENV']), 'HEAD_SHA=review-head'
+      assert_includes File.read(target_env['GITHUB_ENV']), 'BASE_SHA=review-base'
       [target_env.merge('PR_NUMBER' => '../bad'), target_env.merge('REPOSITORY' => 'other/repo')].each do |invalid|
         _, status = run_step_result('pi-review.yml', 'Validate review target', invalid, dir)
         refute status.success?
@@ -101,9 +102,11 @@ class PromptTest < Minitest::Test
       assert_includes prompt, "[BEGIN UNTRUSTED PULL REQUEST DIFF]\ndiff --git"
       File.write(File.join(dir, 'review.md'), 'Model advice')
       run_step('pi-review.yml', 'Upsert review comment', env.merge('PR_NUMBER' => '456', 'HEAD_SHA' => 'review-head'), dir)
+      posted_comment = File.read(File.join(dir, 'posted-comment'))
+      File.delete(File.join(dir, 'posted-comment'))
       output, status = run_step_result('pi-review.yml', 'Upsert review comment', env.merge('PR_NUMBER' => '456', 'HEAD_SHA' => 'stale-head'), dir)
       refute status.success?, 'A stale review must not be posted'
-      posted_comment = File.read(File.join(dir, 'posted-comment'))
+      refute File.exist?(File.join(dir, 'posted-comment'))
       assert posted_comment.start_with?("<!-- pi-code-review -->\n\n#{NOTICE}")
       assert_includes posted_comment, 'Model advice'
     end
