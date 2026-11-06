@@ -24,6 +24,7 @@ public struct ChatSettingsView: View {
 
     public enum SettingsTab: String, CaseIterable, Identifiable {
         case general = "General"
+        case providers = "Providers"
         case context = "Context"
         case advanced = "Advanced"
         case localModels = "Local Models"
@@ -34,6 +35,7 @@ public struct ChatSettingsView: View {
         public var icon: String {
             switch self {
             case .general: return "gear"
+            case .providers: return "key.horizontal"
             case .context: return "text.bubble"
             case .advanced: return "slider.horizontal.3"
             case .localModels: return "cpu"
@@ -75,8 +77,26 @@ public struct ChatSettingsView: View {
         .onChange(of: viewModel.isProxyContext) { _, isProxy in
             if isProxy {
                 showingOllamaSettings = false
-                if selectedTab == .localModels { selectedTab = .general }
+                if selectedTab == .localModels || selectedTab == .providers { selectedTab = .general }
             }
+        }
+    }
+
+    /// Whether the Providers tab/page (model access + Codex Helper pairing) is shown.
+    ///
+    /// Proxy (Botsworth server) contexts supply models server-side, so there is
+    /// nothing for the user to connect. Unlike the old inline section, this does
+    /// not depend on the selected model: picking an Ollama or Apple model should
+    /// not take away the place where you add an API key for another provider.
+    private var showsProviders: Bool {
+        !viewModel.isProxyContext
+    }
+
+    private func isTabVisible(_ tab: SettingsTab) -> Bool {
+        switch tab {
+        case .localModels: return !viewModel.isProxyContext
+        case .providers: return showsProviders
+        case .general, .context, .advanced, .tools: return true
         }
     }
 
@@ -118,7 +138,7 @@ public struct ChatSettingsView: View {
                     .listRowSeparator(.hidden)
                 #endif
 
-                ForEach(SettingsTab.allCases.filter { !viewModel.isProxyContext || $0 != .localModels }) { tab in
+                ForEach(SettingsTab.allCases.filter(isTabVisible)) { tab in
                     Button(action: {
                         selectedTab = tab
                         selectedCustomTab = nil
@@ -174,6 +194,8 @@ public struct ChatSettingsView: View {
                         switch selectedTab {
                         case .general:
                             generalSettingsView
+                        case .providers:
+                            providersSettingsView
                         case .context:
                             contextSettingsView
                         case .advanced:
@@ -219,6 +241,7 @@ public struct ChatSettingsView: View {
     #if os(iOS)
     private enum MobileSettingsPage: String, CaseIterable, Identifiable {
         case general = "General"
+        case providers = "Providers"
         case context = "Context"
         case advanced = "Advanced"
         case localModels = "Local Models"
@@ -229,6 +252,7 @@ public struct ChatSettingsView: View {
         var icon: String {
             switch self {
             case .general: return "gear"
+            case .providers: return "key.horizontal"
             case .context: return "text.bubble"
             case .advanced: return "slider.horizontal.3"
             case .localModels: return "cpu"
@@ -240,7 +264,7 @@ public struct ChatSettingsView: View {
 
     private var mobileLayout: some View {
         List {
-            ForEach(MobileSettingsPage.allCases.filter { !viewModel.isProxyContext || $0 != .localModels }) { page in
+            ForEach(MobileSettingsPage.allCases.filter(isPageVisible)) { page in
                 NavigationLink {
                     mobileSettingsPage(page)
                 } label: {
@@ -270,6 +294,14 @@ public struct ChatSettingsView: View {
         .onDisappear { saveMobileSettings() }
     }
 
+    private func isPageVisible(_ page: MobileSettingsPage) -> Bool {
+        switch page {
+        case .localModels: return !viewModel.isProxyContext
+        case .providers: return showsProviders
+        case .general, .context, .advanced, .tools, .voice: return true
+        }
+    }
+
     private func saveMobileSettings() {
         viewModel.saveSettings()
         viewModel.saveToolSettings()
@@ -281,6 +313,8 @@ public struct ChatSettingsView: View {
             case .general:
                 mobileModelSections
                 mobileActions
+            case .providers:
+                mobileProvidersSections
             case .context:
                 mobileContextSection
             case .advanced:
@@ -308,6 +342,7 @@ public struct ChatSettingsView: View {
     private var mobileLayout: some View {
         Form {
             mobileModelSections
+            mobileProvidersSections
             mobileContextSection
             mobileAdvancedSection
             mobileLocalModelsSection
@@ -361,13 +396,16 @@ public struct ChatSettingsView: View {
 
             modelCatalogStatus
             if !viewModel.isProxyContext {
-                Text("Available models depend on which providers you have connected. If a provider is missing, add an API key or sign in from Manage Access.")
+                Text("Available models depend on which providers you have connected. If a provider is missing, add an API key or sign in from Providers.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
         }
+    }
 
-        if viewModel.canManageAccess {
+    @ViewBuilder
+    private var mobileProvidersSections: some View {
+        if showsProviders {
             Section(header: Text("Model Access")) {
                 Text("Models come from connected providers. API keys enable direct API requests, while account sign-in can unlock provider-specific access like Codex.")
                     .font(.caption)
@@ -396,6 +434,13 @@ public struct ChatSettingsView: View {
                     }
                 }
 
+                // Shortcut for the selected model's provider; meaningless for local models.
+                if viewModel.canManageAccess {
+                    Button(viewModel.accessButtonTitle) { viewModel.presentManageAccess() }
+                }
+            }
+
+            Section(header: Text("Codex Helper")) {
                 Text("For OpenAI account-backed Codex models, start the external helper, then pair with one click from its menu or paste its URL/token below.")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -412,7 +457,6 @@ public struct ChatSettingsView: View {
                     .textSelection(.enabled)
             }
         }
-
     }
 
     @ViewBuilder
@@ -468,9 +512,6 @@ public struct ChatSettingsView: View {
     @ViewBuilder
     private var mobileActions: some View {
         Button("Save Settings") { viewModel.saveSettings() }
-        if viewModel.canManageAccess {
-            Button(viewModel.accessButtonTitle) { viewModel.presentManageAccess() }
-        }
         Button("Clear messages", role: .destructive) { viewModel.clearMessages() }
 
     }
@@ -698,77 +739,13 @@ public struct ChatSettingsView: View {
                                 .font(.body)
                         }
 
-                        if viewModel.canManageAccess {
-                            Divider()
-
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Codex Helper")
-                                    .font(.headline)
-                                Text("Run one of these in Terminal before using OpenAI account-backed Codex models, or pair with one click from the helper app's menu:")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                                Text(viewModel.codexHelperCommand)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .textSelection(.enabled)
-                                pairingStatusRow
-                                TextField("Codex Helper URL", text: $viewModel.codexHelperBaseURLString)
-                                    .textFieldStyle(.roundedBorder)
-                                SecureField("Codex Helper Token", text: $viewModel.codexHelperToken)
-                                    .textFieldStyle(.roundedBorder)
-                                Text("OpenAI account-backed models use the external Codex helper. API-key-backed OpenAI Platform models continue to use the regular API path.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
+                        if showsProviders {
+                            Text("Available models depend on which providers you have connected. Add an API key or sign in from the Providers tab.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
                     }
                     .padding(8)
-                }
-
-                if viewModel.canManageAccess {
-                    GroupBox {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Model Access")
-                                .font(.headline)
-
-                            Text("Models appear here when their provider is configured. Add an API key for direct API requests, or sign in with an account for provider-specific access like Codex.")
-                                .font(.body)
-                                .foregroundColor(.secondary)
-
-                            ForEach(viewModel.providerAccessStates) { state in
-                                VStack(alignment: .leading, spacing: 6) {
-                                    HStack(alignment: .firstTextBaseline) {
-                                        Text(state.displayName)
-                                            .font(.headline)
-                                        Spacer()
-                                        Text(state.badgeTitle)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-
-                                    Text(state.statusDescription)
-                                        .font(.subheadline)
-                                        .foregroundColor(.secondary)
-
-                                    if let reason = viewModel.unavailableReason(for: state) {
-                                        Text(reason)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-
-                                    Button(accessActionTitle(for: state)) {
-                                        viewModel.presentManageAccess(for: state.accessDestination)
-                                    }
-                                    .buttonStyle(.bordered)
-                                }
-
-                                if state.service != viewModel.providerAccessStates.last?.service {
-                                    Divider()
-                                }
-                            }
-                        }
-                        .padding(8)
-                    }
-                    .padding(.top, 8)
                 }
             }
 
@@ -956,6 +933,95 @@ public struct ChatSettingsView: View {
                     }
                     .padding(8)
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var providersSettingsView: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Providers")
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            Divider()
+
+            if showsProviders {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Model Access")
+                            .font(.headline)
+
+                        Text("Models appear in General when their provider is configured. Add an API key for direct API requests, or sign in with an account for provider-specific access like Codex.")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+
+                        ForEach(viewModel.providerAccessStates) { state in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    Text(state.displayName)
+                                        .font(.headline)
+                                    Spacer()
+                                    Text(state.badgeTitle)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Text(state.statusDescription)
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+
+                                if let reason = viewModel.unavailableReason(for: state) {
+                                    Text(reason)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Button(accessActionTitle(for: state)) {
+                                    viewModel.presentManageAccess(for: state.accessDestination)
+                                }
+                                .buttonStyle(.bordered)
+                            }
+
+                            if state.service != viewModel.providerAccessStates.last?.service {
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Codex Helper")
+                            .font(.headline)
+                        Text("Run one of these in Terminal before using OpenAI account-backed Codex models, or pair with one click from the helper app's menu:")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        Text(viewModel.codexHelperCommand)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                        pairingStatusRow
+                        TextField("Codex Helper URL", text: $viewModel.codexHelperBaseURLString)
+                            .textFieldStyle(.roundedBorder)
+                        SecureField("Codex Helper Token", text: $viewModel.codexHelperToken)
+                            .textFieldStyle(.roundedBorder)
+                        if let tokenError = viewModel.codexHelperTokenSaveError {
+                            Text(tokenError)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                        }
+                        Text("OpenAI account-backed models use the external Codex helper. API-key-backed OpenAI Platform models continue to use the regular API path.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                Text("Models are provided by the Botsworth server. No personal provider API key is required.")
+                    .foregroundColor(.secondary)
             }
         }
     }
