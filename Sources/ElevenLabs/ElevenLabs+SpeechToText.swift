@@ -345,12 +345,11 @@ public final class ElevenLabsSTTSession: @unchecked Sendable {
             }
 
         case "error":
-            if let error = response.error {
-                // Terminal: close the session so a later connect() throws
-                // sessionClosed instead of returning as if still connected.
-                closeSession()
-                transcriptionContinuation.finish(throwing: ElevenLabsSTTError.serverError(error.message))
-            }
+            // Terminal: close the session so a later connect() throws
+            // sessionClosed instead of returning as if still connected. An
+            // error message without details still ends the stream.
+            closeSession()
+            transcriptionContinuation.finish(throwing: ElevenLabsSTTError.serverError(response.error?.message ?? "Unknown server error"))
 
         case "done":
             closeSession()

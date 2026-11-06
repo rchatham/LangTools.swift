@@ -347,6 +347,25 @@ final class ElevenLabsSTTSessionTests: XCTestCase {
         }
     }
 
+    /// An "error" message without details used to be ignored, leaving the
+    /// stream open after the server reported a failure.
+    func testServerErrorWithoutDetailsStillEndsStream() async throws {
+        let (session, mock) = try await makeConnectedSession()
+
+        mock.push(#"{"type": "error"}"#)
+
+        var iterator = session.transcriptions.makeAsyncIterator()
+        do {
+            _ = try await iterator.next()
+            XCTFail("Expected the stream to throw")
+        } catch let error as ElevenLabsSTTError {
+            guard case .serverError = error else {
+                return XCTFail("Expected serverError, got \(error)")
+            }
+        }
+        XCTAssertFalse(session.isConnected)
+    }
+
     /// A server-sent "error" message is a valid decode, not a malformed one —
     /// it should still terminate the stream (this is existing, correct
     /// behavior, not part of the decode-resilience fix).
@@ -368,5 +387,31 @@ final class ElevenLabsSTTSessionTests: XCTestCase {
             XCTAssertEqual(message, "something went wrong")
         }
         session.disconnect()
+    }
+}
+
+// MARK: - SerialSendQueue
+
+final class SerialSendQueueTests: XCTestCase {
+    private final class Payload {}
+
+    /// Guards against the queue retaining history: each send waits on the
+    /// one before it, but a finished send (and its payload, e.g. mic audio)
+    /// must be freed, or a long stream would grow without bound.
+    func testFinishedSendsAreReleased() async throws {
+        let queue = SerialSendQueue()
+        weak var released: Payload?
+
+        do {
+            let payload = Payload()
+            released = payload
+            try await queue.run { _ = payload }
+        }
+        // Later sends must not keep the finished one's payload alive.
+        for _ in 0..<3 {
+            try await queue.run {}
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertNil(released, "A finished send's payload is still retained")
     }
 }
