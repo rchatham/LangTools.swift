@@ -9,6 +9,8 @@
 
 import Foundation
 import SwiftUI
+import Combine
+import ChatUI
 import OpenAI
 import LangTools
 
@@ -17,27 +19,17 @@ public final class RealtimeSessionViewModel: ObservableObject {
 
     // MARK: - UI State
 
-    public enum ConnectionState: String {
-        case disconnected = "Disconnected"
-        case connecting = "Connecting…"
-        case connected = "Connected"
-        case error = "Error"
-    }
-
-    public struct TranscriptEntry: Identifiable, Equatable {
-        public enum Role { case user, assistant }
-        public let id: String
-        public let role: Role
-        public var text: String
-        public var isFinal: Bool
-    }
+    public typealias ConnectionState = RealtimeConnectionState
+    public typealias TranscriptEntry = RealtimeTranscriptEntry
 
     @Published public private(set) var connectionState: ConnectionState = .disconnected
     @Published public private(set) var transcript: [TranscriptEntry] = []
     @Published public private(set) var isModelSpeaking = false
     @Published public private(set) var isUserSpeaking = false
     @Published public private(set) var lastError: String?
-    @Published public var textInput: String = ""
+    /// The mic's input level, republished so ChatUI's conversation view can
+    /// observe it through the handler.
+    @Published public private(set) var audioLevel: Float = 0
 
     public let mic = RealtimeMicStreamer()
     public let player = RealtimePCMPlayer()
@@ -65,6 +57,7 @@ public final class RealtimeSessionViewModel: ObservableObject {
 
     public init(apiKeyProvider: @escaping () -> String?) {
         self.apiKeyProvider = apiKeyProvider
+        mic.$audioLevel.assign(to: &$audioLevel)
     }
 
     // MARK: - Lifecycle
@@ -176,10 +169,9 @@ public final class RealtimeSessionViewModel: ObservableObject {
     // MARK: - Actions
 
     /// Send a typed text message into the conversation and request a response.
-    public func sendTextMessage() async {
-        let text = textInput.trimmingCharacters(in: .whitespacesAndNewlines)
+    public func sendText(_ text: String) async {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let session else { return }
-        textInput = ""
 
         transcript.append(TranscriptEntry(id: UUID().uuidString, role: .user, text: text, isFinal: true))
         do {
@@ -332,3 +324,9 @@ public final class RealtimeSessionViewModel: ObservableObject {
         }
     }
 }
+
+// MARK: - ChatUI
+
+/// Lets ChatUI's `RealtimeConversationView` (and the chat composer's
+/// live-voice button) drive this OpenAI Realtime session.
+extension RealtimeSessionViewModel: RealtimeConversationHandler {}

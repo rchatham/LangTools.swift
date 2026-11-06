@@ -178,7 +178,6 @@ struct LangToolsApp: App {
 struct ChatContainerView: View {
     @StateObject private var messageService: MessageService
     @ObservedObject var voiceInputHandler: VoiceInputHandlerAdapter
-    @State private var showRealtimeView = false
 
     init(voiceInputHandler: VoiceInputHandlerAdapter) {
         let fixtureActive = ChatUITestEnvironment.isFixtureActive
@@ -216,6 +215,13 @@ struct ChatContainerView: View {
                 messageService: messageService,
                 settingsView: { chatSettingsView },
                 voiceInputHandler: voiceInputHandler,
+                // The composer's live-voice button opens a realtime voice
+                // conversation over the OpenAI Realtime API.
+                realtimeConversation: {
+                    AnyView(RealtimeView(apiKeyProvider: {
+                        KeychainService.shared.getApiKey(for: .openAI)
+                    }))
+                },
                 supplementaryContent: { message in
                     guard ToolSettings.shared.richContentEnabled,
                           case .contentCards(let content) = message.contentType
@@ -223,21 +229,6 @@ struct ChatContainerView: View {
                     return AnyView(ContentCardRegistry.shared.view(for: content))
                 }
             )
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        showRealtimeView = true
-                    } label: {
-                        Label("Realtime Voice", systemImage: "waveform.circle")
-                    }
-                    .help("Open a live voice conversation")
-                }
-            }
-            .sheet(isPresented: $showRealtimeView) {
-                RealtimeView(apiKeyProvider: {
-                    KeychainService.shared.getApiKey(for: .openAI)
-                })
-            }
         }
         .fixtureConditionalAccessPrompts()
     }

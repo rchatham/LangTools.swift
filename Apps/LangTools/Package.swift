@@ -78,6 +78,7 @@ let package = Package(
         .target(
             name: "Realtime",
             dependencies: [
+                .product(name: "ChatUI", package: "ChatUI"),
                 .product(name: "LangTools", package: "langtools.swift"),
                 .product(name: "OpenAI", package: "langtools.swift"),
             ],
