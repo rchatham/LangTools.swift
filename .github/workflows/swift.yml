@@ -71,6 +71,29 @@ jobs:
       # WhisperKit suites compile to empty modules on Linux.
       run: swift test --skip-build --parallel
 
+  agent-image:
+    # Builds the langtools-agent runtime image and checks it starts and can
+    # validate the example spec. Makes no provider calls.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+    - name: Build image
+      run: docker build -f Dockerfile.agent -t langtools-agent:ci .
+    - name: Smoke test
+      run: |
+        docker run --rm langtools-agent:ci providers
+        docker run --rm langtools-agent:ci tools
+        docker run --rm -e ANTHROPIC_API_KEY=placeholder \
+          -v "$PWD/Examples/AgentRuntime:/work:ro" langtools-agent:ci validate clock.json
+        test "$(docker run --rm --entrypoint id langtools-agent:ci -u)" = 10001
+        test "$(docker run --rm --entrypoint stat langtools-agent:ci -c %U /spool)" = agent
+
   helper-mobile-tests:
     runs-on: macos-latest
     timeout-minutes: 30
@@ -86,7 +109,7 @@ jobs:
       run: |
         set -euo pipefail
         swift test --package-path cli --jobs 2 --no-parallel \
-          --filter 'MobileHelperTests|MobilePairingControllerTests' 2>&1 | tee "$RUNNER_TEMP/helper-mobile-tests.log"
+          --filter 'MobileHelperTests|MobilePairingControllerTests|HelperSubagentRouteTests' 2>&1 | tee "$RUNNER_TEMP/helper-mobile-tests.log"
         if ! grep -Eq 'Executed [1-9][0-9]* tests?' "$RUNNER_TEMP/helper-mobile-tests.log"; then
           echo 'Expected focused helper XCTest cases to execute.' >&2
           exit 1
@@ -125,7 +148,7 @@ jobs:
         # These suites use isolated credentials and local fixtures, not live
         # accounts/Ollama or legacy Keychain ACLs. Keep shared mock state serial.
         swift test --package-path Apps/LangTools --jobs 2 --no-parallel \
-          --filter 'MobileHelper|OllamaEndpoint|ProviderAccessManagerTests|ProviderAccessRefreshRegressionTests|OllamaSettingsErrorRegressionTests|ChatGenerationSettingsTests|ModelGenerationCapabilitiesTests|ChatModelSourceTests/testProxyOllamaCatalogAndTitlesIgnoreDirectEndpointAvailability|ChatModelSourceTests/testDefaultAndDirectCatalogUseExistingProviderAccessManager' \
+          --filter 'MobileHelper|WorkerSubagentToolsTests|OllamaEndpoint|ProviderAccessManagerTests|ProviderAccessRefreshRegressionTests|OllamaSettingsErrorRegressionTests|ChatGenerationSettingsTests|ModelGenerationCapabilitiesTests|ChatModelSourceTests/testProxyOllamaCatalogAndTitlesIgnoreDirectEndpointAvailability|ChatModelSourceTests/testDefaultAndDirectCatalogUseExistingProviderAccessManager' \
           2>&1 | tee "$RUNNER_TEMP/app-helper-tests.log"
         if ! grep -Eq 'Executed [1-9][0-9]* tests?' "$RUNNER_TEMP/app-helper-tests.log"; then
           echo 'Expected focused app XCTest cases to execute.' >&2
