@@ -19,6 +19,7 @@
 		B19B31BD2F2D205700645F8A /* ExampleAgents in Frameworks */ = {isa = PBXBuildFile; productRef = B19B31BC2F2D205700645F8A /* ExampleAgents */; };
 		B1E4E5132F314EF400AE11AA /* Audio in Frameworks */ = {isa = PBXBuildFile; productRef = B1E4E5122F314EF400AE11AA /* Audio */; };
 		B1E4E5152F314EF400AE11AA /* Chat in Frameworks */ = {isa = PBXBuildFile; productRef = B1E4E5142F314EF400AE11AA /* Chat */; };
+		B1C4A7000000000000000001 /* ChatHistory in Frameworks */ = {isa = PBXBuildFile; productRef = B1C4A7000000000000000002 /* ChatHistory */; };
 		B1E4E5172F314EF400AE11AA /* ExampleAgents in Frameworks */ = {isa = PBXBuildFile; productRef = B1E4E5162F314EF400AE11AA /* ExampleAgents */; };
 /* End PBXBuildFile section */
 
@@ -121,6 +122,7 @@
 				B19B31B62F2C9A0600645F8A /* Ollama in Frameworks */,
 				B19B31AF2F2C99C300645F8A /* Ollama in Frameworks */,
 				B1E4E5152F314EF400AE11AA /* Chat in Frameworks */,
+				B1C4A7000000000000000001 /* ChatHistory in Frameworks */,
 				B19B31B22F2C9A0600645F8A /* AppleLangTools in Frameworks */,
 				B1E4E5172F314EF400AE11AA /* ExampleAgents in Frameworks */,
 				B19B31AD2F2C99C300645F8A /* LangTools in Frameworks */,
@@ -209,6 +211,7 @@
 				B19B31BC2F2D205700645F8A /* ExampleAgents */,
 				B1E4E5122F314EF400AE11AA /* Audio */,
 				B1E4E5142F314EF400AE11AA /* Chat */,
+				B1C4A7000000000000000002 /* ChatHistory */,
 				B1E4E5162F314EF400AE11AA /* ExampleAgents */,
 			);
 			productName = LangTools;
@@ -817,6 +820,10 @@
 		B1E4E5162F314EF400AE11AA /* ExampleAgents */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ExampleAgents;
+		};
+		B1C4A7000000000000000002 /* ChatHistory */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ChatHistory;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

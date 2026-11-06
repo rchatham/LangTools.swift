@@ -1,0 +1,192 @@
+import Foundation
+import XCTest
+@testable import Chat
+@testable import ChatHistory
+
+@MainActor
+final class ChatSessionManagerTests: XCTestCase {
+    private func makeManager(_ storage: InMemoryChatHistoryStorage, maximumIdleSessions: Int = 16) -> ChatSessionManager {
+        ChatSessionManager(
+            storage: storage,
+            hooks: TestHooks.make(client: ScriptedChatClient()),
+            timing: .manual,
+            maximumIdleSessions: maximumIdleSessions
+        )
+    }
+
+    func testOneLiveSessionPerConversation() throws {
+        let storage = InMemoryChatHistoryStorage()
+        let manager = makeManager(storage)
+        let record = try storage.createConversation(ConversationDraft())
+
+        XCTAssertTrue(try manager.session(for: record.id) === manager.session(for: record.id))
+        XCTAssertEqual(manager.liveConversationIDs, [record.id])
+        XCTAssertThrowsError(try manager.session(for: UUID()))
+    }
+
+    func testADraftThatWasAlreadyStoredLoadsItsMessages() throws {
+        let storage = InMemoryChatHistoryStorage()
+        let manager = makeManager(storage)
+        let record = try storage.importConversation(ConversationDraft(), messages: [text("kept", .user, at: 1)])
+
+        let session = manager.draftSession(ConversationDraft(id: record.id))
+
+        XCTAssertTrue(session.isMaterialized)
+        XCTAssertEqual(session.chatMessages.map(\.text), ["kept"])
+    }
+
+    func testEvictedSessionsAreReusedWhileSomethingHoldsThem() throws {
+        let storage = InMemoryChatHistoryStorage()
+        let manager = makeManager(storage, maximumIdleSessions: 1)
+        let ids = try (0..<3).map { _ in try storage.createConversation(ConversationDraft()).id }
+
+        var held: ChatSession? = try manager.session(for: ids[0])
+        _ = try manager.session(for: ids[1])
+        _ = try manager.session(for: ids[2])
+
+        XCTAssertTrue(manager.liveSession(for: ids[0]) === held, "A held session is revived, not duplicated")
+        let heldID = held?.conversationID
+        held = nil
+        XCTAssertNotNil(heldID)
+        XCTAssertNil(manager.liveSession(for: ids[1]), "An evicted session nobody holds is released")
+    }
+}
+
+@MainActor
+final class ChatRetentionTests: XCTestCase {
+    private let now = Date(timeIntervalSinceReferenceDate: 10_000_000)
+
+    func testKeepForeverDeletesNothing() throws {
+        let storage = InMemoryChatHistoryStorage(now: { Date(timeIntervalSinceReferenceDate: 0) })
+        try storage.createConversation(ConversationDraft())
+        let pruner = ChatRetentionPruner(storage: storage, isExpired: { _, _ in true })
+
+        XCTAssertEqual(try pruner.prune(policy: .keepForever, now: now), .none)
+        XCTAssertEqual(try storage.conversations(matching: .all).count, 1)
+    }
+
+    func testPinnedExemptAndLiveConversationsAreAlwaysKept() throws {
+        let storage = InMemoryChatHistoryStorage(now: { Date(timeIntervalSinceReferenceDate: 0) })
+        let pinned = try storage.createConversation(ConversationDraft(isPinned: true))
+        let exempt = try storage.createConversation(ConversationDraft(isRetentionExempt: true))
+        let live = try storage.createConversation(ConversationDraft())
+        let ordinary = try storage.createConversation(ConversationDraft())
+        let archived = try storage.createConversation(ConversationDraft())
+        try storage.updateConversation(id: archived.id, .archive(at: Date(timeIntervalSinceReferenceDate: 0)))
+        let pruner = ChatRetentionPruner(storage: storage, isExpired: { _, _ in true })
+
+        let report = try pruner.prune(policy: .deleteInactive(afterDays: 30), protecting: [live.id], now: now)
+
+        XCTAssertEqual(report.deletedIDs, [ordinary.id, archived.id])
+        XCTAssertEqual(report.evaluatedCount, 5)
+        XCTAssertEqual(Set(try storage.conversations(matching: .init(includeArchived: true)).map(\.id)),
+                       [pinned.id, exempt.id, live.id])
+    }
+
+    func testPolicyCutoffAndPersistence() throws {
+        XCTAssertNil(ChatRetentionPolicy.keepForever.cutoff(now: now))
+        XCTAssertNil(ChatRetentionPolicy.deleteInactive(afterDays: 0).cutoff(now: now))
+        let calendar = Calendar(identifier: .gregorian)
+        XCTAssertEqual(
+            ChatRetentionPolicy.deleteInactive(afterDays: 30).cutoff(now: now, calendar: calendar),
+            calendar.date(byAdding: .day, value: -30, to: now)
+        )
+
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "ChatRetentionTests-\(UUID().uuidString)"))
+        let store = ChatRetentionSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.load(), .keepForever)
+        store.save(.deleteInactive(afterDays: 90))
+        XCTAssertEqual(store.load(), .deleteInactive(afterDays: 90))
+    }
+}
+
+@MainActor
+final class ChatHistoryLibraryTests: XCTestCase {
+    private func makeLibrary(_ storage: InMemoryChatHistoryStorage, client: ScriptedChatClient = ScriptedChatClient()) -> ChatHistoryLibrary {
+        let defaults = UserDefaults(suiteName: "ChatHistoryLibraryTests-\(UUID().uuidString)")!
+        return ChatHistoryLibrary(
+            sessions: ChatSessionManager(storage: storage, hooks: TestHooks.make(client: client), timing: .manual),
+            exporter: ChatHistoryExporter(appName: "Tests", now: { Date(timeIntervalSinceReferenceDate: 0) }),
+            retentionSettings: ChatRetentionSettingsStore(defaults: defaults)
+        )
+    }
+
+    func testListModelReloadsAfterStoreChangesAndSearches() async throws {
+        let storage = InMemoryChatHistoryStorage()
+        let library = makeLibrary(storage)
+        let model = ConversationListModel(library: library, query: .init(threadKinds: ["topic"]))
+        XCTAssertTrue(model.conversations.isEmpty)
+
+        let topic = try library.createConversation(ConversationDraft(title: "Garden", threadKind: "topic"))
+        try library.createConversation(ConversationDraft(title: "Hidden main", threadKind: "main"))
+        await assertEventually { model.conversations.map(\.id) == [topic.id] }
+        try library.setPinned(topic.id, true)
+        await assertEventually { model.pinned.map(\.id) == [topic.id] }
+        model.searchText = "nothing matches"
+        XCTAssertTrue(model.conversations.isEmpty)
+    }
+
+    func testDeleteClosesTheLiveSessionFirst() async throws {
+        let storage = InMemoryChatHistoryStorage()
+        let library = makeLibrary(storage)
+        let record = try library.createConversation(ConversationDraft())
+        let session = try library.sessions.session(for: record.id)
+
+        try library.deleteConversations([record.id])
+
+        XCTAssertTrue(session.isClosed)
+        XCTAssertNil(library.conversation(id: record.id))
+    }
+
+    func testJSONExportReimportsLosslessly() throws {
+        let source = InMemoryChatHistoryStorage()
+        let library = makeLibrary(source)
+        let child = Message.agentEvent(type: .completed, agentName: "Maps", details: "done")
+        let event = Message(
+            role: .system,
+            contentType: .agentEvent(AgentEventContent(type: .started, agentName: "Maps", details: "go", children: [child])),
+            createdAt: Date(timeIntervalSinceReferenceDate: 1.25)
+        )
+        let messages = [text("Where?", .user, at: 1), event, text("Here", .assistant, at: 2.5)]
+        let record = try source.importConversation(
+            ConversationDraft(title: "Trip", owner: .init(kind: "bot", id: "7"), threadKind: "topic", metadata: ["a": "b"]),
+            messages: messages
+        )
+
+        let json = try library.export(record.id, format: .json)
+        let document = try ChatHistoryExporter.decodeDocument(from: Data(json.utf8))
+        let target = InMemoryChatHistoryStorage()
+        let imported = try makeLibrary(target).importDocument(document)
+
+        XCTAssertEqual(imported.id, record.id)
+        XCTAssertEqual(imported.owner, record.owner)
+        XCTAssertEqual(imported.metadata, ["a": "b"])
+        let restored = try target.loadMessages(conversationID: record.id)
+        XCTAssertEqual(restored.map(\.uuid), messages.map(\.uuid))
+        XCTAssertEqual(restored.map(\.createdAt), messages.map(\.createdAt), "Fractional seconds survive")
+        XCTAssertEqual(restored[1].childMessages.map(\.uuid), [child.uuid])
+    }
+
+    func testMarkdownAndPlainTextExports() throws {
+        let storage = InMemoryChatHistoryStorage()
+        let library = makeLibrary(storage)
+        let record = try storage.importConversation(
+            ConversationDraft(title: "Notes"),
+            messages: [text("Hello", .user, at: 1), text("Hi!", .assistant, at: 2)]
+        )
+
+        let markdown = try library.export(record.id, format: .markdown)
+        XCTAssertTrue(markdown.hasPrefix("# Notes\n"))
+        XCTAssertTrue(markdown.contains("### You"))
+        XCTAssertTrue(markdown.contains("Hi!"))
+        XCTAssertTrue(markdown.contains("*Exported from Tests on"))
+
+        let plain = try library.export(record.id, format: .plainText)
+        XCTAssertTrue(plain.contains("[YOU]"))
+        XCTAssertTrue(plain.contains("[ASSISTANT]"))
+        XCTAssertEqual(
+            ChatHistoryExporter.filename(for: record, format: .json, date: Date(timeIntervalSinceReferenceDate: 12 * 3600)),
+            "Notes_2001-01-01.json"
+        )
+    }
+}
