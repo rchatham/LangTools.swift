@@ -313,7 +313,9 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
 
     private func markConnectionFailed() {
         lock.lock()
-        _state = .error
+        // A disconnect() already closed the session (and its socket failing
+        // is the result): keep .disconnected rather than reporting .error.
+        if !_closed { _state = .error }
         _closed = true
         lock.unlock()
     }

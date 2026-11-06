@@ -355,7 +355,7 @@ public final class RealtimePipelineManager: RealtimePipeline, @unchecked Sendabl
                 case .interruptionDetected:
                     guard self.interruptionConfig.enabled,
                           self.transition(from: .processing, to: .interrupted) else { return }
-                    Task { await self.finishInterrupt() }
+                    Task { [weak self] in await self?.finishInterrupt() }
                 }
             }
             lock.lock()
