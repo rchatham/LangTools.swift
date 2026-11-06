@@ -425,11 +425,6 @@ extension MessageService: @retroactive ChatMessageService {
     }
 }
 
-extension Message: @retroactive ChatMessageInfo {
-    public weak var parentMessage: Message? { parent }
-    public var childChatMessages: [Message] { childMessages }
-}
-
 /// Legacy UITestMode — the original, pre-fixture mechanism. Only active in
 /// Debug + macOS; Release and non-macOS builds ignore the env var entirely.
 private enum UITestMode: String {

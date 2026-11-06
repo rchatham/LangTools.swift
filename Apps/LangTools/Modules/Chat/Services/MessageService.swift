@@ -309,6 +309,15 @@ public class MessageService {
     /// Callback fired when a message is added or modified (for persistence)
     public var messageUpdatedCallback: ((Message) -> Void)?
 
+    /// Optional hook that can rewrite one request's system prompt and history
+    /// before it is sent, for example to compact older turns or inject memory.
+    ///
+    /// The `Message` objects in `ChatRequestContext.history` are the live
+    /// transcript, so a preparer must return copies instead of mutating them.
+    /// A thrown error fails the send like a provider error. `nil` leaves every
+    /// request unchanged.
+    @ObservationIgnored public var requestPreparer: (@MainActor (ChatRequestContext) async throws -> ChatRequestContext)?
+
     /// Optional hook called when an agent completes with a non-error result.
     /// Receives the raw result string and the agent name; return a `Message` to
     /// display it as structured content, or `nil` to fall through to the default
@@ -470,8 +479,18 @@ public class MessageService {
         let replayService = selectedModel.apiService
 
         do {
-            var currentMessages = requestSnapshot
-            currentMessages.insert(Message(text: systemMessage(), role: .system), at: 0)
+            var history = requestSnapshot
+            var systemPrompt = systemMessage()
+            if let requestPreparer {
+                let prepared = try await requestPreparer(
+                    ChatRequestContext(systemPrompt: systemPrompt, history: history, model: selectedModel)
+                )
+                guard conversationID == requestConversationID else { throw CancellationError() }
+                systemPrompt = prepared.systemPrompt
+                history = prepared.history
+            }
+            var currentMessages = history
+            currentMessages.insert(Message(text: systemPrompt, role: .system), at: 0)
 
             let activeTools = budgetedTools(filteredTools(for: sendID), budget: toolBudget)
             let agentToolNames = Set(agents.map(\.name))
