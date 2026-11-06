@@ -22,12 +22,20 @@ public final class AuthSessionStore {
         keychain: Keychain(service: ChatUITestEnvironment.fixtureKeychainService)
     )
 
-    private let keychain: Keychain
+    private let keychain: Keychain?
+    private let syntheticSecrets: (any KeychainSecretStoring)?
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
     public init(keychain: Keychain = Keychain(service: "com.reidchatham.LangTools_Example")) {
         self.keychain = keychain
+        syntheticSecrets = nil
+    }
+
+    /// Internal store seam for synthetic tests; production still uses Keychain unchanged.
+    init(secretStore: any KeychainSecretStoring) {
+        keychain = nil
+        syntheticSecrets = secretStore
     }
 
     public func save(_ session: AccountSession) throws {
@@ -35,11 +43,13 @@ public final class AuthSessionStore {
         guard let json = String(data: data, encoding: .utf8) else {
             throw AuthSessionStoreError.encodingFailed
         }
-        try keychain.set(json, key: key(for: session.provider))
+        if let syntheticSecrets { try syntheticSecrets.setSecret(json, forKey: key(for: session.provider)) }
+        else { try keychain?.set(json, key: key(for: session.provider)) }
     }
 
     public func session(for provider: AccountLoginProvider) throws -> AccountSession? {
-        guard let json = try keychain.getString(key(for: provider)) else {
+        let stored = try syntheticSecrets?.readSecret(forKey: key(for: provider)) ?? keychain?.getString(key(for: provider))
+        guard let json = stored else {
             return nil
         }
         guard let data = json.data(using: .utf8) else {
@@ -49,7 +59,8 @@ public final class AuthSessionStore {
     }
 
     public func removeSession(for provider: AccountLoginProvider) throws {
-        try keychain.remove(key(for: provider))
+        if let syntheticSecrets { try syntheticSecrets.removeSecret(forKey: key(for: provider)) }
+        else { try keychain?.remove(key(for: provider)) }
     }
 
     public func allSessions() throws -> [AccountSession] {

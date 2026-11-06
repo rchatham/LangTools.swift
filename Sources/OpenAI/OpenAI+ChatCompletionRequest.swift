@@ -592,6 +592,22 @@ extension OpenAI {
                 }
             }
 
+            /// Settles a first-arrival choice: folds its delta into `message` so content and tool
+            /// calls survive even when no later chunk for this index arrives — the whole response
+            /// as one SSE chunk (gateway-buffered or tiny responses), or a sparse/late-arriving
+            /// choice appended mid-stream, would otherwise reach EOF with `message == nil` and
+            /// silently skip the tool completion request. An already-materialized `message` (the
+            /// non-stream shape) passes through verbatim; `index`, `finish_reason`, `delta`, and
+            /// `logprobs` are preserved untouched. Later chunks fold through `combining(with:)`,
+            /// whose `message ?? ...` short-circuits against the settled message — no duplication.
+            func settled() -> Choice {
+                Choice(index: index,
+                       message: message ?? combining(nil, with: delta),
+                       finish_reason: finish_reason,
+                       delta: delta,
+                       logprobs: logprobs)
+            }
+
             func combining(with next: Choice) -> Choice {
                 // We want to merge all `delta`s into the `message` parameter, however the first
                 // ChatCompletionResponse we decode does not have a value for `message` if it is streaming
@@ -710,7 +726,11 @@ extension OpenAI {
         func combining(_ choices: [Choice], with next: [Choice]) -> [Choice] {
             // The first chunk must establish the sorted-accumulator invariant too — if it carries
             // multiple out-of-order choices and is also the last combine, nothing downstream heals it.
-            if choices.isEmpty { return next.isSortedByIndex ? next : next.sorted() }
+            if choices.isEmpty {
+                // A compliant server may send the entire response as one SSE chunk (gateway-buffered
+                // or tiny responses), so every first-arrival choice settles immediately.
+                return (next.isSortedByIndex ? next : next.sorted()).map { $0.settled() }
+            }
             let orderedNext = next.isSortedByIndex ? next : next.sorted()
             // An empty `next` (the terminal usage-only chunk of a real stream) falls through to
             // the reduce as a no-op over the self-healed initial value — no early return needed,
@@ -719,7 +739,10 @@ extension OpenAI {
                 if let index = partialResult.firstIndex(where: { $0.index == next.index }) {
                     partialResult[index] = partialResult[index].combining(with: next)
                 } else {
-                    partialResult.append(next)
+                    // A choice index seen for the first time mid-stream settles too — a sparse or
+                    // late-arriving choice must not depend on a later same-index chunk to
+                    // materialize its message.
+                    partialResult.append(next.settled())
                 }
             }
         }

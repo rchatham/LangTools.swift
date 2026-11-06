@@ -47,4 +47,12 @@ final class UserDefaultsModelMigrationTests: XCTestCase {
         XCTAssertEqual(UserDefaults.model.rawValue, "codex/gpt-5.5")
         XCTAssertEqual(UserDefaults.standard.string(forKey: key), "codex/gpt-5.5")
     }
+
+    func testOllamaCloudRoutePersistsIndependentlyFromLocalOllama() {
+        UserDefaults.standard.set("ollama-cloud/glm-5.2", forKey: key)
+
+        XCTAssertEqual(UserDefaults.model.rawValue, "ollama-cloud/glm-5.2")
+        XCTAssertEqual(UserDefaults.model.route, .ollamaCloud)
+        XCTAssertEqual(UserDefaults.standard.string(forKey: key), "ollama-cloud/glm-5.2")
+    }
 }

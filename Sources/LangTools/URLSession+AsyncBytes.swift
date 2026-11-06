@@ -12,44 +12,89 @@ extension URLSession {
         let cancellation = DataTaskCancellation()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
+                cancellation.install { continuation.resume(with: $0) }
                 let task = dataTask(with: request) { data, response, error in
                     if let error = error {
-                        continuation.resume(throwing: error)
+                        cancellation.complete(.failure(error))
                     } else if let data = data, let response = response {
-                        continuation.resume(returning: (data, response))
+                        cancellation.complete(.success((data, response)))
                     } else {
-                        continuation.resume(throwing: URLError(.badServerResponse))
+                        cancellation.complete(.failure(URLError(.badServerResponse)))
                     }
                 }
-                cancellation.start(task)
+                cancellation.start(resume: { task.resume() }, cancel: { task.cancel() })
             }
         } onCancel: {
             cancellation.cancel()
         }
     }
 
-    private final class DataTaskCancellation: @unchecked Sendable {
+    // Internal action seam keeps ordering tests independent of sockets and of
+    // FoundationNetworking's URLProtocol implementation.
+    final class DataTaskCancellation: @unchecked Sendable {
+        typealias Response = (Data, URLResponse)
         private let lock = NSLock()
-        private var task: URLSessionDataTask?
+        private var completion: ((Result<Response, Error>) -> Void)?
+        private var result: Result<Response, Error>?
+        private var cancelTask: (() -> Void)?
+        private var isStarting = false
         private var isCancelled = false
 
-        func start(_ task: URLSessionDataTask) {
+        func install(_ completion: @escaping (Result<Response, Error>) -> Void) {
             lock.lock()
-            self.task = task
-            let isCancelled = isCancelled
+            let result = result
+            if result == nil { self.completion = completion }
             lock.unlock()
-            task.resume()
-            // Cancellation may arrive before the task exists; the cancelled task
-            // still calls its completion handler, which resumes the continuation.
-            if isCancelled { task.cancel() }
+            if let result { completion(result) }
+        }
+
+        func start(resume: () -> Void, cancel: @escaping () -> Void) {
+            lock.lock()
+            guard result == nil else {
+                lock.unlock()
+                cancel()
+                return
+            }
+            // Commit start under the same lock as cancellation. A cancellation
+            // that wins this transition never resumes the task. If start wins,
+            // defer task cancellation until resume returns (which may reenter).
+            isStarting = true
+            cancelTask = cancel
+            lock.unlock()
+            resume()
+            lock.lock()
+            isStarting = false
+            let shouldCancel = isCancelled
+            if result != nil { cancelTask = nil }
+            lock.unlock()
+            if shouldCancel { cancel() }
+        }
+
+        func complete(_ result: Result<Response, Error>) {
+            lock.lock()
+            guard self.result == nil else { lock.unlock(); return }
+            self.result = result
+            let completion = completion
+            self.completion = nil
+            cancelTask = nil
+            lock.unlock()
+            completion?(result)
         }
 
         func cancel() {
             lock.lock()
+            guard result == nil else { lock.unlock(); return }
             isCancelled = true
-            let task = task
+            let result: Result<Response, Error> = .failure(URLError(.cancelled))
+            self.result = result
+            let completion = completion
+            self.completion = nil
+            let cancelTask = isStarting ? nil : cancelTask
+            if !isStarting { self.cancelTask = nil }
             lock.unlock()
-            task?.cancel()
+            // Neither URLSession nor continuation callbacks run under our lock.
+            cancelTask?()
+            completion?(result)
         }
     }
 

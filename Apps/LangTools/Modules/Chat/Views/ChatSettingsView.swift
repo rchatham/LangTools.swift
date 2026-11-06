@@ -53,10 +53,7 @@ public struct ChatSettingsView: View {
             viewModel.applyHydratedHelperConfigurationIfTokenUnedited(port: helper.port)
         }
         .onChange(of: viewModel.isProxyContext) { _, isProxy in
-            if isProxy {
-                showingOllamaSettings = false
-                if selectedTab == .localModels { selectedTab = .general }
-            }
+            // Local model management remains available in proxy modes.
         }
     }
 
@@ -98,7 +95,7 @@ public struct ChatSettingsView: View {
                     .listRowSeparator(.hidden)
                 #endif
 
-                ForEach(SettingsTab.allCases.filter { !viewModel.isProxyContext || $0 != .localModels }) { tab in
+                ForEach(SettingsTab.allCases) { tab in
                     Button(action: {
                         selectedTab = tab
                         selectedCustomTab = nil
@@ -290,7 +287,6 @@ public struct ChatSettingsView: View {
             #endif
 
             #if !os(watchOS) && !os(tvOS)
-            if !viewModel.isProxyContext {
             Section(header: Text("Local Models")) {
                 Button(action: {
                     guard !ChatUITestEnvironment.isFixtureActive else { return }
@@ -305,7 +301,6 @@ public struct ChatSettingsView: View {
                     }
                 }
                 .disabled(ChatUITestEnvironment.isFixtureActive)
-            }
             }
             #endif
 
@@ -549,7 +544,9 @@ public struct ChatSettingsView: View {
                                 .font(.headline)
                                 .foregroundColor(.secondary)
 
-                            Text(viewModel.isProxyContext ? "Models are provided by the Botsworth server. No personal provider API key is required." : modelDescription(for: viewModel.model))
+                            Text(viewModel.isProxyContext && ![ModelRoute.ollama, .ollamaCloud].contains(viewModel.model.route)
+                                 ? "Models are provided by the Botsworth server. No personal provider API key is required."
+                                 : modelDescription(for: viewModel.model))
                                 .font(.body)
                         }
 
@@ -976,7 +973,8 @@ public struct ChatSettingsView: View {
         }
     }
 
-    private var generationSettingsControls: some View {
+    // Internal composition seam also used by the guarded host render harness.
+    var generationSettingsControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             ChatGenerationSettingsView(
                 maxOutputTokens: Binding(
@@ -1011,9 +1009,16 @@ public struct ChatSettingsView: View {
                     get: { viewModel.generationSettings.stop },
                     set: { viewModel.updateStop($0) }
                 ),
-                capabilities: viewModel.model.generationCapabilities,
+                capabilities: viewModel.effectiveGenerationCapabilities,
                 reset: viewModel.resetGenerationSettings
             )
+            if viewModel.model.generationCapabilities.supportsTopK,
+               !viewModel.effectiveGenerationCapabilities.supportsTopK {
+                Text("Top K is inactive for this transport. Its saved value is retained for supported transports.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .accessibilityIdentifier("generation.topK.inactive")
+            }
             if let error = viewModel.generationSettingsError {
                 Text(error)
                     .font(.caption)
@@ -1034,7 +1039,7 @@ public struct ChatSettingsView: View {
                 Text("Manage Ollama Models")
                     .font(.headline)
 
-                Text("Ollama allows you to run large language models locally on your Mac. Configure and manage your local models from here.")
+                Text("Configure models served by your self-hosted Ollama endpoint. Every model selected under the ollama/ route uses that endpoint, including model IDs ending in :cloud. Hosted Ollama Cloud models use the separate ollama-cloud/ route and do not require a self-hosted daemon.")
                     .font(.body)
                     .foregroundColor(.secondary)
                     .padding(.bottom, 8)
@@ -1141,7 +1146,9 @@ public struct ChatSettingsView: View {
         case .compatible(let provider, _):
             return "Served through \(provider.displayName). Capabilities depend on the model."
         case .ollama:
-            return "This is a locally-hosted model running through Ollama. Performance and capabilities depend on the model and your local hardware."
+            return "This model runs through your configured self-hosted Ollama endpoint, including when its model ID ends in :cloud. Performance and capabilities depend on that endpoint."
+        case .ollamaCloud:
+            return "This model runs through Ollama Cloud using the app's selected backend mode. It is independent from local Ollama and does not require a local daemon."
         case .apple:
             return "Apple's on-device foundation model. It runs privately without a network connection, but has a small context window and does not use tools yet."
         default:
@@ -1349,11 +1356,16 @@ extension ChatSettingsView {
             self.lastSyncedHelperTokenSnapshot = helperToken
             modelSource?.$state.sink { [weak self] state in
                 guard let self else { return }
-                if case .ready(let models) = state, !models.contains(self.model), let first = models.first {
-                    self.model = first
+                if case .ready = state {
+                    // Use reconciledSelection so local ollama/Cloud choices are never
+                    // replaced by the first hosted model.
+                    self.model = self.modelSource?.reconciledSelection(self.model, state: state) ?? self.model
                 }
                 self.objectWillChange.send()
             }.store(in: &cancellables)
+            modelSource?.$independentModels
+                .sink { [weak self] _ in self?.objectWillChange.send() }
+                .store(in: &cancellables)
             // ToolManager is a nested ObservableObject. SwiftUI won't re-render this view
             // when ToolManager's @Published properties change unless we relay its
             // objectWillChange through our own.
@@ -1364,6 +1376,10 @@ extension ChatSettingsView {
             accessManager.objectWillChange
                 .sink { [weak self] _ in self?.objectWillChange.send() }
                 .store(in: &cancellables)
+        }
+
+        public var effectiveGenerationCapabilities: ChatGenerationCapabilities {
+            modelSource?.effectiveGenerationCapabilities(for: model) ?? model.generationCapabilities
         }
 
         /// Narrows the model picker; matched against model IDs and provider names.
@@ -1377,7 +1393,7 @@ extension ChatSettingsView {
         }
 
         public var availableModels: [Model] {
-            if let modelSource, modelSource.isProxy { return modelSource.models }
+            if let modelSource, modelSource.isProxy { return modelSource.pickerModels(retaining: model) }
             let available = accessManager.availableChatModels()
             guard model.apiService == .ollama, !available.contains(model) else { return available }
             return [model] + available
@@ -1667,7 +1683,12 @@ extension ChatSettingsView {
         }
 
         func modelPickerTitle(for model: Model) -> String {
-            if isProxyContext { return model.rawValue }
+            if let modelSource, modelSource.isProxy {
+                if model == self.model, modelSource.isRetainedUnavailableSelection(model) {
+                    return "\(model.rawValue) — Unavailable in current catalog"
+                }
+                return model.rawValue
+            }
             if model.apiService == .ollama,
                !accessManager.availableChatModels().contains(model) {
                 return "\(model.rawValue) — Unavailable on current Ollama server"

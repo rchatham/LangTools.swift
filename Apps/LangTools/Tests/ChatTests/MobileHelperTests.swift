@@ -61,7 +61,7 @@ final class MobileHelperTests: XCTestCase {
         try await waitUntil { !coordinator.isPairing }
         XCTAssertNil(coordinator.errorMessage)
         XCTAssertEqual(configuration.snapshot().helperID, helperID)
-        XCTAssertEqual(configuration.snapshot().baseURL.path, "/v1/ollama")
+        XCTAssertEqual(configuration.snapshot().baseURL?.path, "/v1/ollama")
         XCTAssertEqual(store.records.count, 1)
         let requests = HelperPairingTestProtocol.requests
         XCTAssertEqual(requests.map { $0.url!.path }, ["/v1/mobile/pair", "/v1/mobile/health"])
@@ -132,7 +132,7 @@ final class MobileHelperTests: XCTestCase {
         installSuccessfulResponses(delay: 0.1)
         coordinator.handle(try payload().pairingURL())
         coordinator.confirm(deviceName: "Phone")
-        _ = try configuration.update("http://new.local:11434")
+        _ = try configuration.update("https://new.local:11434")
         try await Task.sleep(nanoseconds: 300_000_000)
         XCTAssertTrue(store.records.isEmpty)
         XCTAssertFalse(configuration.snapshot().isHelper)

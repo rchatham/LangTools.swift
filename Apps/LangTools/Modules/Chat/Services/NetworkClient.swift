@@ -53,8 +53,8 @@ extension NetworkClientProtocol {
         try streamChatCompletionRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
     }
 
-    func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) -> any LangToolsChatRequest & LangToolsStreamableRequest where Self: NetworkClient {
-        self.directRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
+    func request(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> any LangToolsChatRequest & LangToolsStreamableRequest where Self: NetworkClient {
+        try self.directRequest(messages: messages, model: model, stream: stream, tools: tools, toolChoice: toolChoice, toolEventHandler: toolEventHandler)
     }
 
     func agentContext(messages: [Message], model: Model = UserDefaults.model, eventHandler: @escaping (AgentEvent) -> Void) throws -> AgentContext {
@@ -73,7 +73,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     private let compatibleCatalog: CompatibleModelCatalog
     public let providerAccessManager: ProviderAccessManager
     private let ollamaEndpointConfiguration: OllamaEndpointConfiguration
-    private let ollamaSession: URLSession
+    private let ollamaSession: URLSession?
 
     private var userDefaults: UserDefaults { .standard }
     private var langToolchain = LangToolchain()
@@ -88,7 +88,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         openAIAccountChatBridge: OpenAIAccountChatBridging = CLIAccountSessionBridge(),
         providerAccessManager: ProviderAccessManager = .shared,
         ollamaEndpointConfiguration: OllamaEndpointConfiguration = .shared,
-        ollamaSession: URLSession = .shared,
+        ollamaSession: URLSession? = nil,
         generationSettingsProvider: @escaping @Sendable () -> ChatGenerationSettings = {
             ChatGenerationSettingsStore().load()
         },
@@ -271,9 +271,9 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         catch { print(error.localizedDescription) }
     }
 
-    func directRequest(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) -> any LangToolsChatRequest & LangToolsStreamableRequest {
+    func directRequest(messages: [Message], model: Model, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> any LangToolsChatRequest & LangToolsStreamableRequest {
         let generationSettings = generationSettingsProvider()
-        return request(
+        return try request(
             messages: messages,
             model: model,
             generationSettings: generationSettings,
@@ -284,7 +284,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         )
     }
 
-    func request(messages: [Message], model: Model, generationSettings: ChatGenerationSettings, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) -> any LangToolsChatRequest & LangToolsStreamableRequest {
+    func request(messages: [Message], model: Model, generationSettings: ChatGenerationSettings, stream: Bool = false, tools: [Tool]? = nil, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice? = nil, toolEventHandler: @escaping (LangToolsToolEvent) -> Void = { _ in }) throws -> any LangToolsChatRequest & LangToolsStreamableRequest {
         let replayMessages = messages.replayFiltered(
             targetService: model.apiService,
             allowCrossProvider: ToolSettings.shared.crossProviderToolReplay
@@ -435,6 +435,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                 tools: tools?.convertTools(),
                 toolEventHandler: toolEventHandler
             )
+        case .ollamaCloud:
+            throw NetworkError.ollamaCloudTransportUnavailable
         case .apple(let providerModel):
             // Tool calling is not bridged to Foundation Models yet, so tools are
             // not sent; the on-device model answers from the conversation alone.
@@ -484,7 +486,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
             return AgentContext(langTool: context.langTool, model: context.model, messages: replayMessages.toOpenAIMessages(), eventHandler: eventHandler, parent: nil, tools: nil)
         case .ollama(let model):
             let snapshot = ollamaEndpointConfiguration.snapshot()
-            return AgentContext(langTool: try snapshot.provider(directSession: ollamaSession), model: model, messages: replayMessages.toOllamaMessages(), eventHandler: eventHandler)
+            return try snapshot.makeAgentContext(model: model, messages: replayMessages.toOllamaMessages(), eventHandler: eventHandler, directSession: ollamaSession ?? snapshot.directSession)
+        case .ollamaCloud: throw NetworkError.ollamaCloudTransportUnavailable
         case .apple:
             throw AppleIntelligenceError.toolCallingUnsupported
         }
@@ -503,7 +506,8 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         var snapshot = toolchainSnapshot()
         if model.apiService == .ollama {
             let endpoint = endpoint ?? ollamaEndpointConfiguration.snapshot()
-            snapshot.register(try endpoint.provider(directSession: ollamaSession))
+            // Register the captured capability, not a host-reconfigurable concrete provider.
+            return try endpoint.makeToolchain(directSession: ollamaSession ?? endpoint.directSession)
         }
         if model.apiService == .apple {
             snapshot.register(AppleIntelligence())
@@ -609,6 +613,9 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         }
     }
     private func ensureModelAccess(for model: Model) throws {
+        if model.route == .ollamaCloud {
+            throw NetworkError.ollamaCloudTransportUnavailable
+        }
         switch model.apiService {
         case .ollama:
             return
@@ -669,6 +676,7 @@ extension NetworkClient {
         case missingApiKey
         case emptyApiKey
         case incompatibleRequest
+        case ollamaCloudTransportUnavailable
         case modelAccessUnavailable(String)
         case accountProxyTransportFailed(String)
         case unexpectedResponseFormat
@@ -682,6 +690,8 @@ extension NetworkClient {
                 return "API key cannot be empty."
             case .incompatibleRequest:
                 return "The selected request is incompatible with the current provider."
+            case .ollamaCloudTransportUnavailable:
+                return "Ollama Cloud transport must be provided by the hosting app and does not use the configured Ollama endpoint."
             case .modelAccessUnavailable(let modelID):
                 return "Your current credentials do not include access to \(modelID)."
             case .accountProxyTransportFailed(let message):

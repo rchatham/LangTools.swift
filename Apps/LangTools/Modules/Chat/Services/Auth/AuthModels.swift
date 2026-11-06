@@ -92,7 +92,7 @@ public enum AccessDestination: String, CaseIterable, Identifiable, Equatable {
         case .gemini: return .gemini
         case .openrouter, .vercel, .groq, .mistral, .deepseek, .cerebras, .together, .fireworks, .cohere, .perplexity:
             return CompatibleProvider(rawValue: model.route.rawValue)!.accessDestination
-        case .ollama, .apple: return nil
+        case .ollama, .ollamaCloud, .apple: return nil
         }
     }
 
