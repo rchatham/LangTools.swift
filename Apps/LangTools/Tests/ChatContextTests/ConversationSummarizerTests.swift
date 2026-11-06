@@ -8,10 +8,7 @@ import XCTest
 final class LLMConversationSummarizerTests: XCTestCase {
     func testSendsInstructionsAndAFlattenedTranscriptToTheSummaryModel() async throws {
         let client = ContextScriptedClient([.success("  - The user is planning a trip.  ")])
-        let summarizer = LLMConversationSummarizer(
-            networkClient: client,
-            policy: CompactionPolicy(summaryModelIdentifier: "openai/gpt-4o-mini")
-        )
+        let summarizer = LLMConversationSummarizer(networkClient: client)
         let prompt = Message(text: "Plan a trip to Lisbon", role: .user)
         let toolUse = Message(
             role: .assistant,
@@ -24,7 +21,8 @@ final class LLMConversationSummarizerTests: XCTestCase {
             previousSummary: "The user likes window seats.",
             messages: [prompt, toolUse],
             model: .openAI(.gpt4),
-            maximumTokens: 300
+            maximumTokens: 300,
+            policy: CompactionPolicy(summaryModelIdentifier: "openai/gpt-4o-mini")
         ))
 
         XCTAssertEqual(summary, ContextSummary(text: "- The user is planning a trip.", model: "openai/gpt-4o-mini"))
@@ -43,7 +41,6 @@ final class LLMConversationSummarizerTests: XCTestCase {
     func testTranscriptsTooLongForTheModelAreSummarizedInFoldingChunks() async throws {
         var calls: [String] = []
         let summarizer = LLMConversationSummarizer(
-            policy: testPolicy(window: 2_000),
             complete: { messages, _ in
                 calls.append(messages[1].text ?? "")
                 return "summary \(calls.count)"
@@ -55,7 +52,8 @@ final class LLMConversationSummarizerTests: XCTestCase {
             previousSummary: nil,
             messages: messages,
             model: unknownWindowModel,
-            maximumTokens: 200
+            maximumTokens: 200,
+            policy: testPolicy(window: 2_000)
         ))
 
         XCTAssertGreaterThan(calls.count, 1, "3,000+ tokens of transcript cannot fit a 2,000-token window at once")

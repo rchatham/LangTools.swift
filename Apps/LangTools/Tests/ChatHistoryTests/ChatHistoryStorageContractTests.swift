@@ -1,7 +1,9 @@
 import Combine
 import Foundation
+import SwiftData
 import XCTest
 @testable import Chat
+@testable import ChatContext
 @testable import ChatHistory
 
 /// Behavior every `ChatHistoryStorage` must share. Subclasses supply the
@@ -229,6 +231,137 @@ class ChatHistoryStorageContractTests: XCTestCase {
         XCTAssertEqual(try storage.loadMessages(conversationID: record.id, window: .latest(2)).map(\.text), ["m3", "m4"])
     }
 
+    // MARK: Windows
+
+    /// Five plain messages, then an agent event with two children, then five more.
+    private func windowedConversation(_ storage: any ChatHistoryStorage) throws -> (UUID, [Message]) {
+        let record = try storage.createConversation(ConversationDraft())
+        var messages = (0..<5).map { text("m\($0)", .user, at: TimeInterval($0)) }
+        let childA = Message(role: .system, contentType: .agentEvent(AgentEventContent(type: .toolCalled, agentName: "A", details: "a")),
+                             createdAt: Date(timeIntervalSinceReferenceDate: 5.1))
+        let childB = Message(role: .system, contentType: .agentEvent(AgentEventContent(type: .completed, agentName: "A", details: "b")),
+                             createdAt: Date(timeIntervalSinceReferenceDate: 5.2))
+        messages.append(Message(role: .system,
+                                contentType: .agentEvent(AgentEventContent(type: .started, agentName: "A", details: "root", children: [childA, childB])),
+                                createdAt: Date(timeIntervalSinceReferenceDate: 5)))
+        messages += (6..<11).map { text("m\($0)", .assistant, at: TimeInterval($0)) }
+        try storage.applyMessageChanges(MessageChangeSet(upserts: messages), conversationID: record.id)
+        return (record.id, try storage.loadMessages(conversationID: record.id))
+    }
+
+    func testWindowsAreSlicesOfTheFullHistoryWithTheirChildren() throws {
+        let storage = try makeStorage()
+        let (id, all) = try windowedConversation(storage)
+        XCTAssertEqual(all.count, 11)
+        func ids(_ window: MessageWindow) throws -> [UUID] { try storage.loadMessages(conversationID: id, window: window).map(\.uuid) }
+
+        XCTAssertEqual(try ids(.latest(3)), all.suffix(3).map(\.uuid))
+        let latestSix = try storage.loadMessages(conversationID: id, window: .latest(6))
+        XCTAssertEqual(latestSix.map(\.uuid), all.suffix(6).map(\.uuid))
+        XCTAssertEqual(latestSix.first?.childMessages.count, 2, "An agent event comes with its children")
+        XCTAssertEqual(try ids(.latest(50)), all.map(\.uuid))
+        XCTAssertEqual(try ids(.latest(0)), [])
+
+        XCTAssertEqual(try ids(.since(all[7].uuid, minimumCount: 2)), all.suffix(4).map(\.uuid), "From the message on")
+        XCTAssertEqual(try ids(.since(all[9].uuid, minimumCount: 5)), all.suffix(5).map(\.uuid), "Extended to the minimum")
+        XCTAssertEqual(try ids(.since(UUID(), minimumCount: 1)), all.map(\.uuid), "An unknown message loads everything")
+
+        XCTAssertEqual(try ids(.before(all[7].uuid, limit: 3)), all[4..<7].map(\.uuid))
+        XCTAssertEqual(try ids(.before(all[2].uuid, limit: 10)), all[0..<2].map(\.uuid))
+        XCTAssertEqual(try ids(.before(UUID(), limit: 10)), [])
+        let page = try storage.loadMessages(conversationID: id, window: .before(all[6].uuid, limit: 1))
+        XCTAssertEqual(page.first?.childMessages.map(\.text), all[5].childMessages.map(\.text))
+    }
+
+    // MARK: Checkpoints
+
+    private func checkpoint(_ conversationID: UUID, through messageID: UUID, _ summary: String, at seconds: TimeInterval) -> ContextCheckpoint {
+        ContextCheckpoint(
+            conversationID: conversationID,
+            coversThroughMessageID: messageID,
+            summary: summary,
+            tokenEstimate: 4,
+            model: "openai/gpt-4o-mini",
+            createdAt: Date(timeIntervalSinceReferenceDate: seconds)
+        )
+    }
+
+    func testCheckpointsAreSavedAndTheNewestIsLatest() throws {
+        let storage = try makeStorage()
+        let (id, all) = try windowedConversation(storage)
+        XCTAssertNil(try storage.latestCheckpoint(conversationID: id))
+        let older = checkpoint(id, through: all[3].uuid, "older", at: 10)
+        let newer = checkpoint(id, through: all[8].uuid, "newer", at: 20)
+
+        try storage.saveCheckpoint(newer)
+        try storage.saveCheckpoint(older)
+
+        XCTAssertEqual(try storage.latestCheckpoint(conversationID: id), newer)
+        XCTAssertEqual(try storage.checkpoints(conversationID: id), [older, newer], "Oldest first")
+        XCTAssertThrowsError(try storage.latestCheckpoint(conversationID: UUID()))
+    }
+
+    func testACheckpointMustCoverAStoredTopLevelMessage() throws {
+        let storage = try makeStorage()
+        let (id, all) = try windowedConversation(storage)
+        let child = try XCTUnwrap(all[5].childMessages.first)
+
+        for boundary in [UUID(), child.uuid] {
+            XCTAssertThrowsError(try storage.saveCheckpoint(checkpoint(id, through: boundary, "bad", at: 1))) { error in
+                XCTAssertEqual(error as? ChatHistoryError, .messageNotFound(boundary))
+            }
+        }
+        let missing = UUID()
+        XCTAssertThrowsError(try storage.saveCheckpoint(checkpoint(missing, through: all[0].uuid, "x", at: 1))) { error in
+            XCTAssertEqual(error as? ChatHistoryError, .conversationNotFound(missing))
+        }
+        XCTAssertEqual(try storage.checkpoints(conversationID: id), [])
+    }
+
+    func testDeletingTheCoveredMessageMovesTheCheckpointBack() throws {
+        let storage = try makeStorage()
+        let (id, all) = try windowedConversation(storage)
+        let saved = checkpoint(id, through: all[3].uuid, "summary", at: 10)
+        try storage.saveCheckpoint(saved)
+
+        try storage.applyMessageChanges(MessageChangeSet(deletions: [all[3].uuid]), conversationID: id)
+        var moved = saved
+        moved.coversThroughMessageID = all[2].uuid
+        XCTAssertEqual(try storage.checkpoints(conversationID: id), [moved], "It still summarizes the deleted turn")
+
+        try storage.applyMessageChanges(MessageChangeSet(deletions: [all[7].uuid]), conversationID: id)
+        XCTAssertEqual(try storage.checkpoints(conversationID: id), [moved], "Deleting later messages changes nothing")
+
+        try storage.applyMessageChanges(MessageChangeSet(deletions: Set(all[0...2].map(\.uuid))), conversationID: id)
+        XCTAssertEqual(try storage.checkpoints(conversationID: id), [], "Nothing earlier remains, so the checkpoint goes")
+    }
+
+    func testAFailedSaveLeavesCheckpointsUnchanged() throws {
+        let storage = try makeStorage()
+        let (id, all) = try windowedConversation(storage)
+        let saved = checkpoint(id, through: all[3].uuid, "summary", at: 10)
+        try storage.saveCheckpoint(saved)
+
+        failNextSave(storage)
+        XCTAssertThrowsError(try storage.applyMessageChanges(MessageChangeSet(deletions: [all[3].uuid]), conversationID: id))
+        XCTAssertEqual(try storage.checkpoints(conversationID: id), [saved])
+
+        failNextSave(storage)
+        XCTAssertThrowsError(try storage.saveCheckpoint(checkpoint(id, through: all[9].uuid, "lost", at: 20)))
+        XCTAssertEqual(try storage.checkpoints(conversationID: id), [saved])
+    }
+
+    func testDeletingAConversationDeletesItsCheckpoints() throws {
+        let storage = try makeStorage()
+        let (id, all) = try windowedConversation(storage)
+        try storage.saveCheckpoint(checkpoint(id, through: all[3].uuid, "summary", at: 10))
+
+        try storage.deleteConversations(ids: [id])
+        try storage.createConversation(ConversationDraft(id: id))
+
+        XCTAssertEqual(try storage.checkpoints(conversationID: id), [])
+    }
+
     func testMessageChangesForUnknownConversationThrow() throws {
         let storage = try makeStorage()
         let missing = UUID()
@@ -287,6 +420,57 @@ final class SwiftDataFileStorageContractTests: ChatHistoryStorageContractTests {
 
         XCTAssertEqual(loaded.map(\.uuid), [first.uuid, second.uuid, event.uuid])
         XCTAssertEqual(loaded.last?.childMessages.map(\.uuid), [childA.uuid, childB.uuid])
+        let latest = try reopened.loadMessages(conversationID: record.id, window: .latest(1))
+        XCTAssertEqual(latest.first?.childMessages.map(\.uuid), [childA.uuid, childB.uuid],
+                       "Equal timestamps keep their order in windowed loads too")
+    }
+
+    func testCheckpointsSurviveReopeningTheStore() throws {
+        let storage = try makeStorage()
+        let record = try storage.createConversation(ConversationDraft())
+        let message = text("covered", .user, at: 1)
+        try storage.applyMessageChanges(MessageChangeSet(upserts: [message]), conversationID: record.id)
+        let saved = ContextCheckpoint(conversationID: record.id, coversThroughMessageID: message.uuid, summary: "s", tokenEstimate: 1, model: "m")
+        try storage.saveCheckpoint(saved)
+
+        let reopened = try SwiftDataChatHistoryStorage(location: .file(url))
+
+        XCTAssertEqual(try reopened.checkpoints(conversationID: record.id), [saved])
+    }
+
+    /// A store written by schema version 1 opens with its data intact and
+    /// gains checkpoints.
+    func testAVersionOneStoreMigratesToVersionTwo() throws {
+        url = temporaryStoreURL()
+        let conversationID = UUID()
+        let message = text("from version one", .user, at: 1)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        do {
+            let schema = Schema(versionedSchema: ChatHistorySchemaV1.self)
+            let container = try ModelContainer(
+                for: schema,
+                configurations: [ModelConfiguration("ChatHistory", schema: schema, url: url, allowsSave: true, cloudKitDatabase: .none)]
+            )
+            let context = ModelContext(container)
+            let conversation = ChatHistorySchemaV1.ChatHistoryConversation(id: conversationID)
+            conversation.title = "Old"
+            conversation.isTitleAutoGenerated = false
+            conversation.messageCount = 1
+            conversation.nextSortOrder = 1
+            context.insert(conversation)
+            let row = ChatHistorySchemaV1.ChatHistoryMessage(id: message.uuid, conversationID: conversationID)
+            row.apply(try MessageRowCodec.row(for: message, parentID: nil))
+            context.insert(row)
+            try context.save()
+        }
+
+        let migrated = try SwiftDataChatHistoryStorage(location: .file(url))
+
+        XCTAssertEqual(try migrated.conversation(id: conversationID)?.title, "Old")
+        XCTAssertEqual(try migrated.loadMessages(conversationID: conversationID), [message])
+        let saved = ContextCheckpoint(conversationID: conversationID, coversThroughMessageID: message.uuid, summary: "s", tokenEstimate: 1, model: "m")
+        try migrated.saveCheckpoint(saved)
+        XCTAssertEqual(try migrated.latestCheckpoint(conversationID: conversationID), saved)
     }
 }
 

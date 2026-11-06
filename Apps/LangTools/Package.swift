@@ -149,6 +149,7 @@ let package = Package(
                 .product(name: "LangTools", package: "langtools.swift"),
                 .product(name: "Agents", package: "langtools.swift"),
                 .product(name: "OpenAI", package: "langtools.swift"),
+                .product(name: "Ollama", package: "langtools.swift"),
             ],
             path: "Tests/ChatContextTests"),
         .testTarget(
@@ -161,6 +162,7 @@ let package = Package(
                 .product(name: "LangTools", package: "langtools.swift"),
                 .product(name: "Agents", package: "langtools.swift"),
                 .product(name: "OpenAI", package: "langtools.swift"),
+                .product(name: "Ollama", package: "langtools.swift"),
             ],
             path: "Tests/ChatHistoryTests"),
         .testTarget(

@@ -81,6 +81,12 @@ public final class ChatSession: ObservableObject, ChatMessageService {
 
     public var chatMessages: [Message] { messageService.messages }
 
+    /// True when stored messages older than the loaded ones exist.
+    @Published public private(set) var canLoadEarlierMessages = false
+    private let paging: ChatSessionPaging
+    /// Messages added by `loadEarlierMessages()`; sends never re-save them.
+    private var pagedInMessageIDs = Set<UUID>()
+
     /// True while a send is in flight or saves are queued.
     public var hasActivity: Bool { activeSendCount > 0 || hasPendingPersistence }
     public var hasPendingPersistence: Bool { !pending.isEmpty || !pendingDeletionIDs.isEmpty }
@@ -90,7 +96,8 @@ public final class ChatSession: ObservableObject, ChatMessageService {
         draft: ConversationDraft?,
         storage: any ChatHistoryStorage,
         hooks: ChatSessionHooks,
-        timing: ChatPersistenceTiming
+        timing: ChatPersistenceTiming,
+        paging: ChatSessionPaging = .standard
     ) throws {
         precondition(record != nil || draft != nil, "A session needs a stored record or a draft")
         let conversationID = record?.id ?? draft!.id
@@ -100,9 +107,10 @@ public final class ChatSession: ObservableObject, ChatMessageService {
         self.storage = storage
         self.hooks = hooks
         self.timing = timing
+        self.paging = paging
 
         let provisional = draft.map { ConversationRecordRules.record(from: $0, now: Date()) }
-        let context = ChatSessionContext(conversationID: conversationID) { [weak storage] in
+        let context = ChatSessionContext(conversationID: conversationID, checkpoints: storage) { [weak storage] in
             (try? storage?.conversation(id: conversationID)) ?? provisional
         }
         let service = hooks.makeMessageService(context)
@@ -110,12 +118,14 @@ public final class ChatSession: ObservableObject, ChatMessageService {
         service.requestPreparer = hooks.makeRequestPreparer?(context)
         self.messageService = service
 
-        if record != nil {
+        if let record {
             // Load before installing the callback so opening a conversation
             // does not write (and reorder) it.
-            let loaded = try storage.loadMessages(conversationID: conversationID)
+            let window = Self.initialWindow(conversationID: conversationID, storage: storage, paging: paging)
+            let loaded = try storage.loadMessages(conversationID: conversationID, window: window)
             service.messages = loaded
             knownMessageIDs = Set(loaded.map(\.uuid))
+            canLoadEarlierMessages = window != .all && loaded.count < record.messageCount
         }
 
         service.messageUpdatedCallback = { [weak self] message in
@@ -168,6 +178,46 @@ public final class ChatSession: ObservableObject, ChatMessageService {
 
     public func handleError(error: Error) -> ChatAlertInfo? {
         hooks.alert(error)
+    }
+
+    // MARK: - Paging
+
+    /// Everything from the latest checkpoint's covered message on, with at
+    /// least `initialMessageCount` messages; everything without a checkpoint.
+    static func initialWindow(
+        conversationID: UUID,
+        storage: any ChatHistoryStorage,
+        paging: ChatSessionPaging
+    ) -> MessageWindow {
+        guard let minimumCount = paging.initialMessageCount,
+              let checkpoint = (try? storage.latestCheckpoint(conversationID: conversationID)) ?? nil else {
+            return .all
+        }
+        return .since(checkpoint.coversThroughMessageID, minimumCount: minimumCount)
+    }
+
+    /// Loads the page of stored messages before the oldest loaded one and
+    /// returns how many top-level messages were added. Loading never writes.
+    @discardableResult
+    public func loadEarlierMessages() throws -> Int {
+        guard canLoadEarlierMessages, !isClosed, let oldest = messageService.messages.first else {
+            canLoadEarlierMessages = false
+            return 0
+        }
+        let limit = paging.earlierPageSize
+        let earlier = try storage.loadMessages(conversationID: conversationID, window: .before(oldest.uuid, limit: limit))
+        let loadedIDs = Set(messageService.messages.map(\.uuid))
+        let added = earlier.filter { !loadedIDs.contains($0.uuid) }
+        if !added.isEmpty {
+            let callback = messageService.messageUpdatedCallback
+            messageService.messageUpdatedCallback = nil
+            messageService.messages.insert(contentsOf: added, at: 0)
+            messageService.messageUpdatedCallback = callback
+            knownMessageIDs.formUnion(added.map(\.uuid))
+            pagedInMessageIDs.formUnion(added.map(\.uuid))
+        }
+        canLoadEarlierMessages = earlier.count >= limit
+        return added.count
     }
 
     // MARK: - Lifecycle
@@ -301,7 +351,8 @@ public final class ChatSession: ObservableObject, ChatMessageService {
             pending.remove(ids: removed)
             pendingDeletionIDs.formUnion(removed)
         }
-        for message in final where !knownBefore.contains(message.uuid) || message.uuid == promptID {
+        for message in final where (!knownBefore.contains(message.uuid) && !pagedInMessageIDs.contains(message.uuid))
+            || message.uuid == promptID {
             enqueue(message)
         }
     }

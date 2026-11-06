@@ -36,7 +36,7 @@ final class MessageServiceCompactionTests: XCTestCase {
             conversationID: conversationID,
             checkpoints: store,
             policy: { testPolicy() },
-            summarizer: LLMConversationSummarizer(networkClient: client, policy: testPolicy())
+            summarizer: LLMConversationSummarizer(networkClient: client)
         )
         service.requestPreparer = preparer.requestPreparer
 

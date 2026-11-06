@@ -14,12 +14,21 @@ public struct SummaryRequest {
     /// The model whose context the summary is written for.
     public var model: Model
     public var maximumTokens: Int
+    /// The conversation's policy: its summary model and window fallback.
+    public var policy: CompactionPolicy
 
-    public init(previousSummary: String?, messages: [Message], model: Model, maximumTokens: Int) {
+    public init(
+        previousSummary: String?,
+        messages: [Message],
+        model: Model,
+        maximumTokens: Int,
+        policy: CompactionPolicy = .standard
+    ) {
         self.previousSummary = previousSummary
         self.messages = messages
         self.model = model
         self.maximumTokens = maximumTokens
+        self.policy = policy
     }
 }
 
@@ -57,38 +66,24 @@ public struct LLMConversationSummarizer: ConversationSummarizer {
     public typealias Completion = @MainActor (_ messages: [Message], _ model: Model) async throws -> String
 
     public var complete: Completion
-    /// Chooses the model that writes the summary for a conversation's model.
-    public var summaryModel: @MainActor (Model) -> Model
-    public var policy: CompactionPolicy
     public var estimator: TokenEstimator
     /// Longest rendering of one message or tool result in the transcript.
     public var maximumCharactersPerItem: Int
 
     public init(
-        policy: CompactionPolicy = .standard,
         estimator: TokenEstimator = .standard,
         maximumCharactersPerItem: Int = 4_000,
-        summaryModel: @escaping @MainActor (Model) -> Model = { $0 },
         complete: @escaping Completion
     ) {
-        self.policy = policy
         self.estimator = estimator
         self.maximumCharactersPerItem = maximumCharactersPerItem
-        self.summaryModel = summaryModel
         self.complete = complete
     }
 
     /// Summaries written through `networkClient`, the same route chat requests use.
-    public init(
-        networkClient: NetworkClientProtocol,
-        policy: CompactionPolicy = .standard,
-        estimator: TokenEstimator = .standard
-    ) {
-        let summaryIdentifier = policy.normalized.summaryModelIdentifier
+    public init(networkClient: NetworkClientProtocol, estimator: TokenEstimator = .standard) {
         self.init(
-            policy: policy,
             estimator: estimator,
-            summaryModel: { model in summaryIdentifier.flatMap(Model.init(rawValue:)) ?? model },
             complete: { messages, model in
                 var text = ""
                 let stream = try networkClient.streamChatCompletionRequest(
@@ -105,9 +100,14 @@ public struct LLMConversationSummarizer: ConversationSummarizer {
         )
     }
 
+    /// The policy's summary model when it names a valid one, else the conversation's.
+    public static func summaryModel(for request: SummaryRequest) -> Model {
+        request.policy.normalized.summaryModelIdentifier.flatMap(Model.init(rawValue:)) ?? request.model
+    }
+
     public func summarize(_ request: SummaryRequest) async throws -> ContextSummary {
-        let model = summaryModel(request.model)
-        let budget = ContextBudget(model: model, settings: .default, policy: policy)
+        let model = Self.summaryModel(for: request)
+        let budget = ContextBudget(model: model, settings: .default, policy: request.policy)
         let instructions = SummaryPrompt.instructions(maximumTokens: request.maximumTokens)
         let lines = SummaryTranscript.lines(for: request.messages, maximumCharacters: maximumCharactersPerItem)
 

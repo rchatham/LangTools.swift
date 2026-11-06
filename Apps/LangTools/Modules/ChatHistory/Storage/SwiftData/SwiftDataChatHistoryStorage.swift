@@ -7,6 +7,7 @@ import Combine
 import Foundation
 import SwiftData
 import Chat
+import ChatContext
 
 /// The default `ChatHistoryStorage`: one SwiftData container at an explicit
 /// file URL (never the process-wide `default.store`), using the main context
@@ -37,7 +38,7 @@ public final class SwiftDataChatHistoryStorage: ChatHistoryStorage {
         self.titleGenerator = titleGenerator
         self.now = now
 
-        let schema = Schema(versionedSchema: ChatHistorySchemaV1.self)
+        let schema = Schema(versionedSchema: ChatHistorySchemaV2.self)
         let configuration: ModelConfiguration
         switch location {
         case .inMemory:
@@ -125,6 +126,7 @@ public final class SwiftDataChatHistoryStorage: ChatHistoryStorage {
         for id in ids {
             guard let model = try fetchConversation(id) else { continue }
             for row in try fetchRows(conversationID: id) { context.delete(row) }
+            for checkpoint in try fetchCheckpoints(conversationID: id) { context.delete(checkpoint) }
             context.delete(model)
             deleted.insert(id)
         }
@@ -139,8 +141,21 @@ public final class SwiftDataChatHistoryStorage: ChatHistoryStorage {
         guard try fetchConversation(conversationID) != nil else {
             throw ChatHistoryError.conversationNotFound(conversationID)
         }
-        let rows = try fetchRows(conversationID: conversationID).map(\.row)
-        return ConversationRecordRules.window(MessageRowCodec.messages(from: rows), window)
+        if case .all = window {
+            return MessageRowCodec.messages(from: try fetchRows(conversationID: conversationID).map(\.row))
+        }
+        // Order and shape the tree from key columns, then read payloads only
+        // for the rows the window selects.
+        let keys = try fetchRowKeys(conversationID: conversationID)
+        guard let selected = MessageWindowPlanner.selectedIDs(for: window, keys: keys) else {
+            return MessageRowCodec.messages(from: try fetchRows(conversationID: conversationID).map(\.row))
+        }
+        guard !selected.isEmpty else { return [] }
+        let ids = Array(selected)
+        let rows = try context.fetch(FetchDescriptor<ChatHistoryMessage>(
+            predicate: #Predicate { $0.conversationID == conversationID && ids.contains($0.id) }
+        ))
+        return MessageRowCodec.messages(from: rows.map(\.row))
     }
 
     public func applyMessageChanges(_ changes: MessageChangeSet, conversationID: UUID) throws {
@@ -160,6 +175,23 @@ public final class SwiftDataChatHistoryStorage: ChatHistoryStorage {
         )
         guard !plan.isNoOp else { return }
 
+        if !plan.deletedIDs.isEmpty {
+            let stored = try fetchCheckpoints(conversationID: conversationID)
+            let (updated, removed) = CheckpointRules.adjustments(
+                for: stored.map(\.checkpoint),
+                deletedIDs: plan.deletedIDs,
+                previousKeys: storedByID.values.map(\.key),
+                remainingKeys: plan.remainingKeys
+            )
+            let updatedByID = Dictionary(updated.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+            for checkpoint in stored {
+                if removed.contains(checkpoint.id) {
+                    context.delete(checkpoint)
+                } else if let moved = updatedByID[checkpoint.id] {
+                    checkpoint.apply(moved)
+                }
+            }
+        }
         for id in plan.deletedIDs {
             if let stored = storedByID[id] { context.delete(stored) }
         }
@@ -209,6 +241,38 @@ public final class SwiftDataChatHistoryStorage: ChatHistoryStorage {
         return record
     }
 
+    // MARK: Checkpoints
+
+    public func checkpoints(conversationID: UUID) throws -> [ContextCheckpoint] {
+        guard try fetchConversation(conversationID) != nil else {
+            throw ChatHistoryError.conversationNotFound(conversationID)
+        }
+        return try fetchCheckpoints(conversationID: conversationID).map(\.checkpoint)
+            .sorted { ContextCheckpoint.isNewer($1, than: $0) }
+    }
+
+    public func latestCheckpoint(conversationID: UUID) throws -> ContextCheckpoint? {
+        guard try fetchConversation(conversationID) != nil else {
+            throw ChatHistoryError.conversationNotFound(conversationID)
+        }
+        return try fetchCheckpoints(conversationID: conversationID).map(\.checkpoint).min(by: ContextCheckpoint.isNewer)
+    }
+
+    public func saveCheckpoint(_ checkpoint: ContextCheckpoint) throws {
+        let conversationID = checkpoint.conversationID
+        guard try fetchConversation(conversationID) != nil else {
+            throw ChatHistoryError.conversationNotFound(conversationID)
+        }
+        try CheckpointRules.validate(checkpoint, keys: try fetchRowKeys(conversationID: conversationID))
+        let model = try fetchCheckpoints(conversationID: conversationID).first { $0.id == checkpoint.id } ?? {
+            let created = ChatHistoryCheckpoint(id: checkpoint.id, conversationID: conversationID)
+            context.insert(created)
+            return created
+        }()
+        model.apply(checkpoint)
+        try save()
+    }
+
     // MARK: Helpers
 
     private func fetchConversation(_ id: UUID) throws -> ChatHistoryConversation? {
@@ -220,6 +284,19 @@ public final class SwiftDataChatHistoryStorage: ChatHistoryStorage {
     private func fetchRows(conversationID: UUID) throws -> [ChatHistoryMessage] {
         try context.fetch(
             FetchDescriptor<ChatHistoryMessage>(predicate: #Predicate { $0.conversationID == conversationID })
+        )
+    }
+
+    /// Every row's ordering and tree columns, without decoding payloads.
+    private func fetchRowKeys(conversationID: UUID) throws -> [MessageRowKey] {
+        var descriptor = FetchDescriptor<ChatHistoryMessage>(predicate: #Predicate { $0.conversationID == conversationID })
+        descriptor.propertiesToFetch = [\.id, \.parentID, \.sortOrder, \.createdAt, \.contentKind]
+        return try context.fetch(descriptor).map(\.key)
+    }
+
+    private func fetchCheckpoints(conversationID: UUID) throws -> [ChatHistoryCheckpoint] {
+        try context.fetch(
+            FetchDescriptor<ChatHistoryCheckpoint>(predicate: #Predicate { $0.conversationID == conversationID })
         )
     }
 

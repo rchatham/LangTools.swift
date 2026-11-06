@@ -123,7 +123,8 @@ public final class CompactingRequestPreparer {
             previousSummary: base.summary,
             messages: covered,
             model: context.model,
-            maximumTokens: policy.summaryTokenLimit
+            maximumTokens: policy.summaryTokenLimit,
+            policy: policy
         ))
         try Task.checkCancellation()
 
