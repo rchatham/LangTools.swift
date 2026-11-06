@@ -10,6 +10,7 @@ import SwiftUI
 import Chat
 import Audio
 import ExampleAgents
+import Realtime
 
 import LangTools
 import Agents
@@ -219,6 +220,13 @@ struct ChatContainerView: View {
                 messageService: messageService,
                 settingsView: { chatSettingsView },
                 voiceInputHandler: voiceInputHandler,
+                // The composer's live-voice button opens a realtime voice
+                // conversation over the OpenAI Realtime API.
+                realtimeConversation: {
+                    AnyView(RealtimeView(apiKeyProvider: {
+                        KeychainService.shared.getApiKey(for: .openAI)
+                    }))
+                },
                 supplementaryContent: { message in
                     guard ToolSettings.shared.richContentEnabled,
                           case .contentCards(let content) = message.contentType

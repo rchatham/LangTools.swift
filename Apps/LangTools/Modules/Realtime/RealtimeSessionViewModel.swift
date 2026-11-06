@@ -1,0 +1,332 @@
+//
+//  RealtimeSessionViewModel.swift
+//  LangTools_Example
+//
+//  Drives the realtime voice interface: owns the OpenAI Realtime session,
+//  streams mic audio up, plays response audio back, shows live transcripts,
+//  and handles barge-in interruption via server VAD events.
+//
+
+import Foundation
+import SwiftUI
+import Combine
+import ChatUI
+import OpenAI
+import LangTools
+
+@MainActor
+public final class RealtimeSessionViewModel: ObservableObject {
+
+    // MARK: - UI State
+
+    public typealias ConnectionState = RealtimeConnectionState
+    public typealias TranscriptEntry = RealtimeTranscriptEntry
+
+    @Published public private(set) var connectionState: ConnectionState = .disconnected
+    @Published public private(set) var transcript: [TranscriptEntry] = []
+    @Published public private(set) var isModelSpeaking = false
+    @Published public private(set) var isUserSpeaking = false
+    @Published public private(set) var lastError: String?
+    /// The mic's input level, republished so ChatUI's conversation view can
+    /// observe it through the handler.
+    @Published public private(set) var audioLevel: Float = 0
+
+    public let mic = RealtimeMicStreamer()
+    public let player = RealtimePCMPlayer()
+
+    // MARK: - Session
+
+    private let apiKeyProvider: () -> String?
+    private var session: OpenAIRealtimeSession?
+    private var eventTask: Task<Void, Never>?
+
+    /// Chain of pending audio-chunk sends, so each `append(audio:)` call
+    /// waits for the previous one to finish before starting. Without this,
+    /// each ~100ms mic chunk spawns its own unstructured Task, and nothing
+    /// stops two of them from calling into the WebSocket's `send` at once —
+    /// `URLSessionWebSocketTask.send` isn't documented as safe to call
+    /// concurrently, so overlapping sends could interleave or corrupt the
+    /// audio stream the API receives.
+    private var audioSendChain: Task<Void, Never> = Task {}
+
+    /// Tracks the current assistant audio item for truncation on barge-in
+    private var currentAssistantItemId: String?
+    /// The item the user barged in on. Its audio deltas can still arrive
+    /// after the flush; they're dropped so the cut-off reply doesn't resume.
+    private var interruptedItemId: String?
+
+    public init(apiKeyProvider: @escaping () -> String?) {
+        self.apiKeyProvider = apiKeyProvider
+        mic.$audioLevel.assign(to: &$audioLevel)
+    }
+
+    // MARK: - Lifecycle
+
+    public func connect() async {
+        guard connectionState == .disconnected || connectionState == .error else { return }
+        lastError = nil
+
+        guard let apiKey = apiKeyProvider(), !apiKey.isEmpty else {
+            lastError = "No OpenAI API key configured. Add one in Settings."
+            connectionState = .error
+            return
+        }
+
+        guard await mic.requestPermission() else {
+            lastError = "Microphone permission denied."
+            connectionState = .error
+            return
+        }
+
+        connectionState = .connecting
+
+        // Item IDs belong to the previous session; start tracking afresh.
+        currentAssistantItemId = nil
+        interruptedItemId = nil
+
+        let session = OpenAIRealtimeSession(apiKey: apiKey)
+        self.session = session
+
+        do {
+            try await session.connect()
+            try await session.updateSession(configuration: RealtimeSessionConfiguration(
+                modalities: [.text, .audio],
+                instructions: "You are a helpful, concise voice assistant.",
+                voice: "alloy",
+                inputAudioFormat: .pcm16,
+                outputAudioFormat: .pcm16,
+                inputAudioTranscription: .init(model: "whisper-1"),
+                turnDetection: .init(
+                    type: .serverVad,
+                    threshold: 0.5,
+                    prefixPaddingMs: 300,
+                    silenceDurationMs: 500,
+                    createResponse: true,
+                    interruptResponse: true
+                )
+            ))
+
+            consumeEvents(from: session)
+
+            mic.onAudioChunk = { [weak self] data in
+                // Fires on the audio engine's real-time thread — hop to the
+                // main actor (where audioSendChain lives) before chaining.
+                Task { @MainActor [weak self] in
+                    self?.enqueueAudioSend(data)
+                }
+            }
+            // Start the mic first: on iOS it sets the shared audio session to
+            // .playAndRecord/.voiceChat, and changing the category under an
+            // already-running playback engine can stall or re-route it.
+            try mic.start()
+            try player.start()
+
+            connectionState = .connected
+        } catch {
+            lastError = error.localizedDescription
+            connectionState = .error
+            await teardown()
+        }
+    }
+
+    public func disconnect() async {
+        await teardown()
+        connectionState = .disconnected
+    }
+
+    private func teardown() async {
+        // Stop playback before the mic: mic.stop() deactivates the shared
+        // audio session, which shouldn't happen under a running engine.
+        player.stop()
+        mic.stop()
+        eventTask?.cancel()
+        eventTask = nil
+        // Clear `session` before awaiting disconnect so audio chunks still
+        // queued in audioSendChain see it's gone and drop out instead of
+        // racing the disconnect.
+        let closingSession = session
+        session = nil
+        await closingSession?.disconnect()
+        isModelSpeaking = false
+        isUserSpeaking = false
+    }
+
+    /// Append `data` to the current session's audio buffer after any
+    /// already-queued chunk finishes sending, so chunks reach the socket in
+    /// order and never overlap. Must run on the main actor (see
+    /// `audioSendChain`'s doc comment).
+    private func enqueueAudioSend(_ data: Data) {
+        guard let session else { return }
+        let previous = audioSendChain
+        audioSendChain = Task { [weak self] in
+            _ = await previous.value
+            // Skip chunks for a session that was torn down while queued.
+            guard self?.session === session else { return }
+            try? await session.append(audio: data)
+        }
+    }
+
+    // MARK: - Actions
+
+    /// Send a typed text message into the conversation and request a response.
+    public func sendText(_ text: String) async {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let session else { return }
+
+        transcript.append(TranscriptEntry(id: UUID().uuidString, role: .user, text: text, isFinal: true))
+        do {
+            try await session.sendMessage(text)
+            try await session.createResponse()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    /// Manually interrupt the assistant (the UI stop button; server VAD also
+    /// interrupts automatically on speech).
+    public func interrupt() async {
+        guard let session else { return }
+        let truncation = stopPlayback()
+        do {
+            try await session.cancelResponse()
+        } catch {
+            // Cancelling with no active response is fine — ignore
+        }
+        if let truncation {
+            try? await session.truncateItem(itemId: truncation.itemId, contentIndex: 0, audioEndMs: truncation.audioEndMs)
+        }
+    }
+
+    /// Stops local playback and returns where to truncate the assistant
+    /// item: the audio the user actually heard, not everything received.
+    /// Reads the position before flushing, since flush() resets it.
+    private func stopPlayback() -> (itemId: String, audioEndMs: Int)? {
+        // Already stopped and truncated (a barge-in and a manual interrupt
+        // can both fire): another truncate would use the reset play count
+        // and cut the item further than what was heard.
+        if let current = currentAssistantItemId, interruptedItemId == current {
+            player.flush()
+            isModelSpeaking = false
+            return nil
+        }
+        let playedMs = player.playedMilliseconds
+        player.flush()
+        isModelSpeaking = false
+        interruptedItemId = currentAssistantItemId
+        return currentAssistantItemId.map { ($0, playedMs) }
+    }
+
+    // MARK: - Event Handling
+
+    private func consumeEvents(from session: OpenAIRealtimeSession) {
+        // Task inherits @MainActor isolation from this class, so handle(_:)
+        // and state mutations below run on the main actor.
+        eventTask = Task { [weak self] in
+            do {
+                for try await event in session.events {
+                    guard let self else { return }
+                    self.handle(event)
+                }
+            } catch {
+                guard let self, self.connectionState == .connected, self.session === session else { return }
+                self.lastError = error.localizedDescription
+                // The connection is gone: stop the mic, player and audio
+                // session too, as a failed connect() does, rather than
+                // leaving them running until the user ends the session.
+                await self.teardown()
+                self.connectionState = .error
+            }
+        }
+    }
+
+    private func handle(_ event: OpenAIRealtimeServerEvent) {
+        switch event {
+        case .inputAudioBufferSpeechStarted:
+            isUserSpeaking = true
+            // Barge-in: the server detected user speech — stop local playback
+            // immediately so the user isn't talking over stale audio. The
+            // server cancels the response itself (interrupt_response), but
+            // only the client knows how much was played, so truncate the
+            // item there to keep the conversation in line with what was heard.
+            if isModelSpeaking, let truncation = stopPlayback(), let session {
+                Task { [weak self] in
+                    // Skip if the session was torn down before this ran.
+                    guard self?.session === session else { return }
+                    try? await session.truncateItem(itemId: truncation.itemId, contentIndex: 0, audioEndMs: truncation.audioEndMs)
+                }
+            }
+
+        case .inputAudioBufferSpeechStopped:
+            isUserSpeaking = false
+
+        case .conversationItemInputAudioTranscriptionCompleted(let e):
+            upsertTranscript(id: e.itemId, role: .user, text: e.transcript, isFinal: true)
+
+        case .responseOutputItemAdded(let e):
+            // Only message items carry the assistant's audio. A function_call
+            // item has no audio to truncate, so it must not become the
+            // barge-in truncation target.
+            if e.item.type == "message" {
+                currentAssistantItemId = e.item.id
+                interruptedItemId = nil
+                player.resetPlaybackPosition()
+            }
+
+        case .responseAudioTranscriptDelta(let e):
+            appendDelta(id: e.itemId, role: .assistant, delta: e.delta)
+
+        case .responseAudioTranscriptDone(let e):
+            upsertTranscript(id: e.itemId, role: .assistant, text: e.transcript, isFinal: true)
+
+        case .responseTextDelta(let e):
+            appendDelta(id: e.itemId, role: .assistant, delta: e.delta)
+
+        case .responseTextDone(let e):
+            upsertTranscript(id: e.itemId, role: .assistant, text: e.text, isFinal: true)
+
+        case .responseAudioDelta(let e):
+            // Play only the current, uninterrupted item: a late delta for an
+            // item cut off by a barge-in can arrive after the next item has
+            // started (and cleared interruptedItemId).
+            if e.itemId == currentAssistantItemId, e.itemId != interruptedItemId, let audio = e.audioData {
+                isModelSpeaking = true
+                player.enqueue(pcm16: audio)
+            }
+
+        case .responseAudioDone:
+            break
+
+        case .responseDone:
+            isModelSpeaking = false
+
+        case .error(let e):
+            lastError = e.error.message
+
+        default:
+            break
+        }
+    }
+
+    private func appendDelta(id: String, role: TranscriptEntry.Role, delta: String) {
+        if let index = transcript.firstIndex(where: { $0.id == id }) {
+            transcript[index].text += delta
+        } else {
+            transcript.append(TranscriptEntry(id: id, role: role, text: delta, isFinal: false))
+        }
+    }
+
+    private func upsertTranscript(id: String, role: TranscriptEntry.Role, text: String, isFinal: Bool) {
+        if let index = transcript.firstIndex(where: { $0.id == id }) {
+            transcript[index].text = text
+            transcript[index].isFinal = isFinal
+        } else {
+            transcript.append(TranscriptEntry(id: id, role: role, text: text, isFinal: isFinal))
+        }
+    }
+}
+
+// MARK: - ChatUI
+
+/// Lets ChatUI's `RealtimeConversationView` (and the chat composer's
+/// live-voice button) drive this OpenAI Realtime session.
+extension RealtimeSessionViewModel: RealtimeConversationHandler {}
