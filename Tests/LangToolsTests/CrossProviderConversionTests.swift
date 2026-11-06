@@ -15,11 +15,9 @@ import Anthropic
 ///
 /// **Implementation note on full message conversion:**
 /// `Message.init(_ message:)` converts each `ContentType` enum case via
-/// `LangToolsContentType`. Since the `ContentType` enums themselves don't conform to
-/// `LangToolsToolResultContentType` (only the inner structs do), tool result enum cases in
-/// a full message conversion fall back to a text representation (Anthropic) or are skipped
-/// (OpenAI). The critical path fixed by this PR is the direct struct-level conversion via
-/// `ToolResultContent.init(_:)` and `ToolResult.init(_:)`, which is tested below.
+/// `LangToolsContentType`. The enums expose their inner structs through accessors such as
+/// `toolResultContentType`; content the destination can't represent is skipped. Text and
+/// image conversion is covered in `CrossProviderContentConversionTests`.
 final class CrossProviderConversionTests: XCTestCase {
 
     // MARK: - Direct Struct Conversion: OpenAI ToolResultContent → Anthropic ToolResult
@@ -114,9 +112,7 @@ final class CrossProviderConversionTests: XCTestCase {
 
     // MARK: - Full Message Conversion (no-crash verification)
     //
-    // When converting full messages, tool result ContentType enum cases don't directly
-    // conform to LangToolsToolResultContentType. The Anthropic path falls back to a text
-    // representation; the OpenAI path skips the element via compactMap+try?.
+    // Content the destination provider can't represent is skipped via compactMap+try?.
     // These tests verify the conversion completes without a crash.
 
     func testOpenAIToolMessageConversionDoesNotCrash() {
