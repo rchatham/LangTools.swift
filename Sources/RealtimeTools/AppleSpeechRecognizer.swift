@@ -143,17 +143,28 @@ public final class AppleSpeechRecognizer: STTProvider, @unchecked Sendable {
         // Start recognition task
         let (stream, continuation) = AsyncThrowingStream.makeStream(of: TranscriptionResult.self)
         let token = UUID()
-        let recognitionTask = speechRecognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            self?.handleRecognitionResult(result, error: error, continuation: continuation, session: token)
-        }
 
+        // Publish the session before creating the task: the recognizer can
+        // call back immediately (e.g. with an error), and that callback must
+        // find this session's token to clear it.
         lock.lock()
         self.recognitionRequest = recognitionRequest
-        self.recognitionTask = recognitionTask
         self.continuation = continuation
         self.sessionToken = token
         lock.unlock()
         committed = true
+
+        let recognitionTask = speechRecognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
+            self?.handleRecognitionResult(result, error: error, continuation: continuation, session: token)
+        }
+
+        // Keep the task only if the session is still current; an immediate
+        // error callback (or a stop) has already ended it otherwise.
+        lock.lock()
+        let stillCurrent = sessionToken == token
+        if stillCurrent { self.recognitionTask = recognitionTask }
+        lock.unlock()
+        if !stillCurrent { recognitionTask.cancel() }
 
         return stream
     }

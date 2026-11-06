@@ -115,6 +115,10 @@ public final class OpenAIRealtimeSession: LangToolsRealtimeSession, @unchecked S
 
     // MARK: - Initialization
 
+    /// - Parameter sessionConfiguration: Recorded as the session's current
+    ///   configuration; `connect()` does not send it. Call
+    ///   `updateSession(configuration:)` after connecting to apply one (as
+    ///   `OpenAI.createRealtimeSession` does).
     public init(apiKey: String, model: String = "gpt-4o-realtime-preview", sessionConfiguration: RealtimeSessionConfiguration = RealtimeSessionConfiguration()) {
         self.apiKey = apiKey
         self.model = model
