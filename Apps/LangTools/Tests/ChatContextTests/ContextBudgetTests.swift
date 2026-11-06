@@ -61,6 +61,10 @@ final class ContextBudgetTests: XCTestCase {
         XCTAssertEqual(tooHigh.windowPercent, 100)
         let tooLow = ContextBudget(model: .openAI(.gpt4o_mini), settings: ChatConversationSettings(contextWindowPercent: 0), policy: .standard)
         XCTAssertEqual(tooLow.windowPercent, 1)
+
+        let small = ContextBudget(model: .openAI(.gpt4), settings: ChatConversationSettings(contextWindowPercent: 10), policy: .standard)
+        XCTAssertEqual(small.reservedResponseTokens, 204, "The reserve is capped at a quarter of the usable window")
+        XCTAssertEqual(small.inputTokenLimit, 819 - 204)
     }
 
     func testModelsWithoutAPublishedWindowUseThePolicyFallback() {

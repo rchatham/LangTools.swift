@@ -36,11 +36,14 @@ public struct ContextBudget: Equatable, Sendable {
         let policy = policy.normalized
         let published = model.generationCapabilities.contextWindowTokens.flatMap { $0 > 0 ? $0 : nil }
         let window = published ?? policy.fallbackContextWindowTokens
+        let percent = Self.clamped(percent: settings.contextWindowPercent ?? 100)
         self.init(
             contextWindowTokens: window,
             isContextWindowKnown: published != nil,
-            windowPercent: settings.contextWindowPercent ?? 100,
-            reservedResponseTokens: min(policy.reservedResponseTokens, window / 4)
+            windowPercent: percent,
+            // At most a quarter of the usable window, so a small window
+            // percent still leaves room for history.
+            reservedResponseTokens: min(policy.reservedResponseTokens, window * percent / 100 / 4)
         )
     }
 
