@@ -212,159 +212,97 @@ public struct ChatSettingsView: View {
         .directAccessPrompts(enabled: !viewModel.isProxyContext, presentation: accessPromptPresentation)
     }
 
-    // iOS/iPadOS layout (unchanged)
+    #if os(iOS)
+    private enum MobileSettingsPage: String, CaseIterable, Identifiable {
+        case general = "General"
+        case context = "Context"
+        case advanced = "Advanced"
+        case localModels = "Local Models"
+        case tools = "Tools"
+        case voice = "Voice Input"
+
+        var id: String { rawValue }
+        var icon: String {
+            switch self {
+            case .general: return "gear"
+            case .context: return "text.bubble"
+            case .advanced: return "slider.horizontal.3"
+            case .localModels: return "cpu"
+            case .tools: return "hammer.fill"
+            case .voice: return "mic"
+            }
+        }
+    }
+
+    private var mobileLayout: some View {
+        List {
+            ForEach(MobileSettingsPage.allCases.filter { !viewModel.isProxyContext || $0 != .localModels }) { page in
+                NavigationLink {
+                    mobileSettingsPage(page)
+                } label: {
+                    Label(page.rawValue, systemImage: page.icon)
+                }
+                .accessibilityIdentifier("settings.\(page.rawValue)Tab")
+            }
+            ForEach(viewModel.customTabs) { tab in
+                NavigationLink {
+                    Form { tab.content() }
+                        .navigationTitle(tab.name)
+                        .onDisappear { saveMobileSettings() }
+                } label: {
+                    Label(tab.name, systemImage: tab.icon)
+                }
+                .accessibilityIdentifier("settings.\(tab.id)Tab")
+            }
+        }
+        .navigationTitle("Settings")
+        .onAppear { viewModel.loadSettings() }
+        .onDisappear { saveMobileSettings() }
+    }
+
+    private func saveMobileSettings() {
+        viewModel.saveSettings()
+        viewModel.saveToolSettings()
+    }
+
+    private func mobileSettingsPage(_ page: MobileSettingsPage) -> some View {
+        Form {
+            switch page {
+            case .general:
+                mobileModelSections
+                mobileActions
+            case .context:
+                mobileContextSection
+            case .advanced:
+                mobileAdvancedSection
+            case .localModels:
+                mobileLocalModelsSection
+            case .tools:
+                mobileToolsSections
+            case .voice:
+                mobileVoiceSection
+            }
+        }
+        .navigationTitle(page.rawValue)
+        .onDisappear { saveMobileSettings() }
+        .sheet(isPresented: $isEditingSystemMessage) {
+            SystemMessageEditor(systemMessage: $viewModel.systemMessage)
+        }
+        .sheet(isPresented: $showingOllamaSettings) {
+            ollamaSettingsPresentation.makeView()
+        }
+        .directAccessPrompts(enabled: !viewModel.isProxyContext, presentation: accessPromptPresentation)
+    }
+    #else
+    // Legacy layout for other platforms
     private var mobileLayout: some View {
         Form {
-            Section(header: Text("Active Model")) {
-                #if !os(watchOS)
-                // Force refresh when OllamaService updates its models
-                // Note: OllamaService might not be available on all platforms
-                #endif
-
-                if viewModel.showsModelSearch {
-                    TextField("Filter models", text: $viewModel.modelSearchText)
-                        .autocorrectionDisabled()
-                        .accessibilityIdentifier("settings.modelSearch")
-                }
-                Picker("Chat Models", selection: $viewModel.model) {
-                    modelPickerContent
-                }
-                .pickerStyle(.menu)
-                .accessibilityIdentifier("settings.modelPicker")
-                .disabled(viewModel.availableModels.isEmpty)
-
-                modelCatalogStatus
-                if !viewModel.isProxyContext {
-                    Text("Available models depend on which providers you have connected. If a provider is missing, add an API key or sign in from Manage Access.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-
-            if viewModel.canManageAccess {
-                Section(header: Text("Model Access")) {
-                    Text("Models come from connected providers. API keys enable direct API requests, while account sign-in can unlock provider-specific access like Codex.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    ForEach(viewModel.providerAccessStates) { state in
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(state.displayName)
-                                Spacer()
-                                Text(state.badgeTitle)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Text(state.statusDescription)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            if let reason = viewModel.unavailableReason(for: state) {
-                                Text(reason)
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                            Button(accessActionTitle(for: state)) {
-                                viewModel.presentManageAccess(for: state.accessDestination)
-                            }
-                        }
-                    }
-
-                    Text("For OpenAI account-backed Codex models, start the external helper, then pair with one click from its menu or paste its URL/token below.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    pairingStatusRow
-                    TextField("Codex Helper URL", text: $viewModel.codexHelperBaseURLString)
-                    SecureField("Codex Helper Token", text: $viewModel.codexHelperToken)
-                    if let tokenError = viewModel.codexHelperTokenSaveError {
-                        Text(tokenError)
-                            .font(.caption)
-                            .foregroundColor(.red)
-                    }
-                    Text(viewModel.codexHelperCommand)
-                        .font(.system(.caption2, design: .monospaced))
-                        .textSelection(.enabled)
-                }
-            }
-
-            Section(header: Text("System Message")) {
-                HStack {
-                    Text(viewModel.systemMessage)
-                        .lineLimit(3)
-                        .truncationMode(.tail)
-                    Spacer()
-                    Button("Edit") {
-                        isEditingSystemMessage = true
-                    }
-                }
-            }
-
-            #if os(iOS)
-            Section(header: Text("Advanced Parameters")) {
-                generationSettingsControls
-            }
-            #endif
-
-            #if !os(watchOS) && !os(tvOS)
-            if !viewModel.isProxyContext {
-            Section(header: Text("Local Models")) {
-                Button(action: {
-                    guard !ChatUITestEnvironment.isFixtureActive else { return }
-                    showingOllamaSettings = true
-                }) {
-                    HStack {
-                        Text("Manage Ollama Models")
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                }
-                .disabled(ChatUITestEnvironment.isFixtureActive)
-            }
-            }
-            #endif
-
-            Button("Save Settings") { viewModel.saveSettings() }
-            if viewModel.canManageAccess {
-                Button(viewModel.accessButtonTitle) { viewModel.presentManageAccess() }
-            }
-            Button("Clear messages", role: .destructive) { viewModel.clearMessages() }
-
-            Section(header: Text("AI Tools")) {
-                Toggle("Enable AI Tools", isOn: $viewModel.toolManager.toolsEnabled)
-                    .toggleStyle(.switch)
-
-                if viewModel.toolManager.toolsEnabled {
-                    ForEach(viewModel.toolManager.allToolConfigurations()) { config in
-                        Toggle(config.displayName, isOn: viewModel.toolManager.binding(for: config.id))
-                    }
-                } else {
-                    Text("Enable AI Tools to configure individual tools")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                Button("Reset Tool Settings") {
-                    viewModel.toolManager.resetToDefaults()
-                }
-            }
-
-            Section(header: Text("Display")) {
-                Toggle("Rich Content Cards", isOn: $viewModel.toolSettings.richContentEnabled)
-                Text("Display weather, contacts, and events as visual cards below messages")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Toggle("Keep Tool Calls in History", isOn: $viewModel.toolSettings.keepsToolCallsInHistory)
-                Text("Show tool-call cards after the tool completes. Turn off to hide them once the response continues.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Toggle("Share Tool Results Across Providers", isOn: $viewModel.toolSettings.crossProviderToolReplay)
-                Text("Let hidden structured agent results be sent to whichever provider you switch to. Turn off to send them only to the provider that produced them.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
+            mobileModelSections
+            mobileContextSection
+            mobileAdvancedSection
+            mobileLocalModelsSection
+            mobileActions
+            mobileToolsSections
             // Custom sections from app (e.g., Backend)
             ForEach(viewModel.customTabs) { customTab in
                 Section(header: Text(customTab.name)) {
@@ -372,108 +310,7 @@ public struct ChatSettingsView: View {
                 }
             }
 
-            Section(header: Text("Voice Input")) {
-                Toggle("Enable Voice Input", isOn: $viewModel.toolSettings.voiceInputEnabled)
-                    .toggleStyle(.switch)
-
-                if viewModel.toolSettings.voiceInputEnabled {
-                    Picker("Speech Provider", selection: $viewModel.toolSettings.sttProvider) {
-                        ForEach(STTProvider.allCases, id: \.self) { provider in
-                            Text(provider.rawValue).tag(provider)
-                        }
-                    }
-                    .onChange(of: viewModel.toolSettings.sttProvider) { _, newValue in
-                        // Trigger preload when WhisperKit is selected
-                        if newValue == .whisperKit {
-                            viewModel.preloadWhisperKit()
-                        }
-                    }
-
-                    // Show WhisperKit-specific options
-                    if viewModel.toolSettings.sttProvider == .whisperKit {
-                        HStack {
-                            if viewModel.whisperKitIsLoading {
-                                ProgressView()
-                                    .controlSize(.small)
-                            }
-                            Text(viewModel.whisperKitStatusDescription)
-                                .font(.caption)
-                                .foregroundColor(viewModel.whisperKitIsLoading ? .secondary : .green)
-                        }
-
-                        Picker("Model Size", selection: $viewModel.toolSettings.whisperKitModelSize) {
-                            ForEach(WhisperKitModelSize.allCases, id: \.self) { size in
-                                Text(size.displayName).tag(size)
-                            }
-                        }
-                        .onChange(of: viewModel.toolSettings.whisperKitModelSize) { _, _ in
-                            viewModel.preloadWhisperKit()
-                        }
-
-                        Text("Larger models are more accurate but slower")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-
-                    Text("Apple Speech: On-device, private\nOpenAI Whisper: Cloud, high accuracy\nWhisperKit: On-device ML")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    Toggle("Replace send button", isOn: $viewModel.toolSettings.voiceButtonReplaceSend)
-
-                    Text("Show microphone in place of send button when empty")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    Picker("Language", selection: $viewModel.toolSettings.sttLanguage) {
-                        ForEach(STTLanguage.allCases, id: \.self) { language in
-                            Text(language.displayName).tag(language)
-                        }
-                    }
-
-                    Text("Select the language you'll be speaking")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    Toggle("Auto-stop on silence", isOn: $viewModel.toolSettings.autoStopOnSilence)
-
-                    if viewModel.toolSettings.autoStopOnSilence {
-                        Picker("Silence timeout", selection: $viewModel.toolSettings.silenceTimeout) {
-                            ForEach(SilenceTimeout.allCases, id: \.self) { timeout in
-                                Text(timeout.displayName).tag(timeout)
-                            }
-                        }
-
-                        Text("Stop recording after this duration of silence")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-
-                    Toggle("Real-time transcription", isOn: $viewModel.toolSettings.streamingTranscriptionEnabled)
-
-                    Text("Show transcribed text as you speak")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    if viewModel.toolSettings.streamingTranscriptionEnabled &&
-                       viewModel.toolSettings.sttProvider == .openAIWhisper {
-
-                        Toggle("Simulated streaming", isOn: $viewModel.toolSettings.enableOpenAISimulatedStreaming)
-
-                        if viewModel.toolSettings.enableOpenAISimulatedStreaming {
-                            Picker("Update interval", selection: $viewModel.toolSettings.streamingChunkInterval) {
-                                ForEach(StreamingChunkInterval.allCases, id: \.self) { interval in
-                                    Text(interval.displayName).tag(interval)
-                                }
-                            }
-
-                            Text("More frequent updates = more API calls")
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                        }
-                    }
-                }
-            }
+            mobileVoiceSection
         }
         .navigationTitle("Settings")
         .onAppear { viewModel.loadSettings() }
@@ -488,6 +325,288 @@ public struct ChatSettingsView: View {
             ollamaSettingsPresentation.makeView()
         }
         .directAccessPrompts(enabled: !viewModel.isProxyContext, presentation: accessPromptPresentation)
+    }
+
+    #endif
+
+    @ViewBuilder
+    private var mobileModelSections: some View {
+        Section(header: Text("Active Model")) {
+            #if !os(watchOS)
+            // Force refresh when OllamaService updates its models
+            // Note: OllamaService might not be available on all platforms
+            #endif
+
+            if viewModel.showsModelSearch {
+                TextField("Filter models", text: $viewModel.modelSearchText)
+                    .autocorrectionDisabled()
+                    .accessibilityIdentifier("settings.modelSearch")
+            }
+            Picker("Chat Models", selection: $viewModel.model) {
+                modelPickerContent
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("settings.modelPicker")
+            .disabled(viewModel.availableModels.isEmpty)
+
+            modelCatalogStatus
+            if !viewModel.isProxyContext {
+                Text("Available models depend on which providers you have connected. If a provider is missing, add an API key or sign in from Manage Access.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+
+        if viewModel.canManageAccess {
+            Section(header: Text("Model Access")) {
+                Text("Models come from connected providers. API keys enable direct API requests, while account sign-in can unlock provider-specific access like Codex.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                ForEach(viewModel.providerAccessStates) { state in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(state.displayName)
+                            Spacer()
+                            Text(state.badgeTitle)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Text(state.statusDescription)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        if let reason = viewModel.unavailableReason(for: state) {
+                            Text(reason)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        Button(accessActionTitle(for: state)) {
+                            viewModel.presentManageAccess(for: state.accessDestination)
+                        }
+                    }
+                }
+
+                Text("For OpenAI account-backed Codex models, start the external helper, then pair with one click from its menu or paste its URL/token below.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                pairingStatusRow
+                TextField("Codex Helper URL", text: $viewModel.codexHelperBaseURLString)
+                SecureField("Codex Helper Token", text: $viewModel.codexHelperToken)
+                if let tokenError = viewModel.codexHelperTokenSaveError {
+                    Text(tokenError)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+                Text(viewModel.codexHelperCommand)
+                    .font(.system(.caption2, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+        }
+
+    }
+
+    @ViewBuilder
+    private var mobileContextSection: some View {
+        Section(header: Text("System Message")) {
+            HStack {
+                Text(viewModel.systemMessage)
+                    .lineLimit(3)
+                    .truncationMode(.tail)
+                Spacer()
+                Button("Edit") {
+                    isEditingSystemMessage = true
+                }
+            }
+        }
+
+    }
+
+    @ViewBuilder
+    private var mobileAdvancedSection: some View {
+        #if os(iOS)
+        Section(header: Text("Advanced Parameters")) {
+            generationSettingsControls
+        }
+        #endif
+
+    }
+
+    @ViewBuilder
+    private var mobileLocalModelsSection: some View {
+        #if !os(watchOS) && !os(tvOS)
+        if !viewModel.isProxyContext {
+        Section(header: Text("Local Models")) {
+            Button(action: {
+                guard !ChatUITestEnvironment.isFixtureActive else { return }
+                showingOllamaSettings = true
+            }) {
+                HStack {
+                    Text("Manage Ollama Models")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+            }
+            .disabled(ChatUITestEnvironment.isFixtureActive)
+        }
+        }
+        #endif
+
+    }
+
+    @ViewBuilder
+    private var mobileActions: some View {
+        Button("Save Settings") { viewModel.saveSettings() }
+        if viewModel.canManageAccess {
+            Button(viewModel.accessButtonTitle) { viewModel.presentManageAccess() }
+        }
+        Button("Clear messages", role: .destructive) { viewModel.clearMessages() }
+
+    }
+
+    @ViewBuilder
+    private var mobileToolsSections: some View {
+        Section(header: Text("AI Tools")) {
+            Toggle("Enable AI Tools", isOn: $viewModel.toolManager.toolsEnabled)
+                .toggleStyle(.switch)
+
+            if viewModel.toolManager.toolsEnabled {
+                ForEach(viewModel.toolManager.allToolConfigurations()) { config in
+                    Toggle(config.displayName, isOn: viewModel.toolManager.binding(for: config.id))
+                }
+            } else {
+                Text("Enable AI Tools to configure individual tools")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Button("Reset Tool Settings") {
+                viewModel.toolManager.resetToDefaults()
+            }
+        }
+
+        Section(header: Text("Display")) {
+            Toggle("Rich Content Cards", isOn: $viewModel.toolSettings.richContentEnabled)
+            Text("Display weather, contacts, and events as visual cards below messages")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Toggle("Keep Tool Calls in History", isOn: $viewModel.toolSettings.keepsToolCallsInHistory)
+            Text("Show tool-call cards after the tool completes. Turn off to hide them once the response continues.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Toggle("Share Tool Results Across Providers", isOn: $viewModel.toolSettings.crossProviderToolReplay)
+            Text("Let hidden structured agent results be sent to whichever provider you switch to. Turn off to send them only to the provider that produced them.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+
+    }
+
+    @ViewBuilder
+    private var mobileVoiceSection: some View {
+        Section(header: Text("Voice Input")) {
+            Toggle("Enable Voice Input", isOn: $viewModel.toolSettings.voiceInputEnabled)
+                .toggleStyle(.switch)
+
+            if viewModel.toolSettings.voiceInputEnabled {
+                Picker("Speech Provider", selection: $viewModel.toolSettings.sttProvider) {
+                    ForEach(STTProvider.allCases, id: \.self) { provider in
+                        Text(provider.rawValue).tag(provider)
+                    }
+                }
+                .onChange(of: viewModel.toolSettings.sttProvider) { _, newValue in
+                    // Trigger preload when WhisperKit is selected
+                    if newValue == .whisperKit {
+                        viewModel.preloadWhisperKit()
+                    }
+                }
+
+                // Show WhisperKit-specific options
+                if viewModel.toolSettings.sttProvider == .whisperKit {
+                    HStack {
+                        if viewModel.whisperKitIsLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Text(viewModel.whisperKitStatusDescription)
+                            .font(.caption)
+                            .foregroundColor(viewModel.whisperKitIsLoading ? .secondary : .green)
+                    }
+
+                    Picker("Model Size", selection: $viewModel.toolSettings.whisperKitModelSize) {
+                        ForEach(WhisperKitModelSize.allCases, id: \.self) { size in
+                            Text(size.displayName).tag(size)
+                        }
+                    }
+                    .onChange(of: viewModel.toolSettings.whisperKitModelSize) { _, _ in
+                        viewModel.preloadWhisperKit()
+                    }
+
+                    Text("Larger models are more accurate but slower")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Text("Apple Speech: On-device, private\nOpenAI Whisper: Cloud, high accuracy\nWhisperKit: On-device ML")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Toggle("Replace send button", isOn: $viewModel.toolSettings.voiceButtonReplaceSend)
+
+                Text("Show microphone in place of send button when empty")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Picker("Language", selection: $viewModel.toolSettings.sttLanguage) {
+                    ForEach(STTLanguage.allCases, id: \.self) { language in
+                        Text(language.displayName).tag(language)
+                    }
+                }
+
+                Text("Select the language you'll be speaking")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Toggle("Auto-stop on silence", isOn: $viewModel.toolSettings.autoStopOnSilence)
+
+                if viewModel.toolSettings.autoStopOnSilence {
+                    Picker("Silence timeout", selection: $viewModel.toolSettings.silenceTimeout) {
+                        ForEach(SilenceTimeout.allCases, id: \.self) { timeout in
+                            Text(timeout.displayName).tag(timeout)
+                        }
+                    }
+
+                    Text("Stop recording after this duration of silence")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Toggle("Real-time transcription", isOn: $viewModel.toolSettings.streamingTranscriptionEnabled)
+
+                Text("Show transcribed text as you speak")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                if viewModel.toolSettings.streamingTranscriptionEnabled &&
+                   viewModel.toolSettings.sttProvider == .openAIWhisper {
+
+                    Toggle("Simulated streaming", isOn: $viewModel.toolSettings.enableOpenAISimulatedStreaming)
+
+                    if viewModel.toolSettings.enableOpenAISimulatedStreaming {
+                        Picker("Update interval", selection: $viewModel.toolSettings.streamingChunkInterval) {
+                            ForEach(StreamingChunkInterval.allCases, id: \.self) { interval in
+                                Text(interval.displayName).tag(interval)
+                            }
+                        }
+
+                        Text("More frequent updates = more API calls")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder
