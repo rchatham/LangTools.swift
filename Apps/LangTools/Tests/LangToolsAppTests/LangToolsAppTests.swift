@@ -1,6 +1,7 @@
 @testable import Chat
 import Foundation
 import KeychainAccess
+import LangTools
 import Testing
 import XCTest
 @testable import LangToolsApp
@@ -43,3 +44,26 @@ final class KeychainHostSmokeTests: XCTestCase {
     }
 }
 #endif
+
+@MainActor
+final class SystemOneRoutingControllerTests: XCTestCase {
+    private struct StubRouter: LangToolsToolRouter {
+        func route(message: String, options: [ToolRoutingOption]) async throws -> ToolRoutingDecision {
+            ToolRoutingDecision(toolProbabilities: [:])
+        }
+    }
+
+    func testReattachingTheSameServiceKeepsTheLoadedRouter() throws {
+        let suiteName = "SystemOneRoutingControllerTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        let controller = SystemOneRoutingController(defaults: defaults)
+        let service = MessageService(toolSettings: ToolSettings(defaults: defaults))
+
+        controller.attach(to: service)
+        service.toolRouter = StubRouter()
+        controller.attach(to: service)
+
+        XCTAssertNotNil(service.toolRouter)
+    }
+}
