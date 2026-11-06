@@ -264,6 +264,30 @@ final class SwiftDataFileStorageContractTests: ChatHistoryStorageContractTests {
         XCTAssertEqual(try reopened.conversation(id: record.id), saved)
         XCTAssertEqual(try reopened.loadMessages(conversationID: record.id), messages)
     }
+
+    func testEqualTimestampsKeepInsertionOrderAcrossReopen() throws {
+        let storage = try makeStorage()
+        let record = try storage.createConversation(ConversationDraft())
+        let first = text("first", .user, at: 7)
+        let second = text("second", .assistant, at: 7)
+        let childA = Message(role: .system, contentType: .agentEvent(AgentEventContent(type: .toolCalled, agentName: "A", details: "a")),
+                             createdAt: Date(timeIntervalSinceReferenceDate: 8))
+        let childB = Message(role: .system, contentType: .agentEvent(AgentEventContent(type: .completed, agentName: "A", details: "b")),
+                             createdAt: Date(timeIntervalSinceReferenceDate: 8))
+        let event = Message(role: .system,
+                            contentType: .agentEvent(AgentEventContent(type: .started, agentName: "A", details: "root", children: [childA, childB])),
+                            createdAt: Date(timeIntervalSinceReferenceDate: 8))
+        try storage.applyMessageChanges(MessageChangeSet(upserts: [first, second]), conversationID: record.id)
+        try storage.applyMessageChanges(MessageChangeSet(upserts: [event]), conversationID: record.id)
+        // Re-saving an earlier message must not move it after later ones.
+        try storage.applyMessageChanges(MessageChangeSet(upserts: [first]), conversationID: record.id)
+
+        let reopened = try SwiftDataChatHistoryStorage(location: .file(url))
+        let loaded = try reopened.loadMessages(conversationID: record.id)
+
+        XCTAssertEqual(loaded.map(\.uuid), [first.uuid, second.uuid, event.uuid])
+        XCTAssertEqual(loaded.last?.childMessages.map(\.uuid), [childA.uuid, childB.uuid])
+    }
 }
 
 @MainActor

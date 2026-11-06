@@ -16,6 +16,8 @@ final class ScriptedChatClient: NetworkClientProtocol {
         /// Yields `partial` (when given), then fails.
         case failure(partial: String?)
         case held
+        /// Reports a tool call, then fails before the tool completes.
+        case toolCallThenFailure(name: String)
     }
 
     var replies: [Reply]
@@ -40,6 +42,9 @@ final class ScriptedChatClient: NetworkClientProtocol {
                 continuation.finish(throwing: ScriptedError.scripted)
             case .held:
                 held.append(continuation)
+            case .toolCallThenFailure(let name):
+                toolEventHandler(.toolCalled(OpenAI.Message.ToolCall(index: 0, id: "call-1", type: .function, function: .init(name: name, arguments: "{}"))))
+                continuation.finish(throwing: ScriptedError.scripted)
             }
         }
     }

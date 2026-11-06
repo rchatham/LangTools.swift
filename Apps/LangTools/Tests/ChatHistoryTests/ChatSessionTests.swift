@@ -158,6 +158,34 @@ final class ChatSessionTests: XCTestCase {
         XCTAssertTrue(reloaded[0].wasResponseStopped)
     }
 
+    func testAFailedToolCallIsSavedWithItsFailureState() async throws {
+        let session = try storedSession(manager())
+        client.replies = [.toolCallThenFailure(name: "lookup")]
+
+        await XCTAssertThrowsErrorAsync(try await session.send(message: "Use the tool", stream: true))
+
+        let reloaded = try stored(session.conversationID)
+        XCTAssertEqual(reloaded.first?.text, "Use the tool", "A send with tool activity keeps its prompt")
+        let call = try XCTUnwrap(reloaded.flatMap(\.toolCalls).first)
+        XCTAssertEqual(call.name, "lookup")
+        XCTAssertEqual(call.status, .failure, "The final failed state is what gets stored")
+    }
+
+    func testCancellingASendCleansUpAndKeepsThePrompt() async throws {
+        let session = try storedSession(manager())
+        client.replies = [.held]
+        let operation = session.sendOperation(message: "Never mind", stream: true)
+        try await operation.waitUntilEstablished()
+        XCTAssertEqual(session.activeSendCount, 1)
+
+        operation.cancel()
+        try? await operation.waitForCompletion()
+
+        XCTAssertEqual(session.activeSendCount, 0)
+        XCTAssertFalse(session.hasActivity)
+        XCTAssertEqual(try stored(session.conversationID).map(\.text), ["Never mind"])
+    }
+
     // MARK: Drafts
 
     func testDraftIsStoredOnlyWhenItsFirstMessageIsSent() async throws {
