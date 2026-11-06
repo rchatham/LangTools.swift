@@ -71,6 +71,12 @@ public final class ChatSessionManager: ObservableObject {
             touch(session)
             return session
         }
+        // The draft was stored earlier and its session released: load it.
+        if let record = try? storage.conversation(id: draft.id),
+           let session = try? ChatSession(record: record, draft: nil, storage: storage, hooks: hooks, timing: timing) {
+            register(session)
+            return session
+        }
         // A draft session cannot fail to load: there is nothing stored yet.
         let session = try! ChatSession(record: nil, draft: draft, storage: storage, hooks: hooks, timing: timing)
         register(session)

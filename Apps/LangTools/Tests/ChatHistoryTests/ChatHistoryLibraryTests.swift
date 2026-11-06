@@ -24,6 +24,17 @@ final class ChatSessionManagerTests: XCTestCase {
         XCTAssertThrowsError(try manager.session(for: UUID()))
     }
 
+    func testADraftThatWasAlreadyStoredLoadsItsMessages() throws {
+        let storage = InMemoryChatHistoryStorage()
+        let manager = makeManager(storage)
+        let record = try storage.importConversation(ConversationDraft(), messages: [text("kept", .user, at: 1)])
+
+        let session = manager.draftSession(ConversationDraft(id: record.id))
+
+        XCTAssertTrue(session.isMaterialized)
+        XCTAssertEqual(session.chatMessages.map(\.text), ["kept"])
+    }
+
     func testEvictedSessionsAreReusedWhileSomethingHoldsThem() throws {
         let storage = InMemoryChatHistoryStorage()
         let manager = makeManager(storage, maximumIdleSessions: 1)
