@@ -8,6 +8,7 @@ import Agents
 import ChatUI
 import Foundation
 import LangTools
+import OpenAI
 import ToolKit
 
 private enum BufferedMessageEvent {
@@ -254,13 +255,46 @@ private final class SendEventBuffer: @unchecked Sendable {
 @Observable
 public class MessageService {
     public let networkClient: NetworkClientProtocol
-    @ObservationIgnored private let toolSettings: ToolSettings
+    /// Providers preserve dynamic lookup timing without requiring shared state.
+    @MainActor
+    public struct Dependencies {
+        public let selectedModel: () -> Model
+        public let conversationSettings: () -> ChatConversationSettings
+        public let keepsToolCallsInHistory: () -> Bool
+        public let maxToolIterations: () -> Int?
+        public let enabledTools: () -> [OpenAI.Tool]?
+        public let toolConfigurations: () -> [ToolConfiguration]
+        public let agentModelOverride: () -> Model?
+        public let richContentEnabled: () -> Bool
+
+        public init(
+            selectedModel: @escaping () -> Model,
+            conversationSettings: @escaping () -> ChatConversationSettings,
+            keepsToolCallsInHistory: @escaping () -> Bool,
+            maxToolIterations: @escaping () -> Int?,
+            enabledTools: @escaping () -> [OpenAI.Tool]?,
+            toolConfigurations: @escaping () -> [ToolConfiguration],
+            agentModelOverride: @escaping () -> Model? = { nil },
+            richContentEnabled: @escaping () -> Bool = { false }
+        ) {
+            self.selectedModel = selectedModel
+            self.conversationSettings = conversationSettings
+            self.keepsToolCallsInHistory = keepsToolCallsInHistory
+            self.maxToolIterations = maxToolIterations
+            self.enabledTools = enabledTools
+            self.toolConfigurations = toolConfigurations
+            self.agentModelOverride = agentModelOverride
+            self.richContentEnabled = richContentEnabled
+        }
+    }
+
+    @ObservationIgnored private let dependencies: Dependencies
     public var messages: [Message] = [] {
         didSet {
             if let last = messages.last {
                 notifyMessageUpdated(
                     last,
-                    keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory
+                    keepsToolCallsInHistory: dependencies.keepsToolCallsInHistory()
                 )
             }
         }
@@ -295,14 +329,12 @@ public class MessageService {
     /// `agentResultParser` is still consulted for agents.
     public var resultContentParser: ((_ result: String, _ name: String, _ kind: ChatToolCall.Kind) -> ChatToolCall.DisplayContent?)?
 
-    /// Snapshot of tools filtered by the current ToolManager state.
-    /// Delegates to `ToolManager.filteredTools()` for the enabled-id set, then
-    /// intersects with `self.tools` so future changes to ToolManager filtering
-    /// logic are automatically picked up here.
-    /// Hops to the main actor because ToolManager is @MainActor-isolated.
+    /// Snapshot of tools filtered by the enabled-id set, intersected with
+    /// supplied tools and supplemented by non-agent configurations.
+    /// Legacy providers delegate dynamically to the main-actor ToolManager.
     @MainActor
     func filteredTools(for sendID: UUID) -> [Tool]? {
-        guard let enabledTools = ToolManager.shared.filteredTools() else { return nil }
+        guard let enabledTools = dependencies.enabledTools() else { return nil }
         let enabledNames = Set(enabledTools.map { $0.name })
         let agentTools = agents
             .filter { enabledNames.contains($0.name) }
@@ -313,14 +345,36 @@ public class MessageService {
             }
         var result = agentTools + (tools ?? []).filter { enabledNames.contains($0.name) }
         let suppliedToolNames = Set(result.map { $0.name })
-        for config in ToolManager.shared.allToolConfigurations() where !config.isAgent && enabledNames.contains(config.id) && !suppliedToolNames.contains(config.id) {
+        for config in dependencies.toolConfigurations() where !config.isAgent && enabledNames.contains(config.id) && !suppliedToolNames.contains(config.id) {
             result.append(Tool(config.toTool()))
         }
         return result
     }
 
     public init(networkClient: NetworkClientProtocol = NetworkClient.shared, agents: [any Agent]? = nil, tools: [Tool]? = nil, toolSettings: ToolSettings = .shared) {
-        self.toolSettings = toolSettings
+        self.dependencies = Dependencies(
+            selectedModel: { UserDefaults.model },
+            conversationSettings: { ChatConversationSettingsStore().load() },
+            keepsToolCallsInHistory: { toolSettings.keepsToolCallsInHistory },
+            maxToolIterations: { toolSettings.maxToolIterations },
+            enabledTools: { ToolManager.shared.filteredTools() },
+            toolConfigurations: { ToolManager.shared.allToolConfigurations() },
+            agentModelOverride: { toolSettings.agentModelOverride },
+            richContentEnabled: { toolSettings.richContentEnabled }
+        )
+        self.networkClient = networkClient
+        self.agents = agents ?? []
+        self.tools = tools
+    }
+
+    /// Fully owned inputs, with no default client, settings, or registry lookup.
+    public init(
+        networkClient: NetworkClientProtocol,
+        agents: [any Agent]?,
+        tools: [Tool]?,
+        dependencies: Dependencies
+    ) {
+        self.dependencies = dependencies
         self.networkClient = networkClient
         self.agents = agents ?? []
         self.tools = tools
@@ -357,7 +411,7 @@ public class MessageService {
     public func markResponseStopped(messageID: UUID) {
         guard let message = messages.first(where: { $0.uuid == messageID && $0.isUser }) else { return }
         message.wasResponseStopped = true
-        notifyMessageUpdated(message, keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory)
+        notifyMessageUpdated(message, keepsToolCallsInHistory: dependencies.keepsToolCallsInHistory())
     }
 
     private func makeSendOperation(
@@ -369,7 +423,7 @@ public class MessageService {
         let establishment = SendEstablishment()
         let eventNotifications = eventBuffer.register(sendID)
         let requestSnapshot = requestMessages(
-            keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory
+            keepsToolCallsInHistory: dependencies.keepsToolCallsInHistory()
         )
 
         let completion = Task { @MainActor in
@@ -425,17 +479,17 @@ public class MessageService {
         let toolCallTracker = RequestToolCallTracker()
         // Enforce the configured iteration budget before callbacks run so
         // over-limit calls fail fast instead of executing.
-        let toolBudget = ToolIterationBudget(maxIterations: toolSettings.maxToolIterations)
-        let keepsToolCallsInHistory = toolSettings.keepsToolCallsInHistory
-        let selectedModel = UserDefaults.model
+        let toolBudget = ToolIterationBudget(maxIterations: dependencies.maxToolIterations())
+        let keepsToolCallsInHistory = dependencies.keepsToolCallsInHistory()
+        let selectedModel = dependencies.selectedModel()
         let replayService = selectedModel.apiService
         #if DEBUG
         print(RichResultDiagnostics.modelSelectionLog(
             route: .label(forRoute: selectedModel.route.rawValue),
             model: .label(for: selectedModel.slug),
-            override: toolSettings.agentModelOverride.map { RichResultDiagnostics.ProviderLabel.label(forRoute: $0.route.rawValue) },
-            overrideModel: toolSettings.agentModelOverride.map { RichResultDiagnostics.ModelLabel.label(for: $0.slug) },
-            rich: toolSettings.richContentEnabled,
+            override: dependencies.agentModelOverride().map { RichResultDiagnostics.ProviderLabel.label(forRoute: $0.route.rawValue) },
+            overrideModel: dependencies.agentModelOverride().map { RichResultDiagnostics.ModelLabel.label(for: $0.slug) },
+            rich: dependencies.richContentEnabled(),
             history: keepsToolCallsInHistory
         ))
         #endif
@@ -653,8 +707,7 @@ public class MessageService {
     }
 
     func systemMessage() -> String {
-        let store = ChatConversationSettingsStore()
-        let settings = store.load()
+        let settings = dependencies.conversationSettings()
         var prompt = settings.systemPrompt
 
         // Append memory fields if set
@@ -739,8 +792,8 @@ extension MessageService {
             anchorMessageID: &anchorMessageID,
             toolBreakOccurred: &toolBreakOccurred,
             generatedMessageIDs: &generatedMessageIDs,
-            keepsToolCallsInHistory: toolSettings.keepsToolCallsInHistory,
-            replayService: UserDefaults.model.apiService
+            keepsToolCallsInHistory: dependencies.keepsToolCallsInHistory(),
+            replayService: dependencies.selectedModel().apiService
         )
     }
 
@@ -928,7 +981,7 @@ extension MessageService {
         }
 
         // Apply context window truncation from conversation settings
-        let convSettings = ChatConversationSettingsStore().load()
+        let convSettings = dependencies.conversationSettings()
         if let limit = convSettings.maxContextMessages, limit > 0 {
             // Always keep the most recent user+assistant pair and system message
             let keepCount = min(limit, eligibleMessages.count)
@@ -1025,7 +1078,7 @@ extension MessageService {
             #if DEBUG
             print(RichResultDiagnostics.presentationLog(
                 namespace: .tool, agent: nil, outcome: .raw,
-                history: keepsToolCallsInHistory, rich: toolSettings.richContentEnabled
+                history: keepsToolCallsInHistory, rich: dependencies.richContentEnabled()
             ))
             #endif
             return
@@ -1035,7 +1088,7 @@ extension MessageService {
         print(RichResultDiagnostics.presentationLog(
             namespace: .tool, agent: nil,
             outcome: keepsToolCallsInHistory ? .attached : .standalone,
-            history: keepsToolCallsInHistory, rich: toolSettings.richContentEnabled
+            history: keepsToolCallsInHistory, rich: dependencies.richContentEnabled()
         ))
         #endif
         if keepsToolCallsInHistory {
@@ -1156,7 +1209,7 @@ extension MessageService {
                     print(RichResultDiagnostics.presentationLog(
                         namespace: .tool, agent: nil,
                         outcome: attached ? .attached : .attachMissed,
-                        history: keepsToolCallsInHistory, rich: toolSettings.richContentEnabled
+                        history: keepsToolCallsInHistory, rich: dependencies.richContentEnabled()
                     ))
                     #else
                     _ = Self.attachDisplayContentToCompletedChild(ofAgent: agent, childID: identity.id, displayContent: displayContent, in: &calls)
@@ -1167,7 +1220,7 @@ extension MessageService {
                     print(RichResultDiagnostics.presentationLog(
                         namespace: .tool, agent: nil,
                         outcome: .standalone,
-                        history: keepsToolCallsInHistory, rich: toolSettings.richContentEnabled
+                        history: keepsToolCallsInHistory, rich: dependencies.richContentEnabled()
                     ))
                     #endif
                 }
@@ -1187,7 +1240,7 @@ extension MessageService {
                         print(RichResultDiagnostics.presentationLog(
                             namespace: .agent, agent: .label(for: agent),
                             outcome: .attached,
-                            history: keepsToolCallsInHistory, rich: toolSettings.richContentEnabled
+                            history: keepsToolCallsInHistory, rich: dependencies.richContentEnabled()
                         ))
                         #endif
                     } else {
@@ -1195,7 +1248,7 @@ extension MessageService {
                         print(RichResultDiagnostics.presentationLog(
                             namespace: .agent, agent: .label(for: agent),
                             outcome: .attachMissed,
-                            history: keepsToolCallsInHistory, rich: toolSettings.richContentEnabled
+                            history: keepsToolCallsInHistory, rich: dependencies.richContentEnabled()
                         ))
                         #endif
                     }
@@ -1206,7 +1259,7 @@ extension MessageService {
                     print(RichResultDiagnostics.presentationLog(
                         namespace: .agent, agent: .label(for: agent),
                         outcome: .standalone,
-                        history: keepsToolCallsInHistory, rich: toolSettings.richContentEnabled
+                        history: keepsToolCallsInHistory, rich: dependencies.richContentEnabled()
                     ))
                     #endif
                 }
@@ -1217,7 +1270,7 @@ extension MessageService {
                 print(RichResultDiagnostics.presentationLog(
                     namespace: .agent, agent: .label(for: agent),
                     outcome: .legacy,
-                    history: keepsToolCallsInHistory, rich: toolSettings.richContentEnabled
+                    history: keepsToolCallsInHistory, rich: dependencies.richContentEnabled()
                 ))
                 #endif
                 if let callID = Self.setAgentStatus(agent, status: .success, result: nil, in: &calls),
@@ -1235,7 +1288,7 @@ extension MessageService {
                 print(RichResultDiagnostics.presentationLog(
                     namespace: .agent, agent: .label(for: agent),
                     outcome: .raw,
-                    history: keepsToolCallsInHistory, rich: toolSettings.richContentEnabled
+                    history: keepsToolCallsInHistory, rich: dependencies.richContentEnabled()
                 ))
                 #endif
                 Self.setAgentStatus(agent, status: status, result: result, in: &calls)

@@ -42,17 +42,12 @@ public struct ResearchAgent: Agent {
             - Use the webScrapingAgent when you need to analyze specific webpages in depth
             """
 
-        // Add API key missing notice if needed
-        if isApiKeyMissing {
-            return baseInstructions + """
-            
-            NOTE: The Serper API key is missing. You will need to ask the user to provide a Serper API key \
-            for the google_search functionality to work. Explain that the research capabilities require \
-            a Serper API key and guide them on how to enter it through settings.
-            """
-        }
+        // Instructions are metadata: never access credential storage here.
+        return baseInstructions + """
 
-        return baseInstructions
+        If google_search reports unavailable credentials, guide the user to native settings. \
+        Never request or include API keys in chat or tool arguments.
+        """
     }
 
     public var tools: [any LangToolsTool]?
@@ -60,61 +55,33 @@ public struct ResearchAgent: Agent {
         WebScrapingAgent()
     ]
 
-    // Computed property to check if API key is missing using both UserDefaults and Keychain
-    var isApiKeyMissing: Bool {
-        // First check UserDefaults (faster)
-        if let userDefaultsKey = UserDefaults.serperApiKey, !userDefaultsKey.isEmpty {
-            return false
-        }
+    private let credentialStore: any ResearchCredentialStore
+    private let session: URLSession
 
-        // Then check Keychain as backup
-        let keychainKey = KeychainService().getApiKey(for: .serper)
-        return keychainKey == nil || keychainKey?.isEmpty == true
+    /// Construction is credential-I/O-free, including the explicit-key path.
+    /// The search tool resolves saved credentials only when it is invoked.
+    public init(
+        serperApiKey: String? = nil,
+        credentialStore: any ResearchCredentialStore = StoredResearchCredentials(),
+        session: URLSession = .shared
+    ) {
+        self.credentialStore = credentialStore
+        self.session = session
+        self.tools = [SerperTool(apiKeyProvider: {
+            if let serperApiKey, !serperApiKey.isEmpty { return serperApiKey }
+            return try credentialStore.readApiKey()
+        }, session: session)]
     }
 
-    public init(serperApiKey: String? = nil) {
-        // Try to get API key from UserDefaults first
-        var apiKey = UserDefaults.serperApiKey
-
-        // If not in UserDefaults, try Keychain
-        if apiKey == nil || apiKey?.isEmpty == true {
-            apiKey = KeychainService().getApiKey(for: .serper)
-
-            // If we found a key in Keychain, sync it to UserDefaults
-            if let apiKey = apiKey, !apiKey.isEmpty {
-                UserDefaults.serperApiKey = apiKey
-            }
+    /// Only an explicit native configuration action persists credentials.
+    /// A failed save leaves the current tool and preferences unchanged.
+    public mutating func updateApiKey(_ apiKey: String) throws {
+        guard !apiKey.isEmpty else { throw ResearchCredentialError.emptyKey }
+        do {
+            try credentialStore.saveApiKey(apiKey)
+        } catch {
+            throw ResearchCredentialError.storageUnavailable
         }
-
-        // If explicit API key is provided, use that instead
-        if let serperApiKey = serperApiKey, !serperApiKey.isEmpty {
-            apiKey = serperApiKey
-        }
-
-        setupTools(with: apiKey)
-    }
-
-    mutating func setupTools(with apiKey: String?) {
-        if let apiKey, !apiKey.isEmpty {
-            // Update both UserDefaults and Keychain
-            UserDefaults.serperApiKey = apiKey
-            KeychainService().saveApiKey(apiKey: apiKey, for: .serper)
-
-            self.tools = [
-                SerperTool(apiKey: apiKey)
-            ]
-        } else {
-            self.tools = []
-        }
-    }
-
-    // Method to update API key
-    mutating func updateApiKey(_ apiKey: String) {
-        setupTools(with: apiKey)
-    }
-
-    // Check if the agent has a valid API key
-    var hasValidApiKey: Bool {
-        return !isApiKeyMissing
+        tools = [SerperTool(apiKey: apiKey, session: session)]
     }
 }

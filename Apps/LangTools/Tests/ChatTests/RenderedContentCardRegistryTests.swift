@@ -97,9 +97,19 @@ final class RenderedContentCardRegistryTests: XCTestCase {
         host.cacheDisplay(in: host.bounds, to: bitmap)
         let image = try XCTUnwrap(bitmap.cgImage)
         let request = VNRecognizeTextRequest()
+        request.revision = VNRecognizeTextRequestRevision2
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
         request.recognitionLanguages = ["en-US"]
+        // Pin the English fixture recognizer and CPU execution; the default revision
+        // fails in Vision/e5rt on the verification host. Pixel checks remain exact.
+        for (stage, devices) in try request.supportedComputeStageDevices {
+            let cpu = try XCTUnwrap(devices.first {
+                if case .cpu = $0 { return true }
+                return false
+            }, "OCR fixture stage must support CPU execution")
+            request.setComputeDevice(cpu, for: stage)
+        }
         try VNImageRequestHandler(cgImage: image).perform([request])
         print("SwiftUI accessibility nodes unavailable; verifying native rendered text with local Vision OCR")
         return (request.results ?? []).compactMap { observation in
