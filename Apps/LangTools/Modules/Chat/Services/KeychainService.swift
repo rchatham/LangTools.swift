@@ -6,6 +6,7 @@
 
 import Foundation
 import KeychainAccess
+import ToolKit
 
 public protocol KeychainSecretStoring {
     func setSecret(_ value: String, forKey key: String) throws
@@ -85,6 +86,12 @@ public final class CodexHelperTokenStore {
     }
 }
 
+/// Stores API keys and other app secrets.
+///
+/// All secrets for a Keychain service live in one cached `SecretVault`, so
+/// the Keychain is read at most once per launch, only when a secret's value is
+/// actually needed, and presence checks (`hasApiKey`, `hasSecret`) never read
+/// secret data at all. See `SecretVault` for details.
 public class KeychainService: KeychainSecretStoring {
     /// Returns the shared instance. When a validated fixture environment is
     /// active the instance uses the fixture-isolated Keychain service;
@@ -107,43 +114,65 @@ public class KeychainService: KeychainSecretStoring {
         keychain: Keychain(service: ChatUITestEnvironment.fixtureKeychainService)
     )
 
+    /// Identifies the Keychain service. Secrets are read and written through
+    /// `vault`, never through this object directly.
     let keychain: Keychain
+    let vault: SecretVault
 
-    public init(keychain: Keychain = Keychain(service: "com.reidchatham.LangTools_Example")) {
+    /// `vault` defaults to the process-wide vault for `keychain`'s service;
+    /// tests pass their own to count Keychain access.
+    public init(keychain: Keychain = Keychain(service: "com.reidchatham.LangTools_Example"), vault: SecretVault? = nil) {
         self.keychain = keychain
+        self.vault = vault ?? SecretVault.shared(service: keychain.service)
+    }
+
+    private static func apiKeyAccount(for service: APIService) -> String {
+        "\(service.rawValue):apiKey"
     }
 
     public func saveApiKey(apiKey: String, for service: APIService) {
-        do { try keychain.set(apiKey, key: "\(service.rawValue):apiKey")}
-        catch { print("Error saving API key to keychain: \(error)")}
+        // An empty key is no key: presence checks must not report it as set.
+        guard !apiKey.isEmpty else { return deleteApiKey(for: service) }
+        do { try vault.setValue(apiKey, forKey: Self.apiKeyAccount(for: service)) }
+        catch { print("Error saving API key to keychain: \(error)") }
     }
 
     public func getApiKey(for service: APIService) -> String? {
-        do { return try keychain.getString("\(service.rawValue):apiKey") }
-        catch { print("Error fetching API key from keychain: \(error)"); return nil}
+        do { return try vault.value(forKey: Self.apiKeyAccount(for: service)) }
+        catch { print("Error fetching API key from keychain: \(error)"); return nil }
+    }
+
+    /// Whether an API key is stored, without reading it from the Keychain.
+    public func hasApiKey(for service: APIService) -> Bool {
+        vault.contains(Self.apiKeyAccount(for: service))
     }
 
     public func deleteApiKey(for service: APIService) {
-        do { try keychain.remove("\(service.rawValue):apiKey")}
-        catch { print("Error deleting API key from keychain: \(error)")}
+        do { try vault.removeValue(forKey: Self.apiKeyAccount(for: service)) }
+        catch { print("Error deleting API key from keychain: \(error)") }
     }
 
     public func setSecret(_ value: String, forKey key: String) throws {
-        try keychain.set(value, key: key)
+        try vault.setValue(value, forKey: key)
     }
 
     public func readSecret(forKey key: String) throws -> String? {
-        try keychain.getString(key)
+        try vault.value(forKey: key)
+    }
+
+    /// Whether a secret is stored, without reading it from the Keychain.
+    public func hasSecret(forKey key: String) -> Bool {
+        vault.contains(key)
     }
 
     public func removeSecret(forKey key: String) throws {
-        try keychain.remove(key)
+        try vault.removeValue(forKey: key)
     }
 
     @discardableResult
     public func saveSecret(_ value: String, forKey key: String) -> Bool {
         do {
-            try keychain.set(value, key: key)
+            try vault.setValue(value, forKey: key)
             return true
         } catch {
             print("Error saving secret to keychain: \(error)")
@@ -152,12 +181,12 @@ public class KeychainService: KeychainSecretStoring {
     }
 
     public func secret(forKey key: String) -> String? {
-        do { return try keychain.getString(key) }
+        do { return try vault.value(forKey: key) }
         catch { print("Error fetching secret from keychain: \(error)"); return nil }
     }
 
     public func deleteSecret(forKey key: String) {
-        do { try keychain.remove(key) }
+        do { try vault.removeValue(forKey: key) }
         catch { print("Error deleting secret from keychain: \(error)") }
     }
 }

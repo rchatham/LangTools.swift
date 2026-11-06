@@ -54,6 +54,26 @@ existing preferences, app-container identity, and credential lookup. The test bu
 IDs, signing team, deployment versions, and sandbox entitlements are also retained.
 A future identifier change needs an explicit migration/distribution decision.
 
+### Keychain access
+
+API keys, account sessions, and the Codex helper token are kept in one Keychain item
+(`LangTools.secretVault.v1`) under that service, managed by `SecretVault`
+(`Modules/ToolKit/SecretVault.swift`), so the app touches the Keychain as little as possible:
+
+- Checking which providers are configured uses an attributes-only query. It never reads
+  secret data, so launching the app and drawing the model picker never prompt.
+- Secret data is read only when a value is needed (for example, the first request to a
+  provider), at most once per launch, and from one item, so there is at most one access
+  prompt per launch instead of one per credential per read.
+- Writes that would not change a value are skipped.
+- On macOS the item lives in the data protection Keychain when the build is signed with a
+  team (the Xcode app target is). Those items never show the "wants to use your
+  confidential information" dialog. Unsigned builds fall back to the login Keychain.
+
+Credentials saved by earlier versions as one item each are moved into the vault the first
+time each one is needed, so an upgrade can prompt once for each existing credential, one
+time only.
+
 The ChatUI gitlink revision is retained while its submodule section and checkout path
 move to `Apps/LangTools/ChatUI`. For existing checkouts, save any submodule changes
 before switching across the move, then synchronize and initialize the new path:

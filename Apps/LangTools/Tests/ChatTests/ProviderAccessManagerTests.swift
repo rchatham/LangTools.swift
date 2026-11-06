@@ -2,6 +2,7 @@ import XCTest
 import KeychainAccess
 import Anthropic
 import OpenAI
+import ToolKit
 @testable import Chat
 
 final class ProviderAccessManagerTests: XCTestCase {
@@ -293,5 +294,49 @@ final class ProviderAccessManagerTests: XCTestCase {
         XCTAssertEqual(Model.pickerGroups(models, matching: "groq llama").flatMap(\.models), [.compatible(.groq, "llama-3.3-70b-versatile")])
         XCTAssertEqual(Model.pickerGroups(models, matching: "GPT-4O-MINI").flatMap(\.models), [.openAI(.gpt4o_mini)])
         XCTAssertEqual(Model.pickerGroups(models, matching: "no match", keeping: .compatible(.openrouter, "openrouter/auto")).flatMap(\.models), [.compatible(.openrouter, "openrouter/auto")], "the selection stays visible")
+    }
+
+    // MARK: - Keychain access budget
+
+    /// A vault holding a key and a session, as a fresh launch would find it.
+    private func relaunchedVault(_ backend: InMemorySecretVaultBackend) throws -> SecretVault {
+        let previousRun = SecretVault(backend: backend)
+        try previousRun.setValue("sk-test", forKey: "openAI:apiKey")
+        try previousRun.setValue("sk-ant", forKey: "anthropic:apiKey")
+        return SecretVault(backend: backend)
+    }
+
+    func testRefreshChecksKeysWithoutReadingSecretData() throws {
+        let backend = InMemorySecretVaultBackend()
+        let vault = try relaunchedVault(backend)
+        let keys = KeychainService(keychain: keychain, vault: vault)
+        let manager = ProviderAccessManager(keychainService: keys, sessionStore: AuthSessionStore(keychain: keychain, vault: vault))
+
+        for _ in 0..<5 { manager.refresh() }
+        _ = manager.statesForAccessUI()
+        _ = manager.availableChatModels()
+
+        XCTAssertTrue(manager.state(for: .openAI).hasAPIKey)
+        XCTAssertTrue(manager.state(for: .anthropic).hasAPIKey)
+        XCTAssertFalse(manager.state(for: .xAI).hasAPIKey)
+        XCTAssertEqual(backend.readCount, 0, "Showing provider state must never read secrets")
+    }
+
+    func testNetworkClientReadsKeysOnFirstUseOnly() throws {
+        let backend = InMemorySecretVaultBackend()
+        let vault = try relaunchedVault(backend)
+        let keys = KeychainService(keychain: keychain, vault: vault)
+        let manager = ProviderAccessManager(keychainService: keys, sessionStore: AuthSessionStore(keychain: keychain, vault: vault))
+        let savedOverride = ToolSettings.shared.agentModelOverride
+        ToolSettings.shared.agentModelOverride = nil
+        defer { ToolSettings.shared.agentModelOverride = savedOverride }
+        let client = NetworkClient(keychainService: keys, providerAccessManager: manager)
+        XCTAssertEqual(backend.readCount, 0, "Launching must not read secrets")
+
+        let model = Model.openAI(try XCTUnwrap(OpenAI.Model.chatModels.first))
+        for _ in 0..<3 {
+            _ = try client.agentContext(messages: [Message(text: "Hi", role: .user)], model: model) { _ in }
+        }
+        XCTAssertEqual(backend.readCount, 1, "Every stored key comes from one cached read")
     }
 }

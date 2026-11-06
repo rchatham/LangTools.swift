@@ -1,5 +1,6 @@
 import Foundation
 import KeychainAccess
+import ToolKit
 
 public final class AuthSessionStore {
     /// Returns the shared instance. When a validated fixture environment is
@@ -22,12 +23,14 @@ public final class AuthSessionStore {
         keychain: Keychain(service: ChatUITestEnvironment.fixtureKeychainService)
     )
 
-    private let keychain: Keychain
+    /// Sessions share the service's cached `SecretVault` with API keys, so
+    /// reading them costs at most one Keychain access per launch.
+    private let vault: SecretVault
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    public init(keychain: Keychain = Keychain(service: "com.reidchatham.LangTools_Example")) {
-        self.keychain = keychain
+    public init(keychain: Keychain = Keychain(service: "com.reidchatham.LangTools_Example"), vault: SecretVault? = nil) {
+        self.vault = vault ?? SecretVault.shared(service: keychain.service)
     }
 
     public func save(_ session: AccountSession) throws {
@@ -35,11 +38,11 @@ public final class AuthSessionStore {
         guard let json = String(data: data, encoding: .utf8) else {
             throw AuthSessionStoreError.encodingFailed
         }
-        try keychain.set(json, key: key(for: session.provider))
+        try vault.setValue(json, forKey: key(for: session.provider))
     }
 
     public func session(for provider: AccountLoginProvider) throws -> AccountSession? {
-        guard let json = try keychain.getString(key(for: provider)) else {
+        guard let json = try vault.value(forKey: key(for: provider)) else {
             return nil
         }
         guard let data = json.data(using: .utf8) else {
@@ -48,8 +51,13 @@ public final class AuthSessionStore {
         return try decoder.decode(AccountSession.self, from: data)
     }
 
+    /// Whether a session is stored, without reading it from the Keychain.
+    public func hasSession(for provider: AccountLoginProvider) -> Bool {
+        vault.contains(key(for: provider))
+    }
+
     public func removeSession(for provider: AccountLoginProvider) throws {
-        try keychain.remove(key(for: provider))
+        try vault.removeValue(forKey: key(for: provider))
     }
 
     public func allSessions() throws -> [AccountSession] {

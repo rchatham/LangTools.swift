@@ -40,14 +40,16 @@ public final class ProviderAccessManager: ObservableObject {
 
         var newStates: [APIService: ProviderAccessState] = [:]
         for service in APIService.allCases {
-            let apiKey = keychainService.getApiKey(for: service)
+            // Presence only: deciding which models to show never needs the
+            // key itself, so this never reads secret data from the Keychain.
+            let hasAPIKey = keychainService.hasApiKey(for: service)
             let accountProvider = service.accountLoginProvider
             let session = accountProvider.flatMap { try? sessionStore.session(for: $0) }
-            let status = authStatus(apiKey: apiKey, session: session)
+            let status = authStatus(hasAPIKey: hasAPIKey, session: session)
             newStates[service] = ProviderAccessState(
                 service: service,
                 authStatus: status,
-                availableModels: availableModels(for: service, apiKey: apiKey, session: session, ollamaSnapshot: ollamaSnapshot),
+                availableModels: availableModels(for: service, hasAPIKey: hasAPIKey, session: session, ollamaSnapshot: ollamaSnapshot),
                 accountIdentifier: session?.accountIdentifier
             )
         }
@@ -200,9 +202,8 @@ public final class ProviderAccessManager: ObservableObject {
         unavailableReason(for: state(for: service))
     }
 
-    private func authStatus(apiKey: String?, session: AccountSession?) -> ProviderAuthStatus {
-        let hasKey = apiKey?.isEmpty == false
-        switch (hasKey, session) {
+    private func authStatus(hasAPIKey: Bool, session: AccountSession?) -> ProviderAuthStatus {
+        switch (hasAPIKey, session) {
         case (true, let session?):
             return .apiKeyAndAccount(session.provider)
         case (true, nil):
@@ -216,7 +217,7 @@ public final class ProviderAccessManager: ObservableObject {
 
     private func availableModels(
         for service: APIService,
-        apiKey: String?,
+        hasAPIKey: Bool,
         session: AccountSession?,
         ollamaSnapshot: OllamaEndpointConfiguration.Snapshot
     ) -> [Model] {
@@ -227,7 +228,6 @@ public final class ProviderAccessManager: ObservableObject {
             return Model.appleModels
         }
 
-        let hasAPIKey = apiKey?.isEmpty == false
         let hasSession = session != nil
 
         guard hasAPIKey || hasSession else {

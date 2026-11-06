@@ -80,6 +80,10 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     private let langToolchainLock = NSLock()
     private let conversationLock = NSLock()
     private var codexConversationIDs = Set<UUID>()
+    /// Stored API keys are read on the first request, not at launch, so
+    /// starting the app never reads secrets from the Keychain.
+    private let storedApiKeysLock = NSLock()
+    private var didRegisterStoredApiKeys = false
 
     public init(
         keychainService: KeychainService = .shared,
@@ -104,7 +108,6 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
         self.generationSettingsProvider = generationSettingsProvider
         self.compatibleCatalog = compatibleCatalog
         super.init()
-        APIService.llms.forEach { llm in keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) } }
         providerAccessManager.refresh()
     }
 
@@ -491,6 +494,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     }
 
     private func requiredLangTool<T: LangTools>(_ type: T.Type) throws -> T {
+        registerStoredApiKeysIfNeeded()
         langToolchainLock.lock()
         defer { langToolchainLock.unlock() }
         guard let tool = langToolchain.langTool(type) else {
@@ -512,6 +516,7 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
     }
 
     private func toolchainSnapshot() -> LangToolchain {
+        registerStoredApiKeysIfNeeded()
         langToolchainLock.lock()
         defer { langToolchainLock.unlock() }
         return langToolchain
@@ -584,6 +589,19 @@ public class NetworkClient: NSObject, ConversationAwareNetworkClientProtocol {
                 return
             }
             try providerAccessManager.removeAccountSession(for: .openAI)
+        }
+    }
+
+    /// Registers a client for every stored API key, once, the first time a
+    /// request needs the toolchain. Only keys that exist are read, and they
+    /// all come from one cached Keychain item.
+    private func registerStoredApiKeysIfNeeded() {
+        storedApiKeysLock.lock()
+        defer { storedApiKeysLock.unlock() }
+        guard !didRegisterStoredApiKeys else { return }
+        didRegisterStoredApiKeys = true
+        for llm in APIService.llms where keychainService.hasApiKey(for: llm) {
+            keychainService.getApiKey(for: llm).flatMap { registerLangTool($0, for: llm) }
         }
     }
 

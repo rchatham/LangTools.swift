@@ -235,7 +235,8 @@ private final class PausingRegressionKeychainService: KeychainService {
         lock.unlock()
     }
 
-    override func getApiKey(for service: APIService) -> String? {
+    // Refresh checks key presence only, so that is where it pauses.
+    override func hasApiKey(for service: APIService) -> Bool {
         lock.lock()
         let pause = shouldPause
         shouldPause = false
@@ -244,8 +245,10 @@ private final class PausingRegressionKeychainService: KeychainService {
             paused.signal()
             XCTAssertEqual(resume.wait(timeout: .now() + 5), .success)
         }
-        return nil
+        return false
     }
+
+    override func getApiKey(for service: APIService) -> String? { nil }
 }
 
 private final class RegressionHelperStore: MobileHelperCredentialStoring, @unchecked Sendable {
