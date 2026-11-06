@@ -7,6 +7,9 @@ import OpenAI
 import SwiftUI
 import ToolKit
 
+/// Owns the initially supplied model for this view identity, preserving edits as
+/// SwiftUI reconstructs navigation destinations. Use a new view identity (`.id`)
+/// when replacing the model or starting a fresh settings session.
 public struct ChatSettingsView: View {
     @StateObject public var viewModel: ViewModel
     @State private var isEditingSystemMessage = false
@@ -259,7 +262,7 @@ public struct ChatSettingsView: View {
         .navigationTitle("Settings")
         .onAppear {
             // Returning from a submenu can appear before its save-on-disappear.
-            // Load once per Settings presentation to avoid replacing pending edits.
+            // Load once per view identity to avoid replacing pending edits.
             guard !didLoadMobileSettings else { return }
             didLoadMobileSettings = true
             viewModel.loadSettings()

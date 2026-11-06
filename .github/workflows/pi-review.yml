@@ -3,7 +3,7 @@ name: Pi Code Review
 on:
   # Run the workflow definition from the trusted base, never the PR branch.
   pull_request_target:
-    branches: [main, feature/botsworth-helper-launch]
+    branches: [main]
     types: [opened, synchronize, reopened]
 
   workflow_dispatch:
@@ -112,7 +112,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" | jq -e --arg head "$HEAD_SHA" '.state == "open" and .head.sha == $head' > /dev/null
+          gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" | jq -e --arg head "$HEAD_SHA" --arg repo "$REPOSITORY" '.state == "open" and .head.sha == $head and .head.repo.full_name == $repo' > /dev/null
           marker='<!-- pi-code-review -->'
           body_file="$RUNNER_TEMP/review-comment.md"
           jq -Rs '
