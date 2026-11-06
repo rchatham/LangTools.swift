@@ -37,7 +37,11 @@ class PromptTest < Minitest::Test
         if [[ "$1 $2" == 'pr diff' ]]; then
           printf 'diff --git a/file.swift b/file.swift\n+flush()\n'
         elif [[ "$1" == api && "$2" == repos/*/pulls/* ]]; then
-          printf '%s\n' "${HEAD_REPOSITORY:-example/repo}"
+          if [[ "$*" == *--jq* ]]; then
+            printf '%s\n' "${HEAD_REPOSITORY:-example/repo}"
+          else
+            printf '{"state":"open","head":{"sha":"review-head","repo":{"full_name":"example/repo"}},"base":{"sha":"review-base"}}\n'
+          fi
         elif [[ "$1" == api && "$2" == --paginate ]]; then
           printf '[]\n'
         else
@@ -68,6 +72,19 @@ class PromptTest < Minitest::Test
     end
   end
 
+  def test_manual_review_validates_target_before_fetching
+    with_prompt(fixture('issue-comment.json')) do |_, env, dir|
+      target_env = env.merge('PR_NUMBER' => '456', 'GITHUB_ENV' => File.join(dir, 'github-env'))
+      run_step('pi-review.yml', 'Validate review target', target_env, dir)
+      assert_includes File.read(target_env['GITHUB_ENV']), 'HEAD_SHA=review-head'
+      assert_includes File.read(target_env['GITHUB_ENV']), 'BASE_SHA=review-base'
+      [target_env.merge('PR_NUMBER' => '../bad'), target_env.merge('REPOSITORY' => 'other/repo')].each do |invalid|
+        _, status = run_step_result('pi-review.yml', 'Validate review target', invalid, dir)
+        refute status.success?
+      end
+    end
+  end
+
   def test_issue_comment_includes_problem_separately_from_request
     event = fixture('issue-comment.json')
     with_prompt(event) do |prompt|
@@ -84,8 +101,12 @@ class PromptTest < Minitest::Test
       assert_includes prompt, event['issue']['body']
       assert_includes prompt, "[BEGIN UNTRUSTED PULL REQUEST DIFF]\ndiff --git"
       File.write(File.join(dir, 'review.md'), 'Model advice')
-      run_step('pi-review.yml', 'Upsert review comment', env.merge('PR_NUMBER' => '456'), dir)
+      run_step('pi-review.yml', 'Upsert review comment', env.merge('PR_NUMBER' => '456', 'HEAD_SHA' => 'review-head'), dir)
       posted_comment = File.read(File.join(dir, 'posted-comment'))
+      File.delete(File.join(dir, 'posted-comment'))
+      output, status = run_step_result('pi-review.yml', 'Upsert review comment', env.merge('PR_NUMBER' => '456', 'HEAD_SHA' => 'stale-head'), dir)
+      refute status.success?, 'A stale review must not be posted'
+      refute File.exist?(File.join(dir, 'posted-comment'))
       assert posted_comment.start_with?("<!-- pi-code-review -->\n\n#{NOTICE}")
       assert_includes posted_comment, 'Model advice'
     end
