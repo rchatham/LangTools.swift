@@ -190,7 +190,9 @@ extension Ollama {
     }
 
     public struct ChatToolCall: Codable, LangToolsToolSelection {
-        public let id: String? = "ollama"
+        // Cloud backends correlate parallel calls by ID. Reusing a constant
+        // makes multi-tool continuations ambiguous (some return HTTP 500).
+        public let id: String?
         public var name: String? { function.name }
         public var arguments: String {
             JSON.object(function.arguments).jsonString(formatting: []) ?? "{}"
@@ -198,7 +200,10 @@ extension Ollama {
 
         public let function: Function
 
-        public init(function: Function) { self.function = function }
+        public init(function: Function) {
+            self.id = UUID().uuidString
+            self.function = function
+        }
 
         enum CodingKeys: String, CodingKey {
             case id, function
@@ -206,7 +211,8 @@ extension Ollama {
 
         public init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            _ = try container.decodeIfPresent(String.self, forKey: .id)
+            let providerID = try container.decodeIfPresent(String.self, forKey: .id)
+            id = providerID.flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
             function = try container.decode(Function.self, forKey: .function)
         }
 
