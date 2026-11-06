@@ -201,6 +201,8 @@ final class MobileHelperTests: XCTestCase {
         let bad = credential(token: "invalid")
         XCTAssertThrowsError(try store.save(bad))
         try keychain.set(JSONEncoder().encode(bad), key: helperID)
+        XCTAssertEqual(try store.load(helperID: helperID), saved)
+        store.invalidateCache() // Explicitly reload changes made outside the store.
         XCTAssertThrowsError(try store.load(helperID: helperID))
         try store.remove(helperID: helperID)
         XCTAssertNil(try store.load(helperID: helperID))

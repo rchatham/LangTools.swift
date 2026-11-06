@@ -89,11 +89,12 @@ protocol MobileHelperCredentialStoring: Sendable {
 final class MobileHelperCredentialStore: MobileHelperCredentialStoring, @unchecked Sendable {
     static let shared = MobileHelperCredentialStore()
     private let keychain: Keychain
+    private let cache = CredentialReadCache<Data>()
     init(keychain: Keychain = Keychain(service: "LangTools.mobile-helper.devices")
         .accessibility(.afterFirstUnlockThisDeviceOnly)) { self.keychain = keychain }
 
     func load(helperID: String) throws -> MobileHelperCredential? {
-        guard let data = try keychain.getData(helperID) else { return nil }
+        guard let data = try cache.read(helperID, load: { try keychain.getData(helperID) }) else { return nil }
         let credential = try JSONDecoder().decode(MobileHelperCredential.self, from: data)
         try credential.validate()
         guard credential.helperID == helperID else { throw MobileHelperError.invalidIdentity }
@@ -101,9 +102,15 @@ final class MobileHelperCredentialStore: MobileHelperCredentialStoring, @uncheck
     }
     func save(_ credential: MobileHelperCredential) throws {
         try credential.validate()
-        try keychain.set(JSONEncoder().encode(credential), key: credential.helperID)
+        let data = try JSONEncoder().encode(credential)
+        try cache.write(credential.helperID, value: data) {
+            try keychain.set(data, key: credential.helperID)
+        }
     }
-    func remove(helperID: String) throws { try keychain.remove(helperID) }
+    func remove(helperID: String) throws {
+        try cache.write(helperID, value: nil) { try keychain.remove(helperID) }
+    }
+    func invalidateCache() { cache.invalidate() }
 }
 
 /// Deliberate identity-vs-address policy: the QR pins the exact leaf DER hash.

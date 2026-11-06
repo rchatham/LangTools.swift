@@ -95,7 +95,7 @@ public final class CodexHelperPairingCoordinator: ObservableObject {
 
     public convenience init(
         makeHelperClient: @escaping (AccountBackendConfiguration) -> CodexHelperClientProtocol = { CodexHelperClient(configuration: $0) },
-        saveToken: @escaping (String) throws -> Void = { try CodexHelperTokenStore().setToken($0) },
+        saveToken: @escaping (String) throws -> Void = { try CodexHelperTokenStore.shared.setToken($0) },
         loadPersistedToken: @escaping () -> String = { UserDefaults.codexHelperToken }
     ) {
         self.init(

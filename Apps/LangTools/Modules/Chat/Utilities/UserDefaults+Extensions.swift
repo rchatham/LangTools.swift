@@ -128,10 +128,10 @@ extension UserDefaults {
     }
 
     public static var codexHelperToken: String {
-        get { CodexHelperTokenStore().token() }
+        get { CodexHelperTokenStore.shared.token() }
         set {
             do {
-                try CodexHelperTokenStore().setToken(newValue)
+                try CodexHelperTokenStore.shared.setToken(newValue)
             } catch {
                 NSLog("Unable to update the Codex helper token: %@", error.localizedDescription)
             }

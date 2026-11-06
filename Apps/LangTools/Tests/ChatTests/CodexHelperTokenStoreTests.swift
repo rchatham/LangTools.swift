@@ -19,6 +19,21 @@ final class CodexHelperTokenStoreTests: XCTestCase {
         super.tearDown()
     }
 
+    func testRepeatedReadsUseMemoryAndVerifiedWritesUpdateIt() throws {
+        let keychain = TestSecretStore()
+        keychain.value = "original"
+        let store = CodexHelperTokenStore(defaults: defaults, keychain: keychain)
+        for _ in 0..<10 { XCTAssertEqual(try store.loadToken(), "original") }
+        XCTAssertEqual(keychain.readCount, 1)
+        try store.setToken("updated")
+        let count = keychain.readCount
+        XCTAssertEqual(try store.loadToken(), "updated")
+        XCTAssertEqual(keychain.readCount, count)
+        store.invalidateCache()
+        XCTAssertEqual(try store.loadToken(), "updated")
+        XCTAssertEqual(keychain.readCount, count + 1)
+    }
+
     func testLegacyTokenMigratesOnlyAfterVerifiedKeychainWrite() throws {
         defaults.set("legacy-token", forKey: CodexHelperTokenStore.key)
         let keychain = TestSecretStore()
@@ -71,6 +86,7 @@ private final class TestSecretStore: KeychainSecretStoring {
         case write
     }
 
+    var readCount = 0
     var value: String?
     var setError: Error?
     var ignoreWrites = false
@@ -83,6 +99,7 @@ private final class TestSecretStore: KeychainSecretStoring {
 
     func readSecret(forKey key: String) throws -> String? {
         _ = key
+        readCount += 1
         return value
     }
 
