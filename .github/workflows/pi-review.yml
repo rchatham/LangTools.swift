@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]
+          case "$PR_NUMBER" in ""|*[!0-9]*) exit 1 ;; esac
           gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/target.json"
           jq -e --arg repo "$REPOSITORY" '.state == "open" and .head.repo.full_name == $repo' "$RUNNER_TEMP/target.json" > /dev/null
           jq -r '"BASE_SHA=" + .base.sha, "HEAD_SHA=" + .head.sha' "$RUNNER_TEMP/target.json" >> "$GITHUB_ENV"
