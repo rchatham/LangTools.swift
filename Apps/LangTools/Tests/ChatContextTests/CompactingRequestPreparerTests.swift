@@ -217,6 +217,81 @@ final class CompactingRequestPreparerTests: XCTestCase {
         XCTAssertTrue(summarizer.requests.isEmpty)
     }
 
+    // MARK: Tool definitions
+
+    func testToolDefinitionsCountTowardTheTrigger() async throws {
+        // The 3,096-token request above stays under the 3,200 trigger on its
+        // own; the tools offered with it push it over.
+        let history = conversation(turns: 14)
+        let tools = [contextTestTool(descriptionTokens: 100)]
+        let toolTokens = estimator.tokens(in: tools)
+
+        let prepared = try await preparer().prepare(requestContext(history, tools: tools))
+
+        XCTAssertEqual(summarizer.requests.count, 1)
+        XCTAssertLessThanOrEqual(tokens(of: prepared) + toolTokens, 2_000, "The kept request, tools included, fits the target")
+        XCTAssertEqual(prepared.tools.map(\.name), ["lookup"], "Tools pass through untouched")
+    }
+
+    // MARK: Provider overflow
+
+    func testAReportedOverflowCompactsUnderTheTriggerUsingTheProvidersCount() async throws {
+        let history = conversation(turns: 14)
+        let sent = tokens(of: requestContext(history))
+        // The provider counted twice what the estimate says.
+        let overflow = ContextOverflow(requestedTokens: sent * 2, maximumTokens: 4_000)
+
+        let prepared = try await preparer().prepare(requestContext(history, overflow: overflow))
+
+        XCTAssertEqual(summarizer.requests.count, 1)
+        XCTAssertEqual(store.checkpoints.count, 1)
+        XCTAssertLessThanOrEqual(tokens(of: prepared) * 2, 2_000, "Estimates are scaled by the provider's count to fit the target")
+        XCTAssertEqual(events.first, .recoveringFromOverflow(overflow))
+    }
+
+    func testAReportedLimitBelowTheWindowShrinksTheBudget() async throws {
+        let history = conversation(turns: 14)
+        let sent = tokens(of: requestContext(history))
+        // The estimate was right, but the provider allows only 3,000 tokens.
+        let overflow = ContextOverflow(requestedTokens: sent, maximumTokens: 3_000)
+
+        let prepared = try await preparer().prepare(requestContext(history, overflow: overflow))
+
+        XCTAssertEqual(summarizer.requests.count, 1)
+        XCTAssertLessThanOrEqual(tokens(of: prepared), 1_500, "Half of the provider's limit")
+    }
+
+    func testAnOverflowWithoutCountsAssumesTheRequestFilledTheWindow() async throws {
+        let history = conversation(turns: 14)
+        let sent = tokens(of: requestContext(history))
+
+        let prepared = try await preparer().prepare(requestContext(history, overflow: ContextOverflow()))
+
+        XCTAssertEqual(summarizer.requests.count, 1)
+        // The provider refused about 3,100 estimated tokens, so the estimate
+        // is at least 4,000 / 3,100 too low.
+        XCTAssertLessThanOrEqual(tokens(of: prepared) * 4_000 / sent, 2_000)
+    }
+
+    func testAnOverflowWithADisabledPolicySendsTheRequestUnchanged() async throws {
+        let history = conversation(turns: 14)
+
+        let prepared = try await preparer(policy: testPolicy(isEnabled: false))
+            .prepare(requestContext(history, overflow: ContextOverflow()))
+
+        XCTAssertTrue(prepared.history.elementsEqual(history, by: ===))
+        XCTAssertTrue(summarizer.requests.isEmpty)
+    }
+
+    func testAnOverflowWithNothingToFoldSendsTheRequestUnchanged() async throws {
+        let history = [Message(text: filler(500, "one prompt"), role: .user)]
+
+        let prepared = try await preparer().prepare(requestContext(history, overflow: ContextOverflow(requestedTokens: 9_000, maximumTokens: 4_000)))
+
+        XCTAssertTrue(prepared.history.elementsEqual(history, by: ===))
+        XCTAssertTrue(summarizer.requests.isEmpty)
+    }
+
     // MARK: Failures
 
     func testASummarizerFailureFallsBackToAnUnsavedExtractiveSummary() async throws {

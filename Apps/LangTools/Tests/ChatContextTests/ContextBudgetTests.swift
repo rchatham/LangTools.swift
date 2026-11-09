@@ -1,5 +1,6 @@
 import ChatUI
 import Foundation
+import LangTools
 import OpenAI
 import XCTest
 @testable import Chat
@@ -37,6 +38,19 @@ final class TokenEstimatorTests: XCTestCase {
         )
         // overhead 10 + call overhead 10 + name 1 + arguments 2 + hidden raw result 10
         XCTAssertEqual(estimator.tokens(in: withTools), 33, "Raw provider results replace the visible result; pending calls are not replayed")
+    }
+
+    func testToolDefinitionsCountTheirJSONPlusFraming() throws {
+        XCTAssertEqual(estimator.tokens(in: [Tool]()), 0, "A request without tools pays nothing")
+
+        let tool = contextTestTool(descriptionTokens: 40)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let definition = estimator.tokens(in: String(decoding: try encoder.encode(tool), as: UTF8.self))
+        XCTAssertGreaterThan(definition, 40, "The name, description and schema all count")
+
+        XCTAssertEqual(estimator.tokens(in: [tool]), 300 + 10 + definition)
+        XCTAssertEqual(estimator.tokens(in: [tool, tool]), 300 + 2 * (10 + definition), "The tool-use preamble is paid once")
     }
 }
 

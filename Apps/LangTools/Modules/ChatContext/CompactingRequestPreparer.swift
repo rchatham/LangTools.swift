@@ -13,9 +13,15 @@ import Chat
 ///
 /// Each request is the system prompt, the latest checkpoint's summary, and
 /// the messages after the checkpoint. Nothing changes between turns until
-/// the request crosses the policy's trigger; then just enough of the oldest
-/// finished turns are folded into a new checkpoint to get back under the
-/// target. Cuts fall only between turns (see `ConversationTurns`).
+/// the request, tool definitions included, crosses the policy's trigger;
+/// then just enough of the oldest finished turns are folded into a new
+/// checkpoint to get back under the target. Cuts fall only between turns
+/// (see `ConversationTurns`).
+///
+/// When the provider still rejects a request as too long
+/// (`ChatRequestContext.contextOverflow`), the preparer compacts whatever the
+/// estimate says, scaling its estimates by the provider's count or, without
+/// one, by the least the rejection implies.
 ///
 /// The preparer never mutates the messages it is given: the returned history
 /// holds copies. Stored messages are never changed either; compaction only
@@ -25,6 +31,9 @@ public final class CompactingRequestPreparer {
     public enum Event: Equatable {
         /// A new checkpoint was saved.
         case compacted(ContextCheckpoint)
+        /// The provider rejected the request as too long, so this request
+        /// compacts regardless of the estimate.
+        case recoveringFromOverflow(ContextOverflow)
         /// The summarizer failed, so an extractive summary is used for now.
         /// It is kept in memory only; the next compaction tries the model again.
         case usedFallbackSummary(ContextCheckpoint, reason: String)
@@ -104,17 +113,31 @@ public final class CompactingRequestPreparer {
         }
 
         let applied = Self.split(context.history, at: transientCheckpoint ?? persisted)
-        let budget = ContextBudget(model: context.model, settings: context.settings, policy: policy)
-        let estimate = requestTokens(systemPrompt: context.systemPrompt, summary: applied.summary, history: applied.history)
-        guard policy.isEnabled, estimate > budget.tokens(atPercent: policy.triggerPercent) else {
-            return assemble(context, summary: applied.summary, history: applied.history)
+        var budget = ContextBudget(model: context.model, settings: context.settings, policy: policy)
+        let toolTokens = estimator.tokens(in: context.tools)
+        let estimate = toolTokens + requestTokens(systemPrompt: context.systemPrompt, summary: applied.summary, history: applied.history)
+        var correction = 1.0
+        if let overflow = context.contextOverflow, policy.isEnabled {
+            (budget, correction) = Self.recalibrated(budget, after: overflow, estimate: estimate)
+            onEvent?(.recoveringFromOverflow(overflow))
+        } else {
+            guard policy.isEnabled, estimate > budget.tokens(atPercent: policy.triggerPercent) else {
+                return assemble(context, summary: applied.summary, history: applied.history)
+            }
         }
 
         // Compact from the last saved checkpoint, so a model summary is built
         // from the original messages rather than from a fallback summary.
         let base = Self.split(context.history, at: persisted)
         let turns = ConversationTurns(messages: Array(base.history), inFlightMessageIDs: context.inFlightMessageIDs)
-        guard let cut = chooseCut(in: turns, systemPrompt: context.systemPrompt, budget: budget, policy: policy) else {
+        guard let cut = chooseCut(
+            in: turns,
+            systemPrompt: context.systemPrompt,
+            budget: budget,
+            policy: policy,
+            fixedTokens: toolTokens,
+            correction: correction
+        ) else {
             return assemble(context, summary: applied.summary, history: applied.history)
         }
         let covered = Array(turns.messages[..<cut])
@@ -162,9 +185,17 @@ public final class CompactingRequestPreparer {
     /// 3. the smallest cut that fits the input limit;
     /// 4. the largest cut; the provider then reports any remaining overflow.
     ///
-    /// Each request costs the system prompt, room for a full-length summary
-    /// and the kept messages.
-    func chooseCut(in turns: ConversationTurns, systemPrompt: String, budget: ContextBudget, policy: CompactionPolicy) -> Int? {
+    /// Each request costs the system prompt, room for a full-length summary,
+    /// `fixedTokens` (the tool definitions) and the kept messages, all
+    /// multiplied by `correction`.
+    func chooseCut(
+        in turns: ConversationTurns,
+        systemPrompt: String,
+        budget: ContextBudget,
+        policy: CompactionPolicy,
+        fixedTokens: Int = 0,
+        correction: Double = 1
+    ) -> Int? {
         guard !turns.cutIndices.isEmpty else { return nil }
         let messages = turns.messages
         var suffixTokens = Array(repeating: 0, count: messages.count + 1)
@@ -173,7 +204,8 @@ public final class CompactingRequestPreparer {
         }
         let fixed = estimator.tokens(in: CompactedContext.systemPrompt(systemPrompt, summary: ""))
             + policy.summaryTokenLimit
-        func cost(_ cut: Int) -> Int { fixed + suffixTokens[cut] }
+            + fixedTokens
+        func cost(_ cut: Int) -> Int { Int((Double(fixed + suffixTokens[cut]) * correction).rounded(.up)) }
         func keepsRecentTurns(_ cut: Int) -> Bool { turns.turnsKept(cuttingAt: cut) > policy.minimumRecentTurns }
 
         let target = budget.tokens(atPercent: policy.targetPercent)
@@ -182,6 +214,26 @@ public final class CompactingRequestPreparer {
         if let cut = turns.cutIndices.last(where: keepsRecentTurns), cost(cut) <= limit { return cut }
         if let cut = turns.cutIndices.first(where: { cost($0) <= limit }) { return cut }
         return turns.cutIndices.last
+    }
+
+    /// The budget and estimate multiplier for a retry after the provider
+    /// rejected a request of about `estimate` tokens.
+    ///
+    /// A reported limit below the known window replaces it. A reported count
+    /// gives the multiplier directly; without one the request must have been
+    /// at least the window, which bounds the multiplier from below.
+    static func recalibrated(_ budget: ContextBudget, after overflow: ContextOverflow, estimate: Int) -> (ContextBudget, correction: Double) {
+        var budget = budget
+        if let maximum = overflow.maximumTokens, maximum > 0, maximum < budget.contextWindowTokens {
+            budget = ContextBudget(
+                contextWindowTokens: maximum,
+                isContextWindowKnown: true,
+                windowPercent: budget.windowPercent,
+                reservedResponseTokens: min(budget.reservedResponseTokens, maximum * budget.windowPercent / 100 / 4)
+            )
+        }
+        let counted = overflow.requestedTokens ?? overflow.maximumTokens ?? budget.contextWindowTokens
+        return (budget, max(1, Double(counted) / Double(max(1, estimate))))
     }
 
     private func summarize(_ request: SummaryRequest) async throws -> (ContextSummary, isFallback: Bool, failure: String?) {

@@ -149,6 +149,8 @@ let package = Package(
                 .product(name: "LangTools", package: "langtools.swift"),
                 .product(name: "Agents", package: "langtools.swift"),
                 .product(name: "OpenAI", package: "langtools.swift"),
+                .product(name: "Anthropic", package: "langtools.swift"),
+                .product(name: "Gemini", package: "langtools.swift"),
                 .product(name: "Ollama", package: "langtools.swift"),
             ],
             path: "Tests/ChatContextTests"),

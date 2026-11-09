@@ -57,9 +57,45 @@ func requestContext(
     model: Model = unknownWindowModel,
     systemPrompt: String = "system",
     settings: ChatConversationSettings = .default,
-    inFlight: Set<UUID> = []
+    inFlight: Set<UUID> = [],
+    tools: [Tool] = [],
+    overflow: ContextOverflow? = nil
 ) -> ChatRequestContext {
-    ChatRequestContext(systemPrompt: systemPrompt, history: history, model: model, settings: settings, inFlightMessageIDs: inFlight)
+    ChatRequestContext(
+        systemPrompt: systemPrompt,
+        history: history,
+        model: model,
+        settings: settings,
+        inFlightMessageIDs: inFlight,
+        tools: tools,
+        contextOverflow: overflow
+    )
+}
+
+/// A tool whose description costs about `descriptionTokens` tokens.
+func contextTestTool(_ name: String = "lookup", descriptionTokens: Int = 10) -> Tool {
+    Tool(
+        name: name,
+        description: filler(descriptionTokens, "Finds"),
+        tool_schema: ToolSchema(
+            properties: ["query": ToolSchemaProperty(type: "string", description: "What to find")],
+            required: ["query"]
+        )
+    )
+}
+
+/// An error body as a provider sends it, decoded into no provider's type.
+struct ProviderMessageError: Error, Codable, Equatable {
+    let message: String
+}
+
+/// Anthropic's wording for a request over the window, inside the error
+/// `LangTools` throws for an unsuccessful response.
+func promptTooLong(_ requested: Int, _ maximum: Int) -> Error {
+    LangToolsError.responseUnsuccessful(
+        statusCode: 400,
+        ProviderMessageError(message: "prompt is too long: \(requested) tokens > \(maximum) maximum")
+    )
 }
 
 /// Records requests and answers with a fixed summary, optionally failing or
@@ -93,7 +129,11 @@ final class RecordingSummarizer: ConversationSummarizer {
 /// A network client that records requests and replies from a script.
 final class ContextScriptedClient: NetworkClientProtocol {
     var replies: [Result<String, Error>]
-    private(set) var requests: [(messages: [Message], model: Model)] = []
+    private(set) var requests: [(messages: [Message], model: Model, tools: [Tool]?)] = []
+    /// Fails the next successful reply after its text, as if the stream broke.
+    var failAfterNextReply: Error?
+    /// Reported to the next request's tool handler before its reply.
+    var toolEventBeforeNextReply: LangToolsToolEvent?
 
     init(_ replies: [Result<String, Error>] = []) { self.replies = replies }
 
@@ -101,13 +141,23 @@ final class ContextScriptedClient: NetworkClientProtocol {
 
     func streamChatCompletionRequest(messages: [Message], model: Model, stream: Bool, tools: [Tool]?, toolChoice: OpenAI.ChatCompletionRequest.ToolChoice?, toolEventHandler: @escaping (LangToolsToolEvent) -> Void) throws -> AsyncThrowingStream<String, Error> {
         guard !replies.isEmpty else { XCTFail("Unscripted request"); throw ContextTestError.unexpected }
-        requests.append((messages, model))
+        requests.append((messages, model, tools))
         let reply = replies.removeFirst()
+        let trailingError = failAfterNextReply
+        failAfterNextReply = nil
+        if let event = toolEventBeforeNextReply {
+            toolEventBeforeNextReply = nil
+            toolEventHandler(event)
+        }
         return AsyncThrowingStream { continuation in
             switch reply {
             case .success(let text):
                 continuation.yield(text)
-                continuation.finish()
+                if let trailingError {
+                    continuation.finish(throwing: trailingError)
+                } else {
+                    continuation.finish()
+                }
             case .failure(let error):
                 continuation.finish(throwing: error)
             }
