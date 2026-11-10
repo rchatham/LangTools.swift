@@ -15,5 +15,6 @@ Scope: LangTools PR #92 (`feature/chat-history`) and stacked #94 (`feature/chat-
 - Inherits #92 fixes. Reopening without a preparer now loads the full transcript.
 - Deleting a covered message or child invalidates affected summaries instead of moving their boundary and retaining deleted content. Surviving earlier summaries remain usable.
 - Process-local transcript revisions discard transient fallback summaries and cancel summaries racing with deletion. Sessions flush deletions and restore hidden history before the next request.
-- Focused macOS tests: 14 Chat tests, 124 ChatHistory tests (19 abstract-base skips), 62 ChatContext tests; zero failures.
-- Remaining: hosted CI and native app/UI checks. No live-provider overflow request was made.
+- Focused macOS tests: 25 Chat tests, 126 ChatHistory tests (19 abstract-base skips), 63 ChatContext tests; zero failures.
+- Checkpoint read failures now block requests rather than silently omitting summarized history.
+- Remaining: hosted CI and native app/UI checks. Native build stopped at Xcode approval for the pinned JSONMacroPlugin; no validation bypass was used. No live-provider overflow request was made.

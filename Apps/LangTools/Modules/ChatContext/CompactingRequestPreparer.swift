@@ -117,7 +117,7 @@ public final class CompactingRequestPreparer {
             contextRevision = revision
         }
         let policy = policy().normalized
-        let persisted = latestPersistedCheckpoint()
+        let persisted = try latestPersistedCheckpoint()
         if let transient = transientCheckpoint, let persisted, ContextCheckpoint.isNewer(persisted, than: transient) {
             transientCheckpoint = nil
         }
@@ -272,12 +272,14 @@ public final class CompactingRequestPreparer {
         return (ContextSummary(text: fallback.summary(for: request), model: ContextSummary.extractiveModelName), true, failure)
     }
 
-    private func latestPersistedCheckpoint() -> ContextCheckpoint? {
+    private func latestPersistedCheckpoint() throws -> ContextCheckpoint? {
         do {
             return try checkpoints.latestCheckpoint(conversationID: conversationID)
         } catch {
             onEvent?(.checkpointReadFailed(error.localizedDescription))
-            return nil
+            // A paged session may only hold messages after this checkpoint.
+            // Treating a read failure as absence would silently lose context.
+            throw error
         }
     }
 

@@ -365,6 +365,18 @@ final class CompactingRequestPreparerTests: XCTestCase {
         XCTAssertTrue(store.checkpoints.isEmpty)
     }
 
+    func testCheckpointReadFailureDoesNotReturnIncompleteContext() async throws {
+        let revisionStore = RevisionCheckpointStore()
+        revisionStore.readError = ContextTestError.saveFailed
+        let preparer = CompactingRequestPreparer(conversationID: conversationID, checkpoints: revisionStore,
+                                                policy: { testPolicy() }, summarizer: summarizer)
+        do {
+            _ = try await preparer.prepare(requestContext([Message(text: "only the recent page", role: .user)]))
+            XCTFail("Missing checkpoint data must block the request")
+        } catch { XCTAssertEqual(error as? ContextTestError, .saveFailed) }
+        XCTAssertTrue(summarizer.requests.isEmpty)
+    }
+
     func testDeletionDuringSummarizationCannotSaveOrReturnStaleSummary() async throws {
         let revisionStore = RevisionCheckpointStore()
         summarizer.holds = true
@@ -427,7 +439,11 @@ final class CompactingRequestPreparerTests: XCTestCase {
 private final class RevisionCheckpointStore: ContextCheckpointStore {
     var revision: UInt64 = 0
     var saved: [ContextCheckpoint] = []
+    var readError: Error?
     func contextRevision(conversationID: UUID) -> UInt64 { revision }
-    func latestCheckpoint(conversationID: UUID) throws -> ContextCheckpoint? { saved.last }
+    func latestCheckpoint(conversationID: UUID) throws -> ContextCheckpoint? {
+        if let readError { throw readError }
+        return saved.last
+    }
     func saveCheckpoint(_ checkpoint: ContextCheckpoint) throws { saved.append(checkpoint) }
 }
