@@ -76,11 +76,12 @@ public final class ChatHistoryLibrary: ObservableObject {
     // MARK: Export
 
     public func export(_ id: UUID, format: ChatExportFormat) throws -> String {
+        // Fail rather than deliver an apparently complete export that omits
+        // unsaved streaming content. Read metadata after the flush as well.
+        try sessions.liveSession(for: id)?.flush()
         guard let conversation = try storage.conversation(id: id) else {
             throw ChatHistoryError.conversationNotFound(id)
         }
-        // Include unsaved streaming updates from a live session.
-        try? sessions.liveSession(for: id)?.flush()
         let messages = try storage.loadMessages(conversationID: id)
         return exporter.export(conversation, messages: messages, format: format)
     }

@@ -118,17 +118,11 @@ public struct ChatRetentionPruner {
     ///     `nil` when empty), `createdAt` and `archivedAt`.
     ///   - cutoff: the policy's boundary; activity before it is "too old".
     public static func isExpired(_ record: ConversationRecord, cutoff: Date) -> Bool {
-        // TODO(Reid): decide what "inactive" means. Until this is written,
-        // retention never deletes anything, even with a policy turned on.
-        //
-        // Questions to settle in 5-10 lines:
-        // - Which timestamp marks the last activity: `updatedAt` (counts a
-        //   rename as activity), `lastMessageAt` (only messages count), or
-        //   the later of the two?
-        // - An empty conversation has no `lastMessageAt`; should it age from
-        //   `createdAt`?
-        // - Should an archived conversation expire sooner, for example by
-        //   aging from `archivedAt` instead?
-        return false
+        // Be conservative: imports can carry timestamps out of order, and
+        // archiving is not permission to shorten the conversation's lifetime.
+        let lastActivity = [record.createdAt, record.updatedAt,
+                            record.lastMessageAt, record.archivedAt]
+            .compactMap { $0 }.max() ?? record.createdAt
+        return lastActivity < cutoff
     }
 }
