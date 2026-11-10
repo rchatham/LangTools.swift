@@ -508,8 +508,11 @@ public final class ChatSession: ObservableObject, ChatMessageService {
     // MARK: - Drafts
 
     private func materializeIfNeeded() throws {
+        guard !isClosed else {
+            throw ChatSessionError.persistenceFailed("The conversation is no longer available.")
+        }
         guard !isMaterialized else { return }
-        guard !isClosed, let draft else {
+        guard let draft else {
             throw ChatSessionError.persistenceFailed("The conversation is no longer available.")
         }
         do {

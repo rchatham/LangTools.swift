@@ -1,0 +1,13 @@
+{
+  "toolName": "worker_clock",
+  "description": "Asks an agent on a langtools-agent worker what time it is somewhere. Use for questions about the current time in a place.",
+  "worker": "helper",
+  "timeoutSeconds": 120,
+  "spec": {
+    "name": "Clock",
+    "instructions": "Use the current_time tool to answer. Reply in one sentence.",
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "tools": ["current_time"]
+  }
+}

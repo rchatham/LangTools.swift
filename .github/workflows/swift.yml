@@ -19,6 +19,12 @@ on:
         type: boolean
         default: false
 
+# Updating a stacked PR base and head can enqueue duplicate runs. Keep only
+# the newest run for that PR without cancelling main-only manual smoke tests.
+concurrency:
+  group: swift-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     runs-on: macos-latest
@@ -31,8 +37,9 @@ jobs:
     - name: Build
       run: swift build -v
     - name: Run tests
-      # Run merge-gating tests serially because some suites use process-global
-      # MockURLProtocol registration and shared handler state.
+      # `--parallel` runs each XCTest case in its own worker process, so the
+      # process-global MockURLProtocol registration and handler table are never
+      # shared between concurrently running tests.
       #
       # Platform speech suites are skipped on headless macOS runners because they can
       # wait on unavailable speech/model services or leave provider tasks running.
@@ -47,8 +54,7 @@ jobs:
       #   Scripts/run-extended-tests.sh --filter PerformanceTests -v
       #   Scripts/run-extended-tests.sh --filter BenchmarkTests -v
       #   Scripts/run-extended-tests.sh --filter PerformanceRatioGateTests -v
-      # Follow-up for MockURLProtocol hardening: https://github.com/rchatham/LangTools.swift/issues/41
-      run: swift test -v --no-parallel --skip AppleSpeechTests --skip WhisperKitLangToolsTests
+      run: swift test -v --parallel --skip AppleSpeechTests --skip WhisperKitLangToolsTests
 
   linux-build:
     # Keeps the package building on FoundationNetworking, which the Docker test
@@ -67,9 +73,32 @@ jobs:
     - name: Build
       run: swift build --build-tests
     - name: Run tests
-      # Serial for the same shared MockURLProtocol state as the macOS job. Apple
-      # Speech and WhisperKit suites compile to empty modules on Linux.
-      run: swift test --skip-build --no-parallel
+      # Parallel (one process per test case) like the macOS job. Apple Speech and
+      # WhisperKit suites compile to empty modules on Linux.
+      run: swift test --skip-build --parallel
+
+  agent-image:
+    # Builds the langtools-agent runtime image and checks it starts and can
+    # validate the example spec. Makes no provider calls.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+    - name: Build image
+      run: docker build -f Dockerfile.agent -t langtools-agent:ci .
+    - name: Smoke test
+      run: |
+        docker run --rm langtools-agent:ci providers
+        docker run --rm langtools-agent:ci tools
+        docker run --rm -e ANTHROPIC_API_KEY=placeholder \
+          -v "$PWD/Examples/AgentRuntime:/work:ro" langtools-agent:ci validate clock.json
+        test "$(docker run --rm --entrypoint id langtools-agent:ci -u)" = 10001
+        test "$(docker run --rm --entrypoint stat langtools-agent:ci -c %U /spool)" = agent
 
   helper-mobile-tests:
     runs-on: macos-latest
@@ -86,7 +115,7 @@ jobs:
       run: |
         set -euo pipefail
         swift test --package-path cli --jobs 2 --no-parallel \
-          --filter 'MobileHelperTests|MobilePairingControllerTests' 2>&1 | tee "$RUNNER_TEMP/helper-mobile-tests.log"
+          --filter 'MobileHelperTests|MobilePairingControllerTests|HelperSubagentRouteTests' 2>&1 | tee "$RUNNER_TEMP/helper-mobile-tests.log"
         if ! grep -Eq 'Executed [1-9][0-9]* tests?' "$RUNNER_TEMP/helper-mobile-tests.log"; then
           echo 'Expected focused helper XCTest cases to execute.' >&2
           exit 1
@@ -125,7 +154,7 @@ jobs:
         # These suites use isolated credentials and local fixtures, not live
         # accounts/Ollama or legacy Keychain ACLs. Keep shared mock state serial.
         swift test --package-path Apps/LangTools --jobs 2 --no-parallel \
-          --filter 'MobileHelper|OllamaEndpoint|ProviderAccessManagerTests|ProviderAccessRefreshRegressionTests|OllamaSettingsErrorRegressionTests|ChatGenerationSettingsTests|ModelGenerationCapabilitiesTests|ChatModelSourceTests/testProxyOllamaCatalogAndTitlesIgnoreDirectEndpointAvailability|ChatModelSourceTests/testDefaultAndDirectCatalogUseExistingProviderAccessManager|MessageServiceDependencyTests|MessageServiceRequestPreparerTests|ChatHistoryTests|ChatContextTests' \
+          --filter 'MobileHelper|WorkerSubagentToolsTests|OllamaEndpoint|ProviderAccessManagerTests|ProviderAccessRefreshRegressionTests|OllamaSettingsErrorRegressionTests|ChatGenerationSettingsTests|ModelGenerationCapabilitiesTests|ChatModelSourceTests/testProxyOllamaCatalogAndTitlesIgnoreDirectEndpointAvailability|ChatModelSourceTests/testDefaultAndDirectCatalogUseExistingProviderAccessManager|MessageServiceDependencyTests|MessageServiceRequestPreparerTests|ChatHistoryTests|ChatContextTests' \
           2>&1 | tee "$RUNNER_TEMP/app-helper-tests.log"
         if ! grep -Eq 'Executed [1-9][0-9]* tests?' "$RUNNER_TEMP/app-helper-tests.log"; then
           echo 'Expected focused app XCTest cases to execute.' >&2
@@ -158,9 +187,9 @@ jobs:
       with:
         persist-credentials: false
     - name: Run Agents extended tests
-      run: Scripts/run-extended-tests.sh --filter AgentsTests -v --no-parallel
+      run: Scripts/run-extended-tests.sh --filter AgentsTests -v --parallel
     - name: Run Integration extended tests
-      run: Scripts/run-extended-tests.sh --filter IntegrationTests -v --no-parallel
+      run: Scripts/run-extended-tests.sh --filter IntegrationTests -v --parallel
 
   # Non-blocking performance visibility. The measure/reporting suites and the
   # ratios.json regression gate run here so a perf regression surfaces in CI
@@ -178,6 +207,7 @@ jobs:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       with:
         persist-credentials: false
+    # Timing-sensitive: kept serial so concurrent test processes don't skew measurements.
     - name: Run performance ratio gates
       run: Scripts/run-extended-tests.sh --filter PerformanceRatioGateTests -v --no-parallel
     - name: Run performance tests

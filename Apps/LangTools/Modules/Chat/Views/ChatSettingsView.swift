@@ -1751,6 +1751,11 @@ extension ChatSettingsView {
                         .padding(.vertical, 8)
                 }
 
+                #if os(macOS)
+                // Subagents the paired LangTools Helper runs on langtools-agent workers.
+                WorkerSubagentsSettingsBox()
+                #endif
+
                 // Rich Content Cards toggle (independent of tools master switch)
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {

@@ -34,6 +34,10 @@ Codex state is resolved in this order:
 
 `LANGTOOLS_CODEX_PATH` may point to a specific `codex` executable.
 
+## Worker subagents
+
+The helper also runs subagents on [langtools-agent workers](../Sources/AgentDeploy/README.md#subagents-in-the-langtools-macos-app) for the app. Definitions live in `~/.config/langtools-agent/subagents/*.json`. The app lists them through `GET /v1/subagents`, starts a run with `POST /v1/subagents/runs` and polls `POST /v1/subagents/status`, with the same bearer token as the other routes. The helper runs `docker` and `ssh` as you to reach the workers.
+
 ## Menu-bar helper app
 
 **Development build only:** `make helper-app` ad-hoc signs the bundle; it is not notarized or ready for public downloads. Pairing uses a short-lived single-use 64-hex code that is exchanged for the bearer token over an authenticated loopback POST (code TTL: 5 minutes, single use; no token in URL). Another installed app could still claim the custom URL scheme and intercept the code, though without the matching loopback the exchange would fail. Before distribution, replace this with trusted app-to-helper IPC/pairing and Developer ID signing/notarization. The token file is private from other users and browser tabs, but not from processes running as the same user.

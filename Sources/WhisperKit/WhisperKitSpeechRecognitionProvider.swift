@@ -46,6 +46,8 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
         requiresModelDownload: true
     )
     public var eventHandler: (@MainActor @Sendable (SpeechRecognitionEvent) -> Void)?
+    /// Receives debug output. When `nil`, `isDebugLoggingEnabled` falls back to `PrintLogger`.
+    public var logger: LangToolsLogger?
     public var isDebugLoggingEnabled = false
     public private(set) var currentTranscript = ""
 
@@ -680,8 +682,8 @@ public final class WhisperKitSpeechRecognitionProvider: StreamingSpeechRecogniti
     }
 
     private func debugLog(_ message: String) {
-        guard isDebugLoggingEnabled else { return }
-        print("[WhisperKitSpeechRecognitionProvider] \(message)")
+        guard let log = logger ?? (isDebugLoggingEnabled ? PrintLogger() as LangToolsLogger : nil) else { return }
+        log.debug("[WhisperKitSpeechRecognitionProvider] \(message)")
     }
 
     private func completeFinalTranscription(_ text: String) {

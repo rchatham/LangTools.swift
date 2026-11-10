@@ -65,6 +65,11 @@ struct LangToolsApp: App {
         if !fixtureActive {
             initializeOllama()
             CompatibleModelCatalog.shared.refreshInBackground()
+            #if os(macOS)
+            // Worker subagents come from the paired LangTools Helper; without one this
+            // finds none, and Settings → Tools can refresh once the helper is running.
+            Task { @MainActor in await WorkerSubagentTools.shared.refresh() }
+            #endif
         }
     }
 

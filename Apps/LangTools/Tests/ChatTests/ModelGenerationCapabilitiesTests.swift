@@ -32,6 +32,12 @@ final class ModelGenerationCapabilitiesTests: XCTestCase {
     private let anthropicBounds: [String: Int] = [
         "claude-opus-4-6": 128_000, "claude-opus-4-6-20260205": 128_000,
         "claude-sonnet-4-6": 128_000, "claude-sonnet-4-6-20260217": 128_000,
+        "claude-opus-4-7": 128_000, "claude-opus-4-8": 128_000,
+        "claude-opus-5": 128_000, "claude-sonnet-5": 128_000,
+        "claude-fable-5": 128_000, "claude-mythos-5": 128_000,
+        "claude-fable-5-1": 128_000, "claude-mythos-5-1": 128_000,
+        "claude-opus-5-5": 128_000, "claude-sonnet-5-5": 128_000,
+        "claude-haiku-5-5": 128_000,
         "claude-opus-4-5-20251101": 64_000, "claude-sonnet-4-5-latest": 64_000,
         "claude-sonnet-4-5-20250929": 64_000, "claude-haiku-4-5-latest": 64_000,
         "claude-haiku-4-5-20251001": 64_000,

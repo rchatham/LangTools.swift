@@ -79,7 +79,7 @@ let session = sessions.draftSession(ConversationDraft())   // stored on its firs
   `MessageService.requestPreparer` is the hook for compaction and memory.
 - **Retention.** `ChatRetentionPolicy` defaults to keep forever. Pinned,
   `isRetentionExempt` and live conversations are never deleted. Opt-in expiry uses
-  the latest of creation, title/settings/message activity and archiving. A chat
+  the latest of creation, title/settings/metadata/message activity and archiving. A chat
   expires only strictly before the calendar-day cutoff; archiving never shortens
   its lifetime. A failed deletion preview leaves the existing policy unchanged.
 - **Export.** Markdown, plain text, and a versioned JSON document that
