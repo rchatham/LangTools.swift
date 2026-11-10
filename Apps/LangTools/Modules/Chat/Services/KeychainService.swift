@@ -23,6 +23,14 @@ public enum CodexHelperTokenStoreError: LocalizedError, Equatable {
 
 public final class CodexHelperTokenStore {
     public static let key = "codexHelperToken"
+    public static var shared: CodexHelperTokenStore {
+        ChatUITestEnvironment.isFixtureActive ? fixtureInstance : ordinaryInstance
+    }
+    private static let ordinaryInstance = CodexHelperTokenStore(keychain: KeychainService(keychain: Keychain(service: "com.reidchatham.LangTools_Example")))
+    private static let fixtureInstance = CodexHelperTokenStore(keychain: KeychainService(keychain: Keychain(service: ChatUITestEnvironment.fixtureKeychainService)))
+    private let cache = CredentialReadCache<String>()
+
+    public func invalidateCache() { cache.invalidate() }
 
     private let defaults: UserDefaults
     private let keychain: KeychainSecretStoring
@@ -46,6 +54,10 @@ public final class CodexHelperTokenStore {
     }
 
     public func loadToken() throws -> String {
+        try cache.read(Self.key) { try loadPersistedToken() } ?? ""
+    }
+
+    private func loadPersistedToken() throws -> String {
         if let stored = try keychain.readSecret(forKey: Self.key) {
             return stored
         }
@@ -59,8 +71,10 @@ public final class CodexHelperTokenStore {
     }
 
     public func setToken(_ value: String) throws {
-        try replaceKeychainValue(with: value.isEmpty ? nil : value)
-        defaults.removeObject(forKey: Self.key)
+        try cache.write(Self.key, value: value) {
+            try replaceKeychainValue(with: value.isEmpty ? nil : value)
+            defaults.removeObject(forKey: Self.key)
+        }
     }
 
     private func replaceKeychainValue(with value: String?) throws {
@@ -108,23 +122,27 @@ public class KeychainService: KeychainSecretStoring {
     )
 
     let keychain: Keychain
+    private let apiKeyCache = CredentialReadCache<String>()
+
+    /// Call only for an explicit retry or after credentials change outside this process.
+    public func invalidateAPIKeyCache() { apiKeyCache.invalidate() }
 
     public init(keychain: Keychain = Keychain(service: "com.reidchatham.LangTools_Example")) {
         self.keychain = keychain
     }
 
     public func saveApiKey(apiKey: String, for service: APIService) {
-        do { try keychain.set(apiKey, key: "\(service.rawValue):apiKey")}
+        do { try apiKeyCache.write("\(service.rawValue):apiKey", value: apiKey) { try keychain.set(apiKey, key: "\(service.rawValue):apiKey") }}
         catch { print("Error saving API key to keychain: \(error)")}
     }
 
     public func getApiKey(for service: APIService) -> String? {
-        do { return try keychain.getString("\(service.rawValue):apiKey") }
+        do { return try apiKeyCache.read("\(service.rawValue):apiKey") { try keychain.getString("\(service.rawValue):apiKey") } }
         catch { print("Error fetching API key from keychain: \(error)"); return nil}
     }
 
     public func deleteApiKey(for service: APIService) {
-        do { try keychain.remove("\(service.rawValue):apiKey")}
+        do { try apiKeyCache.write("\(service.rawValue):apiKey", value: nil) { try keychain.remove("\(service.rawValue):apiKey") }}
         catch { print("Error deleting API key from keychain: \(error)")}
     }
 
@@ -159,5 +177,34 @@ public class KeychainService: KeychainSecretStoring {
     public func deleteSecret(forKey key: String) {
         do { try keychain.remove(key) }
         catch { print("Error deleting secret from keychain: \(error)") }
+    }
+}
+
+/// Process-local only. Serializes concurrent reads and remembers missing values and
+/// failures so redraws cannot repeatedly trigger a denied Keychain prompt.
+final class CredentialReadCache<Value> {
+    private let lock = NSLock()
+    private var values: [String: Result<Value?, Error>] = [:]
+
+    func read(_ key: String, load: () throws -> Value?) throws -> Value? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = values[key] { return try cached.get() }
+        let result = Result { try load() }
+        values[key] = result
+        return try result.get()
+    }
+
+    func write(_ key: String, value: Value?, persist: () throws -> Void) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try persist()
+        values[key] = .success(value)
+    }
+
+    func invalidate() {
+        lock.lock()
+        defer { lock.unlock() }
+        values.removeAll()
     }
 }

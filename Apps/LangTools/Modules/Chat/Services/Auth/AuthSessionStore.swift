@@ -23,6 +23,11 @@ public final class AuthSessionStore {
     )
 
     private let keychain: Keychain
+    private let cache = CredentialReadCache<String>()
+
+    /// Explicit retry after denial or an external credential change.
+    public func invalidateCache() { cache.invalidate() }
+
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
@@ -35,11 +40,13 @@ public final class AuthSessionStore {
         guard let json = String(data: data, encoding: .utf8) else {
             throw AuthSessionStoreError.encodingFailed
         }
-        try keychain.set(json, key: key(for: session.provider))
+        try cache.write(key(for: session.provider), value: json) {
+            try keychain.set(json, key: key(for: session.provider))
+        }
     }
 
     public func session(for provider: AccountLoginProvider) throws -> AccountSession? {
-        guard let json = try keychain.getString(key(for: provider)) else {
+        guard let json = try cache.read(key(for: provider), load: { try keychain.getString(key(for: provider)) }) else {
             return nil
         }
         guard let data = json.data(using: .utf8) else {
@@ -49,7 +56,9 @@ public final class AuthSessionStore {
     }
 
     public func removeSession(for provider: AccountLoginProvider) throws {
-        try keychain.remove(key(for: provider))
+        try cache.write(key(for: provider), value: nil) {
+            try keychain.remove(key(for: provider))
+        }
     }
 
     public func allSessions() throws -> [AccountSession] {

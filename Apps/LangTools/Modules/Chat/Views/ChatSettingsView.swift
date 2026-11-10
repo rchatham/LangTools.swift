@@ -231,6 +231,11 @@ public struct ChatSettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
+                    Button("Reload Saved Credentials") {
+                        viewModel.accessManager.retryCredentialAccess()
+                        CodexHelperTokenStore.shared.invalidateCache()
+                        MobileHelperCredentialStore.shared.invalidateCache()
+                    }
                     ForEach(viewModel.providerAccessStates) { state in
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
@@ -589,6 +594,11 @@ public struct ChatSettingsView: View {
                                 .font(.body)
                                 .foregroundColor(.secondary)
 
+                            Button("Reload Saved Credentials") {
+                                viewModel.accessManager.retryCredentialAccess()
+                                CodexHelperTokenStore.shared.invalidateCache()
+                                MobileHelperCredentialStore.shared.invalidateCache()
+                            }
                             ForEach(viewModel.providerAccessStates) { state in
                                 VStack(alignment: .leading, spacing: 6) {
                                     HStack(alignment: .firstTextBaseline) {
@@ -1336,7 +1346,7 @@ extension ChatSettingsView {
             generationSettingsStore: ChatGenerationSettingsStoring = ChatGenerationSettingsStore(),
             conversationSettingsStore: ChatConversationSettingsStoring = ChatConversationSettingsStore(),
             accessManager: ProviderAccessManager = .shared,
-            codexHelperTokenStore: CodexHelperTokenStore = CodexHelperTokenStore()
+            codexHelperTokenStore: CodexHelperTokenStore = .shared
         ) {
             self.clearMessages = clearMessages
             self.modelSource = modelSource

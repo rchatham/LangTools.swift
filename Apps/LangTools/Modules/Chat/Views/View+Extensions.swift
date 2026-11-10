@@ -21,7 +21,7 @@ extension View {
                         // Save Serper API key to UserDefaults
                         UserDefaults.serperApiKey = apiKey.wrappedValue
                         // Also save to keychain for consistency
-                        KeychainService().saveApiKey(apiKey: apiKey.wrappedValue, for: service)
+                        KeychainService.shared.saveApiKey(apiKey: apiKey.wrappedValue, for: service)
                     } else {
                         // Save LLM API key using NetworkClient
                         do { try NetworkClient.shared.updateApiKey(apiKey.wrappedValue, for: service) }

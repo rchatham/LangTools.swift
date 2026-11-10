@@ -31,6 +31,13 @@ public final class ProviderAccessManager: ObservableObject {
         refresh()
     }
 
+    /// User-initiated retry; routine refreshes must never clear credential caches.
+    public func retryCredentialAccess() {
+        keychainService.invalidateAPIKeyCache()
+        sessionStore.invalidateCache()
+        refresh()
+    }
+
     public func refresh() {
         stateLock.lock()
         refreshGeneration &+= 1
@@ -40,7 +47,7 @@ public final class ProviderAccessManager: ObservableObject {
 
         var newStates: [APIService: ProviderAccessState] = [:]
         for service in APIService.allCases {
-            let apiKey = keychainService.getApiKey(for: service)
+            let apiKey = (service == .apple || service == .ollama) ? nil : keychainService.getApiKey(for: service)
             let accountProvider = service.accountLoginProvider
             let session = accountProvider.flatMap { try? sessionStore.session(for: $0) }
             let status = authStatus(apiKey: apiKey, session: session)
