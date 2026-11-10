@@ -595,11 +595,11 @@ public struct ChatSettingsView: View {
                                 .foregroundColor(.secondary)
 
                             Button("Reload Saved Credentials") {
-                        viewModel.accessManager.retryCredentialAccess()
-                        CodexHelperTokenStore.shared.invalidateCache()
-                        MobileHelperCredentialStore.shared.invalidateCache()
-                    }
-                    ForEach(viewModel.providerAccessStates) { state in
+                                viewModel.accessManager.retryCredentialAccess()
+                                CodexHelperTokenStore.shared.invalidateCache()
+                                MobileHelperCredentialStore.shared.invalidateCache()
+                            }
+                            ForEach(viewModel.providerAccessStates) { state in
                                 VStack(alignment: .leading, spacing: 6) {
                                     HStack(alignment: .firstTextBaseline) {
                                         Text(state.displayName)
