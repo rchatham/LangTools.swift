@@ -56,6 +56,7 @@ public final class CompactingRequestPreparer {
 
     /// A fallback summary used until the next compaction or a newer saved checkpoint.
     private var transientCheckpoint: ContextCheckpoint?
+    private var contextRevision: UInt64?
     private var modelSummariesPausedUntil: Date?
     /// The previous `prepare` call; calls run one at a time.
     private var previousPreparation: Task<Void, Never>?
@@ -90,8 +91,12 @@ public final class CompactingRequestPreparer {
     public func prepare(_ context: ChatRequestContext) async throws -> ChatRequestContext {
         // Serialized so interleaved sends never summarize the same turns twice.
         let previous = previousPreparation
+        let requestedRevision = checkpoints.contextRevision(conversationID: conversationID)
         let preparation = Task { @MainActor [self] () async throws -> ChatRequestContext in
             await previous?.value
+            guard checkpoints.contextRevision(conversationID: conversationID) == requestedRevision else {
+                throw CancellationError()
+            }
             return try await prepareNow(context)
         }
         previousPreparation = Task { _ = try? await preparation.value }
@@ -106,6 +111,11 @@ public final class CompactingRequestPreparer {
 
     private func prepareNow(_ context: ChatRequestContext) async throws -> ChatRequestContext {
         try Task.checkCancellation()
+        let revision = checkpoints.contextRevision(conversationID: conversationID)
+        if contextRevision != revision {
+            transientCheckpoint = nil
+            contextRevision = revision
+        }
         let policy = policy().normalized
         let persisted = latestPersistedCheckpoint()
         if let transient = transientCheckpoint, let persisted, ContextCheckpoint.isNewer(persisted, than: transient) {
@@ -150,6 +160,12 @@ public final class CompactingRequestPreparer {
             policy: policy
         ))
         try Task.checkCancellation()
+        // A deletion while awaiting the summarizer invalidates this snapshot.
+        // Do not save or send a summary that can resurrect removed content.
+        guard checkpoints.contextRevision(conversationID: conversationID) == revision else {
+            transientCheckpoint = nil
+            throw CancellationError()
+        }
 
         let checkpoint = ContextCheckpoint(
             conversationID: conversationID,

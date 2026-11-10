@@ -318,22 +318,38 @@ class ChatHistoryStorageContractTests: XCTestCase {
         XCTAssertEqual(try storage.checkpoints(conversationID: id), [])
     }
 
-    func testDeletingTheCoveredMessageMovesTheCheckpointBack() throws {
+    func testDeletingCoveredContentInvalidatesItsSummaries() throws {
         let storage = try makeStorage()
         let (id, all) = try windowedConversation(storage)
-        let saved = checkpoint(id, through: all[3].uuid, "summary", at: 10)
+        let earlier = checkpoint(id, through: all[1].uuid, "safe earlier summary", at: 5)
+        let saved = checkpoint(id, through: all[3].uuid, "contains deleted content", at: 10)
+        try storage.saveCheckpoint(earlier)
         try storage.saveCheckpoint(saved)
+        let revision = storage.contextRevision(conversationID: id)
+        try storage.applyMessageChanges(MessageChangeSet(deletions: [all[2].uuid]), conversationID: id)
+        XCTAssertEqual(try storage.checkpoints(conversationID: id), [earlier])
+        XCTAssertNotEqual(storage.contextRevision(conversationID: id), revision)
+        try storage.applyMessageChanges(MessageChangeSet(deletions: [all[1].uuid]), conversationID: id)
+        XCTAssertEqual(try storage.checkpoints(conversationID: id), [])
+    }
 
-        try storage.applyMessageChanges(MessageChangeSet(deletions: [all[3].uuid]), conversationID: id)
-        var moved = saved
-        moved.coversThroughMessageID = all[2].uuid
-        XCTAssertEqual(try storage.checkpoints(conversationID: id), [moved], "It still summarizes the deleted turn")
+    func testDeletingAChildInvalidatesSummariesCoveringItsParent() throws {
+        let storage = try makeStorage()
+        let (id, all) = try windowedConversation(storage)
+        let child = try XCTUnwrap(all[5].childMessages.first)
+        let saved = checkpoint(id, through: all[8].uuid, "contains child", at: 10)
+        try storage.saveCheckpoint(saved)
+        try storage.applyMessageChanges(MessageChangeSet(deletions: [child.uuid]), conversationID: id)
+        XCTAssertEqual(try storage.checkpoints(conversationID: id), [])
+    }
 
+    func testDeletingLaterContentPreservesEarlierSummaries() throws {
+        let storage = try makeStorage()
+        let (id, all) = try windowedConversation(storage)
+        let saved = checkpoint(id, through: all[3].uuid, "earlier summary", at: 10)
+        try storage.saveCheckpoint(saved)
         try storage.applyMessageChanges(MessageChangeSet(deletions: [all[7].uuid]), conversationID: id)
-        XCTAssertEqual(try storage.checkpoints(conversationID: id), [moved], "Deleting later messages changes nothing")
-
-        try storage.applyMessageChanges(MessageChangeSet(deletions: Set(all[0...2].map(\.uuid))), conversationID: id)
-        XCTAssertEqual(try storage.checkpoints(conversationID: id), [], "Nothing earlier remains, so the checkpoint goes")
+        XCTAssertEqual(try storage.checkpoints(conversationID: id), [saved])
     }
 
     func testAFailedSaveLeavesCheckpointsUnchanged() throws {

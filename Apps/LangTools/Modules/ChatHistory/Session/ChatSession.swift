@@ -77,6 +77,7 @@ public final class ChatSession: ObservableObject, ChatMessageService {
     /// Incremented by `close()` so cancelled sends do not reconcile an
     /// emptied transcript into durable deletions.
     private var generation: UInt = 0
+    private var loadedContextRevision: UInt64 = 0
     public private(set) var activeSendCount = 0
 
     public var chatMessages: [Message] { messageService.messages }
@@ -117,11 +118,15 @@ public final class ChatSession: ObservableObject, ChatMessageService {
         service.agentResultParser = hooks.agentResultParser
         service.requestPreparer = hooks.makeRequestPreparer?(context)
         self.messageService = service
+        loadedContextRevision = storage.contextRevision(conversationID: conversationID)
 
         if let record {
             // Load before installing the callback so opening a conversation
             // does not write (and reorder) it.
-            let window = Self.initialWindow(conversationID: conversationID, storage: storage, paging: paging)
+            // A checkpoint only replaces history when a preparer actually
+            // injects its summary. Without one, load the complete transcript.
+            let window: MessageWindow = service.requestPreparer == nil ? .all
+                : Self.initialWindow(conversationID: conversationID, storage: storage, paging: paging)
             let loaded = try storage.loadMessages(conversationID: conversationID, window: window)
             service.messages = loaded
             knownMessageIDs = Set(loaded.map(\.uuid))
@@ -149,6 +154,7 @@ public final class ChatSession: ObservableObject, ChatMessageService {
     public func sendOperation(message: String, stream: Bool) -> ChatSendOperation {
         do {
             try materializeIfNeeded()
+            try refreshAfterDeletion()
         } catch {
             return Self.failedOperation(hooks.mapSendError(error))
         }
@@ -158,6 +164,7 @@ public final class ChatSession: ObservableObject, ChatMessageService {
 
     public func retryOperation(messageID: UUID, stream: Bool) throws -> ChatSendOperation {
         try materializeIfNeeded()
+        try refreshAfterDeletion()
         let inner = try messageService.retryOperation(messageID: messageID, stream: stream)
         return track(inner)
     }
@@ -479,6 +486,23 @@ public final class ChatSession: ObservableObject, ChatMessageService {
         pending = PendingSaveBatch()
         pendingDeletionIDs.removeAll()
         automaticFailureCount = 0
+    }
+
+    /// Commit pending deletions before another request and restore messages
+    /// hidden by an invalidated checkpoint. A failed save/load blocks the send.
+    private func refreshAfterDeletion() throws {
+        if !pendingDeletionIDs.isEmpty { try flush() }
+        let revision = storage.contextRevision(conversationID: conversationID)
+        guard revision != loadedContextRevision else { return }
+        try flush()
+        let loaded = try storage.loadMessages(conversationID: conversationID)
+        let callback = messageService.messageUpdatedCallback
+        messageService.messageUpdatedCallback = nil
+        messageService.messages = loaded
+        messageService.messageUpdatedCallback = callback
+        knownMessageIDs = Set(loaded.map(\.uuid))
+        canLoadEarlierMessages = false
+        loadedContextRevision = revision
     }
 
     // MARK: - Drafts

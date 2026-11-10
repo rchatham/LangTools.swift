@@ -19,7 +19,9 @@ final class ChatSessionPagingTests: XCTestCase {
     }
 
     private func manager(paging: ChatSessionPaging = ChatSessionPaging(initialMessageCount: 3, earlierPageSize: 4)) -> ChatSessionManager {
-        ChatSessionManager(storage: storage, hooks: TestHooks.make(client: client), timing: .manual, paging: paging)
+        var hooks = TestHooks.make(client: client)
+        hooks.makeRequestPreparer = ChatSessionHooks.compactingRequestPreparers(policy: { _ in .standard }, summarizer: nil)
+        return ChatSessionManager(storage: storage, hooks: hooks, timing: .manual, paging: paging)
     }
 
     /// Twenty stored messages, with a checkpoint covering the first `covered`.
@@ -91,7 +93,31 @@ final class ChatSessionPagingTests: XCTestCase {
         XCTAssertEqual(stored.count, messages.count + 2)
         XCTAssertEqual(Array(stored.map(\.uuid).prefix(messages.count)), messages.map(\.uuid), "Paged-in messages keep their place")
         XCTAssertEqual(saves, 1)
-        XCTAssertEqual(client.requests.first?.dropFirst().count, 16, "Without a preparer the request replays what is loaded plus the prompt")
+        XCTAssertEqual(client.requests.first?.dropFirst().count, 11, "The summary replaces covered messages even after paging")
+    }
+
+    func testWithoutAPreparerACheckpointDoesNotHideRequestHistory() async throws {
+        let (id, messages) = try storedConversation(covered: 10)
+        let manager = ChatSessionManager(storage: storage, hooks: TestHooks.make(client: client), timing: .manual)
+        let session = try manager.session(for: id)
+        XCTAssertEqual(session.chatMessages.map(\.uuid), messages.map(\.uuid))
+        client.replies = [.text("reply")]
+        try await session.send(message: "new", stream: true)
+        XCTAssertEqual(client.requests.first?.dropFirst().count, 21)
+    }
+
+    func testDeletingCheckpointBoundaryRestoresEarlierHistoryBeforeSending() async throws {
+        let (id, messages) = try storedConversation(covered: 10)
+        let session = try manager().session(for: id)
+        session.deleteMessage(id: messages[9].uuid)
+        client.replies = [.text("reply")]
+        try await session.send(message: "new", stream: true)
+        XCTAssertNil(try storage.latestCheckpoint(conversationID: id))
+        let request = try XCTUnwrap(client.requests.first)
+        XCTAssertFalse(request.first?.text?.contains("summary") == true)
+        XCTAssertTrue(request.contains { $0.uuid == messages[0].uuid })
+        XCTAssertFalse(request.contains { $0.uuid == messages[9].uuid })
+        XCTAssertFalse(session.canLoadEarlierMessages)
     }
 
     // MARK: Compaction through the hooks

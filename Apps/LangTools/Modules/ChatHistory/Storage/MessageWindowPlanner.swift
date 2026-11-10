@@ -123,35 +123,23 @@ enum CheckpointRules {
         }
     }
 
-    /// Keeps checkpoints valid after messages are deleted. A checkpoint whose
-    /// covered message is gone moves back to the closest earlier top-level
-    /// message that remains (its summary still describes the deleted turns),
-    /// or is removed when no earlier message remains.
+    /// A summary cannot be edited reliably to remove deleted content. Drop
+    /// every checkpoint that covers a deleted message (including children),
+    /// preserving only summaries strictly before the earliest deletion.
     static func adjustments(
         for checkpoints: [ContextCheckpoint],
         deletedIDs: Set<UUID>,
         previousKeys: [MessageRowKey],
         remainingKeys: [MessageRowKey]
     ) -> (updated: [ContextCheckpoint], removed: Set<UUID>) {
-        let affected = checkpoints.filter { deletedIDs.contains($0.coversThroughMessageID) }
-        guard !affected.isEmpty else { return ([], []) }
-        let previousByID = Dictionary(previousKeys.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let remainingTree = MessageRowTree(remainingKeys)
-        let remainingByID = Dictionary(remainingKeys.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let remainingTopLevel = remainingTree.topLevel.compactMap { remainingByID[$0] }
-
-        var updated: [ContextCheckpoint] = []
-        var removed = Set<UUID>()
-        for checkpoint in affected {
-            guard let boundary = previousByID[checkpoint.coversThroughMessageID],
-                  let earlier = remainingTopLevel.last(where: { MessageRowCodec.isOrdered($0, boundary) }) else {
-                removed.insert(checkpoint.id)
-                continue
-            }
-            var moved = checkpoint
-            moved.coversThroughMessageID = earlier.id
-            updated.append(moved)
+        let tree = MessageRowTree(previousKeys)
+        let positions = Dictionary(uniqueKeysWithValues: tree.topLevel.enumerated().map { ($0.element, $0.offset) })
+        let deletedPositions = deletedIDs.compactMap { tree.root(of: $0).flatMap { positions[$0] } }
+        guard let earliest = deletedPositions.min() else { return ([], []) }
+        let removed = checkpoints.filter {
+            guard let boundary = positions[$0.coversThroughMessageID] else { return true }
+            return boundary >= earliest
         }
-        return (updated, removed)
+        return ([], Set(removed.map(\.id)))
     }
 }

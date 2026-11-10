@@ -54,9 +54,18 @@ public struct ContextCheckpoint: Identifiable, Hashable, Codable, Sendable {
 public protocol ContextCheckpointStore: AnyObject {
     /// The newest checkpoint of a conversation, if any.
     func latestCheckpoint(conversationID: UUID) throws -> ContextCheckpoint?
+    /// Changes when existing transcript content is removed. Preparers use
+    /// this process-local revision to discard transient summaries and reject
+    /// summaries produced concurrently with deletion.
+    func contextRevision(conversationID: UUID) -> UInt64
     /// Saves a new checkpoint. Stores may reject one whose covered message
     /// they do not have.
     func saveCheckpoint(_ checkpoint: ContextCheckpoint) throws
+}
+
+public extension ContextCheckpointStore {
+    /// Immutable/non-editable hosts need no revision tracking.
+    func contextRevision(conversationID: UUID) -> UInt64 { 0 }
 }
 
 /// Checkpoints kept in memory, for conversations that are not persisted and

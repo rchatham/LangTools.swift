@@ -365,6 +365,34 @@ final class CompactingRequestPreparerTests: XCTestCase {
         XCTAssertTrue(store.checkpoints.isEmpty)
     }
 
+    func testDeletionDuringSummarizationCannotSaveOrReturnStaleSummary() async throws {
+        let revisionStore = RevisionCheckpointStore()
+        summarizer.holds = true
+        let preparer = CompactingRequestPreparer(conversationID: conversationID, checkpoints: revisionStore,
+                                                policy: { testPolicy() }, summarizer: summarizer)
+        let task = Task { try await preparer.prepare(requestContext(conversation(turns: 15))) }
+        await waitFor { self.summarizer.gate != nil }
+        revisionStore.revision += 1
+        summarizer.release()
+        do {
+            _ = try await task.value
+            XCTFail("Deleted content must not be returned as a summary")
+        } catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertTrue(revisionStore.saved.isEmpty)
+    }
+
+    func testDeletionDiscardsTransientFallbackSummary() async throws {
+        let revisionStore = RevisionCheckpointStore()
+        let preparer = CompactingRequestPreparer(conversationID: conversationID, checkpoints: revisionStore,
+                                                policy: { testPolicy() }, summarizer: nil)
+        let compacted = try await preparer.prepare(requestContext(conversation(turns: 15)))
+        XCTAssertTrue(compacted.systemPrompt.contains(CompactedContext.heading))
+        revisionStore.revision += 1
+        let afterDeletion = try await preparer.prepare(requestContext([Message(text: "remaining", role: .user)]))
+        XCTAssertEqual(afterDeletion.systemPrompt, "system")
+        XCTAssertEqual(afterDeletion.history.map(\.text), ["remaining"])
+    }
+
     // MARK: Concurrency
 
     func testConcurrentRequestsShareOneCompaction() async throws {
@@ -393,4 +421,13 @@ final class CompactingRequestPreparerTests: XCTestCase {
         }
         XCTAssertTrue(condition())
     }
+}
+
+@MainActor
+private final class RevisionCheckpointStore: ContextCheckpointStore {
+    var revision: UInt64 = 0
+    var saved: [ContextCheckpoint] = []
+    func contextRevision(conversationID: UUID) -> UInt64 { revision }
+    func latestCheckpoint(conversationID: UUID) throws -> ContextCheckpoint? { saved.last }
+    func saveCheckpoint(_ checkpoint: ContextCheckpoint) throws { saved.append(checkpoint) }
 }

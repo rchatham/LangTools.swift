@@ -20,6 +20,12 @@ public final class InMemoryChatHistoryStorage: ChatHistoryStorage {
     private let titleGenerator: any ConversationTitleGenerating
     private let now: () -> Date
     private let subject = PassthroughSubject<ChatHistoryChange, Never>()
+    private var contextRevisions: [UUID: UInt64] = [:]
+
+    public func contextRevision(conversationID: UUID) -> UInt64 {
+        contextRevisions[conversationID, default: 0]
+    }
+
 
     /// Test seam: runs before every commit; throwing leaves state unchanged.
     public var saveHook: (() throws -> Void)?
@@ -123,6 +129,7 @@ public final class InMemoryChatHistoryStorage: ChatHistoryStorage {
         try saveHook?()
         rowsByConversation[conversationID] = rows
         checkpointsByConversation[conversationID] = checkpoints
+        if !plan.deletedIDs.isEmpty { contextRevisions[conversationID, default: 0] &+= 1 }
         nextSortOrders[conversationID] = plan.nextSortOrder
         records[conversationID] = record
         subject.send(.messagesChanged(conversationID))

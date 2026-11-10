@@ -23,6 +23,12 @@ public final class SwiftDataChatHistoryStorage: ChatHistoryStorage {
     private let titleGenerator: any ConversationTitleGenerating
     private let now: () -> Date
     private let subject = PassthroughSubject<ChatHistoryChange, Never>()
+    private var contextRevisions: [UUID: UInt64] = [:]
+
+    public func contextRevision(conversationID: UUID) -> UInt64 {
+        contextRevisions[conversationID, default: 0]
+    }
+
 
     /// Test seam: runs before every save; throwing simulates a failed save.
     var saveHook: (() throws -> Void)?
@@ -210,6 +216,7 @@ public final class SwiftDataChatHistoryStorage: ChatHistoryStorage {
         model.nextSortOrder = plan.nextSortOrder
 
         try save()
+        if !plan.deletedIDs.isEmpty { contextRevisions[conversationID, default: 0] &+= 1 }
         subject.send(.messagesChanged(conversationID))
         subject.send(.conversationUpserted(conversationID))
     }
