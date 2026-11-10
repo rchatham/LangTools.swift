@@ -68,12 +68,19 @@ public struct ChatHistorySettingsView: View {
         Binding(
             get: { library.retentionPolicy },
             set: { policy in
-                let wouldDelete = (try? library.retentionPreview(for: policy).count) ?? 0
-                if wouldDelete > 0 {
-                    pendingDeletionCount = wouldDelete
-                    pendingPolicy = policy
-                } else {
-                    apply(policy)
+                do {
+                    let wouldDelete = try library.retentionPreview(for: policy).count
+                    errorMessage = nil
+                    if wouldDelete > 0 {
+                        pendingDeletionCount = wouldDelete
+                        pendingPolicy = policy
+                    } else {
+                        apply(policy)
+                    }
+                } catch {
+                    // A failed preview is not consent to delete an unknown
+                    // number of conversations or enable future deletion.
+                    errorMessage = error.localizedDescription
                 }
             }
         )
