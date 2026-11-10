@@ -603,7 +603,8 @@ extension OpenAI {
 
             func combining(_ message: Message?, with delta: Message.Delta?) -> Message? {
                 guard let delta = delta else { return message }
-                return try! Message(role: message?.role ?? delta.role ?? .assistant, content: .string((message?.content.string ?? "") + (delta.content ?? "")), name: message?.name, tool_calls: combining(message?.tool_calls, with: delta.tool_calls))
+                // Message.init throws for roles that can't hold string content (e.g. `.tool`); keep what we have rather than crash.
+                return (try? Message(role: message?.role ?? delta.role ?? .assistant, content: .string((message?.content.string ?? "") + (delta.content ?? "")), name: message?.name, tool_calls: combining(message?.tool_calls, with: delta.tool_calls))) ?? message
             }
 
             func combining(_ delta: Message.Delta?, with next: Message.Delta?) -> Message.Delta? {

@@ -24,7 +24,13 @@ public extension Anthropic {
     static func toAnthropicMessages(_ messages: [any LangToolsMessage]) -> [Anthropic.Message] {
         messages
             .filter { !$0.role.isSystem && !$0.role.isTool }
-            .map { ($0 as? Anthropic.Message) ?? Anthropic.Message($0) }
+            .compactMap { message in
+                if let native = message as? Anthropic.Message { return native }
+                // A converted message can come out empty, e.g. an OpenAI assistant turn that
+                // only carried tool calls. Anthropic rejects empty content, so drop it.
+                let converted = Anthropic.Message(message)
+                return converted.content.isEmpty ? nil : converted
+            }
     }
 
     static func toAnthropicSystemMessage(_ messages: [any LangToolsMessage]) -> String? {

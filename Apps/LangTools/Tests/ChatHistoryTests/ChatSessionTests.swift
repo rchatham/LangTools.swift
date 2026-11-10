@@ -51,6 +51,19 @@ final class ChatSessionTests: XCTestCase {
         XCTAssertFalse(session.hasPendingPersistence)
     }
 
+    func testClosedStoredSessionRejectsSendsBeforeCallingTheProvider() async throws {
+        let session = try storedSession(manager())
+        session.close()
+        client.replies = [.text("must not be requested")]
+        do {
+            try await session.send(message: "new", stream: true)
+            XCTFail("Closed sessions must reject sends")
+        } catch { XCTAssertTrue(error is ChatSessionError) }
+        XCTAssertThrowsError(try session.retryOperation(messageID: UUID(), stream: true))
+        XCTAssertTrue(client.requests.isEmpty)
+        XCTAssertEqual(saves, 0)
+    }
+
     func testOpeningAConversationWritesNothing() async throws {
         let session = try storedSession(manager(timing: .fast), messages: [text("old", .user, at: 1)])
         XCTAssertEqual(session.chatMessages.map(\.text), ["old"])

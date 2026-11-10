@@ -127,6 +127,16 @@ final class ChatRetentionTests: XCTestCase {
                        [pinned.id, exempt.id, live.id, archived.id, recent.id])
     }
 
+    func testMetadataEditRenewsRetentionWithoutChangingCreationTime() throws {
+        let old = now.addingTimeInterval(-100 * 86_400)
+        let storage = InMemoryChatHistoryStorage(now: { self.now })
+        let record = try storage.createConversation(ConversationDraft(createdAt: old, updatedAt: old))
+        let edited = try storage.updateConversation(id: record.id, .init(metadata: ["note": "active work"]))
+        XCTAssertEqual(edited.createdAt, old)
+        XCTAssertEqual(edited.updatedAt, now)
+        XCTAssertTrue(try ChatRetentionPruner(storage: storage).candidates(policy: .deleteInactive(afterDays: 30), now: now).isEmpty)
+    }
+
     func testPolicyCutoffAndPersistence() throws {
         XCTAssertNil(ChatRetentionPolicy.keepForever.cutoff(now: now))
         XCTAssertNil(ChatRetentionPolicy.deleteInactive(afterDays: 0).cutoff(now: now))

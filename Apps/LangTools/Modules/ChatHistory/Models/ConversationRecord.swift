@@ -182,9 +182,9 @@ public struct ConversationPatch: Sendable {
         self.metadata = metadata
     }
 
-    /// Title and settings edits count as activity; pinning, archiving and
+    /// Title, settings and metadata edits count as activity; pinning, archiving and
     /// ownership changes do not reorder lists.
-    var bumpsUpdatedAt: Bool { title != nil || settings != nil }
+    var bumpsUpdatedAt: Bool { title != nil || settings != nil || metadata != nil }
 
     public static func rename(_ title: String) -> ConversationPatch { .init(title: title) }
     public static func pin(_ isPinned: Bool) -> ConversationPatch { .init(isPinned: isPinned) }

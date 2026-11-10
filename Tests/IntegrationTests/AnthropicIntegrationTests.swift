@@ -383,13 +383,15 @@ final class AnthropicIntegrationTests: XCTestCase {
         // Claude 4.x+ models should support structured output
         XCTAssertTrue(Anthropic.Model.claude46Opus.supportsStructuredOutput)
         XCTAssertTrue(Anthropic.Model.claude46Sonnet.supportsStructuredOutput)
-        XCTAssertTrue(Anthropic.Model.claude45Sonnet_20250929.supportsStructuredOutput)
+        XCTAssertTrue(Anthropic.Model.claude55Sonnet.supportsStructuredOutput)
     }
 
     func testModelDeprecationStatus() {
         XCTAssertFalse(Anthropic.Model.claude46Sonnet.isDeprecated)
         XCTAssertFalse(Anthropic.Model.claude46Opus.isDeprecated)
-        XCTAssertTrue(Anthropic.Model.claude3Haiku_20240307.isDeprecated)
+        // Sonnet 4.5 is deprecated (retirement Nov 30, 2026), not yet retired.
+        XCTAssertTrue(Anthropic.Model(rawValue: "claude-sonnet-4-5-20250929")!.isDeprecated)
+        XCTAssertFalse(Anthropic.Model(rawValue: "claude-sonnet-4-5-20250929")!.isRetired)
     }
 
     // MARK: - Usage Tracking

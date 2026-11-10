@@ -80,7 +80,7 @@ extension LangToolsRequest {
     func updating(stream: Bool) -> Self {
         if var streamReq = (self as? (any LangToolsStreamableRequest)) {
             streamReq.stream = stream
-            return (streamReq as! Self)
+            return (streamReq as? Self) ?? self
         }
         return self
     }
