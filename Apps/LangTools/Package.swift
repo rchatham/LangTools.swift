@@ -8,12 +8,15 @@ let package = Package(
     platforms: [
         .macOS(.v14),
         .iOS(.v17),
-        .watchOS(.v8),
+        .watchOS(.v10), // SwiftData (ChatHistory) requires watchOS 10
     ],
     products: [
         .library(
             name: "Chat",
             targets: ["Chat"]),
+        .library(
+            name: "ChatHistory",
+            targets: ["ChatHistory"]),
         .library(
             name: "Audio",
             targets: ["Audio"]),
@@ -62,6 +65,17 @@ let package = Package(
                 "KeychainAccess",
             ],
             path: "Modules/Chat"),
+        .target(
+            name: "ChatHistory",
+            dependencies: [
+                "Chat",
+                "ToolKit",
+                .product(name: "ChatUI", package: "ChatUI"),
+                .product(name: "LangTools", package: "langtools.swift"),
+                .product(name: "Agents", package: "langtools.swift"),
+                .product(name: "OpenAI", package: "langtools.swift"),
+            ],
+            path: "Modules/ChatHistory"),
         .target(
             name: "Audio",
             dependencies: [
@@ -114,6 +128,17 @@ let package = Package(
             ],
             path: "Tests/ChatTests",
             resources: [.copy("Resources/HelperCertificates")]),
+        .testTarget(
+            name: "ChatHistoryTests",
+            dependencies: [
+                "ChatHistory",
+                "Chat",
+                .product(name: "ChatUI", package: "ChatUI"),
+                .product(name: "LangTools", package: "langtools.swift"),
+                .product(name: "Agents", package: "langtools.swift"),
+                .product(name: "OpenAI", package: "langtools.swift"),
+            ],
+            path: "Tests/ChatHistoryTests"),
         .testTarget(
             name: "ExampleAgentsTests",
             dependencies: [
