@@ -249,6 +249,14 @@ private final class SendEventBuffer: @unchecked Sendable {
     var eventCount: Int {
         lock.withLock { states.values.reduce(0) { $0 + $1.events.count } }
     }
+
+    /// Whether a tool or agent has reported anything for this send yet.
+    func hasActivity(for sendID: UUID) -> Bool {
+        lock.withLock {
+            guard let state = states[sendID] else { return false }
+            return state.latestSequence > 0 || !state.agentCallIDCounts.isEmpty
+        }
+    }
 }
 
 @MainActor
@@ -297,6 +305,9 @@ public class MessageService {
     @ObservationIgnored private let agents: [any Agent]
     private(set) var conversationID = UUID()
     private var activeSends: [UUID: [UUID: Task<Void, Error>]] = [:]
+    /// The prompt each active send answers, keyed by send id. A request
+    /// preparer must not fold another send's unfinished turn into a summary.
+    private var activeSendPromptIDs: [UUID: UUID] = [:]
     /// Generated messages owned by failed attempts, keyed by the stable user message id.
     /// This is intentionally ephemeral and excluded from persisted conversation history.
     private var failedAttemptGeneratedMessageIDs: [UUID: Set<UUID>] = [:]
@@ -316,6 +327,11 @@ public class MessageService {
     /// transcript, so a preparer must return copies instead of mutating them.
     /// A thrown error fails the send like a provider error. `nil` leaves every
     /// request unchanged.
+    ///
+    /// When the provider rejects a request as longer than its context window
+    /// before anything was streamed or any tool ran, the preparer is called
+    /// once more with `ChatRequestContext.contextOverflow` set, and a changed
+    /// request is sent once more.
     @ObservationIgnored public var requestPreparer: (@MainActor (ChatRequestContext) async throws -> ChatRequestContext)?
 
     /// Optional hook called when an agent completes with a non-error result.
@@ -441,6 +457,7 @@ public class MessageService {
             }
         }
         activeSends[requestConversationID, default: [:]][sendID] = completion
+        activeSendPromptIDs[sendID] = userMessage.uuid
         let establishmentTask = Task { try await establishment.wait() }
 
         return ChatSendOperation(
@@ -481,43 +498,72 @@ public class MessageService {
         do {
             var history = requestSnapshot
             var systemPrompt = systemMessage()
+            let activeTools = budgetedTools(filteredTools(for: sendID), budget: toolBudget)
+            var requestContext: ChatRequestContext?
             if let requestPreparer {
-                let prepared = try await requestPreparer(
-                    ChatRequestContext(systemPrompt: systemPrompt, history: history, model: selectedModel)
+                let otherSendIDs = (activeSends[requestConversationID] ?? [:]).keys.filter { $0 != sendID }
+                let context = ChatRequestContext(
+                    systemPrompt: systemPrompt,
+                    history: history,
+                    model: selectedModel,
+                    settings: dependencies.conversationSettings(),
+                    inFlightMessageIDs: Set(otherSendIDs.compactMap { activeSendPromptIDs[$0] }),
+                    tools: activeTools ?? []
                 )
+                requestContext = context
+                let prepared = try await requestPreparer(context)
                 guard conversationID == requestConversationID else { throw CancellationError() }
                 systemPrompt = prepared.systemPrompt
                 history = prepared.history
             }
-            var currentMessages = history
-            currentMessages.insert(Message(text: systemPrompt, role: .system), at: 0)
 
-            let activeTools = budgetedTools(filteredTools(for: sendID), budget: toolBudget)
             let agentToolNames = Set(agents.map(\.name))
             let toolEventHandler: (LangToolsToolEvent) -> Void = { [weak self] event in
                 self?.enqueueToolEvent(event, for: sendID, agentToolNames: agentToolNames)
             }
-
-            try Task.checkCancellation()
-            let responseStream: AsyncThrowingStream<String, Error>
-            if let conversationClient = networkClient as? any ConversationAwareNetworkClientProtocol {
-                responseStream = try conversationClient.streamChatCompletionRequest(
+            let networkClient = networkClient
+            let openResponseStream = { (systemPrompt: String, history: [Message]) throws -> AsyncThrowingStream<String, Error> in
+                let currentMessages = [Message(text: systemPrompt, role: .system)] + history
+                if let conversationClient = networkClient as? any ConversationAwareNetworkClientProtocol {
+                    return try conversationClient.streamChatCompletionRequest(
+                        messages: currentMessages,
+                        model: selectedModel,
+                        conversationID: requestConversationID,
+                        stream: stream,
+                        tools: activeTools,
+                        toolChoice: nil,
+                        toolEventHandler: toolEventHandler
+                    )
+                }
+                return try networkClient.streamChatCompletionRequest(
                     messages: currentMessages,
                     model: selectedModel,
-                    conversationID: requestConversationID,
                     stream: stream,
                     tools: activeTools,
                     toolChoice: nil,
                     toolEventHandler: toolEventHandler
                 )
-            } else {
-                responseStream = try networkClient.streamChatCompletionRequest(
-                    messages: currentMessages,
-                    model: selectedModel,
-                    stream: stream,
-                    tools: activeTools,
-                    toolChoice: nil,
-                    toolEventHandler: toolEventHandler
+            }
+
+            try Task.checkCancellation()
+            var responseStream = try openResponseStream(systemPrompt, history)
+            if let requestPreparer, let requestContext {
+                let sent = (systemPrompt: systemPrompt, messageIDs: history.map(\.uuid))
+                let eventBuffer = eventBuffer
+                responseStream = Self.retryingAfterContextOverflow(
+                    responseStream,
+                    hasToolActivity: { eventBuffer.hasActivity(for: sendID) },
+                    retry: { [weak self] overflow in
+                        guard let self, self.conversationID == requestConversationID else { throw CancellationError() }
+                        var retryContext = requestContext
+                        retryContext.contextOverflow = overflow
+                        let prepared = try await requestPreparer(retryContext)
+                        guard self.conversationID == requestConversationID else { throw CancellationError() }
+                        guard prepared.systemPrompt != sent.systemPrompt || prepared.history.map(\.uuid) != sent.messageIDs else {
+                            return nil
+                        }
+                        return try openResponseStream(prepared.systemPrompt, prepared.history)
+                    }
                 )
             }
             try Task.checkCancellation()
@@ -655,6 +701,50 @@ public class MessageService {
         }
     }
 
+    /// `first`, or, when it fails as too long for the context window before
+    /// producing any text or tool activity, the stream `retry` opens instead.
+    /// `retry` returns `nil` when it has no shorter request, and the original
+    /// error stands. At most one retry is made.
+    nonisolated private static func retryingAfterContextOverflow(
+        _ first: AsyncThrowingStream<String, Error>,
+        hasToolActivity: @escaping @Sendable () -> Bool,
+        retry: @escaping @MainActor (ContextOverflow) async throws -> AsyncThrowingStream<String, Error>?
+    ) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                var producedText = false
+                do {
+                    for try await chunk in first {
+                        producedText = producedText || !chunk.isEmpty
+                        continuation.yield(chunk)
+                    }
+                    continuation.finish()
+                    return
+                } catch {
+                    guard !producedText, !Task.isCancelled, !hasToolActivity(),
+                          let overflow = ContextOverflow(error: error)
+                    else {
+                        continuation.finish(throwing: error)
+                        return
+                    }
+                    do {
+                        guard let second = try await retry(overflow) else {
+                            continuation.finish(throwing: error)
+                            return
+                        }
+                        for try await chunk in second {
+                            continuation.yield(chunk)
+                        }
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
+
     nonisolated private static func merge(
         responseStream: AsyncThrowingStream<String, Error>,
         eventNotifications: AsyncStream<UInt64>,
@@ -695,6 +785,7 @@ public class MessageService {
 
     private func removeActiveSend(id: UUID, conversationID: UUID) {
         activeSends[conversationID]?.removeValue(forKey: id)
+        activeSendPromptIDs.removeValue(forKey: id)
         if activeSends[conversationID]?.isEmpty == true {
             activeSends.removeValue(forKey: conversationID)
         }
@@ -725,6 +816,7 @@ public class MessageService {
     public func clearMessages() {
         let previousConversationID = conversationID
         let sends = activeSends.removeValue(forKey: previousConversationID) ?? [:]
+        for sendID in sends.keys { activeSendPromptIDs.removeValue(forKey: sendID) }
         let sendsToDrain = Array(sends.values)
         sends.keys.forEach { eventBuffer.remove($0) }
         conversationID = UUID()

@@ -244,11 +244,21 @@ public struct ConversationQuery: Equatable, Sendable {
     }
 }
 
-/// How many messages to load.
+/// Which messages to load. Every window counts top-level messages and
+/// includes their agent-event children. Stores read only the selected
+/// messages' payloads.
 public enum MessageWindow: Equatable, Sendable {
     case all
-    /// The newest `n` top-level messages, with their agent-event children.
+    /// The newest `n` top-level messages.
     case latest(Int)
+    /// `messageID` and every top-level message after it, extended back to at
+    /// least the newest `minimumCount`. Sessions open long conversations
+    /// this way from their latest checkpoint. If `messageID` is not stored,
+    /// every message.
+    case since(UUID, minimumCount: Int)
+    /// Up to `limit` top-level messages immediately before `messageID`, for
+    /// "load earlier". Empty when `messageID` is not stored.
+    case before(UUID, limit: Int)
 }
 
 /// Notifications published by a store after a successful save.
@@ -262,6 +272,8 @@ public enum ChatHistoryError: LocalizedError, Equatable {
     case conversationNotFound(UUID)
     case conversationAlreadyExists(UUID)
     case storeUnavailable(String)
+    /// A checkpoint must cover a stored top-level message of its conversation.
+    case messageNotFound(UUID)
 
     public var errorDescription: String? {
         switch self {
@@ -271,6 +283,8 @@ public enum ChatHistoryError: LocalizedError, Equatable {
             return "A conversation with this identifier already exists."
         case .storeUnavailable(let reason):
             return "Chat history is unavailable: \(reason)"
+        case .messageNotFound:
+            return "The message is no longer available."
         }
     }
 }

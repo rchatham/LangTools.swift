@@ -6,6 +6,7 @@
 import Combine
 import Foundation
 import Chat
+import ChatContext
 
 /// A non-persistent `ChatHistoryStorage` for previews, tests and as a startup
 /// fallback when the durable store cannot be opened. It shares the row codec
@@ -15,9 +16,16 @@ public final class InMemoryChatHistoryStorage: ChatHistoryStorage {
     private var records: [UUID: ConversationRecord] = [:]
     private var rowsByConversation: [UUID: [UUID: MessageRow]] = [:]
     private var nextSortOrders: [UUID: Int64] = [:]
+    private var checkpointsByConversation: [UUID: [ContextCheckpoint]] = [:]
     private let titleGenerator: any ConversationTitleGenerating
     private let now: () -> Date
     private let subject = PassthroughSubject<ChatHistoryChange, Never>()
+    private var contextRevisions: [UUID: UInt64] = [:]
+
+    public func contextRevision(conversationID: UUID) -> UInt64 {
+        contextRevisions[conversationID, default: 0]
+    }
+
 
     /// Test seam: runs before every commit; throwing leaves state unchanged.
     public var saveHook: (() throws -> Void)?
@@ -77,6 +85,7 @@ public final class InMemoryChatHistoryStorage: ChatHistoryStorage {
             records.removeValue(forKey: id)
             rowsByConversation.removeValue(forKey: id)
             nextSortOrders.removeValue(forKey: id)
+            checkpointsByConversation.removeValue(forKey: id)
         }
         subject.send(.conversationsDeleted(deleted))
     }
@@ -84,7 +93,10 @@ public final class InMemoryChatHistoryStorage: ChatHistoryStorage {
     public func loadMessages(conversationID: UUID, window: MessageWindow) throws -> [Message] {
         guard records[conversationID] != nil else { throw ChatHistoryError.conversationNotFound(conversationID) }
         let rows = Array((rowsByConversation[conversationID] ?? [:]).values)
-        return ConversationRecordRules.window(MessageRowCodec.messages(from: rows), window)
+        guard let selected = MessageWindowPlanner.selectedIDs(for: window, keys: rows.map(MessageRowKey.init)) else {
+            return MessageRowCodec.messages(from: rows)
+        }
+        return MessageRowCodec.messages(from: rows.filter { selected.contains($0.id) })
     }
 
     public func applyMessageChanges(_ changes: MessageChangeSet, conversationID: UUID) throws {
@@ -99,16 +111,53 @@ public final class InMemoryChatHistoryStorage: ChatHistoryStorage {
             nextSortOrder: nextSortOrders[conversationID] ?? 0
         )
         guard !plan.isNoOp else { return }
+        var checkpoints = checkpointsByConversation[conversationID] ?? []
+        if !plan.deletedIDs.isEmpty {
+            let (updated, removed) = CheckpointRules.adjustments(
+                for: checkpoints,
+                deletedIDs: plan.deletedIDs,
+                previousKeys: rows.values.map(MessageRowKey.init),
+                remainingKeys: plan.remainingKeys
+            )
+            let updatedByID = Dictionary(updated.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+            checkpoints = checkpoints.compactMap { removed.contains($0.id) ? nil : (updatedByID[$0.id] ?? $0) }
+        }
         for id in plan.deletedIDs { rows.removeValue(forKey: id) }
         for row in plan.writes { rows[row.id] = row }
         ConversationRecordRules.apply(plan.summary, titleGenerator: titleGenerator, to: &record, updatedAt: now())
 
         try saveHook?()
         rowsByConversation[conversationID] = rows
+        checkpointsByConversation[conversationID] = checkpoints
+        if !plan.deletedIDs.isEmpty { contextRevisions[conversationID, default: 0] &+= 1 }
         nextSortOrders[conversationID] = plan.nextSortOrder
         records[conversationID] = record
         subject.send(.messagesChanged(conversationID))
         subject.send(.conversationUpserted(conversationID))
+    }
+
+    // MARK: Checkpoints
+
+    public func checkpoints(conversationID: UUID) throws -> [ContextCheckpoint] {
+        guard records[conversationID] != nil else { throw ChatHistoryError.conversationNotFound(conversationID) }
+        return (checkpointsByConversation[conversationID] ?? []).sorted { ContextCheckpoint.isNewer($1, than: $0) }
+    }
+
+    public func latestCheckpoint(conversationID: UUID) throws -> ContextCheckpoint? {
+        guard records[conversationID] != nil else { throw ChatHistoryError.conversationNotFound(conversationID) }
+        return checkpointsByConversation[conversationID]?.min(by: ContextCheckpoint.isNewer)
+    }
+
+    public func saveCheckpoint(_ checkpoint: ContextCheckpoint) throws {
+        let conversationID = checkpoint.conversationID
+        guard records[conversationID] != nil else { throw ChatHistoryError.conversationNotFound(conversationID) }
+        let rows = (rowsByConversation[conversationID] ?? [:]).values
+        try CheckpointRules.validate(checkpoint, keys: rows.map(MessageRowKey.init))
+        try saveHook?()
+        var checkpoints = checkpointsByConversation[conversationID] ?? []
+        checkpoints.removeAll { $0.id == checkpoint.id }
+        checkpoints.append(checkpoint)
+        checkpointsByConversation[conversationID] = checkpoints
     }
 
     @discardableResult

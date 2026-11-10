@@ -6,6 +6,7 @@
 import Combine
 import Foundation
 import Chat
+import ChatContext
 
 /// A durable store of conversations and their messages.
 ///
@@ -16,8 +17,14 @@ import Chat
 ///
 /// Every mutating call is one transaction: on failure nothing is written and
 /// the error is rethrown. `changes` publishes only after a successful save.
+///
+/// A store also keeps each conversation's context checkpoints
+/// (`ContextCheckpointStore`). `saveCheckpoint` rejects a checkpoint whose
+/// covered message is not a stored top-level message; deleting that message
+/// moves the checkpoint back to the closest earlier message (or removes it);
+/// deleting a conversation deletes its checkpoints.
 @MainActor
-public protocol ChatHistoryStorage: AnyObject {
+public protocol ChatHistoryStorage: ContextCheckpointStore {
     func conversations(matching query: ConversationQuery) throws -> [ConversationRecord]
     func conversation(id: UUID) throws -> ConversationRecord?
     @discardableResult func createConversation(_ draft: ConversationDraft) throws -> ConversationRecord
@@ -31,6 +38,8 @@ public protocol ChatHistoryStorage: AnyObject {
     /// Creates a conversation with its full history in one transaction,
     /// preserving message IDs and the draft's timestamps. Used by importers.
     @discardableResult func importConversation(_ draft: ConversationDraft, messages: [Message]) throws -> ConversationRecord
+    /// A conversation's checkpoints, oldest first.
+    func checkpoints(conversationID: UUID) throws -> [ContextCheckpoint]
     var changes: AnyPublisher<ChatHistoryChange, Never> { get }
 }
 
@@ -162,12 +171,5 @@ enum ConversationRecordRules {
             result = Array(result.prefix(limit))
         }
         return result
-    }
-
-    static func window(_ messages: [Message], _ window: MessageWindow) -> [Message] {
-        switch window {
-        case .all: return messages
-        case .latest(let count): return Array(messages.suffix(max(0, count)))
-        }
     }
 }

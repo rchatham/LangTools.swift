@@ -2,7 +2,8 @@
 //  ChatHistorySchemaV1.swift
 //  ChatHistory
 //
-//  SwiftData schema, version 1.
+//  SwiftData schema, version 1. Frozen: never edit these models. Version 2
+//  (ChatHistorySchemaV2.swift) reuses them unchanged and adds checkpoints.
 //
 //  Model rules (they keep a future CloudKit or sync backend possible):
 //  no `@Attribute(.unique)`, every property has a default, no relationships.
@@ -70,11 +71,6 @@ enum ChatHistorySchemaV1: VersionedSchema {
     }
 }
 
-enum ChatHistoryMigrationPlan: SchemaMigrationPlan {
-    static var schemas: [any VersionedSchema.Type] { [ChatHistorySchemaV1.self] }
-    static var stages: [MigrationStage] { [] }
-}
-
 typealias ChatHistoryConversation = ChatHistorySchemaV1.ChatHistoryConversation
 typealias ChatHistoryMessage = ChatHistorySchemaV1.ChatHistoryMessage
 
@@ -133,6 +129,10 @@ extension ChatHistoryMessage {
             payload: payload,
             payloadVersion: payloadVersion
         )
+    }
+
+    var key: MessageRowKey {
+        MessageRowKey(id: id, parentID: parentID, sortOrder: sortOrder, createdAt: createdAt, contentKind: contentKind)
     }
 
     func apply(_ row: MessageRow) {
