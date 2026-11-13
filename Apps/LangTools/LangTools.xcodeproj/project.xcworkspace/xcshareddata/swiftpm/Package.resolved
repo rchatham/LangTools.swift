@@ -1,13 +1,13 @@
 {
-  "originHash" : "05325657552c97fd8e0aaa4ec05eb888bfdd95b9605516c984439078a8489e2b",
+  "originHash" : "10d5b38699e24b072892ee82f88fb3cb6770f03112716a7a895f3e1cd958a68f",
   "pins" : [
     {
       "identity" : "json.swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/rchatham/JSON.swift.git",
       "state" : {
-        "revision" : "498270c44bb80c5cf5b8de8727ceb030f95c0777",
-        "version" : "1.0.4"
+        "revision" : "ac7d9e641a5bc9067bcc6553b1e95dfa0ee81860",
+        "version" : "1.1.0"
       }
     },
     {
@@ -20,6 +20,15 @@
       }
     },
     {
+      "identity" : "mlx-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ml-explore/mlx-swift",
+      "state" : {
+        "revision" : "dc43e62d7055353c7f99fa071a4e71d29dfddc44",
+        "version" : "0.31.4"
+      }
+    },
+    {
       "identity" : "swift-argument-parser",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-argument-parser.git",
@@ -29,12 +38,12 @@
       }
     },
     {
-      "identity" : "swift-asn1",
+      "identity" : "swift-atomics",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-asn1.git",
+      "location" : "https://github.com/apple/swift-atomics.git",
       "state" : {
-        "revision" : "9f542610331815e29cc3821d3b6f488db8715517",
-        "version" : "1.6.0"
+        "revision" : "0442cb5a3f98ab802acb777929fdb446bda11a34",
+        "version" : "1.3.1"
       }
     },
     {
@@ -47,21 +56,30 @@
       }
     },
     {
-      "identity" : "swift-crypto",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-crypto.git",
-      "state" : {
-        "revision" : "bb4ba815dab96d4edc1e0b86d7b9acf9ff973a84",
-        "version" : "4.3.1"
-      }
-    },
-    {
       "identity" : "swift-jinja",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-jinja.git",
       "state" : {
         "revision" : "0aeefadec459ce8e11a333769950fb86183aca43",
         "version" : "2.3.5"
+      }
+    },
+    {
+      "identity" : "swift-nio",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-nio.git",
+      "state" : {
+        "revision" : "ad6b5f17270a7008f60d35ec5378e6144a575162",
+        "version" : "2.84.0"
+      }
+    },
+    {
+      "identity" : "swift-numerics",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-numerics",
+      "state" : {
+        "revision" : "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
+        "version" : "1.1.1"
       }
     },
     {
@@ -74,12 +92,21 @@
       }
     },
     {
+      "identity" : "swift-system",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-system.git",
+      "state" : {
+        "revision" : "869129b7bf4ecc57b97d0193ad29690ca2134750",
+        "version" : "1.8.1"
+      }
+    },
+    {
       "identity" : "swift-transformers",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-transformers.git",
       "state" : {
-        "revision" : "150169bfba0889c229a2ce7494cf8949f18e6906",
-        "version" : "1.1.9"
+        "revision" : "573e5c9036c2f136b3a8a071da8e8907322403d0",
+        "version" : "1.1.6"
       }
     },
     {
@@ -92,21 +119,21 @@
       }
     },
     {
+      "identity" : "systemone.swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rchatham/SystemOne.swift.git",
+      "state" : {
+        "revision" : "71f8d4cf8ba670c53aa95f31b662da9ee37ead48",
+        "version" : "0.2.0"
+      }
+    },
+    {
       "identity" : "whisperkit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/argmaxinc/WhisperKit.git",
       "state" : {
         "revision" : "e2adabbe7d98dc4d0ab9a5b75424ecc42a9cdbef",
         "version" : "0.18.0"
-      }
-    },
-    {
-      "identity" : "yyjson",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ibireme/yyjson.git",
-      "state" : {
-        "revision" : "8b4a38dc994a110abaec8a400615567bd996105f",
-        "version" : "0.12.0"
       }
     }
   ],
