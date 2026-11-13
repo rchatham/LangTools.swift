@@ -1,5 +1,5 @@
 {
-  "originHash" : "c5aad8515b48a8b594fbb61885933bfdd4222ab7dab89141b37f27defc90ad4d",
+  "originHash" : "8702b5898ec4712ec7672534d421d32650007f3bab4fef9ac36e63d56659f69e",
   "pins" : [
     {
       "identity" : "json.swift",
@@ -105,7 +105,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/rchatham/SystemOne.swift.git",
       "state" : {
-        "revision" : "708bda7cebf5561bd6b996c6023c144a48915800"
+        "revision" : "71f8d4cf8ba670c53aa95f31b662da9ee37ead48",
+        "version" : "0.2.0"
       }
     },
     {

@@ -15,8 +15,8 @@ let package = Package(
     ],
     dependencies: [
         .package(name: "langtools.swift", path: "../../"),
-        // Move to a tagged release once SystemOneChat and HTTPDecider ship in one.
-        .package(url: "https://github.com/rchatham/SystemOne.swift.git", revision: "708bda7cebf5561bd6b996c6023c144a48915800"),
+        // 0.x minor releases may break the API, so stay within 0.2.
+        .package(url: "https://github.com/rchatham/SystemOne.swift.git", .upToNextMinor(from: "0.2.0")),
     ],
     targets: [
         .target(

@@ -123,7 +123,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/rchatham/SystemOne.swift.git",
       "state" : {
-        "revision" : "708bda7cebf5561bd6b996c6023c144a48915800"
+        "revision" : "71f8d4cf8ba670c53aa95f31b662da9ee37ead48",
+        "version" : "0.2.0"
       }
     },
     {
