@@ -20,6 +20,7 @@
 		B1E4E5132F314EF400AE11AA /* Audio in Frameworks */ = {isa = PBXBuildFile; productRef = B1E4E5122F314EF400AE11AA /* Audio */; };
 		B1E4E5152F314EF400AE11AA /* Chat in Frameworks */ = {isa = PBXBuildFile; productRef = B1E4E5142F314EF400AE11AA /* Chat */; };
 		B1E4E5172F314EF400AE11AA /* ExampleAgents in Frameworks */ = {isa = PBXBuildFile; productRef = B1E4E5162F314EF400AE11AA /* ExampleAgents */; };
+		B1A0510E2F00000000000003 /* SystemOneLangTools in Frameworks */ = {isa = PBXBuildFile; productRef = B1A0510E2F00000000000002 /* SystemOneLangTools */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -81,6 +82,7 @@
 				Assets.xcassets,
 				ContentCards/CalendarEventCard.swift,
 				LangToolsApp.swift,
+				SystemOneRouting.swift,
 			);
 			target = B1D1EBDE2CA2518E00AD7FA6 /* LangToolsApp */;
 		};
@@ -116,6 +118,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B1A0510E2F00000000000003 /* SystemOneLangTools in Frameworks */,
 				B1E4E5132F314EF400AE11AA /* Audio in Frameworks */,
 				B19B31B42F2C9A0600645F8A /* LangTools in Frameworks */,
 				B19B31B62F2C9A0600645F8A /* Ollama in Frameworks */,
@@ -210,6 +213,7 @@
 				B1E4E5122F314EF400AE11AA /* Audio */,
 				B1E4E5142F314EF400AE11AA /* Chat */,
 				B1E4E5162F314EF400AE11AA /* ExampleAgents */,
+				B1A0510E2F00000000000002 /* SystemOneLangTools */,
 			);
 			productName = LangTools;
 			productReference = B1D1EBDF2CA2518F00AD7FA6 /* LangTools.app */;
@@ -289,6 +293,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				B1E4E5112F314EF400AE11AA /* XCLocalSwiftPackageReference "../LangTools" */,
+				B1A0510E2F00000000000001 /* XCLocalSwiftPackageReference "../../Integrations/SystemOne" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B1D1EBE02CA2518F00AD7FA6 /* Products */;
@@ -763,6 +768,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../LangTools;
 		};
+		B1A0510E2F00000000000001 /* XCLocalSwiftPackageReference "../../Integrations/SystemOne" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../Integrations/SystemOne;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -817,6 +826,11 @@
 		B1E4E5162F314EF400AE11AA /* ExampleAgents */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ExampleAgents;
+		};
+		B1A0510E2F00000000000002 /* SystemOneLangTools */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B1A0510E2F00000000000001 /* XCLocalSwiftPackageReference "../../Integrations/SystemOne" */;
+			productName = SystemOneLangTools;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
