@@ -16,13 +16,76 @@ public final class OllamaService: ObservableObject {
     @Published var availableModels: [Ollama.Model] = []
     @Published var runningModels: [Ollama.ListRunningModelsResponse.RunningModelInfo] = []
     @Published var isLoading = false
-    @Published public var error: Error?
+    @Published public var error: Error? {
+        willSet {
+            let assignment = UUID()
+            errorAssignmentStack.append(assignment)
+            latestErrorAssignment = (assignment, newValue)
+            // Consume the permit BEFORE @Published invokes synchronous subscribers.
+            // A subscriber's nested public assignment must invalidate pending claims.
+            if claimedErrorAssignment {
+                claimedErrorAssignment = false
+            } else {
+                invalidateErrorPublications()
+            }
+        }
+        didSet {
+            let completed = errorAssignmentStack.removeLast()
+            guard errorAssignmentStack.isEmpty, let latest = latestErrorAssignment else { return }
+            latestErrorAssignment = nil
+            // @Published stores AFTER invoking subscribers. A nested assignment
+            // would otherwise be overwritten by the outer setter on its return.
+            // Replay the last assignment without invalidating its newer claim.
+            if completed != latest.id { assignClaimedError(latest.value) }
+        }
+    }
     @Published public private(set) var transportRevision: UInt64 = 0
 
     public let endpointConfiguration: OllamaEndpointConfiguration
     private let session: URLSession
     private let providerAccessManager: ProviderAccessManager
     private var refreshGeneration: UInt64 = 0
+    private let errorPublicationOwner = UUID()
+    private var errorPublicationID = UUID()
+    private var claimedErrorAssignment = false
+    private var errorAssignmentStack: [UUID] = []
+    private var latestErrorAssignment: (id: UUID, value: Error?)?
+
+    /// Opaque capability for the latest error-producing operation on this service.
+    /// Model/cache/loading generations are intentionally independent of this domain.
+    public struct ErrorPublicationClaim {
+        fileprivate let owner: UUID
+        fileprivate let id: UUID
+    }
+
+    public func beginErrorPublication(clearError: Bool = true) -> ErrorPublicationClaim {
+        errorPublicationID = UUID()
+        let claim = ErrorPublicationClaim(owner: errorPublicationOwner, id: errorPublicationID)
+        if clearError { publishError(nil, for: claim) }
+        return claim
+    }
+
+    public func isCurrentErrorPublication(_ claim: ErrorPublicationClaim) -> Bool {
+        claim.owner == errorPublicationOwner && claim.id == errorPublicationID
+    }
+
+    /// Returns whether this assignment was accepted. Synchronous subscribers may
+    /// supersede the claim during publication; callers must recheck before more work.
+    @discardableResult
+    public func publishError(_ value: Error?, for claim: ErrorPublicationClaim) -> Bool {
+        guard isCurrentErrorPublication(claim) else { return false }
+        assignClaimedError(value)
+        return true
+    }
+
+    private func assignClaimedError(_ value: Error?) {
+        claimedErrorAssignment = true
+        error = value
+    }
+
+    public func invalidateErrorPublications() {
+        errorPublicationID = UUID()
+    }
 
     public init(
         endpointConfiguration: OllamaEndpointConfiguration = .shared,
@@ -40,8 +103,8 @@ public final class OllamaService: ObservableObject {
         let snapshot = endpointConfiguration.snapshot()
         refreshGeneration &+= 1
         let generation = refreshGeneration
+        let errorClaim = beginErrorPublication()
         isLoading = true
-        error = nil
 
         Task {
             do {
@@ -58,10 +121,12 @@ public final class OllamaService: ObservableObject {
                 if endpointConfiguration.storeModels(models, for: snapshot) {
                     providerAccessManager.refresh()
                 }
+                publishError(nil, for: errorClaim)
             } catch {
                 guard endpointConfiguration.isCurrent(snapshot), generation == refreshGeneration else { return }
-                self.error = snapshot.isHelper ? MobileHelperError.actionable(error, session: snapshot.helper?.session) : error
                 isLoading = false
+                publishError(snapshot.isHelper ? MobileHelperError.actionable(error, session: snapshot.helper?.session) : error,
+                    for: errorClaim)
             }
         }
     }

@@ -1,9 +1,9 @@
 import SwiftUI
 
 private struct ManageAccessPromptModifier: ViewModifier {
-    @ObservedObject private var coordinator = AuthPresentationCoordinator.shared
-    @ObservedObject private var loginCoordinator = AccountLoginCoordinator.shared
-    @ObservedObject private var accessManager = ProviderAccessManager.shared
+    @ObservedObject private var coordinator: AuthPresentationCoordinator
+    @ObservedObject private var loginCoordinator: AccountLoginCoordinator
+    @ObservedObject private var accessManager: ProviderAccessManager
     @State private var showAPIKeyPrompt = false
     @State private var apiKeyInput = ""
     @State private var apiKeyService: APIService = .openAI
@@ -13,11 +13,17 @@ private struct ManageAccessPromptModifier: ViewModifier {
     @State private var resultMessage = ""
 
     @State private var presenterID = UUID()
-    private let networkClient: NetworkClientProtocol
+    private let controller: AccessPromptController
     private let priority: Int
+    private let selectedModelBinding: Binding<Model>
 
-    init(networkClient: NetworkClientProtocol = NetworkClient.shared, priority: Int) {
-        self.networkClient = networkClient
+    init(accessPrompts: AccessPromptContext, priority: Int) {
+        let dependencies = accessPrompts.resolvePresentationDependencies()
+        self._coordinator = ObservedObject(wrappedValue: dependencies.presentation)
+        self._loginCoordinator = ObservedObject(wrappedValue: dependencies.login)
+        self.selectedModelBinding = dependencies.model
+        self.controller = AccessPromptController(context: accessPrompts)
+        self.accessManager = accessPrompts.accessManager
         self.priority = priority
     }
 
@@ -75,11 +81,11 @@ private struct ManageAccessPromptModifier: ViewModifier {
     }
 
     private var currentDestination: AccessDestination? {
-        coordinator.preferredDestination ?? AccessDestination.destination(for: UserDefaults.model)
+        coordinator.preferredDestination ?? AccessDestination.destination(for: selectedModelBinding.wrappedValue)
     }
 
     private var currentService: APIService {
-        currentDestination?.service ?? UserDefaults.model.apiService
+        currentDestination?.service ?? selectedModelBinding.wrappedValue.apiService
     }
 
     private var currentState: ProviderAccessState {
@@ -205,12 +211,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
             return
         }
         do {
-            if apiKeyService == .serper {
-                UserDefaults.serperApiKey = trimmed
-                KeychainService.shared.saveApiKey(apiKey: trimmed, for: .serper)
-            } else {
-                try networkClient.updateApiKey(trimmed, for: apiKeyService)
-            }
+            try controller.saveAPIKey(trimmed, for: apiKeyService)
             apiKeyInput = ""
             coordinator.dismiss()
         } catch {
@@ -220,7 +221,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
 
     private func removeAPIKey(for service: APIService) {
         do {
-            try networkClient.removeApiKey(for: service)
+            try controller.removeAPIKey(for: service)
             coordinator.dismiss()
         } catch {
             presentError(error.localizedDescription)
@@ -238,10 +239,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
     private func handleAccountConnect(for provider: AccountLoginProvider) {
         Task { @MainActor in
             do {
-                try await networkClient.connectAccount(provider)
-                accessManager.refresh()
-                let updatedState = accessManager.statesForAccessUI().first { $0.accessDestination?.accountProvider == provider }
-                    ?? accessManager.state(for: provider.service)
+                let updatedState = try await controller.connectAccount(provider)
                 presentResult(connectMessage(for: provider, state: updatedState))
             } catch {
                 presentError(error.localizedDescription)
@@ -252,8 +250,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
     private func handleAccountDisconnect(for provider: AccountLoginProvider) {
         Task { @MainActor in
             do {
-                try await networkClient.disconnectAccount(provider)
-                accessManager.refresh()
+                try await controller.disconnectAccount(provider)
                 presentResult(disconnectMessage(for: provider))
             } catch {
                 presentError(error.localizedDescription)
@@ -264,8 +261,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
     private func handleCodexHelperConnect() {
         Task { @MainActor in
             do {
-                try await networkClient.connectCodexHelper()
-                accessManager.refresh()
+                try await controller.connectCodexHelper()
                 presentResult("Connected OpenAI through the Codex helper. Codex model access has been refreshed.")
             } catch {
                 presentError(error.localizedDescription)
@@ -276,12 +272,7 @@ private struct ManageAccessPromptModifier: ViewModifier {
     private func handleCodexDisconnect(usesHelper: Bool) {
         Task { @MainActor in
             do {
-                if usesHelper {
-                    try await networkClient.disconnectCodexHelper()
-                } else {
-                    try await networkClient.disconnectAccount(.openAI)
-                }
-                accessManager.refresh()
+                try await controller.disconnectCodex(usesHelper: usesHelper)
                 presentResult(usesHelper ? "Disconnected the Codex helper." : disconnectMessage(for: .openAI))
             } catch {
                 presentError(error.localizedDescription)
@@ -339,6 +330,10 @@ private struct ManageAccessPromptModifier: ViewModifier {
 
 public extension View {
     func manageAccessPrompts(networkClient: NetworkClientProtocol = NetworkClient.shared, priority: Int = 0) -> some View {
-        modifier(ManageAccessPromptModifier(networkClient: networkClient, priority: priority))
+        modifier(ManageAccessPromptModifier(accessPrompts: .legacy(networkClient: networkClient), priority: priority))
+    }
+
+    func manageAccessPrompts(accessPrompts: AccessPromptContext, priority: Int = 0) -> some View {
+        modifier(ManageAccessPromptModifier(accessPrompts: accessPrompts, priority: priority))
     }
 }

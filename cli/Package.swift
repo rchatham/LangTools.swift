@@ -8,6 +8,7 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
+        .library(name: "HelperCore", targets: ["HelperCore"]),
         .executable(name: "langtools", targets: ["CLI"]),
         .executable(name: "LangToolsHelper", targets: ["LangToolsHelper"]),
     ],
