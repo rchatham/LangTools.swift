@@ -65,7 +65,11 @@ final class ScriptedChatClient: NetworkClientProtocol {
 enum TestHooks {
     /// Hooks with fixed settings and no tool registry, so tests never read
     /// app preferences.
-    static func make(client: ScriptedChatClient, removesFailedPrompt: Bool = true) -> ChatSessionHooks {
+    static func make(
+        client: ScriptedChatClient,
+        removesFailedPrompt: Bool = true,
+        failedPromptHandling: FailedPromptHandling? = nil
+    ) -> ChatSessionHooks {
         var hooks = ChatSessionHooks(makeMessageService: { context in
             MessageService(
                 networkClient: client,
@@ -86,7 +90,7 @@ enum TestHooks {
                 )
             )
         })
-        hooks.removesFailedPromptWithoutOutput = removesFailedPrompt
+        hooks.failedPromptHandling = failedPromptHandling ?? (removesFailedPrompt ? .returnToComposer : .keepInline)
         return hooks
     }
 }

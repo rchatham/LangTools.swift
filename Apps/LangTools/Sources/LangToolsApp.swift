@@ -225,7 +225,7 @@ final class ChatHistoryEnvironment: ObservableObject {
         if !fixtureActive {
             hooks.agentResultParser = ContentCardRegistry.shared.agentResultParser
         }
-        hooks.alert = { LangToolsAlerts.alert(for: $0) }
+        hooks.alert = { error, _ in LangToolsAlerts.alert(for: error) }
 
         var storageError: String?
         let storage: any ChatHistoryStorage
