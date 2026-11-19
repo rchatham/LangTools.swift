@@ -167,7 +167,8 @@ public final class ChatSession: ObservableObject, ChatMessageService {
         relay.handler = { [weak self] event in self?.handleCompaction(event) }
         if let preparer {
             service.requestPreparer = { [weak self] request in
-                defer { self?.isCompacting = false }
+                // Publish only real changes: every publish redraws observers.
+                defer { if self?.isCompacting == true { self?.isCompacting = false } }
                 return try await preparer(request)
             }
         }
@@ -276,8 +277,10 @@ public final class ChatSession: ObservableObject, ChatMessageService {
 
     /// The checkpoint whose marker goes right after `messageID` in the
     /// transcript: one ending there that is not shown above the messages
-    /// (`leadingCheckpoint`). A list that draws markers from this should
-    /// redraw its rows when `checkpoints` or `canLoadEarlierMessages` change.
+    /// (`leadingCheckpoint`). Rows that show a marker should observe the
+    /// session (`ChatSessionCheckpointMarker` does), so it follows later
+    /// changes; a checkpoint written during a send appears when the reply
+    /// redraws the transcript.
     public func inlineCheckpoint(after messageID: UUID) -> ChatSessionCheckpoint? {
         guard let checkpoint = checkpoint(endingAt: messageID), checkpoint.id != leadingCheckpoint?.id else { return nil }
         return checkpoint
@@ -295,7 +298,7 @@ public final class ChatSession: ObservableObject, ChatMessageService {
     private func handleCompaction(_ event: CompactingRequestPreparer.Event) {
         switch event {
         case .summarizing:
-            isCompacting = true
+            if !isCompacting { isCompacting = true }
         case .compacted:
             unsavedCheckpoint = nil
             reloadCheckpoints()
