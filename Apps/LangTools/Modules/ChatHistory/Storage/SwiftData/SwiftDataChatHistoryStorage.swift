@@ -258,6 +258,13 @@ public final class SwiftDataChatHistoryStorage: ChatHistoryStorage {
             .sorted { ContextCheckpoint.isNewer($1, than: $0) }
     }
 
+    public func messageCount(conversationID: UUID, throughMessageID messageID: UUID) throws -> Int? {
+        guard try fetchConversation(conversationID) != nil else {
+            throw ChatHistoryError.conversationNotFound(conversationID)
+        }
+        return MessageRowTree(try fetchRowKeys(conversationID: conversationID)).topLevelCount(through: messageID)
+    }
+
     public func latestCheckpoint(conversationID: UUID) throws -> ContextCheckpoint? {
         guard try fetchConversation(conversationID) != nil else {
             throw ChatHistoryError.conversationNotFound(conversationID)

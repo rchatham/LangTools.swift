@@ -77,7 +77,7 @@ final class CompactingRequestPreparerTests: XCTestCase {
         XCTAssertEqual(checkpoint.model, "test/summarizer")
         XCTAssertEqual(checkpoint.tokenEstimate, estimator.tokens(in: checkpoint.summary))
         XCTAssertEqual(checkpoint.createdAt, clock)
-        XCTAssertEqual(events, [.compacted(checkpoint)])
+        XCTAssertEqual(events, [.summarizing(messageCount: coveredCount), .compacted(checkpoint)])
 
         XCTAssertEqual(prepared.systemPrompt, CompactedContext.systemPrompt("system", summary: checkpoint.summary))
         XCTAssertEqual(prepared.history.map(\.uuid), history.dropFirst(coveredCount).map(\.uuid))
@@ -302,7 +302,7 @@ final class CompactingRequestPreparerTests: XCTestCase {
         let prepared = try await preparer.prepare(requestContext(history))
 
         XCTAssertTrue(store.checkpoints.isEmpty, "A fallback summary is never saved")
-        guard case .usedFallbackSummary(let fallback, _) = events.first else { return XCTFail("Expected a fallback event: \(events)") }
+        guard case .usedFallbackSummary(let fallback, _) = events.last else { return XCTFail("Expected a fallback event: \(events)") }
         XCTAssertEqual(fallback.model, ContextSummary.extractiveModelName)
         XCTAssertTrue(prepared.systemPrompt.hasSuffix(fallback.summary))
         XCTAssertTrue(prepared.history.first?.isUser == true)
@@ -341,10 +341,25 @@ final class CompactingRequestPreparerTests: XCTestCase {
         history.append(Message(text: "next", role: .user))
         let second = try await preparer.prepare(requestContext(history))
 
-        guard case .checkpointSaveFailed = events.first else { return XCTFail("Expected a save failure: \(events)") }
+        guard case .checkpointSaveFailed = events.last else { return XCTFail("Expected a save failure: \(events)") }
         XCTAssertTrue(first.systemPrompt.hasSuffix("summary of \(summarizer.requests[0].messages.count) messages"))
         XCTAssertEqual(second.systemPrompt, first.systemPrompt)
         XCTAssertEqual(summarizer.requests.count, 1)
+    }
+
+    func testSummarizingIsAnnouncedWhileTheSummarizerRuns() async throws {
+        summarizer.holds = true
+        let preparer = preparer()
+        let task = Task { try await preparer.prepare(requestContext(conversation(turns: 15))) }
+        await waitFor { self.summarizer.gate != nil }
+
+        let coveredCount = try XCTUnwrap(summarizer.requests.first).messages.count
+        XCTAssertEqual(events, [.summarizing(messageCount: coveredCount)], "Announced before the summary exists")
+
+        summarizer.release()
+        _ = try await task.value
+        let checkpoint = try XCTUnwrap(store.checkpoints.first)
+        XCTAssertEqual(events, [.summarizing(messageCount: coveredCount), .compacted(checkpoint)])
     }
 
     func testCancellingDuringSummarizationSavesNothing() async throws {

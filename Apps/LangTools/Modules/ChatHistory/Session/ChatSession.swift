@@ -11,7 +11,30 @@
 import Combine
 import Foundation
 import Chat
+import ChatContext
 import ChatUI
+
+/// A context checkpoint as a session shows it: older messages summarized so
+/// requests stay inside the model's context window.
+public struct ChatSessionCheckpoint: Identifiable, Hashable, Sendable {
+    public let checkpoint: ContextCheckpoint
+    /// Top-level messages from the start of the conversation through the
+    /// covered one, when the store knows it.
+    public let coveredMessageCount: Int?
+    /// False for a fallback summary kept only in memory: it is used until
+    /// the next compaction but is gone after the app restarts.
+    public let isSaved: Bool
+
+    public init(checkpoint: ContextCheckpoint, coveredMessageCount: Int?, isSaved: Bool) {
+        self.checkpoint = checkpoint
+        self.coveredMessageCount = coveredMessageCount
+        self.isSaved = isSaved
+    }
+
+    public var id: UUID { checkpoint.id }
+    /// True when the summary was written without the model.
+    public var isExtractive: Bool { checkpoint.model == ContextSummary.extractiveModelName }
+}
 
 /// Ordered pending upserts for one conversation, keyed by message ID so a
 /// streaming message is written once per flush.
@@ -84,6 +107,12 @@ public final class ChatSession: ObservableObject, ChatMessageService {
 
     /// True when stored messages older than the loaded ones exist.
     @Published public private(set) var canLoadEarlierMessages = false
+    /// The conversation's context checkpoints, oldest first. Includes an
+    /// unsaved fallback summary while one is in use.
+    @Published public private(set) var checkpoints: [ChatSessionCheckpoint] = []
+    /// True while a send waits for older messages to be summarized.
+    @Published public private(set) var isCompacting = false
+    private var unsavedCheckpoint: ChatSessionCheckpoint?
     private let paging: ChatSessionPaging
     /// Messages added by `loadEarlierMessages()`; sends never re-save them.
     private var pagedInMessageIDs = Set<UUID>()
@@ -111,12 +140,13 @@ public final class ChatSession: ObservableObject, ChatMessageService {
         self.paging = paging
 
         let provisional = draft.map { ConversationRecordRules.record(from: $0, now: Date()) }
-        let context = ChatSessionContext(conversationID: conversationID, checkpoints: storage) { [weak storage] in
+        let relay = ChatSessionCompactionRelay()
+        let context = ChatSessionContext(conversationID: conversationID, checkpoints: storage, compactionRelay: relay) { [weak storage] in
             (try? storage?.conversation(id: conversationID)) ?? provisional
         }
         let service = hooks.makeMessageService(context)
         service.agentResultParser = hooks.agentResultParser
-        service.requestPreparer = hooks.makeRequestPreparer?(context)
+        let preparer = hooks.makeRequestPreparer?(context)
         self.messageService = service
         loadedContextRevision = storage.contextRevision(conversationID: conversationID)
 
@@ -125,12 +155,21 @@ public final class ChatSession: ObservableObject, ChatMessageService {
             // does not write (and reorder) it.
             // A checkpoint only replaces history when a preparer actually
             // injects its summary. Without one, load the complete transcript.
-            let window: MessageWindow = service.requestPreparer == nil ? .all
+            let window: MessageWindow = preparer == nil ? .all
                 : Self.initialWindow(conversationID: conversationID, storage: storage, paging: paging)
             let loaded = try storage.loadMessages(conversationID: conversationID, window: window)
             service.messages = loaded
             knownMessageIDs = Set(loaded.map(\.uuid))
             canLoadEarlierMessages = window != .all && loaded.count < record.messageCount
+            reloadCheckpoints()
+        }
+
+        relay.handler = { [weak self] event in self?.handleCompaction(event) }
+        if let preparer {
+            service.requestPreparer = { [weak self] request in
+                defer { self?.isCompacting = false }
+                return try await preparer(request)
+            }
         }
 
         service.messageUpdatedCallback = { [weak self] message in
@@ -225,6 +264,77 @@ public final class ChatSession: ObservableObject, ChatMessageService {
         }
         canLoadEarlierMessages = earlier.count >= limit
         return added.count
+    }
+
+    // MARK: - Checkpoints
+
+    /// The newest checkpoint that ends at `messageID`; its marker belongs
+    /// right after that message.
+    public func checkpoint(endingAt messageID: UUID) -> ChatSessionCheckpoint? {
+        checkpoints.last { $0.checkpoint.coversThroughMessageID == messageID }
+    }
+
+    /// The checkpoint whose marker goes right after `messageID` in the
+    /// transcript: one ending there that is not shown above the messages
+    /// (`leadingCheckpoint`). A list that draws markers from this should
+    /// redraw its rows when `checkpoints` or `canLoadEarlierMessages` change.
+    public func inlineCheckpoint(after messageID: UUID) -> ChatSessionCheckpoint? {
+        guard let checkpoint = checkpoint(endingAt: messageID), checkpoint.id != leadingCheckpoint?.id else { return nil }
+        return checkpoint
+    }
+
+    /// The checkpoint to show above the loaded messages while earlier ones
+    /// are not loaded: the newest whose covered message is the first loaded
+    /// message or older. Its marker is shown there rather than inline.
+    public var leadingCheckpoint: ChatSessionCheckpoint? {
+        guard canLoadEarlierMessages else { return nil }
+        let laterIDs = Set(messageService.messages.dropFirst().map(\.uuid))
+        return checkpoints.last { !laterIDs.contains($0.checkpoint.coversThroughMessageID) }
+    }
+
+    private func handleCompaction(_ event: CompactingRequestPreparer.Event) {
+        switch event {
+        case .summarizing:
+            isCompacting = true
+        case .compacted:
+            unsavedCheckpoint = nil
+            reloadCheckpoints()
+        case .usedFallbackSummary(let checkpoint, _):
+            unsavedCheckpoint = ChatSessionCheckpoint(
+                checkpoint: checkpoint,
+                coveredMessageCount: coveredMessageCount(through: checkpoint.coversThroughMessageID),
+                isSaved: false
+            )
+            reloadCheckpoints()
+        case .recoveringFromOverflow, .checkpointReadFailed, .checkpointSaveFailed:
+            break
+        }
+    }
+
+    /// Re-reads the stored checkpoints. An unsaved fallback stays listed
+    /// until a newer checkpoint is saved.
+    private func reloadCheckpoints() {
+        let stored = isMaterialized ? ((try? storage.checkpoints(conversationID: conversationID)) ?? []) : []
+        var shown = stored.map {
+            ChatSessionCheckpoint(
+                checkpoint: $0,
+                coveredMessageCount: coveredMessageCount(through: $0.coversThroughMessageID),
+                isSaved: true
+            )
+        }
+        if let unsaved = unsavedCheckpoint {
+            if stored.contains(where: { ContextCheckpoint.isNewer($0, than: unsaved.checkpoint) }) {
+                unsavedCheckpoint = nil
+            } else {
+                shown.append(unsaved)
+            }
+        }
+        if shown != checkpoints { checkpoints = shown }
+    }
+
+    private func coveredMessageCount(through messageID: UUID) -> Int? {
+        guard isMaterialized else { return nil }
+        return (try? storage.messageCount(conversationID: conversationID, throughMessageID: messageID)) ?? nil
     }
 
     // MARK: - Lifecycle
@@ -478,6 +588,8 @@ public final class ChatSession: ObservableObject, ChatMessageService {
         pendingDeletionIDs.removeAll()
         knownMessageIDs.subtract(deletions)
         automaticFailureCount = 0
+        // Deleting a summarized message drops its checkpoints.
+        if !deletions.isEmpty { reloadCheckpoints() }
         onActivityChanged?(self)
     }
 
@@ -503,6 +615,9 @@ public final class ChatSession: ObservableObject, ChatMessageService {
         knownMessageIDs = Set(loaded.map(\.uuid))
         canLoadEarlierMessages = false
         loadedContextRevision = revision
+        // The preparer drops its unsaved fallback summary after a deletion.
+        unsavedCheckpoint = nil
+        reloadCheckpoints()
     }
 
     // MARK: - Drafts

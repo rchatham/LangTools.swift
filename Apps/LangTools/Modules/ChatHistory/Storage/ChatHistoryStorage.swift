@@ -40,6 +40,10 @@ public protocol ChatHistoryStorage: ContextCheckpointStore {
     @discardableResult func importConversation(_ draft: ConversationDraft, messages: [Message]) throws -> ConversationRecord
     /// A conversation's checkpoints, oldest first.
     func checkpoints(conversationID: UUID) throws -> [ContextCheckpoint]
+    /// How many top-level messages the conversation has from its start
+    /// through `messageID`, or `nil` when that is not a stored top-level
+    /// message. Shows how much of a conversation a checkpoint covers.
+    func messageCount(conversationID: UUID, throughMessageID messageID: UUID) throws -> Int?
     var changes: AnyPublisher<ChatHistoryChange, Never> { get }
 }
 

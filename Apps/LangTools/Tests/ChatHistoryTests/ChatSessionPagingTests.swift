@@ -167,7 +167,7 @@ final class ChatSessionPagingTests: XCTestCase {
         try await session.send(message: String(repeating: "long prompt ", count: 80), stream: true)
 
         let checkpoint = try XCTUnwrap(try storage.latestCheckpoint(conversationID: id))
-        XCTAssertEqual(events, [.compacted(checkpoint)])
+        XCTAssertEqual(events, [.summarizing(messageCount: 18), .compacted(checkpoint)])
         XCTAssertEqual(checkpoint.coversThroughMessageID, messages[17].uuid, "Keeps the last turn and the prompt")
         let request = try XCTUnwrap(client.requests.first)
         XCTAssertTrue(request.first?.text?.contains(checkpoint.summary) == true)

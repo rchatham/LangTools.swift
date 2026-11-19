@@ -82,6 +82,12 @@ struct MessageRowTree {
 
     func root(of id: UUID) -> UUID? { rootByID[id] }
 
+    /// Top-level messages from the start through `id`; `nil` when `id` is
+    /// not a top-level message.
+    func topLevelCount(through id: UUID) -> Int? {
+        topLevel.firstIndex(of: id).map { $0 + 1 }
+    }
+
     /// IDs of the rows whose top-level ancestor is in `roots`.
     func rows(under roots: some Sequence<UUID>) -> Set<UUID> {
         let roots = Set(roots)

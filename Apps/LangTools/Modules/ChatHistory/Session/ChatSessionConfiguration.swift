@@ -22,21 +22,39 @@ public struct ChatSessionContext {
     /// Where this conversation's context checkpoints live: the session's store.
     public let checkpoints: any ContextCheckpointStore
     private let recordProvider: @MainActor () -> ConversationRecord?
+    private let compactionRelay: ChatSessionCompactionRelay
 
     init(
         conversationID: UUID,
         checkpoints: any ContextCheckpointStore,
+        compactionRelay: ChatSessionCompactionRelay,
         recordProvider: @escaping @MainActor () -> ConversationRecord?
     ) {
         self.conversationID = conversationID
         self.checkpoints = checkpoints
+        self.compactionRelay = compactionRelay
         self.recordProvider = recordProvider
+    }
+
+    /// Passes compaction progress to the session, which publishes it for
+    /// the UI (`ChatSession.isCompacting`, `ChatSession.checkpoints`).
+    /// `compactingRequestPreparers` reports every event; a custom preparer
+    /// that wraps a `CompactingRequestPreparer` should forward its events.
+    public func reportCompaction(_ event: CompactingRequestPreparer.Event) {
+        compactionRelay.handler?(event)
     }
 
     /// The conversation's current record, read at call time so settings
     /// changed after the session was created still apply. For a draft that
     /// has not been saved yet this is the draft's provisional record.
     public var record: ConversationRecord? { recordProvider() }
+}
+
+/// Carries compaction events from a session's request preparer to the
+/// session, which exists only after its preparer is built.
+@MainActor
+final class ChatSessionCompactionRelay {
+    var handler: ((CompactingRequestPreparer.Event) -> Void)?
 }
 
 /// Resolves the model and conversation settings for one request.

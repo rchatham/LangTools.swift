@@ -143,6 +143,12 @@ public final class InMemoryChatHistoryStorage: ChatHistoryStorage {
         return (checkpointsByConversation[conversationID] ?? []).sorted { ContextCheckpoint.isNewer($1, than: $0) }
     }
 
+    public func messageCount(conversationID: UUID, throughMessageID messageID: UUID) throws -> Int? {
+        guard records[conversationID] != nil else { throw ChatHistoryError.conversationNotFound(conversationID) }
+        let keys = (rowsByConversation[conversationID] ?? [:]).values.map(MessageRowKey.init)
+        return MessageRowTree(keys).topLevelCount(through: messageID)
+    }
+
     public func latestCheckpoint(conversationID: UUID) throws -> ContextCheckpoint? {
         guard records[conversationID] != nil else { throw ChatHistoryError.conversationNotFound(conversationID) }
         return checkpointsByConversation[conversationID]?.min(by: ContextCheckpoint.isNewer)

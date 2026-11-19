@@ -29,6 +29,9 @@ import Chat
 @MainActor
 public final class CompactingRequestPreparer {
     public enum Event: Equatable {
+        /// Older turns are about to be summarized; the request waits for it.
+        /// `messageCount` is how many messages the summary will cover.
+        case summarizing(messageCount: Int)
         /// A new checkpoint was saved.
         case compacted(ContextCheckpoint)
         /// The provider rejected the request as too long, so this request
@@ -44,7 +47,7 @@ public final class CompactingRequestPreparer {
     public let conversationID: UUID
     /// After a summarizer failure, model summaries pause this long.
     public var fallbackCooldown: TimeInterval
-    /// Diagnostics for logging; never needed for correctness.
+    /// Progress and diagnostics, for logging and UI; never needed for correctness.
     public var onEvent: (@MainActor (Event) -> Void)?
 
     private let checkpoints: any ContextCheckpointStore
@@ -152,6 +155,7 @@ public final class CompactingRequestPreparer {
         }
         let covered = Array(turns.messages[..<cut])
         let kept = turns.messages[cut...]
+        onEvent?(.summarizing(messageCount: covered.count))
         let (summary, isFallback, failure) = try await summarize(SummaryRequest(
             previousSummary: base.summary,
             messages: covered,

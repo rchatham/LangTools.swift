@@ -16,7 +16,8 @@ public extension ChatSessionHooks {
     /// - Parameters:
     ///   - policy: the policy for a conversation, read on every request.
     ///   - summarizer: writes summaries; `nil` uses only extractive summaries.
-    ///   - onEvent: diagnostics, for logging.
+    ///   - onEvent: diagnostics, for logging. Every event also reaches the
+    ///     session (`ChatSessionContext.reportCompaction`).
     static func compactingRequestPreparers(
         policy: @escaping @MainActor (ConversationRecord?) -> CompactionPolicy,
         summarizer: (any ConversationSummarizer)?,
@@ -31,9 +32,10 @@ public extension ChatSessionHooks {
                 summarizer: summarizer,
                 estimator: estimator
             )
-            if let onEvent {
-                let conversationID = context.conversationID
-                preparer.onEvent = { onEvent(conversationID, $0) }
+            let conversationID = context.conversationID
+            preparer.onEvent = { event in
+                onEvent?(conversationID, event)
+                context.reportCompaction(event)
             }
             return preparer.requestPreparer
         }

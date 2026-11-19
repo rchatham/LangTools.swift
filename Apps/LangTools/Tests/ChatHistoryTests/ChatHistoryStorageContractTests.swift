@@ -301,6 +301,18 @@ class ChatHistoryStorageContractTests: XCTestCase {
         XCTAssertThrowsError(try storage.latestCheckpoint(conversationID: UUID()))
     }
 
+    func testMessageCountThroughAMessageCountsTopLevelMessages() throws {
+        let storage = try makeStorage()
+        let (id, all) = try windowedConversation(storage)
+        let child = try XCTUnwrap(all[5].childMessages.first)
+
+        XCTAssertEqual(try storage.messageCount(conversationID: id, throughMessageID: all[0].uuid), 1)
+        XCTAssertEqual(try storage.messageCount(conversationID: id, throughMessageID: all[8].uuid), 9, "Child messages are not counted")
+        XCTAssertNil(try storage.messageCount(conversationID: id, throughMessageID: child.uuid))
+        XCTAssertNil(try storage.messageCount(conversationID: id, throughMessageID: UUID()))
+        XCTAssertThrowsError(try storage.messageCount(conversationID: UUID(), throughMessageID: all[0].uuid))
+    }
+
     func testACheckpointMustCoverAStoredTopLevelMessage() throws {
         let storage = try makeStorage()
         let (id, all) = try windowedConversation(storage)
