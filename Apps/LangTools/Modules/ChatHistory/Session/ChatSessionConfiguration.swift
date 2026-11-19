@@ -96,6 +96,49 @@ public enum ChatSessionError: LocalizedError, Equatable {
     }
 }
 
+/// What a session does with a prompt whose send failed before producing any
+/// output. A failure with partial output always keeps and stores both.
+public enum FailedPromptHandling: Sendable, Equatable {
+    /// Remove the prompt, so ChatUI puts its text back in the composer and
+    /// shows the error alert.
+    case returnToComposer
+    /// Keep the prompt on screen with ChatUI's inline failure and Retry row,
+    /// and still report the error through `handleError`, so alerts, sign-in
+    /// and API key prompts appear. The prompt stays out of storage until a
+    /// retry delivers it.
+    case keepWithRetry
+    /// Keep the prompt and store it like any other message. ChatUI shows the
+    /// failure inline only.
+    case keepInline
+}
+
+/// A send or retry starting or finishing in one conversation.
+public struct ChatSendEvent: Equatable, Sendable {
+    public enum Outcome: Equatable, Sendable {
+        case succeeded
+        case failed
+        /// Stopped by the caller or by closing the session, including any
+        /// error the cancellation caused.
+        case cancelled
+    }
+
+    public enum Kind: Equatable, Sendable {
+        case started
+        case finished(Outcome)
+    }
+
+    public let conversationID: UUID
+    public let kind: Kind
+    /// Whether another send in the same conversation is still in flight.
+    public let isStillSending: Bool
+
+    public init(conversationID: UUID, kind: Kind, isStillSending: Bool) {
+        self.conversationID = conversationID
+        self.kind = kind
+        self.isStillSending = isStillSending
+    }
+}
+
 /// Host behavior for every session a `ChatSessionManager` creates.
 @MainActor
 public struct ChatSessionHooks {
@@ -107,27 +150,34 @@ public struct ChatSessionHooks {
     public var agentResultParser: ((_ result: String, _ agentName: String) -> Message?)?
     /// Maps a send error before it is thrown to the UI.
     public var mapSendError: @MainActor (Error) -> Error
-    /// Builds the alert for an error, or `nil` when the host handles it.
-    public var alert: @MainActor (Error) -> ChatAlertInfo?
-    /// When true, a prompt whose send failed before producing any output is
-    /// removed, so ChatUI restores it to the composer instead of keeping a
-    /// failed bubble. Botsworth relies on this.
-    public var removesFailedPromptWithoutOutput: Bool
+    /// Builds the alert for an error, or `nil` when the host handles it. It
+    /// gets the conversation's `MessageService`, which can answer provider
+    /// errors (such as an API key prompt) for its own network client.
+    public var alert: @MainActor (_ error: Error, _ messageService: MessageService) -> ChatAlertInfo?
+    /// What happens to a prompt whose send failed before producing output.
+    public var failedPromptHandling: FailedPromptHandling
+    /// Reports sends and retries starting and finishing, for UI that reacts
+    /// to pending replies. Persistence retries are not reported.
+    public var onSendEvent: (@MainActor (ChatSendEvent) -> Void)?
 
     public init(
         makeMessageService: @escaping @MainActor (ChatSessionContext) -> MessageService,
         makeRequestPreparer: (@MainActor (ChatSessionContext) -> (@MainActor (ChatRequestContext) async throws -> ChatRequestContext)?)? = nil,
         agentResultParser: ((_ result: String, _ agentName: String) -> Message?)? = nil,
         mapSendError: @escaping @MainActor (Error) -> Error = { $0 },
-        alert: @escaping @MainActor (Error) -> ChatAlertInfo? = { ChatAlertInfo(title: "Error", message: $0.localizedDescription) },
-        removesFailedPromptWithoutOutput: Bool = true
+        alert: @escaping @MainActor (_ error: Error, _ messageService: MessageService) -> ChatAlertInfo? = { error, _ in
+            ChatAlertInfo(title: "Error", message: error.localizedDescription)
+        },
+        failedPromptHandling: FailedPromptHandling = .returnToComposer,
+        onSendEvent: (@MainActor (ChatSendEvent) -> Void)? = nil
     ) {
         self.makeMessageService = makeMessageService
         self.makeRequestPreparer = makeRequestPreparer
         self.agentResultParser = agentResultParser
         self.mapSendError = mapSendError
         self.alert = alert
-        self.removesFailedPromptWithoutOutput = removesFailedPromptWithoutOutput
+        self.failedPromptHandling = failedPromptHandling
+        self.onSendEvent = onSendEvent
     }
 
     /// Message services wired to the shared tool registry and settings, with

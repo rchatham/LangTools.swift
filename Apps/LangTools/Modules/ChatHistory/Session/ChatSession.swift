@@ -70,6 +70,9 @@ public final class ChatSession: ObservableObject, ChatMessageService {
     /// Top-level message IDs known to be stored or queued. Anything in this
     /// set that disappears from memory by the end of a send is deleted.
     private var knownMessageIDs = Set<UUID>()
+    /// Failed prompts kept on screen for Retry but held out of storage
+    /// (`FailedPromptHandling.keepWithRetry`) until a retry delivers them.
+    private var heldPromptIDs = Set<UUID>()
     private var debounceTask: Task<Void, Never>?
     private var maximumLatencyTask: Task<Void, Never>?
     private var retryTask: Task<Void, Never>?
@@ -148,7 +151,16 @@ public final class ChatSession: ObservableObject, ChatMessageService {
 
     public func retryOperation(messageID: UUID, stream: Bool) throws -> ChatSendOperation {
         try materializeIfNeeded()
-        let inner = try messageService.retryOperation(messageID: messageID, stream: stream)
+        // The retry delivers a held prompt, so it is stored again from here on.
+        // Release it first: the retry re-adds it through the update callback.
+        let wasHeld = heldPromptIDs.remove(messageID) != nil
+        let inner: ChatSendOperation
+        do {
+            inner = try messageService.retryOperation(messageID: messageID, stream: stream)
+        } catch {
+            if wasHeld { heldPromptIDs.insert(messageID) }
+            throw error
+        }
         return track(inner)
     }
 
@@ -163,11 +175,12 @@ public final class ChatSession: ObservableObject, ChatMessageService {
         let before = Set(messageService.messages.map(\.uuid))
         messageService.deleteMessage(id: id)
         let removed = before.subtracting(messageService.messages.map(\.uuid))
+        heldPromptIDs.subtract(removed)
         queueDeletions(removed)
     }
 
     public func handleError(error: Error) -> ChatAlertInfo? {
-        hooks.alert(error)
+        hooks.alert(error, messageService)
     }
 
     // MARK: - Lifecycle
@@ -195,6 +208,7 @@ public final class ChatSession: ObservableObject, ChatMessageService {
         cancelScheduledFlushes()
         pending = PendingSaveBatch()
         pendingDeletionIDs.removeAll()
+        heldPromptIDs.removeAll()
         messageService.messageUpdatedCallback = nil
         messageService.clearMessages()
     }
@@ -207,6 +221,7 @@ public final class ChatSession: ObservableObject, ChatMessageService {
         let promptID = inner.messageID
         activeSendCount += 1
         onActivityChanged?(self)
+        hooks.onSendEvent?(ChatSendEvent(conversationID: conversationID, kind: .started, isStillSending: true))
 
         let completion = Task { @MainActor [weak self] in
             var sendError: Error?
@@ -219,16 +234,23 @@ public final class ChatSession: ObservableObject, ChatMessageService {
                 if let sendError { throw sendError }
                 return
             }
+            var finishError: Error?
             defer {
                 self.activeSendCount -= 1
                 self.onActivityChanged?(self)
+                self.reportSendFinished(error: finishError, generationBefore: generationBefore)
             }
-            try self.finishSend(
-                error: sendError,
-                knownBefore: knownBefore,
-                generationBefore: generationBefore,
-                promptID: promptID
-            )
+            do {
+                try self.finishSend(
+                    error: sendError,
+                    knownBefore: knownBefore,
+                    generationBefore: generationBefore,
+                    promptID: promptID
+                )
+            } catch {
+                finishError = error
+                throw error
+            }
         }
         let hooks = self.hooks
         let establishment = Task { @MainActor in
@@ -238,15 +260,49 @@ public final class ChatSession: ObservableObject, ChatMessageService {
                 throw hooks.mapSendError(error)
             }
         }
+        // With `keepWithRetry` the operation carries no message ID, so ChatUI
+        // reports every failure through `handleError` (alerts, sign-in, key
+        // prompts) as well as showing the prompt's inline Retry row. ChatUI
+        // then cannot mark a stopped response, so cancelling marks it here.
+        let reportsMessageID = hooks.failedPromptHandling != .keepWithRetry
         // Cancelling stops the request; `completion` still runs so the
         // terminal state (including a partial response) is saved.
         return ChatSendOperation(
             id: inner.id,
-            messageID: inner.messageID,
+            messageID: reportsMessageID ? promptID : nil,
             establishment: establishment,
             completion: completion,
-            cancel: { inner.cancel() }
+            cancel: { [weak self] in
+                if !reportsMessageID, let promptID {
+                    Task { @MainActor in self?.markResponseStopped(messageID: promptID) }
+                }
+                inner.cancel()
+            }
         )
+    }
+
+    /// Reports a finished send. A close or a cancellation wins over any error
+    /// it caused, so stopping a reply never reads as a failure.
+    private func reportSendFinished(error: Error?, generationBefore: UInt) {
+        guard let onSendEvent = hooks.onSendEvent else { return }
+        let outcome: ChatSendEvent.Outcome
+        if generation != generationBefore || Self.isCancellation(error) {
+            outcome = .cancelled
+        } else {
+            outcome = error == nil ? .succeeded : .failed
+        }
+        onSendEvent(ChatSendEvent(
+            conversationID: conversationID,
+            kind: .finished(outcome),
+            isStillSending: activeSendCount > 0
+        ))
+    }
+
+    private static func isCancellation(_ error: Error?) -> Bool {
+        guard let error else { return false }
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        return false
     }
 
     /// Persists a finished send's authoritative state. A network error stays
@@ -259,8 +315,8 @@ public final class ChatSession: ObservableObject, ChatMessageService {
         promptID: UUID?
     ) throws {
         let mappedError = error.map(hooks.mapSendError)
-        if let error, hooks.removesFailedPromptWithoutOutput {
-            removeFailedPromptIfItHasNoOutput(promptID: promptID, knownBefore: knownBefore, error: error)
+        if let error {
+            handleFailedPromptWithoutOutput(promptID: promptID, knownBefore: knownBefore, error: error)
         }
 
         guard !isClosed, generation == generationBefore else {
@@ -279,14 +335,26 @@ public final class ChatSession: ObservableObject, ChatMessageService {
         if let mappedError { throw mappedError }
     }
 
-    /// A prompt that failed before producing anything is removed so ChatUI
-    /// restores it to the composer. Partial output is kept.
-    private func removeFailedPromptIfItHasNoOutput(promptID: UUID?, knownBefore: Set<UUID>, error: Error) {
-        guard !(error is CancellationError), let promptID,
-              messageService.messages.contains(where: { $0.uuid == promptID && $0.isUser }) else { return }
+    /// Applies `failedPromptHandling` to a prompt that failed before
+    /// producing anything. Partial output is always kept with its prompt.
+    private func handleFailedPromptWithoutOutput(promptID: UUID?, knownBefore: Set<UUID>, error: Error) {
+        guard !Self.isCancellation(error), let promptID,
+              let prompt = messageService.messages.first(where: { $0.uuid == promptID && $0.isUser })
+        else { return }
         let generated = messageService.messages.filter { !knownBefore.contains($0.uuid) && $0.uuid != promptID }
         guard generated.isEmpty else { return }
-        messageService.deleteMessage(id: promptID)
+        switch hooks.failedPromptHandling {
+        case .returnToComposer:
+            messageService.deleteMessage(id: promptID)
+        case .keepWithRetry:
+            // ChatUI's Retry row needs the failure on the message itself.
+            if prompt.sendFailure == nil {
+                prompt.sendFailure = ChatSendFailure(message: error.localizedDescription)
+            }
+            heldPromptIDs.insert(promptID)
+        case .keepInline:
+            break
+        }
     }
 
     /// Queues deletions for known messages that are no longer in memory
@@ -294,7 +362,8 @@ public final class ChatSession: ObservableObject, ChatMessageService {
     /// re-queues this send's messages, because MessageService finalizes tool
     /// failures after its last streaming callback.
     private func reconcileTerminalState(knownBefore: Set<UUID>, promptID: UUID?) {
-        let final = messageService.messages
+        // Held prompts count as absent: one stored earlier in the send is deleted.
+        let final = messageService.messages.filter { !heldPromptIDs.contains($0.uuid) }
         let finalIDs = Set(final.map(\.uuid))
         let removed = knownMessageIDs.subtracting(finalIDs)
         if !removed.isEmpty {
@@ -326,7 +395,7 @@ public final class ChatSession: ObservableObject, ChatMessageService {
     // MARK: - Queueing
 
     private func queueStreamingUpdate(_ message: Message) {
-        guard !isClosed else { return }
+        guard !isClosed, !heldPromptIDs.contains(message.uuid) else { return }
         enqueue(message)
         scheduleFlushes()
     }
