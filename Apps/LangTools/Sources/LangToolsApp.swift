@@ -253,6 +253,12 @@ struct ChatContainerView: View {
     @StateObject private var listModel: ConversationListModel
     @State private var selection: UUID?
     @State private var draft = ConversationDraft()
+    /// The app opens on the chat; the history sidebar starts collapsed.
+    @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
+    @State private var showingHistory = false
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
 
     init(history: ChatHistoryEnvironment, voiceInputHandler: VoiceInputHandlerAdapter) {
         self.history = history
@@ -265,27 +271,15 @@ struct ChatContainerView: View {
             if history.isFixture {
                 NavigationStack { chatView(for: currentSession) }
             } else {
-                NavigationSplitView {
-                    ChatHistoryListView(
-                        model: listModel,
-                        selection: $selection,
-                        style: .sidebar,
-                        title: "History",
-                        onNewConversation: startNewConversation
-                    )
-                    #if os(macOS)
-                    .toolbar {
-                        ToolbarItem {
-                            Button { startNewConversation(nil) } label: {
-                                Label("New Chat", systemImage: "square.and.pencil")
-                            }
-                        }
-                    }
-                    #endif
-                } detail: {
-                    let session = currentSession
-                    chatView(for: session).id(session.conversationID)
+                #if os(iOS)
+                if horizontalSizeClass == .compact {
+                    stackLayout
+                } else {
+                    splitLayout
                 }
+                #else
+                splitLayout
+                #endif
             }
         }
         .onReceive(history.library.changes) { change in
@@ -295,6 +289,72 @@ struct ChatContainerView: View {
             }
         }
         .fixtureConditionalAccessPrompts()
+    }
+
+    /// iPad and macOS: the chat fills the window and History is a sidebar
+    /// the user opens with the sidebar button.
+    private var splitLayout: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            historyList(style: .sidebar)
+            #if os(macOS)
+            .toolbar {
+                ToolbarItem {
+                    Button { startNewConversation(nil) } label: {
+                        Label("New Chat", systemImage: "square.and.pencil")
+                    }
+                }
+            }
+            #endif
+        } detail: {
+            let session = currentSession
+            chatView(for: session).id(session.conversationID)
+        }
+    }
+
+    #if os(iOS)
+    /// iPhone: the chat is the first screen. History opens as a sheet,
+    /// where picking a conversation or starting a new one closes it.
+    private var stackLayout: some View {
+        NavigationStack {
+            let session = currentSession
+            chatView(for: session)
+                .id(session.conversationID)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { showingHistory = true } label: {
+                            Label("History", systemImage: "clock.arrow.circlepath")
+                        }
+                        .accessibilityIdentifier("chat.history")
+                    }
+                }
+        }
+        .sheet(isPresented: $showingHistory) {
+            NavigationStack {
+                historyList(style: .stack)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { showingHistory = false }
+                        }
+                    }
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+    #endif
+
+    private func historyList(style: ChatHistoryListStyle) -> some View {
+        ChatHistoryListView(
+            model: listModel,
+            selection: $selection,
+            style: style,
+            title: "History",
+            onSelect: { _ in showingHistory = false },
+            onNewConversation: { title in
+                startNewConversation(title)
+                showingHistory = false
+            }
+        )
     }
 
     /// The selected conversation, or a fresh draft that is stored on its
