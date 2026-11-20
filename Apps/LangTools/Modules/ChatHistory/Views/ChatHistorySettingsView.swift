@@ -19,31 +19,69 @@ public struct ChatHistorySettingsView: View {
     }
 
     public var body: some View {
-        Form {
-            Section {
-                Picker("Keep conversations", selection: policyBinding) {
-                    Text("Forever").tag(ChatRetentionPolicy.keepForever)
-                    ForEach(ChatRetentionPolicy.presetDays, id: \.self) { days in
-                        Text(Self.label(days: days)).tag(ChatRetentionPolicy.deleteInactive(afterDays: days))
-                    }
-                }
-            } header: {
-                Text("Retention")
-            } footer: {
-                Text("Conversations with no activity for this long are deleted automatically. Pinned conversations and long-running threads are always kept.")
-            }
+        content
+    }
 
-            if let report = library.lastRetentionReport, !report.deletedIDs.isEmpty {
-                Section {
-                    Text("Last cleanup deleted \(report.deletedIDs.count) of \(report.evaluatedCount) conversations.")
-                        .foregroundColor(.secondary)
-                }
+    /// Settings hosts already provide the container: iOS wraps a custom tab
+    /// in a `Form`, macOS in a `ScrollView`. A second `Form` collapses to
+    /// a sliver, so this view emits sections on iOS and a stack on macOS,
+    /// like the other app-owned tabs.
+    @ViewBuilder
+    private var content: some View {
+        #if os(macOS)
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Retention")
+                .font(.title2)
+                .fontWeight(.semibold)
+            retentionPicker
+                .frame(maxWidth: 320, alignment: .leading)
+            Text(Self.retentionFooter)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let reportText {
+                Text(reportText).foregroundColor(.secondary)
             }
-
             if let errorMessage {
-                Section {
-                    Text(errorMessage).foregroundColor(.red)
-                }
+                Text(errorMessage).foregroundColor(.red)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        #else
+        Section {
+            retentionPicker
+        } header: {
+            Text("Retention")
+        } footer: {
+            Text(Self.retentionFooter)
+        }
+        if let reportText {
+            Section {
+                Text(reportText).foregroundColor(.secondary)
+            }
+        }
+        if let errorMessage {
+            Section {
+                Text(errorMessage).foregroundColor(.red)
+            }
+        }
+        #endif
+    }
+
+    private static let retentionFooter = "Conversations with no activity for this long are deleted automatically. Pinned conversations and long-running threads are always kept."
+
+    private var reportText: String? {
+        guard let report = library.lastRetentionReport, !report.deletedIDs.isEmpty else { return nil }
+        return "Last cleanup deleted \(report.deletedIDs.count) of \(report.evaluatedCount) conversations."
+    }
+
+    /// The picker carries the confirmation, so it is attached once however
+    /// the content is laid out.
+    private var retentionPicker: some View {
+        Picker("Keep conversations", selection: policyBinding) {
+            Text("Forever").tag(ChatRetentionPolicy.keepForever)
+            ForEach(ChatRetentionPolicy.presetDays, id: \.self) { days in
+                Text(Self.label(days: days)).tag(ChatRetentionPolicy.deleteInactive(afterDays: days))
             }
         }
         .confirmationDialog(
