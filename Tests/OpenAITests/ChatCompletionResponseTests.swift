@@ -114,6 +114,16 @@ final class ChatCompletionResponseTests: XCTestCase {
         XCTAssertEqual(choice.message?.role, .assistant)
     }
 
+    /// A delta whose role can't hold string content (`.tool`) used to hit a `try!` in
+    /// `combining(_:with:)` and crash the stream; it must now be skipped.
+    func testStreamingDeltaWithToolRoleDoesNotCrash() throws {
+        // The first chunk seeds the accumulator; the second triggers the delta merge.
+        let combined = OpenAI.ChatCompletionResponse.empty
+            .combining(with: streamChunk("dropped", role: .tool))
+            .combining(with: streamChunk("kept"))
+        XCTAssertEqual(try XCTUnwrap(combined.choices.first).message?.content.string, "kept")
+    }
+
     private func streamChunk(index: Int, content: String) -> OpenAI.ChatCompletionResponse {
         OpenAI.ChatCompletionResponse(
             id: "chunk",

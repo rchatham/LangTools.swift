@@ -438,6 +438,9 @@ struct CLI {
 
         case .ollama:
             await handleOllamaCommand(command)
+
+        case .voice:
+            print(VoiceCommand.apply(argument: command.rawArguments).green)
         }
         return false
     }
@@ -719,7 +722,7 @@ struct CLI {
         case .ollama:
             let subcommand = command.arguments.first?.lowercased() ?? "list"
             return ["", "list", "ls"].contains(subcommand)
-        case .clear, .save, .load, .sessions, .model, .compact, .plan, .tasks, .cancel, .settings, .apikey:
+        case .clear, .save, .load, .sessions, .model, .compact, .plan, .tasks, .cancel, .settings, .apikey, .voice:
             return false
         }
     }

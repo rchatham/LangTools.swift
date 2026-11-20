@@ -1,5 +1,7 @@
 # Docker Setup for Linux Testing
 
+> This page covers the test images. For the `langtools-agent` runtime image (`Dockerfile.agent`), see [Sources/AgentRuntime/README.md](Sources/AgentRuntime/README.md#running-in-a-container).
+
 This directory contains Docker configuration for testing LangTools.swift on Linux with multiple Swift versions.
 
 ## Prerequisites

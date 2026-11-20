@@ -124,6 +124,12 @@ public class ToolManager: ObservableObject {
         _setStates(updatedStates)
     }
 
+    /// Remove tool configurations, for tools that no longer exist. Their enabled
+    /// states are kept, so a tool that comes back keeps the user's choice.
+    public func unregister(ids: Set<String>) {
+        for id in ids { toolConfigurations[id] = nil }
+    }
+
     // MARK: - Querying
 
     /// All registered configurations sorted by display name.
