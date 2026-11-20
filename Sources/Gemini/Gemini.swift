@@ -139,6 +139,18 @@ extension Gemini {
 // CaseIterable is declared in the extension below rather than here to allow
 // @available(*, deprecated) on individual cases without breaking synthesis.
 public enum GeminiModel: String {
+    // MARK: - Gemini 4 Models - Active (ai.google.dev/gemini-api/docs/models, 2026-11)
+    case gemini4Carbon = "gemini-4-carbon"
+    case gemini4Neon = "gemini-4-neon"
+    case gemini4Hydrogen = "gemini-4-hydrogen"
+    case gemini4Argon = "gemini-4-argon"
+
+    // MARK: - Gemini 3.5+ Models - Active
+    case gemini38Flash = "gemini-3.8-flash"
+    case gemini36Flash = "gemini-3.6-flash"
+    case gemini35FlashLite = "gemini-3.5-flash-lite"
+    case gemini31FlashLite = "gemini-3.1-flash-lite"
+
     // MARK: - Gemini 3.x Models - Active
     case gemini3Pro = "gemini-3-pro"
     case gemini3ProPreview = "gemini-3-pro-preview"
@@ -208,6 +220,8 @@ extension GeminiModel {
 extension GeminiModel: CaseIterable {
     public static var allCases: [GeminiModel] {
         let active: [GeminiModel] = [
+            .gemini4Carbon, .gemini4Neon, .gemini4Hydrogen, .gemini4Argon,
+            .gemini38Flash, .gemini36Flash, .gemini35FlashLite, .gemini31FlashLite,
             .gemini3Pro, .gemini3ProPreview, .gemini3Flash, .gemini3FlashPreview, .gemini31Pro,
         ]
         // Use rawValue init to include deprecated/retired cases without re-triggering warnings.

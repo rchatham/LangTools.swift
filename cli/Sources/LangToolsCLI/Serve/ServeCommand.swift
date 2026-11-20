@@ -1,11 +1,12 @@
 import Foundation
 import HelperCore
+import AgentDeploy
 
 struct ServeCommand {
     static func run(arguments: [String]) async throws {
         let options = try ServeOptions(arguments: arguments)
         let token = try HelperTokenLoader.load(from: options.tokenFile)
-        let server = LocalHelperServer(host: options.host, port: options.port, bearerToken: token)
+        let server = LocalHelperServer(host: options.host, port: options.port, bearerToken: token, subagents: .standard())
         try await withTaskCancellationHandler {
             try await server.run()
         } onCancel: {

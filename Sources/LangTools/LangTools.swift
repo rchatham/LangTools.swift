@@ -42,7 +42,13 @@ extension LangTools {
                 catch { completion(.failure(error)) }
                 return
             }
-            do { for try await response in stream(request: request) { completion(.success(response as! Request.Response)) }; didCompleteStreaming?(nil) } catch { didCompleteStreaming?(error) }
+            do {
+                for try await response in stream(request: request) {
+                    guard let response = response as? Request.Response else { throw LangToolsError.invalidData }
+                    completion(.success(response))
+                }
+                didCompleteStreaming?(nil)
+            } catch { didCompleteStreaming?(error) }
         }
     }
 
@@ -69,7 +75,11 @@ extension LangTools {
         #endif
         guard let httpResponse = response as? HTTPURLResponse else { throw LangToolsError.requestFailed }
         guard httpResponse.statusCode == 200 else { throw LangToolsError.responseUnsuccessful(statusCode: httpResponse.statusCode, Self.decodeError(data: data)) }
-        if let audioResponseType = Response.self as? any LangToolsAudioResponse.Type { return try audioResponseType.init(audioData: data) as! Response } else { return try Self.decodeResponse(data: data) }
+        if let audioResponseType = Response.self as? any LangToolsAudioResponse.Type {
+            guard let response = try audioResponseType.init(audioData: data) as? Response else { throw LangToolsError.invalidData }
+            return response
+        }
+        return try Self.decodeResponse(data: data)
     }
 
     public func stream<Request: LangToolsStreamableRequest>(request: Request) -> AsyncThrowingStream<Request.Response, Error> {

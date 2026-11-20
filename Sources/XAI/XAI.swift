@@ -58,6 +58,12 @@ public struct XAIErrorResponse: Error, Codable {
 // CaseIterable is declared in the extension below rather than here to allow
 // @available(*, deprecated) on individual cases without breaking synthesis.
 public enum XAIModel: String {
+    // MARK: - Grok 4.3+ Models - Active (docs.x.ai/docs/models, 2026-11)
+    case grok47 = "grok-4.7"
+    case grok46 = "grok-4.6"
+    case grok45 = "grok-4.5"
+    case grok43 = "grok-4.3"
+
     // MARK: - Grok 4.1 Models - Active
     case grok41FastReasoning = "grok-4-1-fast-reasoning"
     case grok41FastNonReasoning = "grok-4-1-fast-non-reasoning"
@@ -115,6 +121,7 @@ extension XAIModel {
 extension XAIModel: CaseIterable {
     public static var allCases: [XAIModel] {
         let active: [XAIModel] = [
+            .grok47, .grok46, .grok45, .grok43,
             .grok41FastReasoning, .grok41FastNonReasoning,
             .grok4FastReasoning, .grok4FastNonReasoning, .grok4_0709,
             .grok3, .grok3_mini,

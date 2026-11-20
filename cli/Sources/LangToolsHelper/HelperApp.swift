@@ -1,6 +1,7 @@
 #if canImport(AppKit)
 import AppKit
 import HelperCore
+import AgentDeploy
 
 @main
 struct LangToolsHelperApp {
@@ -176,7 +177,8 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate {
             },
             pairingCodeConsumer: { [pairingRegistry] code in
                 await pairingRegistry.consume(code)
-            }
+            },
+            subagents: .standard()
         )
         serverTask = Task.detached { [weak self] in
             do {

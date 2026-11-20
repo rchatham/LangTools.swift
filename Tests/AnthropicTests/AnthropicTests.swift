@@ -192,16 +192,18 @@ class AnthropicTests: XCTestCase {
     }
 
     func testIsDeprecatedProperty() throws {
-        // Deprecated models should return true
-        XCTAssertTrue(Anthropic.Model.claude3Haiku_20240307.isDeprecated)
+        // Deprecated models should return true (use rawValue to avoid warnings).
+        XCTAssertTrue(Anthropic.Model(rawValue: "claude-sonnet-4-5-20250929")!.isDeprecated)
 
         // Active models should return false
         XCTAssertFalse(Anthropic.Model.claude46Opus.isDeprecated)
         XCTAssertFalse(Anthropic.Model.claude46Sonnet.isDeprecated)
         XCTAssertFalse(Anthropic.Model.claude45Haiku_20251001.isDeprecated)
+        XCTAssertFalse(Anthropic.Model.claude55Opus.isDeprecated)
 
         // Retired models are not "deprecated" (they are retired); `isDeprecated` must return false.
         XCTAssertFalse(Anthropic.Model(rawValue: "claude-3-7-sonnet-20250219")!.isDeprecated)
+        XCTAssertFalse(Anthropic.Model(rawValue: "claude-3-haiku-20240307")!.isDeprecated)
         XCTAssertFalse(Anthropic.Model(rawValue: "claude-3-opus-20240229")!.isDeprecated)
     }
 
@@ -209,6 +211,11 @@ class AnthropicTests: XCTestCase {
         // Retired models should return true.
         // Use rawValue init to avoid triggering deprecated-use warnings in tests.
         let retiredRawValues = [
+            "claude-opus-4-1-latest",
+            "claude-opus-4-1-20250805",
+            "claude-opus-4-20250514",
+            "claude-sonnet-4-20250514",
+            "claude-3-haiku-20240307",
             "claude-3-7-sonnet-20250219",
             "claude-3-5-haiku-20241022",
             "claude-3-5-sonnet-latest",
@@ -226,9 +233,10 @@ class AnthropicTests: XCTestCase {
         // Active models should return false
         XCTAssertFalse(Anthropic.Model.claude46Opus.isRetired)
         XCTAssertFalse(Anthropic.Model.claude46Sonnet.isRetired)
+        XCTAssertFalse(Anthropic.Model.claude55Opus.isRetired)
 
         // Deprecated (but not yet retired) models should return false
-        XCTAssertFalse(Anthropic.Model.claude3Haiku_20240307.isRetired)
+        XCTAssertFalse(Anthropic.Model(rawValue: "claude-sonnet-4-5-20250929")!.isRetired)
     }
 
     // MARK: - Content Block Decoding

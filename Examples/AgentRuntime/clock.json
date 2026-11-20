@@ -1,0 +1,12 @@
+{
+  "name": "Clock",
+  "description": "Answers questions about the current time.",
+  "instructions": "Use the current_time tool to answer. Reply in one sentence.",
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "tools": ["current_time"],
+  "timeoutSeconds": 120,
+  "messages": [
+    { "role": "user", "content": "What day of the week is it in Tokyo right now?" }
+  ]
+}

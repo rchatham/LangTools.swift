@@ -140,6 +140,19 @@ class GeminiTests: XCTestCase {
 
     func testGeminiModelRawValues() throws {
         // Verify active model IDs are correct
+        XCTAssertEqual(GeminiModel.gemini4Carbon.rawValue, "gemini-4-carbon")
+        XCTAssertEqual(GeminiModel.gemini4Neon.rawValue, "gemini-4-neon")
+        XCTAssertEqual(GeminiModel.gemini4Hydrogen.rawValue, "gemini-4-hydrogen")
+        XCTAssertEqual(GeminiModel.gemini4Argon.rawValue, "gemini-4-argon")
+        XCTAssertEqual(GeminiModel.gemini38Flash.rawValue, "gemini-3.8-flash")
+        XCTAssertEqual(GeminiModel.gemini36Flash.rawValue, "gemini-3.6-flash")
+        XCTAssertEqual(GeminiModel.gemini35FlashLite.rawValue, "gemini-3.5-flash-lite")
+        XCTAssertEqual(GeminiModel.gemini31FlashLite.rawValue, "gemini-3.1-flash-lite")
+        for model in [GeminiModel.gemini4Neon, .gemini4Hydrogen, .gemini38Flash] {
+            XCTAssertFalse(model.isDeprecated)
+            XCTAssertFalse(model.isRetired)
+            XCTAssertTrue(GeminiModel.allCases.contains(model))
+        }
         XCTAssertEqual(GeminiModel.gemini3Pro.rawValue, "gemini-3-pro")
         XCTAssertEqual(GeminiModel.gemini3Flash.rawValue, "gemini-3-flash")
         XCTAssertEqual(GeminiModel.gemini31Pro.rawValue, "gemini-3.1-pro")

@@ -65,6 +65,7 @@ enum CommandType: String, CaseIterable {
     case settings = "settings"
     case apikey = "apikey"
     case ollama = "ollama"
+    case voice = "voice"
 
     var help: CommandHelpDefinition {
         switch self {
@@ -153,6 +154,21 @@ enum CommandType: String, CaseIterable {
                     "Pulling and deleting models are interactive or stateful operations."
                 ],
                 seeAlso: ["/model", "/status"]
+            )
+        case .voice:
+            return .init(
+                description: "Read assistant replies aloud",
+                usage: "/voice [on|off|status]",
+                examples: ["/voice", "/voice on", "/voice off"],
+                details: [
+                    "With no argument, /voice toggles speech on or off. The setting is remembered between runs.",
+                    "Uses OpenAI text-to-speech when an OpenAI API key is set, otherwise the macOS `say` voice.",
+                    "Code blocks are skipped when reading a reply aloud."
+                ],
+                notes: [
+                    "A new reply, or /voice off, stops any reply that is still being read."
+                ],
+                seeAlso: ["/apikey", "/settings"]
             )
         }
     }

@@ -14,22 +14,21 @@ final class AnthropicStructuredOutputTests: XCTestCase {
     // MARK: - Model Support Tests
 
     func testSupportedModelsForStructuredOutput() {
-        // Test that Claude 4.x models support structured output
-        // Check that the supported models set contains the expected models
+        // Test that current Claude models support structured output.
         let supportedModels = Anthropic.Model.structuredOutputModels
 
-        // Claude 4.5 Sonnet
-        XCTAssertTrue(supportedModels.contains(.claude45Sonnet_latest), "claude45Sonnet_latest should support structured output")
+        // Claude 5.x models
+        XCTAssertTrue(supportedModels.contains(.claude5Opus), "claude5Opus should support structured output")
+        XCTAssertTrue(supportedModels.contains(.claude55Sonnet), "claude55Sonnet should support structured output")
 
-        // Claude 4.1 Opus
-        XCTAssertTrue(supportedModels.contains(.claude41Opus_latest), "claude41Opus_latest should support structured output")
-
-        // Claude 4.5 Haiku
+        // Claude 4.x active models
+        XCTAssertTrue(supportedModels.contains(.claude47Opus), "claude47Opus should support structured output")
         XCTAssertTrue(supportedModels.contains(.claude45Haiku_latest), "claude45Haiku_latest should support structured output")
 
         // Verify supportsStructuredOutput computed property
-        XCTAssertTrue(Anthropic.Model.claude45Sonnet_latest.supportsStructuredOutput)
-        XCTAssertTrue(Anthropic.Model.claude41Opus_latest.supportsStructuredOutput)
+        XCTAssertTrue(Anthropic.Model.claude5Opus.supportsStructuredOutput)
+        XCTAssertTrue(Anthropic.Model.claude55Sonnet.supportsStructuredOutput)
+        XCTAssertTrue(Anthropic.Model.claude47Opus.supportsStructuredOutput)
         XCTAssertTrue(Anthropic.Model.claude45Haiku_latest.supportsStructuredOutput)
     }
 
@@ -39,15 +38,16 @@ final class AnthropicStructuredOutputTests: XCTestCase {
         let supportedModels = Anthropic.Model.structuredOutputModels
         let retiredSonnet = Anthropic.Model(rawValue: "claude-3-5-sonnet-latest")!
         let retiredOpus   = Anthropic.Model(rawValue: "claude-3-opus-latest")!
+        let retiredHaiku3 = Anthropic.Model(rawValue: "claude-3-haiku-20240307")!
 
         XCTAssertFalse(supportedModels.contains(retiredSonnet), "claude-3-5-sonnet-latest should not support structured output")
         XCTAssertFalse(supportedModels.contains(retiredOpus),   "claude-3-opus-latest should not support structured output")
-        XCTAssertFalse(supportedModels.contains(.claude3Haiku_20240307), "claude3Haiku_20240307 should not support structured output")
+        XCTAssertFalse(supportedModels.contains(retiredHaiku3), "claude-3-haiku-20240307 should not support structured output")
 
         // Verify supportsStructuredOutput computed property
         XCTAssertFalse(retiredSonnet.supportsStructuredOutput)
         XCTAssertFalse(retiredOpus.supportsStructuredOutput)
-        XCTAssertFalse(Anthropic.Model.claude3Haiku_20240307.supportsStructuredOutput)
+        XCTAssertFalse(retiredHaiku3.supportsStructuredOutput)
     }
 
     // MARK: - Request Tests
@@ -267,11 +267,11 @@ final class AnthropicStructuredOutputTests: XCTestCase {
     }
 
     func testModelValidationSuccess() throws {
-        // Test that using structured output with supported model succeeds
+        // Test that using structured output with a supported model succeeds
         let anthropic = Anthropic(apiKey: "test-key")
 
         var request = Anthropic.MessageRequest(
-            model: .claude45Sonnet_latest, // Supported model
+            model: .claude55Sonnet, // Supported model
             messages: [Anthropic.Message(role: .user, content: "Test")],
             max_tokens: 1024
         )
