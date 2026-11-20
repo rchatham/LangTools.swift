@@ -6,8 +6,8 @@ name: Swift
 on:
   push:
     branches: [ "main" ]
+  # Include stacked PRs targeting feature branches, not just main.
   pull_request:
-    branches: [ "main" ]
   workflow_dispatch:
     inputs:
       run_ollama_cloud_tests:
@@ -18,6 +18,12 @@ on:
         description: Run the pinned Pi Ollama Cloud smoke test (main only)
         type: boolean
         default: false
+
+# Updating a stacked PR base and head can enqueue duplicate runs. Keep only
+# the newest run for that PR without cancelling main-only manual smoke tests.
+concurrency:
+  group: swift-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -148,7 +154,7 @@ jobs:
         # These suites use isolated credentials and local fixtures, not live
         # accounts/Ollama or legacy Keychain ACLs. Keep shared mock state serial.
         swift test --package-path Apps/LangTools --jobs 2 --no-parallel \
-          --filter 'MobileHelper|WorkerSubagentToolsTests|OllamaEndpoint|ProviderAccessManagerTests|ProviderAccessRefreshRegressionTests|OllamaSettingsErrorRegressionTests|ChatGenerationSettingsTests|ModelGenerationCapabilitiesTests|ChatModelSourceTests/testProxyOllamaCatalogAndTitlesIgnoreDirectEndpointAvailability|ChatModelSourceTests/testDefaultAndDirectCatalogUseExistingProviderAccessManager' \
+          --filter 'MobileHelper|WorkerSubagentToolsTests|OllamaEndpoint|ProviderAccessManagerTests|ProviderAccessRefreshRegressionTests|OllamaSettingsErrorRegressionTests|ChatGenerationSettingsTests|ModelGenerationCapabilitiesTests|ChatModelSourceTests/testProxyOllamaCatalogAndTitlesIgnoreDirectEndpointAvailability|ChatModelSourceTests/testDefaultAndDirectCatalogUseExistingProviderAccessManager|MessageServiceDependencyTests|MessageServiceRequestPreparerTests|ChatHistoryTests|ChatContextTests' \
           2>&1 | tee "$RUNNER_TEMP/app-helper-tests.log"
         if ! grep -Eq 'Executed [1-9][0-9]* tests?' "$RUNNER_TEMP/app-helper-tests.log"; then
           echo 'Expected focused app XCTest cases to execute.' >&2

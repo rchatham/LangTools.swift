@@ -8,6 +8,7 @@
 import Combine
 import SwiftUI
 import Chat
+import ChatHistory
 import Audio
 import ExampleAgents
 
@@ -28,6 +29,8 @@ struct LangToolsApp: App {
     // Use @StateObject so SwiftUI observes voiceInputHandler.objectWillChange
     // This enables instant UI updates when settings change
     @StateObject private var voiceInputHandler: VoiceInputHandlerAdapter
+    /// One chat history store, session manager and library for the process.
+    @StateObject private var history: ChatHistoryEnvironment
 
     init() {
         let fixtureActive = ChatUITestEnvironment.isFixtureActive
@@ -49,6 +52,10 @@ struct LangToolsApp: App {
         )
         _voiceInputHandler = StateObject(wrappedValue: adapter)
 
+        // The autoclosure runs when SwiftUI installs the state object, after
+        // the registrations below.
+        _history = StateObject(wrappedValue: ChatHistoryEnvironment.make())
+
         configureUITestDefaults()
         registerToolConfigurations()
         registerCardTypes()
@@ -69,7 +76,7 @@ struct LangToolsApp: App {
     var body: some Scene {
         #if os(macOS)
         Window("LangTools.swift", id: "main") {
-            ChatContainerView(voiceInputHandler: voiceInputHandler)
+            ChatContainerView(history: history, voiceInputHandler: voiceInputHandler)
                 .onOpenURL { url in
                     handleIncomingURL(url)
                 }
@@ -78,7 +85,7 @@ struct LangToolsApp: App {
         }
         #else
         WindowGroup {
-            ChatContainerView(voiceInputHandler: voiceInputHandler)
+            ChatContainerView(history: history, voiceInputHandler: voiceInputHandler)
                 .onOpenURL { url in
                     handleIncomingURL(url)
                 }
@@ -179,55 +186,204 @@ struct LangToolsApp: App {
     }
 }
 
-struct ChatContainerView: View {
-    @StateObject private var messageService: MessageService
-    @ObservedObject var voiceInputHandler: VoiceInputHandlerAdapter
+/// Chat history for the app: one store, session manager and library.
+@MainActor
+final class ChatHistoryEnvironment: ObservableObject {
+    let library: ChatHistoryLibrary
+    /// Set when the store could not be opened and history is memory-only.
+    let storageError: String?
+    /// UI-test fixtures keep the single-chat layout and never touch disk.
+    let isFixture: Bool
+    private var retentionTask: Task<Void, Never>?
 
-    init(voiceInputHandler: VoiceInputHandlerAdapter) {
+    var sessions: ChatSessionManager { library.sessions }
+
+    private init(library: ChatHistoryLibrary, storageError: String?, isFixture: Bool) {
+        self.library = library
+        self.storageError = storageError
+        self.isFixture = isFixture
+        if !isFixture { retentionTask = library.scheduleRetention() }
+    }
+
+    static func make() -> ChatHistoryEnvironment {
         let fixtureActive = ChatUITestEnvironment.isFixtureActive
+        let legacyUITestMode = UITestMode.current
+        let isFixture = fixtureActive || legacyUITestMode != nil
 
         // Fixture mode: no real agents, no real network.
-        let agents: [Agent] = fixtureActive ? [] : [
-            CalendarAgent(),
-            ReminderAgent(),
-            ResearchAgent()
-        ]
-        let service: MessageService
+        let agents: [Agent] = fixtureActive ? [] : [CalendarAgent(), ReminderAgent(), ResearchAgent()]
+        let networkClient: NetworkClientProtocol
         if let fixtureEnv = ChatUITestEnvironment.current {
-            // Fixture: reuse the existing UITestNetworkClient (same canned
-            // responses as legacy UITestMode), extended with the fixture mode.
-            service = MessageService(
-                networkClient: UITestNetworkClient(mode: fixtureEnv.legacyUITestMode),
-                agents: agents
-            )
-        } else if let uiTestMode = UITestMode.current {
-            service = MessageService(networkClient: UITestNetworkClient(mode: uiTestMode), agents: agents)
+            networkClient = UITestNetworkClient(mode: fixtureEnv.legacyUITestMode)
+        } else if let legacyUITestMode {
+            networkClient = UITestNetworkClient(mode: legacyUITestMode)
         } else {
-            service = MessageService(agents: agents)
+            networkClient = NetworkClient.shared
         }
+
+        var hooks = ChatSessionHooks.standard(networkClient: networkClient, agents: agents)
         if !fixtureActive {
-            service.agentResultParser = ContentCardRegistry.shared.agentResultParser
+            hooks.agentResultParser = ContentCardRegistry.shared.agentResultParser
         }
-        _messageService = StateObject(wrappedValue: service)
+        hooks.alert = { LangToolsAlerts.alert(for: $0) }
+
+        var storageError: String?
+        let storage: any ChatHistoryStorage
+        if isFixture {
+            storage = InMemoryChatHistoryStorage()
+        } else {
+            do {
+                storage = try SwiftDataChatHistoryStorage(location: .applicationSupport(directory: "LangToolsApp"))
+            } catch {
+                storageError = error.localizedDescription
+                storage = InMemoryChatHistoryStorage()
+            }
+        }
+        let library = ChatHistoryLibrary(
+            sessions: ChatSessionManager(storage: storage, hooks: hooks),
+            exporter: ChatHistoryExporter(appName: "LangTools")
+        )
+        return ChatHistoryEnvironment(library: library, storageError: storageError, isFixture: isFixture)
+    }
+}
+
+struct ChatContainerView: View {
+    @ObservedObject var history: ChatHistoryEnvironment
+    @ObservedObject var voiceInputHandler: VoiceInputHandlerAdapter
+    @StateObject private var listModel: ConversationListModel
+    @State private var selection: UUID?
+    @State private var draft = ConversationDraft()
+    /// The app opens on the chat; the history sidebar starts collapsed.
+    @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
+    @State private var showingHistory = false
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
+
+    init(history: ChatHistoryEnvironment, voiceInputHandler: VoiceInputHandlerAdapter) {
+        self.history = history
         self.voiceInputHandler = voiceInputHandler
+        _listModel = StateObject(wrappedValue: ConversationListModel(library: history.library))
     }
 
     var body: some View {
-        NavigationStack {
-            ChatView<MessageService>(
-                title: "LangTools",
-                messageService: messageService,
-                settingsView: { chatSettingsView },
-                voiceInputHandler: voiceInputHandler,
-                supplementaryContent: { message in
-                    guard ToolSettings.shared.richContentEnabled,
-                          case .contentCards(let content) = message.contentType
-                    else { return nil }
-                    return AnyView(ContentCardRegistry.shared.view(for: content))
+        Group {
+            if history.isFixture {
+                NavigationStack { chatView(for: currentSession) }
+            } else {
+                #if os(iOS)
+                if horizontalSizeClass == .compact {
+                    stackLayout
+                } else {
+                    splitLayout
                 }
-            )
+                #else
+                splitLayout
+                #endif
+            }
+        }
+        .onReceive(history.library.changes) { change in
+            // Select a draft in the sidebar once its first message stores it.
+            if selection == nil, change == .conversationUpserted(draft.id) {
+                selection = draft.id
+            }
         }
         .fixtureConditionalAccessPrompts()
+    }
+
+    /// iPad and macOS: the chat fills the window and History is a sidebar
+    /// the user opens with the sidebar button.
+    private var splitLayout: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            historyList(style: .sidebar)
+            #if os(macOS)
+            .toolbar {
+                ToolbarItem {
+                    Button { startNewConversation(nil) } label: {
+                        Label("New Chat", systemImage: "square.and.pencil")
+                    }
+                }
+            }
+            #endif
+        } detail: {
+            let session = currentSession
+            chatView(for: session).id(session.conversationID)
+        }
+    }
+
+    #if os(iOS)
+    /// iPhone: the chat is the first screen. History opens as a sheet,
+    /// where picking a conversation or starting a new one closes it.
+    private var stackLayout: some View {
+        NavigationStack {
+            let session = currentSession
+            chatView(for: session)
+                .id(session.conversationID)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { showingHistory = true } label: {
+                            Label("History", systemImage: "clock.arrow.circlepath")
+                        }
+                        .accessibilityIdentifier("chat.history")
+                    }
+                }
+        }
+        .sheet(isPresented: $showingHistory) {
+            NavigationStack {
+                historyList(style: .stack)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { showingHistory = false }
+                        }
+                    }
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+    #endif
+
+    private func historyList(style: ChatHistoryListStyle) -> some View {
+        ChatHistoryListView(
+            model: listModel,
+            selection: $selection,
+            style: style,
+            title: "History",
+            onSelect: { _ in showingHistory = false },
+            onNewConversation: { title in
+                startNewConversation(title)
+                showingHistory = false
+            }
+        )
+    }
+
+    /// The selected conversation, or a fresh draft that is stored on its
+    /// first message.
+    private var currentSession: ChatSession {
+        if let selection, let session = try? history.sessions.session(for: selection) {
+            return session
+        }
+        return history.sessions.draftSession(draft)
+    }
+
+    private func startNewConversation(_ title: String?) {
+        draft = ConversationDraft(title: title)
+        selection = nil
+    }
+
+    private func chatView(for session: ChatSession) -> some View {
+        ChatView<ChatSession>(
+            title: "LangTools",
+            messageService: session,
+            settingsView: { chatSettingsView },
+            voiceInputHandler: voiceInputHandler,
+            supplementaryContent: { message in
+                guard ToolSettings.shared.richContentEnabled,
+                      case .contentCards(let content) = message.contentType
+                else { return nil }
+                return AnyView(ContentCardRegistry.shared.view(for: content))
+            }
+        )
     }
 
     private var chatSettingsView: AnyView {
@@ -239,9 +395,12 @@ struct ChatContainerView: View {
             ? ProviderAccessManager(keychainService: KeychainService.shared)
             : ProviderAccessManager.shared
         let viewModel = ChatSettingsView.ViewModel(
-            clearMessages: messageService.clearMessages,
+            clearMessages: { startNewConversation(nil) },
             accessManager: accessManager
         )
+        if !history.isFixture {
+            viewModel.customTabs = [.chatHistory(library: history.library)]
+        }
 
         viewModel.onPreloadWhisperKit = { [weak voiceInputHandler] in
             voiceInputHandler?.preloadWhisperKit()
@@ -269,6 +428,14 @@ extension MessageService: @retroactive ChatMessageService {
     public typealias ChatMessage = Message
 
     public func handleError(error: any Error) -> ChatAlertInfo? {
+        LangToolsAlerts.alert(for: error)
+    }
+}
+
+/// Maps provider and app errors to alerts for every chat surface.
+@MainActor
+enum LangToolsAlerts {
+    static func alert(for error: any Error) -> ChatAlertInfo? {
         if error is MobileHelperError {
             return ChatAlertInfo(title: "Paired Helper", message: error.localizedDescription)
         }
@@ -360,7 +527,7 @@ extension MessageService: @retroactive ChatMessageService {
         }
     }
 
-    private func handleCLIAccountError(_ error: CLIAccountSessionBridgeError) -> ChatAlertInfo {
+    private static func handleCLIAccountError(_ error: CLIAccountSessionBridgeError) -> ChatAlertInfo {
         let message = normalizedCLIErrorMessage(error)
         let lowercasedMessage = message.lowercased()
 
@@ -398,14 +565,14 @@ extension MessageService: @retroactive ChatMessageService {
         )
     }
 
-    private func normalizedCLIErrorMessage(_ error: CLIAccountSessionBridgeError) -> String {
+    private static func normalizedCLIErrorMessage(_ error: CLIAccountSessionBridgeError) -> String {
         let rawMessage = error.errorDescription ?? "LangToolsCLI request failed."
         let withoutPrefix = rawMessage.replacingOccurrences(of: "Error: ", with: "")
         let components = withoutPrefix.components(separatedBy: "\n\nSee ")
         return components.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? withoutPrefix
     }
 
-    func handleApiError(_ error: Error) -> ChatAlertInfo? {
+    static func handleApiError(_ error: Error) -> ChatAlertInfo? {
         switch error {
         case let error as OpenAIErrorResponse:
             return ChatAlertInfo(title: "OpenAI API Error", button: ButtonInfo(text: "OK", role: .cancel), message: error.error.message)
@@ -428,11 +595,6 @@ extension MessageService: @retroactive ChatMessageService {
             return ChatAlertInfo(title: "API Error", button: ButtonInfo(text: "OK", role: .cancel), message: "An unexpected API error occurred.\n\(error.localizedDescription)")
         }
     }
-}
-
-extension Message: @retroactive ChatMessageInfo {
-    public weak var parentMessage: Message? { parent }
-    public var childChatMessages: [Message] { childMessages }
 }
 
 /// Legacy UITestMode — the original, pre-fixture mechanism. Only active in
