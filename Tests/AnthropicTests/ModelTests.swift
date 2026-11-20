@@ -111,6 +111,8 @@ final class ModelTests: XCTestCase {
             ("claude-opus-5-5", .claude55Opus),
             ("claude-sonnet-5-5", .claude55Sonnet),
             ("claude-haiku-5-5", .claude55Haiku),
+            ("claude-fable-5-2", .claude52Fable),
+            ("claude-mythos-5-2", .claude52Mythos),
         ]
         for (id, model) in latest {
             XCTAssertEqual(model.rawValue, id)

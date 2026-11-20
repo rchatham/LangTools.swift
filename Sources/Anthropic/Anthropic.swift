@@ -189,6 +189,8 @@ public extension Anthropic {
         public static let claude55Opus = Model(modelID: .claude55Opus)
         public static let claude55Sonnet = Model(modelID: .claude55Sonnet)
         public static let claude55Haiku = Model(modelID: .claude55Haiku)
+        public static let claude52Fable = Model(modelID: .claude52Fable)
+        public static let claude52Mythos = Model(modelID: .claude52Mythos)
 
         // MARK: - Retired Models (kept for Codable round-trip compatibility only — will return API errors)
         // Note: Swift has no @available(*, retired) for members. @available(*, deprecated) is used
@@ -244,6 +246,8 @@ public extension Anthropic {
             case claude55Opus = "claude-opus-5-5"
             case claude55Sonnet = "claude-sonnet-5-5"
             case claude55Haiku = "claude-haiku-5-5"
+            case claude52Fable = "claude-fable-5-2"
+            case claude52Mythos = "claude-mythos-5-2"
             case claude41Opus_latest = "claude-opus-4-1-latest"
             case claude41Opus_20250805 = "claude-opus-4-1-20250805"
             case claude4Opus_20250514 = "claude-opus-4-20250514"
@@ -283,6 +287,7 @@ extension Anthropic.Model {
             .claude5Fable, .claude5Mythos,
             .claude51Fable, .claude51Mythos,
             .claude55Opus, .claude55Sonnet, .claude55Haiku,
+            .claude52Fable, .claude52Mythos,
         ]
     }
 
@@ -331,6 +336,7 @@ extension Anthropic.Model {
             .claude5Fable, .claude5Mythos,
             .claude51Fable, .claude51Mythos,
             .claude55Opus, .claude55Sonnet, .claude55Haiku,
+            .claude52Fable, .claude52Mythos,
         ]
     }
 

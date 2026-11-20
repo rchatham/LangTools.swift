@@ -34,6 +34,10 @@ final class ModelRequestTests: XCTestCase {
     // MARK: - Model Catalog Tests
 
     func testCurrentModelIDs() {
+        XCTAssertEqual(OpenAI.Model.gpt6_2_astra.rawValue, "gpt-6.2-astra")
+        XCTAssertEqual(OpenAI.Model.gpt6_2_sol.rawValue, "gpt-6.2-sol")
+        XCTAssertEqual(OpenAI.Model.gpt6_1_terra.rawValue, "gpt-6.1-terra")
+        XCTAssertEqual(OpenAI.Model.gpt6_luna.rawValue, "gpt-6-luna")
         XCTAssertEqual(OpenAI.Model.gpt5_5.rawValue, "gpt-5.5")
         XCTAssertEqual(OpenAI.Model.gpt5_5_pro.rawValue, "gpt-5.5-pro")
         XCTAssertEqual(OpenAI.Model.gpt5_4.rawValue, "gpt-5.4")
@@ -53,6 +57,9 @@ final class ModelRequestTests: XCTestCase {
     }
 
     func testCurrentModelTypes() {
+        XCTAssertEqual(OpenAI.Model.gpt6_2_astra.type, .chat)
+        XCTAssertEqual(OpenAI.Model.gpt6_2_sol.type, .chat)
+        XCTAssertEqual(OpenAI.Model.gpt6_luna.type, .chat)
         XCTAssertEqual(OpenAI.Model.gpt5_5.type, .chat)
         XCTAssertEqual(OpenAI.Model.o3.type, .chat)
         XCTAssertEqual(OpenAI.Model.gptRealtime.type, .realtime)

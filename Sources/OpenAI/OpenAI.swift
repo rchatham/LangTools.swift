@@ -219,6 +219,10 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
     public static let gpt5_4_nano = OpenAIModel(modelID: .gpt5_4_nano)
     public static let gpt5_5 = OpenAIModel(modelID: .gpt5_5)
     public static let gpt5_5_pro = OpenAIModel(modelID: .gpt5_5_pro)
+    public static let gpt6_luna = OpenAIModel(modelID: .gpt6_luna)
+    public static let gpt6_1_terra = OpenAIModel(modelID: .gpt6_1_terra)
+    public static let gpt6_2_sol = OpenAIModel(modelID: .gpt6_2_sol)
+    public static let gpt6_2_astra = OpenAIModel(modelID: .gpt6_2_astra)
 
     public static let gpt53_codex_spark = OpenAIModel(modelID: .gpt53_codex_spark)
 
@@ -293,6 +297,10 @@ public struct OpenAIModel: Codable, CaseIterable, Equatable, Identifiable, RawRe
         case gpt5_4_nano = "gpt-5.4-nano"
         case gpt5_5 = "gpt-5.5"
         case gpt5_5_pro = "gpt-5.5-pro"
+        case gpt6_luna = "gpt-6-luna"
+        case gpt6_1_terra = "gpt-6.1-terra"
+        case gpt6_2_sol = "gpt-6.2-sol"
+        case gpt6_2_astra = "gpt-6.2-astra"
 
         case gpt53_codex_spark = "gpt-5.3-codex-spark"
 

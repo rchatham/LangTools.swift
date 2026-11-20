@@ -166,6 +166,12 @@ class XAITests: XCTestCase {
 
     func testXAIModelRawValues() throws {
         // Verify active model IDs are correct
+        XCTAssertEqual(XAIModel.grok47.rawValue, "grok-4.7")
+        XCTAssertEqual(XAIModel.grok46.rawValue, "grok-4.6")
+        XCTAssertEqual(XAIModel.grok45.rawValue, "grok-4.5")
+        XCTAssertEqual(XAIModel.grok43.rawValue, "grok-4.3")
+        XCTAssertFalse(XAIModel.grok47.isDeprecated)
+        XCTAssertTrue(XAIModel.allCases.contains(.grok47))
         XCTAssertEqual(XAIModel.grok3.rawValue, "grok-3")
         XCTAssertEqual(XAIModel.grok4_0709.rawValue, "grok-4-0709")
         XCTAssertEqual(XAIModel.grok2Vision.rawValue, "grok-2-vision-1212")
