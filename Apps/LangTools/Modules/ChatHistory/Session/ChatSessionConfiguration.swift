@@ -10,6 +10,7 @@
 import Foundation
 import Agents
 import Chat
+import ChatContext
 import ChatUI
 import LangTools
 import ToolKit
@@ -18,17 +19,42 @@ import ToolKit
 @MainActor
 public struct ChatSessionContext {
     public let conversationID: UUID
+    /// Where this conversation's context checkpoints live: the session's store.
+    public let checkpoints: any ContextCheckpointStore
     private let recordProvider: @MainActor () -> ConversationRecord?
+    private let compactionRelay: ChatSessionCompactionRelay
 
-    init(conversationID: UUID, recordProvider: @escaping @MainActor () -> ConversationRecord?) {
+    init(
+        conversationID: UUID,
+        checkpoints: any ContextCheckpointStore,
+        compactionRelay: ChatSessionCompactionRelay,
+        recordProvider: @escaping @MainActor () -> ConversationRecord?
+    ) {
         self.conversationID = conversationID
+        self.checkpoints = checkpoints
+        self.compactionRelay = compactionRelay
         self.recordProvider = recordProvider
+    }
+
+    /// Passes compaction progress to the session, which publishes it for
+    /// the UI (`ChatSession.isCompacting`, `ChatSession.checkpoints`).
+    /// `compactingRequestPreparers` reports every event; a custom preparer
+    /// that wraps a `CompactingRequestPreparer` should forward its events.
+    public func reportCompaction(_ event: CompactingRequestPreparer.Event) {
+        compactionRelay.handler?(event)
     }
 
     /// The conversation's current record, read at call time so settings
     /// changed after the session was created still apply. For a draft that
     /// has not been saved yet this is the draft's provisional record.
     public var record: ConversationRecord? { recordProvider() }
+}
+
+/// Carries compaction events from a session's request preparer to the
+/// session, which exists only after its preparer is built.
+@MainActor
+final class ChatSessionCompactionRelay {
+    var handler: ((CompactingRequestPreparer.Event) -> Void)?
 }
 
 /// Resolves the model and conversation settings for one request.
@@ -205,6 +231,28 @@ public struct ChatSessionHooks {
                 )
             )
         })
+    }
+}
+
+/// How much of a stored conversation a session loads when it opens.
+///
+/// A session always loads every message after the conversation's latest
+/// context checkpoint, because requests replay them. Older messages, already
+/// summarized, load on demand with `ChatSession.loadEarlierMessages()`.
+/// Without a checkpoint every message is loaded, so requests never silently
+/// lose history.
+public struct ChatSessionPaging: Sendable, Equatable {
+    /// The fewest newest top-level messages loaded at open; `nil` loads everything.
+    public var initialMessageCount: Int?
+    /// Top-level messages per "load earlier" page.
+    public var earlierPageSize: Int
+
+    public static let standard = ChatSessionPaging(initialMessageCount: 100, earlierPageSize: 100)
+    public static let unbounded = ChatSessionPaging(initialMessageCount: nil, earlierPageSize: 100)
+
+    public init(initialMessageCount: Int?, earlierPageSize: Int) {
+        self.initialMessageCount = initialMessageCount.map { max(1, $0) }
+        self.earlierPageSize = max(1, earlierPageSize)
     }
 }
 

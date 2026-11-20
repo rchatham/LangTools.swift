@@ -1100,7 +1100,7 @@ public struct ChatSettingsView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Window % — stored only")
+                        Text("Window %")
                             .font(.caption)
                         TextField("100", value: Binding(
                             get: { viewModel.conversationSettings.contextWindowPercent },
@@ -1110,7 +1110,7 @@ public struct ChatSettingsView: View {
                         .frame(width: 60)
                     }
 
-                    Text("Only Message Limit is applied to requests; Window % is stored for future wiring.")
+                    Text("Message Limit drops the oldest messages. Window % keeps requests within that share of the model's context window in apps that compact context.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

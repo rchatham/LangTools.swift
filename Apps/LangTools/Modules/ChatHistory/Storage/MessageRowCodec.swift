@@ -17,7 +17,14 @@ import OpenAI
 /// parent pointers), so fields added to `Message` later survive a round trip
 /// without a schema migration. `plainText` and `role` are denormalized for
 /// search, previews and decode fallbacks.
-struct MessageRow: Equatable {
+/// What chronological ordering needs from a row.
+protocol MessageRowOrdering {
+    var id: UUID { get }
+    var createdAt: Date { get }
+    var sortOrder: Int64 { get }
+}
+
+struct MessageRow: Equatable, MessageRowOrdering {
     var id: UUID
     var parentID: UUID?
     var sortOrder: Int64
@@ -31,6 +38,7 @@ struct MessageRow: Equatable {
 
 enum MessageRowCodec {
     static let payloadVersion = 1
+    static let agentEventKind = "agentEvent"
     static let previewLength = 200
 
     private static let encoder: JSONEncoder = {
@@ -70,7 +78,7 @@ enum MessageRowCodec {
         case .null: return "null"
         case .string: return "string"
         case .array: return "array"
-        case .agentEvent: return "agentEvent"
+        case .agentEvent: return agentEventKind
         case .contentCards: return "contentCards"
         }
     }
@@ -174,7 +182,7 @@ enum MessageRowCodec {
 
     /// Chronological order with deterministic tie-breaks. Kept identical to
     /// Botsworth's legacy store so imported conversations keep their order.
-    static func isOrdered(_ lhs: MessageRow, _ rhs: MessageRow) -> Bool {
+    static func isOrdered<Row: MessageRowOrdering>(_ lhs: Row, _ rhs: Row) -> Bool {
         if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
         if lhs.sortOrder != rhs.sortOrder { return lhs.sortOrder < rhs.sortOrder }
         return lhs.id.uuidString < rhs.id.uuidString

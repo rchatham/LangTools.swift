@@ -24,6 +24,8 @@ struct MessageChangePlan {
     var writes: [MessageRow]
     var nextSortOrder: Int64
     var summary: ConversationSummary
+    /// Every row after the batch, without payloads, for checkpoint upkeep.
+    var remainingKeys: [MessageRowKey]
     /// True when the batch would not change any stored row. Stores skip the
     /// save so re-saving identical messages does not reorder conversations.
     var isNoOp: Bool
@@ -87,6 +89,7 @@ enum MessageChangePlanner {
             writes: orderedWrites,
             nextSortOrder: next,
             summary: summary(of: Array(rows.values)),
+            remainingKeys: rows.values.map(MessageRowKey.init),
             isNoOp: deletedIDs.isEmpty && orderedWrites.allSatisfy { existing[$0.id] == $0 }
         )
     }
